@@ -11,11 +11,15 @@ SCRIPT = Path(__file__).with_name("delivery_next.py")
 
 def state(**overrides):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": "run-20260817-120000",
         "workspace": "/workspace/service",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
+        "repo_id": "repo-123",
+        "task_key": "task-123",
+        "writer_id": "writer-123",
+        "revision": 0,
         "current_stage": "round-1-semantic-review",
         "requires_stability_round": False,
         "status": "active",
@@ -72,13 +76,25 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
 
     def test_invalid_state_emits_blocked(self):
-        result = self.run_helper(state(schema_version=2))
+        result = self.run_helper(state(schema_version=3))
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
 
     def test_mismatched_run_id_emits_blocked(self):
         result = self.run_helper(state(), "--run-id", "other-run")
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_mismatched_writer_id_emits_blocked(self):
+        result = self.run_helper(state(), "--writer-id", "other-writer")
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_invalid_revision_emits_blocked(self):
+        result = self.run_helper(state(revision=-1))
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)

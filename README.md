@@ -24,6 +24,7 @@
 - 每类复查最多自动修复一次；相同问题指纹复现或没有客观进展时停止，而不是无限重试。
 - 使用 `pass`、`fail`、`unknown` 三态记录真实命令退出码；`unknown` 绝不算通过。
 - 对跨服务、公共契约或跨会话任务持久化轻量状态，并通过只读 helper 校验下一阶段。
+- 多窗口执行使用 repo/task/worktree 三层 lease：阻止同一 worktree 双写和同一任务重复实现，不阻塞不同 worktree 的不同任务并行。
 - 输出固定最终报告：终态、实际轮次、验收证据、已处理问题、验证命令、变更摘要和未处理项。
 
 ## Install
@@ -135,6 +136,10 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id>
 
 它只输出一个白名单 token，例如 `verify-final`、`complete` 或 `blocked`；不会写状态、执行代码或绕过人工决策。状态字段见 [references/state-schema.md](references/state-schema.md)。
 
+## 多窗口并行
+
+一个执行任务对应一个 Git worktree 和分支。同一 worktree 只能有一个写入者；相同范围的任务不能在另一个 worktree 重复执行；不同任务可并行。Codex 与 Claude Code 共用用户级 lease，因此跨运行时也不会双写。Skill 默认使用两小时 writer lease，过期后也不会自动抢占，避免仍在运行的窗口被覆盖。具体恢复、接管与安装锁说明见[使用与维护指南](docs/usage-guide.md#多窗口并行)。
+
 ## 质量与边界
 
 - 不承诺“全仓库绝对没有问题”，只对当前授权范围的验收项和验证证据负责。
@@ -186,6 +191,8 @@ agents/openai.yaml               # Codex 界面元数据
 .claude/skills/convergent-delivery -> ../.. # Claude Code 入口（相对软链接）
 scripts/delivery_next.py         # 状态校验与下一阶段 helper
 scripts/test_delivery_next.py    # helper 回归测试
+scripts/delivery_lease.py        # 多窗口 writer lease helper
+scripts/test_delivery_lease.py   # lease 回归测试
 scripts/test_install.py          # 安装器回归测试
 scripts/test_check.py            # 项目检查入口回归测试
 references/state-schema.md       # 跨会话状态 Schema

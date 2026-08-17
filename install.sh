@@ -9,6 +9,7 @@ GITHUB_RAW_VERSION_URL="https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MANAGED_SOURCE="${HOME}/.convergent-delivery/source"
+INSTALL_LOCK_DIR="${HOME}/.convergent-delivery/.install.lock"
 CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
 
@@ -17,6 +18,7 @@ TARGET="all"
 SOURCE_OVERRIDE=""
 OFFLINE=0
 FORCE=0
+INSTALL_LOCK_HELD=0
 
 usage() {
   cat <<EOF
@@ -92,6 +94,24 @@ do_version() {
   echo "  Codex:       $(version_at "$CODEX_TARGET")"
   echo "  Claude Code: $(version_at "$CLAUDE_TARGET")"
   echo "  GitHub main: $(latest_version)"
+}
+
+release_install_lock() {
+  if [[ "$INSTALL_LOCK_HELD" -eq 1 ]]; then
+    rm -f "$INSTALL_LOCK_DIR/pid"
+    rmdir "$INSTALL_LOCK_DIR" 2>/dev/null || true
+  fi
+}
+
+acquire_install_lock() {
+  mkdir -p "$(dirname "$INSTALL_LOCK_DIR")"
+  if ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+    echo "Error: another installation is in progress: $INSTALL_LOCK_DIR" >&2
+    exit 1
+  fi
+  printf '%s\n' "$$" > "$INSTALL_LOCK_DIR/pid"
+  INSTALL_LOCK_HELD=1
+  trap release_install_lock EXIT INT TERM
 }
 
 prepare_source() {
@@ -187,6 +207,8 @@ if [[ "$ACTION" == "version" ]]; then
   do_version
   exit 0
 fi
+
+acquire_install_lock
 
 if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   prepare_source

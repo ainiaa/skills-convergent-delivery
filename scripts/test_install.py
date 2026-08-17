@@ -56,6 +56,17 @@ class InstallTest(unittest.TestCase):
             self.assertTrue(target.is_dir())
             self.assertIn("refusing to replace existing directory", result.stderr)
 
+    def test_install_refuses_when_another_install_is_in_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            lock = home / ".convergent-delivery/.install.lock"
+            lock.mkdir(parents=True)
+
+            result = self.run_installer(home, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("another installation is in progress", result.stderr)
+
     def test_readme_current_version_matches_version_file(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

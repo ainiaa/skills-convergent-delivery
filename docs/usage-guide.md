@@ -37,6 +37,7 @@ bash install.sh --upgrade --target all
 - **安装被拒绝：已有目录或文件**：先检查该目录是否有自己的修改；迁移或删除它后重试。不要对普通目录使用 `--force`。
 - **Skill 未出现**：确认目标路径存在，再重启运行时；Claude Code 也可用 `/skills` 检查发现结果。
 - **版本检查显示 `unable to fetch`**：本地安装不受影响；检查网络或使用 `--offline` 仅查看本地版本。
+- **提示 `another installation is in progress`**：另一个安装、升级或卸载正在修改运行时入口。等待其结束后重试；确认没有进程在运行后，才人工清理 `~/.convergent-delivery/.install.lock`。
 
 ## 版本、卸载和状态
 
@@ -60,13 +61,26 @@ bash install.sh --uninstall --target all
 
 恢复任务前，运行 `scripts/delivery_next.py`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/delivery_next.py`，避免因当前工作目录变化而找不到 helper。
 
+## 多窗口并行
+
+可以同时处理多个任务，但每个执行任务应使用独立的 Git worktree 和分支。Skill 在真正写入前自动要求 writer lease：同一 worktree 只能有一个写入者；同一仓库内、范围相同的任务即使位于不同 worktree 也不能重复执行；不同任务在不同 worktree 可以并行。
+
+```bash
+# 在主工作区创建一个独立 worktree（示例）
+git worktree add ../service-fix -b convergent/fix-payment HEAD
+```
+
+Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/`，因此跨运行时也会互斥；各自的非 PDLC ledger 仍保存在运行时状态目录。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
+
+PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。恢复时必须传入 `run_id`、`writer_id` 和当前 `revision`，以防旧窗口覆盖新状态。
+
 ## 维护版本
 
 发布新版本时：
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、helper、Shell 语法和必要 Skill 元数据检查。
+3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和必要 Skill 元数据检查。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
 不要为 Codex 和 Claude Code 复制两份 `SKILL.md`；如需调整流程，只修改仓库根目录的主文件。

@@ -23,6 +23,21 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 - **默认并留痕**：不影响业务语义的文案、日志补充和代码组织；采用最小、兼容的默认值。
 - **必须阻塞**：金额或业务规则、跨服务兼容性、数据迁移、权限、发布、不可逆或外发操作。不得用“合理假设”绕过。
 
+## 多窗口与多任务隔离
+
+- `plan` 和 `review` 可以并行；`execute` 在**写入代码、状态或安装入口前**必须先获取 writer lease。lease 不是全仓库锁：同一 worktree 只允许一个 writer；同一仓库、同一 `task_key` 在不同 worktree 也只允许一个 writer；不同任务可在不同 worktree 并行。
+- `repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`workspace` 使用 `git rev-parse --show-toplevel`；`task_key` 使用冻结后的范围和验收项的确定性指纹，不能仅用分支名或自然语言标题。
+- Codex 与 Claude Code 共用 lease 根目录 `~/.convergent-delivery/leases`，避免两个运行时互相看不到 writer。状态 ledger 仍按各运行时目录保存。在对应 Skill 根目录运行：
+
+  ```bash
+  python3 scripts/delivery_lease.py acquire --root <lease-root> \
+    --repo <repo-id> --workspace <workspace> --task-key <task-key>
+  ```
+
+  成功时记录返回的 `run_id`、`writer_id` 和到期时间；每个阶段结束前续期，终态后释放。lease 默认有效期为两小时，过期 lease 不自动抢占；仅在确认原任务不再运行时，使用 `--takeover` 并在 ledger 记录理由。
+- 若返回 `blocked_workspace`，不要在当前工作区写入。工作区干净且没有他人 diff 时，可为该任务创建独立分支和 worktree 后重试；否则报告阻塞和建议命令。若返回 `blocked_task`，不得重复实现同一任务，应恢复持有者的 run 或等待用户决定。
+- 每次状态写入必须由当前 `writer_id` 持有 lease，且 `revision` 单调加一；原子 rename 只防止半写入，不能替代 lease。PDLC 的 `docs/.pdlc-state/` 仍保存流程产物，但同样需要外部 lease 防止多个窗口并写。
+
 ## 证据、严重度和自动修复条件
 
 每项发现必须写明位置或调用链、可复现条件/失败测试/客观工具输出、实际影响和根因。没有证据的内容只能作为建议。
@@ -78,9 +93,9 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 - 每个“通过、已修复、完成”的结论必须能对应到最后一次代码修改后的具体命令、退出码和验收项；编译、lint 或局部测试不能替代其未覆盖行为的证明。
 - 已有失败仅在具备变更前基线证据、且本次定向回归通过时才可标为 `pre-existing`；否则按未知回归处理。
 - 普通任务在当前上下文维护**紧凑** ledger：轮次、阶段、验收项→证据→结果、问题指纹、修复批次、命令及退出码、范围变化和用户决策。只记录可影响交付结论的事实，不生成重复叙述或无关文档。
-- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger。非 PDLC 任务在 Codex 写入 `~/.codex/state/convergent-delivery/<工作区指纹>/<run-id>.json`，在 Claude Code 写入 `~/.claude/state/convergent-delivery/<工作区指纹>/<run-id>.json`，避免污染仓库；PDLC 任务沿用 `docs/.pdlc-state/`。状态严格遵循 [Schema v1](references/state-schema.md)，仅保存工作区、基线、范围、阶段、轮次、验收结果、问题指纹、命令结果、阻塞原因和简短 handoff，不记录密钥或请求敏感数据。
-- 更新状态时先写临时文件并原子 rename；恢复时优先指定 `run_id`。未指定时，只有工作区、基线和范围均匹配的未终态候选恰好一份才可继续，多个候选一律 `blocked`，不得自动猜测。
-- 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id>`。helper 只读状态，只输出白名单中的一个下一阶段 token；状态缺失、非法、未推进或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
+- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger。非 PDLC 任务在 Codex 写入 `~/.codex/state/convergent-delivery/<工作区指纹>/<run-id>.json`，在 Claude Code 写入 `~/.claude/state/convergent-delivery/<工作区指纹>/<run-id>.json`，避免污染仓库；PDLC 任务沿用 `docs/.pdlc-state/`。状态严格遵循 [Schema v2](references/state-schema.md)，仅保存工作区、基线、范围、阶段、轮次、验收结果、问题指纹、命令结果、阻塞原因和简短 handoff，不记录密钥或请求敏感数据。
+- 更新状态前续期 lease，再写临时文件并原子 rename，且 `revision` 单调加一；恢复时优先指定 `run_id` 与 `writer_id`。未指定时，只有工作区、基线和范围均匹配的未终态候选恰好一份才可继续，多个候选一律 `blocked`，不得自动猜测。
+- 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`。helper 只读状态，只输出白名单中的一个下一阶段 token；状态缺失、非法、未推进或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
 
 ## 终态和交接
 
@@ -96,6 +111,7 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 交付终态：complete | blocked_*
 轮次：<实际完成轮数>/<1 或 2>（<低风险 | 高风险原因>）
 任务基线：<commit / 初始 diff>
+执行隔离：<worktree；run_id；lease 已释放 | 未获取/保留原因>
 稳定轮：已执行（<风险触发器/影响面扩大原因>）| 已跳过（低风险且影响面未扩大）
 变更摘要：<文件数；文件列表；主要行为变化>
 

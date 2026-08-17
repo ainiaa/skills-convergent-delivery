@@ -32,10 +32,16 @@ def require_mapping(value, name):
 def validate_state(state, arguments):
     if not isinstance(state, dict):
         raise ValueError("state must be an object")
-    if state.get("schema_version") != 1:
+    if state.get("schema_version") != 2:
         raise ValueError("unsupported schema_version")
 
     run_id = require_string(state.get("run_id"), "run_id")
+    repo_id = require_string(state.get("repo_id"), "repo_id")
+    task_key = require_string(state.get("task_key"), "task_key")
+    writer_id = require_string(state.get("writer_id"), "writer_id")
+    revision = state.get("revision")
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        raise ValueError("revision must be a non-negative integer")
     workspace = require_string(state.get("workspace"), "workspace")
     if not Path(workspace).is_absolute():
         raise ValueError("workspace must be absolute")
@@ -49,6 +55,14 @@ def validate_state(state, arguments):
 
     if arguments.run_id and arguments.run_id != run_id:
         raise ValueError("run_id does not match")
+    if arguments.repo_id and arguments.repo_id != repo_id:
+        raise ValueError("repo_id does not match")
+    if arguments.task_key and arguments.task_key != task_key:
+        raise ValueError("task_key does not match")
+    if arguments.writer_id and arguments.writer_id != writer_id:
+        raise ValueError("writer_id does not match")
+    if arguments.revision is not None and arguments.revision != revision:
+        raise ValueError("revision does not match")
     if arguments.workspace and arguments.workspace != workspace:
         raise ValueError("workspace does not match")
     if arguments.baseline and arguments.baseline != baseline["commit"]:
@@ -87,6 +101,10 @@ def main():
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--state", required=True)
     parser.add_argument("--run-id")
+    parser.add_argument("--repo-id")
+    parser.add_argument("--task-key")
+    parser.add_argument("--writer-id")
+    parser.add_argument("--revision", type=int)
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--scope-fingerprint")
