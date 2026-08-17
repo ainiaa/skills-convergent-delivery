@@ -1,0 +1,4 @@
+interface:
+  display_name: "有限阶段闭环交付"
+  short_description: "按风险自适应使用一到两轮复查完成可验证的稳定交付任务"
+  default_prompt: "使用 $convergent-delivery 处理当前需求：完成 TDD 交付轮，并仅在高风险时执行稳定轮；最后输出轮次与验证报告。"
