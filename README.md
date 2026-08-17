@@ -2,7 +2,7 @@
 
 一个面向软件功能开发和 Bug 修复的 Codex 与 Claude Code Skill。它将需求确认、TDD、实现、复查、验证和交接收敛为有限流程，避免在“再检查一次 → 再修一次”中无限循环。
 
-当前版本：[0.1.0](VERSION)
+当前开发版本：[0.1.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么需要它
 
@@ -65,7 +65,18 @@ curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/m
   | bash -s -- --version
 ```
 
-该命令显示本地源码、Codex 安装、Claude Code 安装和 GitHub 最新版本；加 `--offline` 可跳过网络检查。
+该命令显示本地源码、Codex 安装、Claude Code 安装和 GitHub `main` 中的版本；加 `--offline` 可跳过网络检查。
+
+## 3 步快速开始
+
+1. 安装到当前机器的两个运行时：
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh | bash -s -- --target all
+   ```
+
+2. 在 Codex 中说“使用 `$convergent-delivery` 修复分页 SQL 错误”；或在 Claude Code 中执行 `/convergent-delivery 修复分页 SQL 错误`。
+3. 根据最终报告核对交付终态、验收证据、验证命令和未处理项。
 
 ## 使用方式
 
@@ -135,6 +146,22 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id>
 
 - [使用与维护指南](docs/usage-guide.md)：运行时差异、安装器边界、版本维护和跨会话状态。
 - [变更日志](CHANGELOG.md)：按版本记录的面向用户变更。
+- [贡献指南](CONTRIBUTING.md)：开发、测试和提交约定。
+- [安全策略](SECURITY.md)：敏感问题的报告方式。
+
+## 反馈与许可
+
+- 使用问题和想法：在 [GitHub Discussions](https://github.com/ainiaa/skills-convergent-delivery/discussions) 发起讨论；若未启用 Discussions，则提交 Issue。
+- 确认的 Bug 或功能请求：[GitHub Issues](https://github.com/ainiaa/skills-convergent-delivery/issues)。
+- 开源许可：[MIT](LICENSE)。
+
+## 开发
+
+提交前运行：
+
+```bash
+bash scripts/check.sh
+```
 
 ## 参考与鸣谢
 
@@ -153,12 +180,14 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id>
 ```text
 VERSION                          # 唯一版本号
 install.sh                       # 安装、升级、卸载、版本检查
+scripts/check.sh                 # 可复现的项目检查入口
 SKILL.md                         # Skill 主流程
 agents/openai.yaml               # Codex 界面元数据
 .claude/skills/convergent-delivery -> ../.. # Claude Code 入口（相对软链接）
 scripts/delivery_next.py         # 状态校验与下一阶段 helper
 scripts/test_delivery_next.py    # helper 回归测试
 scripts/test_install.py          # 安装器回归测试
+scripts/test_check.py            # 项目检查入口回归测试
 references/state-schema.md       # 跨会话状态 Schema
 references/evaluation-scenarios.md # Skill 压力场景
 ```

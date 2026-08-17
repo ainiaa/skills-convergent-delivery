@@ -59,7 +59,7 @@ class InstallTest(unittest.TestCase):
     def test_readme_current_version_matches_version_file(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn(f"当前版本：[{VERSION}](VERSION)", readme)
+        self.assertIn(f"当前开发版本：[{VERSION}](VERSION)", readme)
 
     def test_readme_links_to_the_usage_guide_and_changelog(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -69,7 +69,16 @@ class InstallTest(unittest.TestCase):
         self.assertTrue((ROOT / "CHANGELOG.md").is_file())
         self.assertIn("[使用与维护指南](docs/usage-guide.md)", readme)
         self.assertIn("[变更日志](CHANGELOG.md)", readme)
-        self.assertIn(f"## [{VERSION}]", changelog)
+        self.assertIn("## [Unreleased]", changelog)
+
+    def test_public_project_documents_are_linked_from_readme(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        for name in ("LICENSE", "CONTRIBUTING.md", "SECURITY.md"):
+            self.assertTrue((ROOT / name).is_file(), name)
+            self.assertIn(f"]({name})", readme)
+        self.assertIn("## 3 步快速开始", readme)
+        self.assertIn("前置条件", (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -91,7 +91,7 @@ do_version() {
   echo "  Local source: ${local_version}"
   echo "  Codex:       $(version_at "$CODEX_TARGET")"
   echo "  Claude Code: $(version_at "$CLAUDE_TARGET")"
-  echo "  Latest:      $(latest_version)"
+  echo "  GitHub main: $(latest_version)"
 }
 
 prepare_source() {
