@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Coordinate convergent-delivery writers across worktrees and windows."""
+"""Coordinate converge writers across worktrees and windows."""
 
 import argparse
 import fcntl

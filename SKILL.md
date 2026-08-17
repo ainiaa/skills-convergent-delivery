@@ -1,5 +1,5 @@
 ---
-name: convergent-delivery
+name: converge
 description: "Deliver a software feature or bug fix through a finite, evidence-driven workflow: freeze scope, use TDD, perform semantic and risk reviews, apply at most one repair per review, and end with an explicit verified status. Use when the user asks for end-to-end delivery, continuous checking/fixing, ‘不要反复确认’, ‘直到没有问题再结束’, ‘按闭环开发’, or ‘使用闭环交付’."
 ---
 

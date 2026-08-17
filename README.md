@@ -1,4 +1,4 @@
-# Convergent Delivery
+# Converge
 
 一个面向软件功能开发和 Bug 修复的 Codex 与 Claude Code Skill。它将需求确认、TDD、实现、复查、验证和交接收敛为有限流程，避免在“再检查一次 → 再修一次”中无限循环。
 
@@ -12,7 +12,7 @@
 - Agent 反复进行泛化审查，消耗大量 token，却不一定带来新的证据；
 - 最后没有清晰答案：改了什么、跑了哪些验证、是否真的可以交付。
 
-`convergent-delivery` 用“自适应 1+1”流程解决这些问题：低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以真实验证证据和固定最终报告结束。
+`converge` 用“自适应 1+1”流程解决这些问题：低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以真实验证证据和固定最终报告结束。
 
 ## 能力
 
@@ -29,7 +29,7 @@
 
 ## Install
 
-安装器会为目标运行时创建 `convergent-delivery` 软链接，Skill 的代码仅保留一份。默认安装到 Codex 和 Claude Code：
+安装器会为目标运行时创建 `converge` 软链接，Skill 的代码仅保留一份。默认安装到 Codex 和 Claude Code：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh \
@@ -76,32 +76,37 @@ curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/m
    curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh | bash -s -- --target all
    ```
 
-2. 在 Codex 中说“使用 `$convergent-delivery` 修复分页 SQL 错误”；或在 Claude Code 中执行 `/convergent-delivery 修复分页 SQL 错误`。
+2. 在 Codex 中说“使用 `$converge` 修复分页 SQL 错误”；或在 Claude Code 中执行 `/converge 修复分页 SQL 错误`。
 3. 根据最终报告核对交付终态、验收证据、验证命令和未处理项。
 
-## 使用方式
+## 调用当前 Skill
 
-安装或放置到 Codex Skills 目录后，可显式调用：
+### 显式调用
 
-```text
-使用 $convergent-delivery 修复交易流水分页 SQL 错误，完成后给出最终报告。
-```
-
-也可以用自然语言触发：
+Codex 使用 `$converge`：
 
 ```text
-按闭环开发实现这个功能，不要反复确认，直到有明确终态再结束。
+使用 $converge 修复交易流水分页 SQL 错误，完成后给出最终报告。
 ```
 
-### Claude Code
-
-安装器会将个人 Skill 链接到 `~/.claude/skills/convergent-delivery`。此外，仓库内也提供 `.claude/skills/convergent-delivery` 到主目录的相对软链接；直接将本仓库作为项目打开 Claude Code 也可调用：
+Claude Code 使用 `/converge`：
 
 ```text
-/convergent-delivery 修复交易流水分页 SQL 错误，完成后给出最终报告。
+/converge 修复交易流水分页 SQL 错误，完成后给出最终报告。
 ```
 
-Claude Code 使用 `~/.claude/state/convergent-delivery/` 保存非 PDLC 的跨会话状态，并用 `${CLAUDE_SKILL_DIR}` 定位随 Skill 分发的 helper；Codex 保持原有的 `~/.codex/state/` 位置。
+安装器会将 Claude Code 的个人 Skill 链接到 `~/.claude/skills/converge`。仓库内也提供 `.claude/skills/converge` 到主目录的相对软链接；直接将本仓库作为项目打开 Claude Code 也可调用。旧的 `convergent-delivery` 软链接若指向同一源码，安装时会自动迁移。非 PDLC 状态路径保留原名称，避免中断既有任务。
+
+### 关键词触发
+
+不写命令也可以。以下表达会触发 Skill：
+
+- “按闭环开发实现这个功能”
+- “不要反复确认，直到有明确终态再结束”
+- “持续检查并修复，给出最终报告”
+- “使用闭环交付修复这个 Bug”
+
+需要只出方案或只做检查时，在请求中写明“给方案”或“检查一下”；否则默认执行完整交付流程。
 
 ### 三种模式
 
@@ -170,7 +175,7 @@ bash scripts/check.sh
 
 ## 参考与鸣谢
 
-`convergent-delivery` 是针对“需求实现后反复检查和修复”的交付问题重新组合的轻量工作流，不复制任何一个现有 Skill 的完整流程或代码。感谢以下项目和 Skill 提供的理念与实践参考：
+`converge` 是针对“需求实现后反复检查和修复”的交付问题重新组合的轻量工作流，不复制任何一个现有 Skill 的完整流程或代码。感谢以下项目和 Skill 提供的理念与实践参考：
 
 - [kanfu-panda/pdlc-skills](https://github.com/kanfu-panda/pdlc-skills) 中的 `pdlc-fix`、`pdlc-feature`、`pdlc-quality`、`pdlc-loop-next`：根因定位、TDD 红绿守卫、真实质量闸门、单向状态推进和防循环设计。
 - [obra/superpowers](https://github.com/obra/superpowers) 的 `systematic-debugging`、`test-driven-development`、`verification-before-completion`：先根因后修复、测试先行、没有本轮验证证据就不宣称完成。
@@ -188,7 +193,7 @@ install.sh                       # 安装、升级、卸载、版本检查
 scripts/check.sh                 # 可复现的项目检查入口
 SKILL.md                         # Skill 主流程
 agents/openai.yaml               # Codex 界面元数据
-.claude/skills/convergent-delivery -> ../.. # Claude Code 入口（相对软链接）
+.claude/skills/converge -> ../..            # Claude Code 入口（相对软链接）
 scripts/delivery_next.py         # 状态校验与下一阶段 helper
 scripts/test_delivery_next.py    # helper 回归测试
 scripts/delivery_lease.py        # 多窗口 writer lease helper

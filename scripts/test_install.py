@@ -27,8 +27,8 @@ class InstallTest(unittest.TestCase):
             result = self.run_installer(home, "--target", "all")
             self.assertEqual(0, result.returncode, result.stderr)
 
-            codex = home / ".codex/skills/convergent-delivery"
-            claude = home / ".claude/skills/convergent-delivery"
+            codex = home / ".codex/skills/converge"
+            claude = home / ".claude/skills/converge"
             self.assertTrue(codex.is_symlink())
             self.assertTrue(claude.is_symlink())
             self.assertEqual(ROOT, codex.resolve())
@@ -47,7 +47,7 @@ class InstallTest(unittest.TestCase):
     def test_install_refuses_to_replace_an_existing_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            target = home / ".codex/skills/convergent-delivery"
+            target = home / ".codex/skills/converge"
             target.mkdir(parents=True)
 
             result = self.run_installer(home, "--target", "codex")
@@ -66,6 +66,22 @@ class InstallTest(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
             self.assertIn("another installation is in progress", result.stderr)
+
+    def test_install_migrates_known_legacy_skill_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            for runtime in ("codex", "claude"):
+                legacy = home / f".{runtime}/skills/convergent-delivery"
+                legacy.parent.mkdir(parents=True)
+                legacy.symlink_to(ROOT)
+
+            result = self.run_installer(home, "--target", "all")
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse((home / ".codex/skills/convergent-delivery").exists())
+            self.assertFalse((home / ".claude/skills/convergent-delivery").exists())
+            self.assertTrue((home / ".codex/skills/converge").is_symlink())
+            self.assertTrue((home / ".claude/skills/converge").is_symlink())
 
     def test_readme_current_version_matches_version_file(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -90,6 +106,16 @@ class InstallTest(unittest.TestCase):
             self.assertIn(f"]({name})", readme)
         self.assertIn("## 3 步快速开始", readme)
         self.assertIn("前置条件", (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8"))
+
+    def test_readme_documents_explicit_and_keyword_triggers_for_both_runtimes(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("## 调用当前 Skill", readme)
+        self.assertIn("$converge", readme)
+        self.assertIn("/converge", readme)
+        self.assertIn("### 关键词触发", readme)
+        self.assertIn("按闭环开发", readme)
+        self.assertIn("不要反复确认", readme)
 
 
 if __name__ == "__main__":

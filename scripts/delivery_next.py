@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a convergent-delivery state and emit exactly one next-stage token."""
+"""Validate a converge state and emit exactly one next-stage token."""
 
 import argparse
 import json

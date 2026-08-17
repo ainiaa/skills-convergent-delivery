@@ -1,13 +1,13 @@
 # 使用与维护指南
 
-`convergent-delivery` 在 Codex 和 Claude Code 中使用同一份 `SKILL.md`。安装器只创建软链接，因此升级后两端始终加载同一套规则。
+`converge` 在 Codex 和 Claude Code 中使用同一份 `SKILL.md`。安装器只创建软链接，因此升级后两端始终加载同一套规则。
 
 ## 支持的运行时
 
 | 运行时 | 安装位置 | 调用方式 |
 |---|---|---|
-| Codex | `~/.codex/skills/convergent-delivery` | 自然语言或 `$convergent-delivery` |
-| Claude Code | `~/.claude/skills/convergent-delivery` | `/convergent-delivery` 或自然语言 |
+| Codex | `~/.codex/skills/converge` | 自然语言或 `$converge` |
+| Claude Code | `~/.claude/skills/converge` | `/converge` 或自然语言 |
 
 ## 前置条件
 
@@ -83,4 +83,4 @@ PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写
 3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和必要 Skill 元数据检查。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
-不要为 Codex 和 Claude Code 复制两份 `SKILL.md`；如需调整流程，只修改仓库根目录的主文件。
+不要为 Codex 和 Claude Code 复制两份 `SKILL.md`；如需调整流程，只修改仓库根目录的主文件。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

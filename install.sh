@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install convergent-delivery as a native Codex and/or Claude Code skill.
+# Install converge as a native Codex and/or Claude Code skill.
 set -euo pipefail
 
 GITHUB_OWNER="ainiaa"
@@ -10,8 +10,10 @@ GITHUB_RAW_VERSION_URL="https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MANAGED_SOURCE="${HOME}/.convergent-delivery/source"
 INSTALL_LOCK_DIR="${HOME}/.convergent-delivery/.install.lock"
-CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
-CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
+CODEX_TARGET="${HOME}/.codex/skills/converge"
+CLAUDE_TARGET="${HOME}/.claude/skills/converge"
+LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
+LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
 
 ACTION="install"
 TARGET="all"
@@ -22,7 +24,7 @@ INSTALL_LOCK_HELD=0
 
 usage() {
   cat <<EOF
-convergent-delivery installer
+converge installer
 
 Usage:
   bash install.sh [--target codex|claude|all] [--source /path/to/clone]
@@ -31,7 +33,7 @@ Usage:
   bash install.sh --version [--offline]
 
 The default target is all (Codex and Claude Code). Installation creates only
-the runtime's convergent-delivery symlink; it never replaces an existing
+the runtime's converge symlink; it never replaces an existing
 directory unless --force is supplied.
 
 Remote install:
@@ -65,6 +67,13 @@ target_path() {
   esac
 }
 
+legacy_target_path() {
+  case "$1" in
+    codex) printf '%s\n' "$LEGACY_CODEX_TARGET" ;;
+    claude) printf '%s\n' "$LEGACY_CLAUDE_TARGET" ;;
+  esac
+}
+
 version_at() {
   local path="$1"
   if [[ -f "$path/VERSION" ]]; then
@@ -88,7 +97,7 @@ do_version() {
     local_version="$(head -1 "$SCRIPT_DIR/VERSION")"
   fi
 
-  echo "convergent-delivery version status"
+  echo "converge version status"
   echo "──────────────────────────────────────"
   echo "  Local source: ${local_version}"
   echo "  Codex:       $(version_at "$CODEX_TARGET")"
@@ -148,6 +157,16 @@ same_source() {
   [[ -L "$1" ]] && [[ "$(cd "$1" 2>/dev/null && pwd -P)" == "$SOURCE_DIR" ]]
 }
 
+migrate_legacy_target() {
+  local runtime="$1"
+  local legacy
+  legacy="$(legacy_target_path "$runtime")"
+  if same_source "$legacy"; then
+    rm "$legacy"
+    echo "${runtime}: migrated legacy link → $(target_path "$runtime")"
+  fi
+}
+
 ensure_installable() {
   local target="$1"
   if same_source "$target"; then
@@ -185,7 +204,7 @@ install_target() {
 is_skill_link() {
   local target="$1"
   [[ -L "$target" ]] && [[ -f "$target/SKILL.md" ]] \
-    && grep -q '^name: convergent-delivery$' "$target/SKILL.md"
+    && grep -Eq '^name: (converge|convergent-delivery)$' "$target/SKILL.md"
 }
 
 uninstall_target() {
@@ -213,15 +232,18 @@ acquire_install_lock
 if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   prepare_source
   if [[ "$TARGET" == "all" ]]; then
+    migrate_legacy_target codex
+    migrate_legacy_target claude
     ensure_installable "$CODEX_TARGET"
     ensure_installable "$CLAUDE_TARGET"
     install_target codex
     install_target claude
   else
+    migrate_legacy_target "$TARGET"
     ensure_installable "$(target_path "$TARGET")"
     install_target "$TARGET"
   fi
-  echo "✅ convergent-delivery $(head -1 "$SOURCE_DIR/VERSION") is ready. Restart the runtime if it is already open."
+  echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Restart the runtime if it is already open."
 elif [[ "$ACTION" == "uninstall" ]]; then
   if [[ "$TARGET" == "all" ]]; then
     uninstall_target codex
