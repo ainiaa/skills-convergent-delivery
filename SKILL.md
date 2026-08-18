@@ -26,8 +26,14 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 ## 多窗口与多任务隔离
 
 - `plan` 和 `review` 可以并行；`execute` 在**写入代码、状态或安装入口前**必须先获取 writer lease。lease 不是全仓库锁：同一 worktree 只允许一个 writer；同一仓库、同一 `task_key` 在不同 worktree 也只允许一个 writer；不同任务可在不同 worktree 并行。
-- `repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`workspace` 使用 `git rev-parse --show-toplevel`；`task_key` 使用冻结后的范围和验收项的确定性指纹，不能仅用分支名或自然语言标题。
-- Codex 与 Claude Code 共用 lease 根目录 `~/.convergent-delivery/leases`，避免两个运行时互相看不到 writer。状态 ledger 仍按各运行时目录保存。在对应 Skill 根目录运行：
+- `repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`workspace` 使用 `git rev-parse --show-toplevel`；必须通过 helper 生成 `task_key`，不能自行拼接、仅用分支名或自然语言标题：
+
+  ```bash
+  python3 scripts/delivery_task_key.py --repo <repo-id> --baseline <commit> \
+    --acceptance '<验收项>' [--acceptance '<验收项>'] [--module '<允许模块>']
+  ```
+
+- Codex 与 Claude Code 共用 lease 根目录 `~/.convergent-delivery/leases` 和状态根目录 `~/.convergent-delivery/state`，避免两个运行时互相看不到 writer 或无法恢复同一任务。在对应 Skill 根目录运行：
 
   ```bash
   python3 scripts/delivery_lease.py acquire --root <lease-root> \
@@ -35,6 +41,14 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
   ```
 
   成功时记录返回的 `run_id`、`writer_id` 和到期时间；每个阶段结束前续期，终态后释放。lease 默认有效期为两小时，过期 lease 不自动抢占；仅在确认原任务不再运行时，使用 `--takeover` 并在 ledger 记录理由。
+- 同一 run 需要从旧 worktree 转到新 worktree 时，先续期，再用 `move` 原子切换 workspace lease，最后用新 workspace 写入状态；不得在新 worktree 再次 `acquire`，否则旧 workspace 会继续被占用：
+
+  ```bash
+  python3 scripts/delivery_lease.py move --root <lease-root> --repo <repo-id> \
+    --from-workspace <old-workspace> --workspace <new-workspace> \
+    --task-key <task-key> --run-id <run-id> --writer-id <writer-id>
+  ```
+
 - 若返回 `blocked_workspace`，不要在当前工作区写入。工作区干净且没有他人 diff 时，可为该任务创建独立分支和 worktree 后重试；否则报告阻塞和建议命令。若返回 `blocked_task`，不得重复实现同一任务，应恢复持有者的 run 或等待用户决定。
 - 每次状态写入必须由当前 `writer_id` 持有 lease，且 `revision` 单调加一；原子 rename 只防止半写入，不能替代 lease。PDLC 的 `docs/.pdlc-state/` 仍保存流程产物，但同样需要外部 lease 防止多个窗口并写。
 
@@ -67,7 +81,7 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 
 分支规则：
 
-1. `scope`：将每条验收项映射为测试或其他客观检查；无法映射时先补充验收条件或 `blocked_decision`。行为测试优先验证项目既有的公共 seam（API、Service 契约、消息或持久化边界），断言可观察行为而非私有实现；测试应能在内部重构后保持有效。仅文档、格式或不改变运行时行为的配置可用确定性校验替代新增行为测试；其他代码和配置行为变更必须有回归测试。
+1. `scope`：先查已有代码、测试、接口和文档，再将每条验收项映射为测试或其他客观检查；只有业务语义仍无法由证据确定时，才一次询问一个关键问题并给出推荐答案。无法映射时先补充验收条件或 `blocked_decision`。行为测试优先验证项目既有的公共 seam（API、Service 契约、消息或持久化边界），断言可观察行为而非私有实现；测试应能在内部重构后保持有效。仅文档、格式或不改变运行时行为的配置可用确定性校验替代新增行为测试；其他代码和配置行为变更必须有回归测试。
 2. `round-1-build`（第 1 轮）：Bug 任务先完成“复现 → 调用链/数据流追踪 → 根因假设及证据”；根因不明时不得先尝试修复。随后先写/更新失败测试，再做最小实现使其变绿，运行定向验证；正常红绿迭代不另计一轮。红灯必须因目标行为尚未满足而失败；编译错误、Mock 配置错误或环境错误不算有效红灯，先修正测试或环境。遇到与当前根因无关的意外构建/测试/运行失败时，停止当前修复批次，保留证据并先定位该失败；无客观进展即 `blocked_no_progress`。
 3. `round-1-semantic-review`（第 1 轮）：仅审查需求符合性、API/DTO 契约、数据映射、边界与错误响应。按根因聚合为一批，最多自动修复一次；修复后重跑受影响检查。若检查失败，先且仅先判定一次：与验收项不符的真实回归或无法判定 → 回滚该批并 `blocked_no_progress`；已授权行为改变导致的过期测试 → 在同批中更新测试并重新验证；环境问题 → `blocked_environment`。
 4. `verify-round-1`：仅高风险路径执行，用第 1 轮后的最新 diff 运行规定的定向或模块验证。
@@ -93,17 +107,17 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 - 每个“通过、已修复、完成”的结论必须能对应到最后一次代码修改后的具体命令、退出码和验收项；编译、lint 或局部测试不能替代其未覆盖行为的证明。
 - 已有失败仅在具备变更前基线证据、且本次定向回归通过时才可标为 `pre-existing`；否则按未知回归处理。
 - 普通任务在当前上下文维护**紧凑** ledger：轮次、阶段、验收项→证据→结果、问题指纹、修复批次、命令及退出码、范围变化和用户决策。只记录可影响交付结论的事实，不生成重复叙述或无关文档。
-- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger。非 PDLC 任务在 Codex 写入 `~/.codex/state/convergent-delivery/<工作区指纹>/<run-id>.json`，在 Claude Code 写入 `~/.claude/state/convergent-delivery/<工作区指纹>/<run-id>.json`，避免污染仓库；PDLC 任务沿用 `docs/.pdlc-state/`。状态严格遵循 [Schema v2](references/state-schema.md)，仅保存工作区、基线、范围、阶段、轮次、验收结果、问题指纹、命令结果、阻塞原因和简短 handoff，不记录密钥或请求敏感数据。
-- 更新状态前续期 lease，再写临时文件并原子 rename，且 `revision` 单调加一；恢复时优先指定 `run_id` 与 `writer_id`。未指定时，只有工作区、基线和范围均匹配的未终态候选恰好一份才可继续，多个候选一律 `blocked`，不得自动猜测。
-- 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`。helper 只读状态，只输出白名单中的一个下一阶段 token；状态缺失、非法、未推进或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
+- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger 到 `~/.convergent-delivery/state/<repo 指纹>/<task 指纹>/<run-id>.json`，避免污染仓库且允许跨运行时恢复；PDLC 任务仍沿用 `docs/.pdlc-state/` 作为流程产物。状态严格遵循 [Schema v3](references/state-schema.md)，保存轮次、问题指纹、命令结果、阻塞码和简短 handoff，不记录密钥或请求敏感数据。
+- 每次状态写入先续期 lease，再用 `delivery_state.py write` 校验活动 lease、当前 writer 和 expected revision 后原子写入；不得直接覆盖 JSON。`revision` 必须单调加一。状态路径通过 `delivery_state.py path` 生成；恢复必须指定 `run_id`、`writer_id` 和 `revision`，多个候选一律 `blocked`，不得自动猜测。
+- 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`。helper 会验证活动 lease，只输出白名单中的一个下一阶段 token；状态缺失、非法、过期或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
 
 ## 终态和交接
 
 - `complete`：所有验收项有通过证据，所需验证通过，风险复查未留待修 P0/P1。
-- `blocked_decision`：需要业务、范围、兼容性或发布选择。
-- `blocked_environment`：依赖、凭据、数据库或测试环境使结果无法判定。
-- `blocked_no_progress`：同一根因已修复仍复现，或修复批次无法带来客观进展。
-- `budget_exhausted`：语义或风险复查修复预算已用尽，仍有新的范围内问题。
+- `blocked_decision`：需要业务、范围、兼容性或发布选择；状态 `blocked_code=decision`。
+- `blocked_environment`：依赖、凭据、数据库或测试环境使结果无法判定；状态 `blocked_code=environment`。
+- `blocked_no_progress`：同一根因已修复仍复现，或修复批次无法带来客观进展；状态 `blocked_code=no_progress`。
+- `budget_exhausted`：语义或风险复查修复预算已用尽，仍有新的范围内问题；状态 `blocked_code=budget_exhausted`。
 
 结束时必须输出以下紧凑报告；没有数据的栏目明确写“无”，不得省略：
 
@@ -135,8 +149,8 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 
 ## 与项目流程协作
 
-- 用 `pdlc-fix` 的根因定位和红绿回归纪律完成 `build`。
+- 可用 `pdlc-fix` 的根因定位和红绿回归纪律完成 `build`；PDLC 不可用时直接执行本 Skill 的等价规则，不得因此阻塞。
 - 大型功能可用 `pdlc-feature` 维护需求、设计和持久化状态；日常小改动不强制产出完整 PDLC 文档。
-- 用 `pdlc-quality` 的客观退出码、三态结果和“不可判不算通过”作为验证准则。
+- 可用 `pdlc-quality` 的客观退出码、三态结果和“不可判不算通过”作为验证准则；PDLC 不可用时维持同一验证标准。
 - 复查优先使用项目规定的 CodeGraph/code-review-graph；实现保持 ponytail 的最小改动原则。
 - 修改本 skill 的流程规则后，按 [压力场景](references/evaluation-scenarios.md) 做前向验证；每个场景用独立、全新的 Agent 运行并保留输入、原始最终报告与命令证据，再对照预期判定。这是维护本 skill 的检查，不是每次业务交付都执行的额外轮次。

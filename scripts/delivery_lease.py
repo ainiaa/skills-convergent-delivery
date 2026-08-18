@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -88,10 +88,19 @@ def write_exclusive(path, record):
 
 def replace_record(path, record):
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = None
     try:
-        temporary.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            descriptor = None
+            json.dump(record, file, sort_keys=True)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
         os.replace(temporary, path)
     finally:
+        if descriptor is not None:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 
@@ -220,6 +229,57 @@ def release(arguments, paths):
     return 0
 
 
+def move(arguments, paths, repo, workspace):
+    """Move one active writer to a new worktree without leaving the old lease behind."""
+    from_workspace = canonical_path(arguments.from_workspace)
+    old_paths = lease_paths(arguments.root, repo, from_workspace, arguments.task_key)
+    records = {old_paths["workspace"], paths["workspace"], paths["task"]}
+
+    with ExitStack() as stack:
+        for path in sorted(records, key=str):
+            stack.enter_context(lock_record(path))
+
+        old_workspace_record = read_record(old_paths["workspace"])
+        task_record = read_record(paths["task"])
+        for record in (old_workspace_record, task_record):
+            if not same_owner(record, arguments.run_id, arguments.writer_id) or is_expired(record):
+                payload("blocked_owner", holder=record)
+                return 2
+
+        target_path = paths["workspace"]
+        if target_path != old_paths["workspace"] and target_path.exists():
+            target_record = read_record(target_path)
+            if (
+                not same_owner(target_record, arguments.run_id, arguments.writer_id)
+                or target_record.get("task_key") != arguments.task_key
+            ):
+                payload("blocked_workspace", holder=target_record)
+                return 2
+            if is_expired(target_record):
+                target_record = dict(old_workspace_record)
+                target_record["workspace"] = workspace
+                replace_record(target_path, target_record)
+        elif target_path != old_paths["workspace"]:
+            target_record = dict(old_workspace_record)
+            target_record["workspace"] = workspace
+            if not write_exclusive(target_path, target_record):
+                payload("blocked_workspace", holder=read_record(target_path))
+                return 2
+
+        task_record["workspace"] = workspace
+        replace_record(paths["task"], task_record)
+        if target_path != old_paths["workspace"]:
+            old_paths["workspace"].unlink()
+
+    payload(
+        "moved",
+        released_workspace=from_workspace,
+        workspace=workspace,
+        lease_expires_at=task_record["lease_expires_at"],
+    )
+    return 0
+
+
 def inspect(paths):
     records = {}
     for kind, path in paths.items():
@@ -230,10 +290,11 @@ def inspect(paths):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("acquire", "renew", "release", "inspect"))
+    parser.add_argument("command", choices=("acquire", "renew", "release", "move", "inspect"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--workspace", required=True)
+    parser.add_argument("--from-workspace")
     parser.add_argument("--task-key", required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--writer-id")
@@ -249,16 +310,20 @@ def main():
         repo = canonical_path(arguments.repo)
         workspace = canonical_path(arguments.workspace)
         paths = lease_paths(arguments.root, repo, workspace, arguments.task_key)
-        if arguments.command in {"renew", "release"} and (
+        if arguments.command in {"renew", "release", "move"} and (
             not arguments.run_id or not arguments.writer_id
         ):
             raise ValueError(f"{arguments.command} requires --run-id and --writer-id")
+        if arguments.command == "move" and not arguments.from_workspace:
+            raise ValueError("move requires --from-workspace")
         if arguments.command == "acquire":
             return acquire(arguments, paths, repo, workspace)
         if arguments.command == "renew":
             return renew(arguments, paths)
         if arguments.command == "release":
             return release(arguments, paths)
+        if arguments.command == "move":
+            return move(arguments, paths, repo, workspace)
         return inspect(paths)
     except (OSError, ValueError, KeyError) as error:
         payload("error", message=str(error))

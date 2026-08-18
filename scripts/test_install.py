@@ -83,6 +83,23 @@ class InstallTest(unittest.TestCase):
             self.assertTrue((home / ".codex/skills/converge").is_symlink())
             self.assertTrue((home / ".claude/skills/converge").is_symlink())
 
+    def test_install_backs_up_a_known_legacy_skill_directory_before_replacing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            legacy = home / ".codex/skills/convergent-delivery"
+            legacy.mkdir(parents=True)
+            (legacy / "SKILL.md").write_text(
+                "---\nname: convergent-delivery\ndescription: legacy\n---\n", encoding="utf-8"
+            )
+
+            result = self.run_installer(home, "--target", "codex")
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((home / ".codex/skills/converge").is_symlink())
+            self.assertFalse(legacy.exists())
+            backups = list((home / ".convergent-delivery/legacy-backups").rglob("SKILL.md"))
+            self.assertEqual(1, len(backups))
+
     def test_readme_current_version_matches_version_file(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -116,6 +133,15 @@ class InstallTest(unittest.TestCase):
         self.assertIn("### 关键词触发", readme)
         self.assertIn("按闭环开发", readme)
         self.assertIn("不要反复确认", readme)
+
+    def test_documentation_uses_shared_state_and_strict_resume_identity(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
+
+        self.assertIn("--writer-id <writer-id>", readme)
+        self.assertIn("--revision <revision>", readme)
+        self.assertIn("~/.convergent-delivery/state/", usage)
+        self.assertIn("PDLC 不可用时", (ROOT / "SKILL.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

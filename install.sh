@@ -164,6 +164,14 @@ migrate_legacy_target() {
   if same_source "$legacy"; then
     rm "$legacy"
     echo "${runtime}: migrated legacy link → $(target_path "$runtime")"
+  elif [[ -d "$legacy" ]] && [[ -f "$legacy/SKILL.md" ]] \
+    && grep -Eq '^name: (converge|convergent-delivery)$' "$legacy/SKILL.md"; then
+    local backup_root="${HOME}/.convergent-delivery/legacy-backups"
+    local backup_dir
+    mkdir -p "$backup_root"
+    backup_dir="$(mktemp -d "$backup_root/${runtime}-convergent-delivery.XXXXXX")"
+    mv "$legacy" "$backup_dir/convergent-delivery"
+    echo "${runtime}: backed up legacy directory → $backup_dir/convergent-delivery"
   fi
 }
 

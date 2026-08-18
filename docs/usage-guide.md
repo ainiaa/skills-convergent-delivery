@@ -30,7 +30,7 @@ bash install.sh --target all
 bash install.sh --upgrade --target all
 ```
 
-安装器不会删除已有的普通文件或目录。若目标位置存在其他软链接，必须明确传入 `--force` 才会替换。
+安装器不会删除已有的普通文件或目录。若发现本 Skill 旧名称 `convergent-delivery` 的目录，会先移动到 `~/.convergent-delivery/legacy-backups/` 再安装 `converge`，避免两个版本同时触发；其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
 
@@ -52,14 +52,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-非 PDLC 的跨会话 ledger 保存位置如下：
-
-| 运行时 | 状态位置 |
-|---|---|
-| Codex | `~/.codex/state/convergent-delivery/` |
-| Claude Code | `~/.claude/state/convergent-delivery/` |
-
-恢复任务前，运行 `scripts/delivery_next.py`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/delivery_next.py`，避免因当前工作目录变化而找不到 helper。
+非 PDLC 的跨会话 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。状态路径通过 `scripts/delivery_state.py path` 生成；每次更新只能使用 `delivery_state.py write`，它会校验活动 lease、writer 和 revision。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/` 定位这些 helper，避免因当前工作目录变化而找不到文件。
 
 ## 多窗口并行
 
@@ -70,9 +63,11 @@ bash install.sh --uninstall --target all
 git worktree add ../service-fix -b convergent/fix-payment HEAD
 ```
 
-Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/`，因此跨运行时也会互斥；各自的非 PDLC ledger 仍保存在运行时状态目录。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
+Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent-delivery/state/`，因此跨运行时既会互斥，也能恢复同一任务。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
 
-PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。恢复时必须传入 `run_id`、`writer_id` 和当前 `revision`，以防旧窗口覆盖新状态。
+同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
+
+PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。未安装 PDLC 时，直接使用 `converge` 的原生状态机、TDD 和验证规则，不会因此阻塞。
 
 ## 维护版本
 

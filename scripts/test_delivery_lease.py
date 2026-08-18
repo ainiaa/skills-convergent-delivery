@@ -12,7 +12,9 @@ SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
-    def run_lease(self, root, command, *, workspace, task_key, run_id=None, writer_id=None):
+    def run_lease(
+        self, root, command, *, workspace, task_key, run_id=None, writer_id=None, from_workspace=None
+    ):
         arguments = [
             sys.executable,
             str(SCRIPT),
@@ -30,6 +32,8 @@ class DeliveryLeaseTest(unittest.TestCase):
             arguments.extend(["--run-id", run_id])
         if writer_id:
             arguments.extend(["--writer-id", writer_id])
+        if from_workspace:
+            arguments.extend(["--from-workspace", from_workspace])
         return subprocess.run(arguments, text=True, capture_output=True, check=False)
 
     def test_same_workspace_allows_only_one_writer(self):
@@ -99,6 +103,99 @@ class DeliveryLeaseTest(unittest.TestCase):
             self.assertEqual([0, 2], sorted(result.returncode for result in results))
             statuses = {json.loads(result.stdout)["status"] for result in results}
             self.assertEqual({"acquired", "blocked_workspace"}, statuses)
+
+    def test_renew_keeps_lease_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            acquired = self.run_lease(
+                root,
+                "acquire",
+                workspace="/repo/a",
+                task_key="payment",
+                run_id="run-1",
+                writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+
+            renewed = self.run_lease(
+                root,
+                "renew",
+                workspace="/repo/a",
+                task_key="payment",
+                run_id="run-1",
+                writer_id="writer-1",
+            )
+
+            self.assertEqual(0, renewed.returncode, renewed.stderr)
+            self.assertEqual("renewed", json.loads(renewed.stdout)["status"])
+            for record in root.rglob("*.json"):
+                self.assertEqual(0o600, record.stat().st_mode & 0o777)
+
+    def test_release_by_another_writer_preserves_the_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            acquired = self.run_lease(
+                root,
+                "acquire",
+                workspace="/repo/a",
+                task_key="payment",
+                run_id="run-1",
+                writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+
+            release = self.run_lease(
+                root,
+                "release",
+                workspace="/repo/a",
+                task_key="payment",
+                run_id="run-2",
+                writer_id="writer-2",
+            )
+            retry = self.run_lease(root, "acquire", workspace="/repo/a", task_key="payment")
+
+            self.assertEqual(2, release.returncode)
+            self.assertEqual("blocked_owner", json.loads(release.stdout)["status"])
+            self.assertEqual(2, retry.returncode)
+
+    def test_move_releases_the_previous_worktree_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            acquired = self.run_lease(
+                root,
+                "acquire",
+                workspace="/repo/a",
+                task_key="payment",
+                run_id="run-1",
+                writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+
+            moved = self.run_lease(
+                root,
+                "move",
+                workspace="/repo/b",
+                from_workspace="/repo/a",
+                task_key="payment",
+                run_id="run-1",
+                writer_id="writer-1",
+            )
+            moved_lease = self.run_lease(
+                root,
+                "inspect",
+                workspace="/repo/b",
+                task_key="payment",
+            )
+            reused_old_workspace = self.run_lease(
+                root, "acquire", workspace="/repo/a", task_key="inventory"
+            )
+
+            self.assertEqual(0, moved.returncode, moved.stderr)
+            self.assertEqual("moved", json.loads(moved.stdout)["status"])
+            moved_records = json.loads(moved_lease.stdout)["leases"]
+            self.assertEqual("/repo/b", moved_records["workspace"]["workspace"])
+            self.assertEqual("/repo/b", moved_records["task"]["workspace"])
+            self.assertEqual(0, reused_old_workspace.returncode, reused_old_workspace.stderr)
 
 
 if __name__ == "__main__":
