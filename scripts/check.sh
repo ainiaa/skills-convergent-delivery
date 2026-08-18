@@ -11,6 +11,7 @@ python3 scripts/test_delivery_lease.py
 python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
 python3 scripts/test_delivery_state.py
+python3 scripts/test_reporting_contract.py
 python3 - <<'PY'
 from pathlib import Path
 

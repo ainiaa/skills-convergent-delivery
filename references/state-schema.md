@@ -36,7 +36,12 @@
     ],
     "acceptance": [
       {"criterion": "验收项", "evidence": "测试或命令", "result": "pass | fail | unknown", "freshness": "fresh | stale | unavailable"}
-    ]
+    ],
+    "report_history": {
+      "last_outcome": "ready | attention | decision | blocked",
+      "reported_fingerprints": ["已向用户说明的问题或待决项指纹"],
+      "summary_fingerprint": "上一份用户回执的指纹"
+    }
   },
   "handoff": {
     "goal": "当前目标",
@@ -47,7 +52,7 @@
 }
 ```
 
-`repo_id`、`task_key`、`writer_id`、`revision` 是写入归属信息：`repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`task_key` 必须由 `scripts/delivery_task_key.py` 生成；`writer_id` 来自成功获取的 lease；每次成功状态写入将 `revision` 加一。`ledger` 保留跨会话防重复修复和最终验收所需的最小证据，命令参数必须脱敏。
+`repo_id`、`task_key`、`writer_id`、`revision` 是写入归属信息：`repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`task_key` 必须由 `scripts/delivery_task_key.py` 生成；`writer_id` 来自成功获取的 lease；每次成功状态写入将 `revision` 加一。`ledger` 保留跨会话防重复修复、最终验收和增量回执所需的最小证据，命令参数必须脱敏。`report_history` 仅用于避免重复汇报，不保存用户原文、密钥或业务敏感数据。
 
 `engine` 是任务开始后不可静默改变的执行契约。`native-v1` 不填写 `pdlc_root` 或 `feature_id`，并使用原生阶段；`pdlc-v1` 必须填写这两个字段，且 `current_stage` 只能为 `pdlc-run`。PDLC 的细粒度阶段、检查和产物继续只保存在 `docs/.pdlc-state/<feature-id>.json`；本 state 只记录协调层事实，不能复制或覆盖其状态。
 

@@ -129,7 +129,7 @@ description: "Coordinate a software feature or bug fix through a finite, evidenc
 - 每次状态写入先续期 lease，再将完整 Schema v4 JSON 通过 `delivery_state.py write --input -` 的 stdin 提交；脚本根据 `repo_id`、`task_key` 和 `run_id` 推导唯一正式路径，校验活动 lease、当前 writer 和 expected revision 后同目录原子写入。不得传入 state 路径或以 `/tmp` 文件作为输入。`revision` 必须单调加一。恢复必须指定 `run_id`、`writer_id` 和 `revision`，多个候选一律 `blocked`，不得自动猜测。
 - 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`。helper 会验证活动 lease，只输出白名单中的一个下一阶段 token；`pdlc-v1` 只会输出 `pdlc-run`，阶段决定仍由 PDLC 状态机完成。状态缺失、非法、过期或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
 
-## 终态和交接
+## 内部终态和交接
 
 - `complete`：所有验收项有通过证据，所需验证通过，风险复查未留待修 P0/P1。
 - `blocked_decision`：需要业务、范围、兼容性或发布选择；状态 `blocked_code=decision`。
@@ -137,32 +137,7 @@ description: "Coordinate a software feature or bug fix through a finite, evidenc
 - `blocked_no_progress`：同一根因已修复仍复现，或修复批次无法带来客观进展；状态 `blocked_code=no_progress`。
 - `budget_exhausted`：语义或风险复查修复预算已用尽，仍有新的范围内问题；状态 `blocked_code=budget_exhausted`。
 
-结束时必须输出以下紧凑报告；没有数据的栏目明确写“无”，不得省略：
-
-```text
-交付终态：complete | blocked_*
-执行引擎：<pdlc-v1 | native-v1>（<选择原因>）
-轮次：<实际完成轮数>/<1 或 2>（<低风险 | 高风险原因>）
-任务基线：<commit / 初始 diff>
-执行隔离：<worktree；run_id；lease 已释放 | 未获取/保留原因>
-稳定轮：已执行（<风险触发器/影响面扩大原因>）| 已跳过（低风险且影响面未扩大）
-变更摘要：<文件数；文件列表；主要行为变化>
-
-验收项：
-- <验收项>：pass | fail | unknown；证据：<测试/命令；fresh | stale | unavailable>
-
-已处理问题：
-- [P?][Round ?] <问题> → <根因> → <修复> → <结果>
-
-验证：
-- <命令>：pass | fail | unknown（exit <码或原因>）
-
-未处理项：
-- 无 | <严重度、证据、最小下一步>
-
-用户保留行为：
-- 无 | <内容>
-```
+这些是状态机术语，不得直接作为用户最终汇报。结束时必须按 [面向用户的交付回执](references/reporting.md) 从 ledger 渲染 `summary`；默认不展示空栏目、命令、轮次、基线、引擎、lease 或严重度。用户明确要求细节时才生成技术证明包。报告只使用已有证据，不得为了凑报告重跑检查。
 
 破坏性、发布或外发操作始终需要用户明确授权。
 

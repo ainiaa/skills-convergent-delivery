@@ -2,7 +2,7 @@
 
 一个面向软件功能开发和 Bug 修复的 Codex 与 Claude Code Skill。它将需求确认、TDD、实现、复查、验证和交接收敛为有限流程，避免在“再检查一次 → 再修一次”中无限循环。
 
-当前开发版本：[0.3.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.4.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么需要它
 
@@ -12,7 +12,7 @@
 - Agent 反复进行泛化审查，消耗大量 token，却不一定带来新的证据；
 - 最后没有清晰答案：改了什么、跑了哪些验证、是否真的可以交付。
 
-`converge` 用有限、可恢复的控制循环解决这些问题：它优先将具体需求产物、TDD、实现和阶段评审委托给兼容的 PDLC；PDLC 不可用时才使用内置原生流程。无论哪个引擎，低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以新鲜验证证据和固定最终报告结束。
+`converge` 用有限、可恢复的控制循环解决这些问题：它优先将具体需求产物、TDD、实现和阶段评审委托给兼容的 PDLC；PDLC 不可用时才使用内置原生流程。无论哪个引擎，低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以新鲜验证证据和面向用户的交付回执结束。
 
 ## 能力
 
@@ -27,7 +27,7 @@
 - 使用 `pass`、`fail`、`unknown` 三态记录真实命令退出码；每个验收项还标记 `fresh`、`stale` 或 `unavailable`，`unknown` 和陈旧结果绝不算通过。
 - 对跨服务、公共契约或跨会话任务持久化轻量状态，并通过只读 helper 校验下一阶段。
 - 多窗口执行使用 repo/task/worktree 三层 lease：阻止同一 worktree 双写和同一任务重复实现，不阻塞不同 worktree 的不同任务并行。
-- 输出固定最终报告：终态、实际轮次、验收证据、已处理问题、验证命令、变更摘要和未处理项。
+- 默认输出一屏“交付回执”：结论、影响、已验证范围和一个明确下一步；命令、轮次和状态机证据仅在要求详细报告时展示。
 
 ## Install
 
@@ -79,7 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/m
    ```
 
 2. 在 Codex 中说“使用 `$converge` 修复分页 SQL 错误”；或在 Claude Code 中执行 `/converge 修复分页 SQL 错误`。
-3. 根据最终报告核对交付终态、验收证据、验证命令和未处理项。
+3. 根据交付回执确认结论、已验证范围和是否需要你决定下一步。
 
 ## 调用当前 Skill
 
@@ -185,6 +185,7 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
 - [贡献指南](CONTRIBUTING.md)：开发、测试和提交约定。
 - [安全策略](SECURITY.md)：敏感问题的报告方式。
 - [压力场景](references/evaluation-scenarios.md)：修改 Skill 后验证 PDLC 路由、恢复、根因守卫与验收新鲜度。
+- [交付回执规范](references/reporting.md)：默认摘要、待决问题、增量汇报和技术证明包的展示规则。
 
 ## 反馈与许可
 
@@ -235,4 +236,5 @@ scripts/test_install.py          # 安装器回归测试
 scripts/test_check.py            # 项目检查入口回归测试
 references/state-schema.md       # 跨会话状态 Schema
 references/evaluation-scenarios.md # Skill 压力场景
+references/reporting.md            # 面向用户的交付回执规范
 ```
