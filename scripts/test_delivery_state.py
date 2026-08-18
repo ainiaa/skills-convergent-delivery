@@ -13,7 +13,7 @@ STATE_SCRIPT = Path(__file__).with_name("delivery_state.py")
 
 def state(revision=0, writer_id="writer-1"):
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "run_id": "run-1",
         "repo_id": "/repo/common.git",
         "task_key": "task-payment",
@@ -22,10 +22,27 @@ def state(revision=0, writer_id="writer-1"):
         "workspace": "/repo/worktree-a",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
+        "engine": {
+            "name": "native-v1",
+            "selection": "auto",
+            "reason": "PDLC is unavailable",
+        },
         "current_stage": "round-1-semantic-review",
         "requires_stability_round": False,
         "status": "active",
-        "ledger": {"completed_rounds": 0, "repair_fingerprints": [], "checks": []},
+        "ledger": {
+            "completed_rounds": 0,
+            "repair_fingerprints": [],
+            "checks": [],
+            "acceptance": [
+                {
+                    "criterion": "Requested behavior",
+                    "evidence": "targeted test",
+                    "result": "pass",
+                    "freshness": "fresh",
+                }
+            ],
+        },
         "handoff": {
             "goal": "Fix requested behavior",
             "last_verification": "targeted test passed",
@@ -196,6 +213,29 @@ class DeliveryStateTest(unittest.TestCase):
             )
             self.assertNotEqual(0, wrong_writer.returncode)
             self.assertIn("lease", wrong_writer.stderr)
+
+    def test_write_persists_the_frozen_pdlc_engine_without_native_stages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            payload = state()
+            payload["engine"] = {
+                "name": "pdlc-v1",
+                "selection": "explicit",
+                "reason": "PDLC v1 capability is available",
+                "pdlc_root": "/tools/pdlc-skills",
+                "feature_id": "F-123",
+            }
+            payload["current_stage"] = "pdlc-run"
+
+            result = self.write(root, state_home, payload, -1)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            written = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("pdlc-v1", written["engine"]["name"])
+            self.assertEqual("pdlc-run", written["current_stage"])
 
     def test_write_rejects_external_candidate_file(self):
         with tempfile.TemporaryDirectory() as directory:

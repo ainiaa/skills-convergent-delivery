@@ -12,11 +12,16 @@ SCRIPT = Path(__file__).with_name("delivery_next.py")
 
 def state(**overrides):
     value = {
-        "schema_version": 3,
+        "schema_version": 4,
         "run_id": "run-20260818-120000",
         "workspace": "/workspace/service",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
+        "engine": {
+            "name": "native-v1",
+            "selection": "auto",
+            "reason": "PDLC is unavailable",
+        },
         "repo_id": "/repo/common.git",
         "task_key": "task-123",
         "writer_id": "writer-123",
@@ -24,7 +29,19 @@ def state(**overrides):
         "current_stage": "round-1-semantic-review",
         "requires_stability_round": False,
         "status": "active",
-        "ledger": {"completed_rounds": 0, "repair_fingerprints": [], "checks": []},
+        "ledger": {
+            "completed_rounds": 0,
+            "repair_fingerprints": [],
+            "checks": [],
+            "acceptance": [
+                {
+                    "criterion": "Requested behavior",
+                    "evidence": "targeted test",
+                    "result": "pass",
+                    "freshness": "fresh",
+                }
+            ],
+        },
         "handoff": {
             "goal": "Fix the requested behavior",
             "last_verification": "targeted test passed",
@@ -122,8 +139,32 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("blocked\n", result.stdout)
         self.assertEqual(0, result.returncode)
 
+    def test_complete_state_requires_fresh_passing_acceptance_evidence(self):
+        result = self.current(
+            state(
+                status="complete",
+                current_stage="verify-final",
+                ledger={
+                    "completed_rounds": 1,
+                    "repair_fingerprints": [],
+                    "checks": [],
+                    "acceptance": [
+                        {
+                            "criterion": "Requested behavior",
+                            "evidence": "old targeted test",
+                            "result": "pass",
+                            "freshness": "stale",
+                        }
+                    ],
+                },
+            )
+        )
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
     def test_invalid_state_emits_blocked(self):
-        result = self.current(state(schema_version=4))
+        result = self.current(state(schema_version=5))
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
@@ -163,6 +204,54 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_active_final_verification_state_must_not_restart(self):
         result = self.current(state(current_stage="verify-final"))
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_active_pdlc_task_only_delegates_to_the_pdlc_runner(self):
+        result = self.current(
+            state(
+                current_stage="pdlc-run",
+                engine={
+                    "name": "pdlc-v1",
+                    "selection": "explicit",
+                    "reason": "PDLC v1 is available",
+                    "pdlc_root": "/tools/pdlc-skills",
+                    "feature_id": "F-123",
+                },
+            )
+        )
+
+        self.assertEqual("pdlc-run\n", result.stdout)
+        self.assertEqual(0, result.returncode)
+
+    def test_pdlc_task_rejects_a_native_stage(self):
+        result = self.current(
+            state(
+                engine={
+                    "name": "pdlc-v1",
+                    "selection": "auto",
+                    "reason": "PDLC v1 is available",
+                    "pdlc_root": "/tools/pdlc-skills",
+                    "feature_id": "F-123",
+                }
+            )
+        )
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_native_task_rejects_embedded_pdlc_state(self):
+        result = self.current(
+            state(
+                engine={
+                    "name": "native-v1",
+                    "selection": "auto",
+                    "reason": "PDLC is unavailable",
+                    "pdlc_root": "/tools/pdlc-skills",
+                }
+            )
+        )
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)

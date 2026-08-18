@@ -9,11 +9,12 @@ import os
 import sys
 import uuid
 from contextlib import ExitStack, contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 DEFAULT_TTL_SECONDS = 7200
+UTC = timezone.utc
 
 
 def canonical_path(value):

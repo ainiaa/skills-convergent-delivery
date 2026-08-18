@@ -12,7 +12,7 @@
 ## 前置条件
 
 - 使用远程安装时需要 Bash、`curl`、`git` 和可访问 GitHub 的网络。
-- 使用本地 clone 安装时需要 Bash；运行项目检查还需要 Python 3。
+- 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.9 或更高版本。
 - 安装器不需要 `codex` 或 `claude` 命令行工具，但对应运行时必须已安装才能使用 Skill。
 - 已打开的 Codex 或 Claude Code 需要重启，或按各自的 Skill 刷新机制重新加载。
 
@@ -52,7 +52,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-非 PDLC 的跨会话 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 JSON 经 `delivery_state.py write --input -` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer 和 revision。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/` 定位这些 helper，避免因当前工作目录变化而找不到文件。
+跨会话协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 Schema v4 JSON 经 `delivery_state.py write --input -` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer、revision、冻结的执行引擎和验收证据。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/` 定位这些 helper，避免因当前工作目录变化而找不到文件。
 
 ## 多窗口并行
 
@@ -67,7 +67,7 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
 
-PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。未安装 PDLC 时，直接使用 `converge` 的原生状态机、TDD 和验证规则，不会因此阻塞。
+PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。默认可用时选择 `pdlc-v1`，由 PDLC 独占 TDD、实现与阶段评审；`converge` 只保存协调信息并聚合交付证据。未安装 PDLC 时，才使用 `converge` 的原生状态机、TDD 和验证规则。强制 PDLC 的任务如果在恢复时失去所需能力，会明确阻塞而不会静默降级。
 
 ## 维护版本
 

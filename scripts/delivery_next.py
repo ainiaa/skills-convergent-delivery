@@ -9,7 +9,7 @@ from pathlib import Path
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
 
 
-ACTIVE_STAGES = {
+NATIVE_ACTIVE_STAGES = {
     "scope",
     "round-1-build",
     "round-1-semantic-review",
@@ -17,6 +17,11 @@ ACTIVE_STAGES = {
     "round-2-risk-review",
     "verify-final",
 }
+PDLC_ACTIVE_STAGES = {"pdlc-run"}
+ENGINE_NAMES = {"native-v1", "pdlc-v1"}
+ENGINE_SELECTIONS = {"auto", "explicit"}
+CHECK_RESULTS = {"pass", "fail", "unknown"}
+FRESHNESS = {"fresh", "stale", "unavailable"}
 
 BLOCKED_CODES = {
     "decision",
@@ -39,10 +44,28 @@ def require_mapping(value, name):
     return value
 
 
+def validate_engine(value):
+    engine = require_mapping(value, "engine")
+    name = engine.get("name")
+    if name not in ENGINE_NAMES:
+        raise ValueError("engine.name must be native-v1 or pdlc-v1")
+    if engine.get("selection") not in ENGINE_SELECTIONS:
+        raise ValueError("engine.selection must be auto or explicit")
+    require_string(engine.get("reason"), "engine.reason")
+    if name == "pdlc-v1":
+        root = require_string(engine.get("pdlc_root"), "engine.pdlc_root")
+        if not Path(root).is_absolute():
+            raise ValueError("engine.pdlc_root must be absolute")
+        require_string(engine.get("feature_id"), "engine.feature_id")
+    elif "pdlc_root" in engine or "feature_id" in engine:
+        raise ValueError("native engine must not carry PDLC state")
+    return name
+
+
 def validate_state(state, arguments):
     if not isinstance(state, dict):
         raise ValueError("state must be an object")
-    if state.get("schema_version") != 3:
+    if state.get("schema_version") != 4:
         raise ValueError("unsupported schema_version")
 
     run_id = require_string(state.get("run_id"), "run_id")
@@ -61,6 +84,7 @@ def validate_state(state, arguments):
     require_string(baseline.get("commit"), "baseline.commit")
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
+    engine_name = validate_engine(state.get("engine"))
     ledger = require_mapping(state.get("ledger"), "ledger")
     completed_rounds = ledger.get("completed_rounds")
     if (
@@ -80,6 +104,21 @@ def validate_state(state, arguments):
     checks = ledger.get("checks")
     if not isinstance(checks, list) or not all(isinstance(item, dict) for item in checks):
         raise ValueError("ledger.checks must be a list of objects")
+    for item in checks:
+        require_string(item.get("stage"), "ledger.checks[].stage")
+        require_string(item.get("command"), "ledger.checks[].command")
+        if item.get("result") not in CHECK_RESULTS:
+            raise ValueError("ledger.checks[].result must be pass, fail, or unknown")
+    acceptance = ledger.get("acceptance")
+    if not isinstance(acceptance, list) or not all(isinstance(item, dict) for item in acceptance):
+        raise ValueError("ledger.acceptance must be a list of objects")
+    for item in acceptance:
+        require_string(item.get("criterion"), "ledger.acceptance[].criterion")
+        require_string(item.get("evidence"), "ledger.acceptance[].evidence")
+        if item.get("result") not in CHECK_RESULTS:
+            raise ValueError("ledger.acceptance[].result must be pass, fail, or unknown")
+        if item.get("freshness") not in FRESHNESS:
+            raise ValueError("ledger.acceptance[].freshness is invalid")
     handoff = require_mapping(state.get("handoff"), "handoff")
     for field in ("goal", "last_verification", "open_issues", "next_action"):
         require_string(handoff.get(field), f"handoff.{field}")
@@ -103,6 +142,10 @@ def validate_state(state, arguments):
 
     status = state.get("status")
     if status == "complete":
+        if not acceptance or not all(
+            item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
+        ):
+            raise ValueError("complete state requires fresh passing acceptance evidence")
         return "complete"
     if status == "blocked":
         if state.get("blocked_code") not in BLOCKED_CODES:
@@ -115,8 +158,11 @@ def validate_state(state, arguments):
     if not isinstance(state.get("requires_stability_round"), bool):
         raise ValueError("requires_stability_round must be boolean")
     stage = state.get("current_stage")
-    if stage not in ACTIVE_STAGES:
+    active_stages = NATIVE_ACTIVE_STAGES if engine_name == "native-v1" else PDLC_ACTIVE_STAGES
+    if stage not in active_stages:
         raise ValueError("invalid current_stage")
+    if engine_name == "pdlc-v1":
+        return "pdlc-run"
     if stage == "scope":
         return "round-1-build"
     if stage == "round-1-build":
