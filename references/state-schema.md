@@ -39,7 +39,7 @@
 
 `repo_id`、`task_key`、`writer_id`、`revision` 是写入归属信息：`repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`task_key` 必须由 `scripts/delivery_task_key.py` 生成；`writer_id` 来自成功获取的 lease；每次成功状态写入将 `revision` 加一。`ledger` 保留跨会话防重复修复所需的最小证据，命令参数必须脱敏。
 
-状态根目录固定为 `~/.convergent-delivery/state/`，供 Codex 与 Claude Code 共用。更新状态时，先续期 lease，再由 `delivery_state.py write` 校验活动 lease、writer 和 expected revision 后原子写入。恢复时必须指定 `run_id`、`writer_id` 和 `revision`；未指定时一律阻塞。
+状态根目录固定为 `~/.convergent-delivery/state/`，供 Codex 与 Claude Code 共用。正式路径只能由 `repo_id`、`task_key` 和 `run_id` 推导；更新时先续期 lease，再将完整 JSON 通过 `delivery_state.py write --input -` 的 stdin 提交。脚本不接受任意 `--state` 路径或外部候选文件，校验活动 lease、writer 和 expected revision 后在正式文件同目录原子写入。恢复时必须指定 `run_id`、`writer_id` 和 `revision`；未指定时一律阻塞。
 
 恢复或外层循环前运行：
 

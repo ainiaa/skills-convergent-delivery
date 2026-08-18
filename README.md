@@ -140,7 +140,7 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
   --writer-id <writer-id> --revision <revision>
 ```
 
-非 PDLC 状态保存在 Codex 与 Claude Code 共用的 `~/.convergent-delivery/state/`，因此可以跨运行时恢复同一任务。它只输出一个白名单 token，例如 `verify-final`、`complete` 或 `blocked`；会校验活动 lease，但不会写状态、执行代码或绕过人工决策。状态字段见 [references/state-schema.md](references/state-schema.md)。
+非 PDLC 状态保存在 Codex 与 Claude Code 共用的 `~/.convergent-delivery/state/`，因此可以跨运行时恢复同一任务。正式 state 路径由 repo、task 和 run 自动推导；候选 JSON 只经 `delivery_state.py write --input -` 的 stdin 提交，不能写入 `/tmp` 或任意路径。只读 helper 输出一个白名单 token，例如 `verify-final`、`complete` 或 `blocked`；会校验活动 lease，但不会写状态、执行代码或绕过人工决策。状态字段见 [references/state-schema.md](references/state-schema.md)。
 
 ## 多窗口并行
 

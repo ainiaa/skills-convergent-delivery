@@ -107,8 +107,8 @@ description: "Deliver a software feature or bug fix through a finite, evidence-d
 - 每个“通过、已修复、完成”的结论必须能对应到最后一次代码修改后的具体命令、退出码和验收项；编译、lint 或局部测试不能替代其未覆盖行为的证明。
 - 已有失败仅在具备变更前基线证据、且本次定向回归通过时才可标为 `pre-existing`；否则按未知回归处理。
 - 普通任务在当前上下文维护**紧凑** ledger：轮次、阶段、验收项→证据→结果、问题指纹、修复批次、命令及退出码、范围变化和用户决策。只记录可影响交付结论的事实，不生成重复叙述或无关文档。
-- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger 到 `~/.convergent-delivery/state/<repo 指纹>/<task 指纹>/<run-id>.json`，避免污染仓库且允许跨运行时恢复；PDLC 任务仍沿用 `docs/.pdlc-state/` 作为流程产物。状态严格遵循 [Schema v3](references/state-schema.md)，保存轮次、问题指纹、命令结果、阻塞码和简短 handoff，不记录密钥或请求敏感数据。
-- 每次状态写入先续期 lease，再用 `delivery_state.py write` 校验活动 lease、当前 writer 和 expected revision 后原子写入；不得直接覆盖 JSON。`revision` 必须单调加一。状态路径通过 `delivery_state.py path` 生成；恢复必须指定 `run_id`、`writer_id` 和 `revision`，多个候选一律 `blocked`，不得自动猜测。
+- 跨两个及以上服务、涉及已发布依赖/公共契约、预计跨会话，或用户要求 PDLC/恢复时，自动持久化 ledger 到 `~/.convergent-delivery/state/<repo 指纹>/<task 指纹>/<run 指纹>.json`，避免污染仓库且允许跨运行时恢复；PDLC 任务仍沿用 `docs/.pdlc-state/` 作为流程产物。状态严格遵循 [Schema v3](references/state-schema.md)，保存轮次、问题指纹、命令结果、阻塞码和简短 handoff，不记录密钥或请求敏感数据。
+- 每次状态写入先续期 lease，再将完整 Schema v3 JSON 通过 `delivery_state.py write --input -` 的 stdin 提交；脚本根据 `repo_id`、`task_key` 和 `run_id` 推导唯一正式路径，校验活动 lease、当前 writer 和 expected revision 后同目录原子写入。不得传入 state 路径或以 `/tmp` 文件作为输入。`revision` 必须单调加一。恢复必须指定 `run_id`、`writer_id` 和 `revision`，多个候选一律 `blocked`，不得自动猜测。
 - 恢复或外层循环前运行 helper。Codex 在 Skill 根目录执行 `python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`；Claude Code 使用 `python3 "${CLAUDE_SKILL_DIR}/scripts/delivery_next.py" --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>`。helper 会验证活动 lease，只输出白名单中的一个下一阶段 token；状态缺失、非法、过期或与传入标识不匹配时输出 `blocked`。它不写文件、不执行代码，也不自行驱动代码修改。
 
 ## 终态和交接

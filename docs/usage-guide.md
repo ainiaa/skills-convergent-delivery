@@ -52,7 +52,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-非 PDLC 的跨会话 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。状态路径通过 `scripts/delivery_state.py path` 生成；每次更新只能使用 `delivery_state.py write`，它会校验活动 lease、writer 和 revision。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/` 定位这些 helper，避免因当前工作目录变化而找不到文件。
+非 PDLC 的跨会话 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 JSON 经 `delivery_state.py write --input -` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer 和 revision。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`。在 Claude Code 中使用 `${CLAUDE_SKILL_DIR}/scripts/` 定位这些 helper，避免因当前工作目录变化而找不到文件。
 
 ## 多窗口并行
 

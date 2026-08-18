@@ -15,6 +15,7 @@
 
 - Skill 正式名称从 `convergent-delivery` 调整为更易记的 `converge`；安装器会安全迁移指向同一源码的旧软链接。
 - 状态 Schema 升级为 v3：共享跨运行时 ledger，并用 lease、writer 与 revision 保护写入和恢复。
+- 状态写入改为仅接受 stdin 候选 JSON，并由脚本推导正式路径，避免 `/tmp` 或任意路径成为恢复状态。
 
 ### 文档
 

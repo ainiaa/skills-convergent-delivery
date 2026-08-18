@@ -21,7 +21,8 @@ def state_path(root, repo, task_key, run_id):
     base = Path(root).expanduser().resolve()
     repo_digest = hashlib.sha256(str(Path(repo).expanduser().resolve()).encode("utf-8")).hexdigest()
     task_digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()
-    return base / repo_digest / task_digest / f"{run_id}.json"
+    run_digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
+    return base / repo_digest / task_digest / f"{run_digest}.json"
 
 
 def write_private(path, payload):
@@ -62,32 +63,34 @@ def validate_candidate(candidate, arguments):
 
 
 def write(arguments):
-    candidate = json.loads(Path(arguments.input).read_text(encoding="utf-8"))
+    if arguments.input != "-":
+        raise ValueError("write only accepts --input - from stdin")
+    candidate = json.load(sys.stdin)
     validate_candidate(candidate, arguments)
-    state_path = Path(arguments.state)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_record(state_path):
-        current_revision = -1
-        if state_path.exists():
-            current = json.loads(state_path.read_text(encoding="utf-8"))
-            validate_candidate(current, arguments)
-            current_revision = current["revision"]
-        if current_revision != arguments.expected_revision:
-            raise ValueError("expected revision does not match current state")
-        if candidate["revision"] != current_revision + 1:
-            raise ValueError("candidate revision must be the next revision")
-        with active_lease(candidate, arguments.lease_root, arguments.run_id, arguments.writer_id):
-            write_private(state_path, candidate)
+    managed_path = state_path(
+        DEFAULT_STATE_ROOT, candidate["repo_id"], candidate["task_key"], candidate["run_id"]
+    )
+    with active_lease(candidate, arguments.lease_root, arguments.run_id, arguments.writer_id):
+        managed_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_record(managed_path):
+            current_revision = -1
+            if managed_path.exists():
+                current = json.loads(managed_path.read_text(encoding="utf-8"))
+                validate_candidate(current, arguments)
+                current_revision = current["revision"]
+            if current_revision != arguments.expected_revision:
+                raise ValueError("expected revision does not match current state")
+            if candidate["revision"] != current_revision + 1:
+                raise ValueError("candidate revision must be the next revision")
+            write_private(managed_path, candidate)
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("path", "write"))
-    parser.add_argument("--state")
     parser.add_argument("--input")
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
-    parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--repo")
     parser.add_argument("--task-key")
     parser.add_argument("--run-id")
@@ -98,10 +101,10 @@ def main():
         if arguments.command == "path":
             if not all((arguments.repo, arguments.task_key, arguments.run_id)):
                 raise ValueError("path requires --repo, --task-key, and --run-id")
-            print(state_path(arguments.state_root, arguments.repo, arguments.task_key, arguments.run_id))
+            print(state_path(DEFAULT_STATE_ROOT, arguments.repo, arguments.task_key, arguments.run_id))
             return 0
-        if not all((arguments.state, arguments.input, arguments.run_id, arguments.writer_id)):
-            raise ValueError("write requires --state, --input, --run-id, and --writer-id")
+        if not all((arguments.input, arguments.run_id, arguments.writer_id)):
+            raise ValueError("write requires --input, --run-id, and --writer-id")
         if arguments.expected_revision is None:
             raise ValueError("write requires --expected-revision")
         write(arguments)
