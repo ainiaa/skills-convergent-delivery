@@ -19,6 +19,9 @@ class ReportingContractTest(unittest.TestCase):
         self.assertIn("只报告相对上一份回执的变化", report)
         self.assertIn("不得出现这些内部字段", report)
         self.assertIn("不得重新跑检查来凑报告内容", report)
+        self.assertIn("`decision` | 160–260 字", report)
+        self.assertIn("当前实现能做什么", report)
+        self.assertIn("未验证范围和实际影响", report)
 
 
 if __name__ == "__main__":
