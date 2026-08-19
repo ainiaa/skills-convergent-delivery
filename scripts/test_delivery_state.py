@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from delivery_engine import pdlc_fingerprint
+
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 STATE_SCRIPT = Path(__file__).with_name("delivery_state.py")
@@ -13,7 +15,7 @@ STATE_SCRIPT = Path(__file__).with_name("delivery_state.py")
 
 def state(revision=0, writer_id="writer-1"):
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "run_id": "run-1",
         "repo_id": "/repo/common.git",
         "task_key": "task-payment",
@@ -220,13 +222,20 @@ class DeliveryStateTest(unittest.TestCase):
             state_home = Path(directory) / "home"
             state_path = self.state_path(state_home)
             self.acquire(root)
+            pdlc_root = Path(directory) / "pdlc"
+            for name in ("pdlc-tdd", "pdlc-implement", "pdlc-review", "pdlc-feature"):
+                skill = pdlc_root / "skills" / name / "SKILL.md"
+                skill.parent.mkdir(parents=True, exist_ok=True)
+                skill.write_text(f"{name}\n", encoding="utf-8")
             payload = state()
             payload["engine"] = {
                 "name": "pdlc-v1",
                 "selection": "explicit",
                 "reason": "PDLC v1 capability is available",
-                "pdlc_root": "/tools/pdlc-skills",
+                "pdlc_root": str(pdlc_root.resolve()),
                 "feature_id": "F-123",
+                "task_kind": "feature",
+                "pdlc_fingerprint": pdlc_fingerprint(pdlc_root, "feature"),
             }
             payload["current_stage"] = "pdlc-run"
 

@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from delivery_engine import TASK_KINDS, compatible_root, compatible_tdd_provider, pdlc_fingerprint
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
 
 
@@ -18,7 +19,14 @@ NATIVE_ACTIVE_STAGES = {
     "verify-final",
 }
 PDLC_ACTIVE_STAGES = {"pdlc-run"}
-ENGINE_NAMES = {"native-v1", "pdlc-v1"}
+ENGINE_NAMES = {
+    "native-v1",
+    "pdlc-v1",
+    "superpowers-tdd-v1",
+    "mattpocock-tdd-v1",
+    "generic-tdd-v1",
+}
+TDD_ENGINES = ENGINE_NAMES - {"pdlc-v1"}
 ENGINE_SELECTIONS = {"auto", "explicit"}
 CHECK_RESULTS = {"pass", "fail", "unknown"}
 FRESHNESS = {"fresh", "stale", "unavailable"}
@@ -48,7 +56,7 @@ def validate_engine(value):
     engine = require_mapping(value, "engine")
     name = engine.get("name")
     if name not in ENGINE_NAMES:
-        raise ValueError("engine.name must be native-v1 or pdlc-v1")
+        raise ValueError("engine.name is invalid")
     if engine.get("selection") not in ENGINE_SELECTIONS:
         raise ValueError("engine.selection must be auto or explicit")
     require_string(engine.get("reason"), "engine.reason")
@@ -57,15 +65,38 @@ def validate_engine(value):
         if not Path(root).is_absolute():
             raise ValueError("engine.pdlc_root must be absolute")
         require_string(engine.get("feature_id"), "engine.feature_id")
-    elif "pdlc_root" in engine or "feature_id" in engine:
-        raise ValueError("native engine must not carry PDLC state")
+        task_kind = engine.get("task_kind")
+        if task_kind not in TASK_KINDS:
+            raise ValueError("engine.task_kind must be feature or fix")
+        fingerprint = require_string(engine.get("pdlc_fingerprint"), "engine.pdlc_fingerprint")
+        compatible, problem = compatible_root(root, task_kind)
+        if not compatible or pdlc_fingerprint(compatible, task_kind) != fingerprint:
+            raise ValueError(f"frozen PDLC capability is unavailable or changed: {problem or root}")
+    else:
+        if any(
+            field in engine
+            for field in ("pdlc_root", "feature_id", "task_kind", "pdlc_fingerprint")
+        ):
+            raise ValueError("TDD engine must not carry PDLC state")
+        if name == "native-v1":
+            if "tdd_skill_path" in engine or "tdd_skill_fingerprint" in engine:
+                raise ValueError("native engine must not carry a third-party TDD skill")
+        else:
+            path = require_string(engine.get("tdd_skill_path"), "engine.tdd_skill_path")
+            if not Path(path).is_absolute():
+                raise ValueError("engine.tdd_skill_path must be absolute")
+            fingerprint = require_string(
+                engine.get("tdd_skill_fingerprint"), "engine.tdd_skill_fingerprint"
+            )
+            if not compatible_tdd_provider(name, path, fingerprint):
+                raise ValueError("frozen third-party TDD skill is unavailable or changed")
     return name
 
 
 def validate_state(state, arguments):
     if not isinstance(state, dict):
         raise ValueError("state must be an object")
-    if state.get("schema_version") != 4:
+    if state.get("schema_version") != 5:
         raise ValueError("unsupported schema_version")
 
     run_id = require_string(state.get("run_id"), "run_id")
@@ -158,7 +189,7 @@ def validate_state(state, arguments):
     if not isinstance(state.get("requires_stability_round"), bool):
         raise ValueError("requires_stability_round must be boolean")
     stage = state.get("current_stage")
-    active_stages = NATIVE_ACTIVE_STAGES if engine_name == "native-v1" else PDLC_ACTIVE_STAGES
+    active_stages = NATIVE_ACTIVE_STAGES if engine_name in TDD_ENGINES else PDLC_ACTIVE_STAGES
     if stage not in active_stages:
         raise ValueError("invalid current_stage")
     if engine_name == "pdlc-v1":

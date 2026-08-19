@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from delivery_engine import file_fingerprint, pdlc_fingerprint
+
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
@@ -12,7 +14,7 @@ SCRIPT = Path(__file__).with_name("delivery_next.py")
 
 def state(**overrides):
     value = {
-        "schema_version": 4,
+        "schema_version": 5,
         "run_id": "run-20260818-120000",
         "workspace": "/workspace/service",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
@@ -54,6 +56,34 @@ def state(**overrides):
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def pdlc_engine(self, directory):
+        root = Path(directory) / "pdlc"
+        for name in ("pdlc-tdd", "pdlc-implement", "pdlc-review", "pdlc-feature"):
+            path = root / "skills" / name / "SKILL.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{name}\n", encoding="utf-8")
+        return {
+            "name": "pdlc-v1",
+            "selection": "explicit",
+            "reason": "PDLC v1 is available",
+            "pdlc_root": str(root.resolve()),
+            "feature_id": "F-123",
+            "task_kind": "feature",
+            "pdlc_fingerprint": pdlc_fingerprint(root, "feature"),
+        }
+
+    def generic_tdd_engine(self, directory):
+        path = Path(directory) / "project-tdd" / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Run a test first, then use the red and green cycle.\n", encoding="utf-8")
+        return {
+            "name": "generic-tdd-v1",
+            "selection": "auto",
+            "reason": "generic TDD provider is available",
+            "tdd_skill_path": str(path.resolve()),
+            "tdd_skill_fingerprint": file_fingerprint(path),
+        }, path
+
     def run_helper(self, payload, *, run_id=None, writer_id=None, revision=None, acquire=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -164,7 +194,7 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
 
     def test_invalid_state_emits_blocked(self):
-        result = self.current(state(schema_version=5))
+        result = self.current(state(schema_version=4))
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
@@ -209,34 +239,51 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
 
     def test_active_pdlc_task_only_delegates_to_the_pdlc_runner(self):
-        result = self.current(
-            state(
-                current_stage="pdlc-run",
-                engine={
-                    "name": "pdlc-v1",
-                    "selection": "explicit",
-                    "reason": "PDLC v1 is available",
-                    "pdlc_root": "/tools/pdlc-skills",
-                    "feature_id": "F-123",
-                },
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.current(
+                state(current_stage="pdlc-run", engine=self.pdlc_engine(directory))
             )
-        )
 
         self.assertEqual("pdlc-run\n", result.stdout)
         self.assertEqual(0, result.returncode)
 
     def test_pdlc_task_rejects_a_native_stage(self):
-        result = self.current(
-            state(
-                engine={
-                    "name": "pdlc-v1",
-                    "selection": "auto",
-                    "reason": "PDLC v1 is available",
-                    "pdlc_root": "/tools/pdlc-skills",
-                    "feature_id": "F-123",
-                }
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.current(
+                state(engine=self.pdlc_engine(directory))
             )
-        )
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_pdlc_task_rejects_a_changed_frozen_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.pdlc_engine(directory)
+            Path(engine["pdlc_root"], "skills", "pdlc-review", "SKILL.md").write_text(
+                "changed\n", encoding="utf-8"
+            )
+            result = self.current(state(current_stage="pdlc-run", engine=engine))
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_adapted_tdd_task_uses_native_stages_with_a_frozen_skill_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine, _ = self.generic_tdd_engine(directory)
+            result = self.current(
+                state(engine=engine)
+            )
+
+        self.assertEqual("verify-final\n", result.stdout)
+        self.assertEqual(0, result.returncode)
+
+    def test_third_party_tdd_task_rejects_missing_or_changed_frozen_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine, path = self.generic_tdd_engine(directory)
+            path.write_text("Run a test first, then use the red and green cycle. Changed.\n", encoding="utf-8")
+            result = self.current(
+                state(engine=engine)
+            )
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
@@ -249,6 +296,21 @@ class DeliveryNextTest(unittest.TestCase):
                     "selection": "auto",
                     "reason": "PDLC is unavailable",
                     "pdlc_root": "/tools/pdlc-skills",
+                }
+            )
+        )
+
+        self.assertEqual("blocked\n", result.stdout)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_native_task_rejects_a_third_party_tdd_fingerprint(self):
+        result = self.current(
+            state(
+                engine={
+                    "name": "native-v1",
+                    "selection": "auto",
+                    "reason": "PDLC is unavailable",
+                    "tdd_skill_fingerprint": "should-not-be-here",
                 }
             )
         )

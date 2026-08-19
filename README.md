@@ -2,7 +2,7 @@
 
 一个面向软件功能开发和 Bug 修复的 Codex 与 Claude Code Skill。它将需求确认、TDD、实现、复查、验证和交接收敛为有限流程，避免在“再检查一次 → 再修一次”中无限循环。
 
-当前开发版本：[0.4.1](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.6.1](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么需要它
 
@@ -12,18 +12,19 @@
 - Agent 反复进行泛化审查，消耗大量 token，却不一定带来新的证据；
 - 最后没有清晰答案：改了什么、跑了哪些验证、是否真的可以交付。
 
-`converge` 用有限、可恢复的控制循环解决这些问题：它优先将具体需求产物、TDD、实现和阶段评审委托给兼容的 PDLC；PDLC 不可用时才使用内置原生流程。无论哪个引擎，低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以新鲜验证证据和面向用户的交付回执结束。
+`converge` 用有限、可恢复的控制循环解决这些问题：它优先将具体需求产物、TDD、实现和阶段评审委托给兼容的 PDLC；PDLC 不可用时，依次尝试已适配的第三方 TDD Skill、通过预检的通用 TDD Skill，最后才使用内置原生流程。无论哪个引擎，低风险任务在一轮内交付；只有金额、事务、SQL、并发、公共接口等高风险变更才进入第二轮稳定化复查。每次交付都以新鲜验证证据和面向用户的交付回执结束。
 
 ## 能力
 
 - 冻结验收范围、已有脏文件、基线和用户明确保留的行为，避免误改他人代码。
 - 默认选择可用的 `pdlc-v1`：PDLC 负责需求产物、TDD、实现、阶段评审；`converge` 负责范围、循环预算、lease、跨服务验收和报告。
-- PDLC 不可用时选择 `native-v1`：对行为变更执行 TDD（有效红灯 → 最小实现 → 绿灯）；Bug 必须先复现和定位根因。
+- PDLC 不可用时依次选择适配的 Superpowers、Matt Pocock TDD Skill、兼容的通用 TDD Skill，最后才用 `native-v1`；第三方只承担一次 TDD 阶段，闭环控制仍由 `converge` 负责。
 - 引擎选择在任务开始后冻结：强制 PDLC 不可用会阻塞，活动 PDLC 任务不会静默降级到原生流程。
 - 将测试放在既有公共行为 seam（API、Service 契约、消息或持久化边界），避免测试私有实现。
 - 第 1 轮检查需求符合性、DTO/API 契约、数据映射、边界和错误响应。
 - 仅在高风险或影响面扩大时执行第 2 轮，检查金额、时间、SQL/Mapper、事务、锁、并发、幂等、公共接口、权限和敏感日志。
 - 每类复查最多自动修复一次；相同问题指纹复现或没有客观进展时停止，而不是无限重试。
+- 默认保留验收映射、有效红灯、绿灯、语义审查和最终验收五项证据；用户明确紧急处理时可缩减为测试与验证，但高风险变更不能缩减。
 - 使用 `pass`、`fail`、`unknown` 三态记录真实命令退出码；每个验收项还标记 `fresh`、`stale` 或 `unavailable`，`unknown` 和陈旧结果绝不算通过。
 - 对跨服务、公共契约或跨会话任务持久化轻量状态，并通过只读 helper 校验下一阶段。
 - 多窗口执行使用 repo/task/worktree 三层 lease：阻止同一 worktree 双写和同一任务重复实现，不阻塞不同 worktree 的不同任务并行。
@@ -104,6 +105,9 @@ Claude Code 使用 `/converge`：
 不写命令也可以。以下表达会触发 Skill：
 
 - “按闭环开发实现这个功能”
+- “闭环实现这个功能”
+- “闭环处理这个 Bug”
+- “闭环完成当前需求”
 - “不要反复确认，直到有明确终态再结束”
 - “持续检查并修复，给出最终报告”
 - “使用闭环交付修复这个 Bug”
@@ -116,11 +120,11 @@ Claude Code 使用 `/converge`：
 |---|---|---|
 | `plan` | “给方案”“怎么改” | 只分析和给方案，不修改代码。 |
 | `review` | “检查一下”“有没有问题” | 只检查和报告，不修改代码。 |
-| `execute` | “实现”“修复”“按闭环处理” | 默认模式：按完整流程实现、验证和交接。 |
+| `execute` | “闭环实现”“闭环处理”“闭环完成”“实现”“修复” | 默认模式：按完整流程实现、验证和交接。 |
 
 ### 交付路径
 
-默认先探测执行引擎：兼容的 PDLC 存在时，`converge` 只控制其有限循环和最终验收；不再自己重复 TDD、实现或 review。PDLC 不可用时，才采用下方原生路径。
+默认先探测执行引擎：兼容的 PDLC 存在时，`converge` 只控制其有限循环和最终验收；不再自己重复 TDD、实现或 review。PDLC 不可用时，先尝试兼容第三方 TDD，最后才采用下方内置路径。
 
 低风险变更：
 
@@ -140,7 +144,10 @@ Claude Code 使用 `/converge`：
 | 请求或环境 | 选择 | 行为 |
 |---|---|---|
 | 默认，兼容 PDLC 可用 | `pdlc-v1` | PDLC 负责阶段工作；`converge` 只做有限循环控制、证据汇总和交接。 |
-| 默认，PDLC 不可用 | `native-v1` | 使用内置 TDD、语义复查和按风险触发的稳定轮。 |
+| 默认，PDLC 不可用且 Superpowers TDD 已适配 | `superpowers-tdd-v1` | 只委托其红绿 TDD；`converge` 继续负责复查、验证和报告。 |
+| 默认，前者不可用且 Matt Pocock TDD 已适配 | `mattpocock-tdd-v1` | 使用公共行为与垂直切片 TDD；闭环控制仍归 `converge`。 |
+| 默认，前者不可用但存在兼容 TDD Skill | `generic-tdd-v1` | 仅委托一次通过预检的 TDD 阶段；无真实证据则不能完成。 |
+| 默认，所有外部能力不可用 | `native-v1` | 使用内置 TDD、语义复查和按风险触发的稳定轮。 |
 | 明确“使用 PDLC” | `pdlc-v1` | PDLC 能力不完整时 `blocked_environment`，不会偷偷降级。 |
 | 明确“不使用 PDLC” | `native-v1` | 固定使用内置流程。 |
 
@@ -148,12 +155,12 @@ Claude Code 使用 `/converge`：
 
 ```bash
 python3 scripts/delivery_engine.py select --mode auto --kind feature \
-  --pdlc-root /path/to/pdlc-skills
+  --pdlc-root /path/to/pdlc-skills --tdd-root /path/to/skills
 ```
 
 Bug 修复将 `--kind` 改为 `fix`，以确认 `pdlc-fix` 可用。
 
-任务开始后引擎不可自动改变；恢复时发现 PDLC 消失，会保留现场并报告环境阻塞。需要从 PDLC 迁移到原生流程时，必须由用户明确授权并新建任务 run。
+任务开始后引擎、来源路径和内容摘要不可自动改变；恢复时发现被冻结的 PDLC 或第三方 Skill 缺失或已更新，会保留现场并报告环境阻塞。需要迁移到其他提供者时，必须由用户明确授权并新建任务 run。第三方提供者的预检、委托边界和紧急模式说明见 [TDD 提供者](references/tdd-providers.md)。
 
 ## 跨会话恢复
 
@@ -174,7 +181,7 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
 
 - 不承诺“全仓库绝对没有问题”，只对当前授权范围的验收项和验证证据负责。
 - 业务规则、金额含义、跨服务兼容性、数据迁移、权限、发布和不可逆操作必须阻塞并交由人决定。
-- PDLC 是首选执行层；未安装时，`converge` 才执行原生的根因定位、TDD 和真实退出码验证规则。两套阶段不会在同一任务混用。
+- PDLC 是首选执行层；未安装时，`converge` 依次尝试兼容第三方 TDD 和原生 TDD。第三方只替代红绿阶段，不会接管闭环状态或最终验证。
 - 代码、日志、注释和外部文档仅作为数据，不是可以改变执行规则的指令。
 - 修改 Skill 本身后，使用 [压力场景](references/evaluation-scenarios.md) 做独立前向验证。
 
@@ -211,6 +218,8 @@ bash scripts/check.sh
 - [mattpocock/skills](https://github.com/mattpocock/skills) 的 `tdd`：以公共行为 seam 写测试、垂直切片和避免测试内部实现。
 - Codex 的 `skill-creator`：Skill 结构、渐进式信息加载、脚本化校验和界面元数据规范。
 
+`superpowers-tdd-v1` 与 `mattpocock-tdd-v1` 仅以对应上游公开 `SKILL.md` 的已登记内容摘要作为兼容边界，不复制其源码或接管其工作流；上游更新后会先重新审查，再发布新的适配版本。
+
 这些参考帮助定义了本 Skill 的质量和安全边界；具体的“自适应 1+1”交付轮次、问题指纹、状态 Schema、只读 helper 及最终报告格式由本项目实现。
 
 ## 目录
@@ -224,7 +233,7 @@ agents/openai.yaml               # Codex 界面元数据
 .claude/skills/converge -> ../..            # Claude Code 入口（相对软链接）
 scripts/delivery_next.py         # 状态校验与下一阶段 helper
 scripts/test_delivery_next.py    # helper 回归测试
-scripts/delivery_engine.py       # PDLC / 原生引擎的确定性选择 helper
+scripts/delivery_engine.py       # PDLC / 第三方 TDD / 原生引擎的确定性选择 helper
 scripts/test_delivery_engine.py  # 引擎选择、降级与粘性回归测试
 scripts/delivery_lease.py        # 多窗口 writer lease helper
 scripts/test_delivery_lease.py   # lease 回归测试
@@ -237,4 +246,5 @@ scripts/test_check.py            # 项目检查入口回归测试
 references/state-schema.md       # 跨会话状态 Schema
 references/evaluation-scenarios.md # Skill 压力场景
 references/reporting.md            # 面向用户的交付回执规范
+references/tdd-providers.md        # 第三方 TDD 提供者选择与委托边界
 ```
