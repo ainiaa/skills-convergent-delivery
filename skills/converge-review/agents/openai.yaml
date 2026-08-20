@@ -1,0 +1,4 @@
+interface:
+  display_name: "Converge Review · 独立只读审查"
+  short_description: "只读检查需求与代码差异，返回有证据且绑定源码版本的发现"
+  default_prompt: "使用 $converge-review 只读检查当前改动；不要修改文件，按证据报告问题。"

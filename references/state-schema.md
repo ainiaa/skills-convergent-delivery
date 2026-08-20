@@ -1,6 +1,6 @@
 # 轻量状态 Schema v5
 
-仅用于跨服务、跨会话或用户要求恢复的 `converge` 任务。状态文件不保存密钥、Cookie、请求正文或敏感业务数据。
+仅用于跨服务、跨会话或用户要求恢复的单个 `converge` 任务。状态文件不保存密钥、Cookie、请求正文或敏感业务数据。多 Batch 计划使用独立的 [Batch Protocol v1](../skills/converge-batch/references/batch-contract.md) 和 `~/.convergent-delivery/batch-state/`，不得把两种状态合并。
 
 ```json
 {

@@ -10,10 +10,30 @@ GITHUB_RAW_VERSION_URL="https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MANAGED_SOURCE="${HOME}/.convergent-delivery/source"
 INSTALL_LOCK_DIR="${HOME}/.convergent-delivery/.install.lock"
-CODEX_TARGET="${HOME}/.codex/skills/converge"
-CLAUDE_TARGET="${HOME}/.claude/skills/converge"
+CODEX_SKILLS_ROOT="${HOME}/.codex/skills"
+CLAUDE_SKILLS_ROOT="${HOME}/.claude/skills"
 LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
+SKILL_NAMES=(converge converge-review converge-batch)
+REQUIRED_SOURCE_FILES=(
+  SKILL.md
+  VERSION
+  references/evaluation-scenarios.md
+  references/execution-protocol.md
+  references/reporting.md
+  references/state-schema.md
+  references/tdd-providers.md
+  scripts/delivery_engine.py
+  scripts/delivery_lease.py
+  scripts/delivery_next.py
+  scripts/delivery_state.py
+  scripts/delivery_task_key.py
+  skills/converge-review/SKILL.md
+  skills/converge-review/references/review-contract.md
+  skills/converge-batch/SKILL.md
+  skills/converge-batch/references/batch-contract.md
+  skills/converge-batch/scripts/batch_state.py
+)
 
 ACTION="install"
 TARGET="all"
@@ -32,9 +52,9 @@ Usage:
   bash install.sh --uninstall [--target codex|claude|all]
   bash install.sh --version [--offline]
 
-The default target is all (Codex and Claude Code). Installation creates only
-the runtime's converge symlink; it never replaces an existing
-directory unless --force is supplied.
+The default target is all (Codex and Claude Code). Installation creates the
+converge, converge-review, and converge-batch symlinks as one Suite. It never
+replaces an existing directory.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
@@ -61,9 +81,17 @@ case "$TARGET" in
 esac
 
 target_path() {
+  local skill="${2:-converge}"
   case "$1" in
-    codex) printf '%s\n' "$CODEX_TARGET" ;;
-    claude) printf '%s\n' "$CLAUDE_TARGET" ;;
+    codex) printf '%s/%s\n' "$CODEX_SKILLS_ROOT" "$skill" ;;
+    claude) printf '%s/%s\n' "$CLAUDE_SKILLS_ROOT" "$skill" ;;
+  esac
+}
+
+skill_source() {
+  case "$1" in
+    converge) printf '%s\n' "$SOURCE_DIR" ;;
+    converge-review|converge-batch) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
   esac
 }
 
@@ -100,8 +128,8 @@ do_version() {
   echo "converge version status"
   echo "──────────────────────────────────────"
   echo "  Local source: ${local_version}"
-  echo "  Codex:       $(version_at "$CODEX_TARGET")"
-  echo "  Claude Code: $(version_at "$CLAUDE_TARGET")"
+  echo "  Codex:       $(version_at "$(target_path codex converge)")"
+  echo "  Claude Code: $(version_at "$(target_path claude converge)")"
   echo "  GitHub main: $(latest_version)"
 }
 
@@ -146,22 +174,25 @@ prepare_source() {
     SOURCE_DIR="$MANAGED_SOURCE"
   fi
 
-  if [[ ! -f "$SOURCE_DIR/SKILL.md" || ! -f "$SOURCE_DIR/VERSION" ]]; then
-    echo "Error: source must contain SKILL.md and VERSION: $SOURCE_DIR" >&2
-    exit 1
-  fi
+  local relative
+  for relative in "${REQUIRED_SOURCE_FILES[@]}"; do
+    if [[ ! -f "$SOURCE_DIR/$relative" ]]; then
+      echo "Error: mandatory Suite file is missing: $SOURCE_DIR/$relative" >&2
+      exit 1
+    fi
+  done
   SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd -P)"
 }
 
 same_source() {
-  [[ -L "$1" ]] && [[ "$(cd "$1" 2>/dev/null && pwd -P)" == "$SOURCE_DIR" ]]
+  [[ -L "$1" ]] && [[ "$(cd "$1" 2>/dev/null && pwd -P)" == "$2" ]]
 }
 
 migrate_legacy_target() {
   local runtime="$1"
   local legacy
   legacy="$(legacy_target_path "$runtime")"
-  if same_source "$legacy"; then
+  if same_source "$legacy" "$SOURCE_DIR"; then
     rm "$legacy"
     echo "${runtime}: migrated legacy link → $(target_path "$runtime")"
   elif [[ -d "$legacy" ]] && [[ -f "$legacy/SKILL.md" ]] \
@@ -177,7 +208,8 @@ migrate_legacy_target() {
 
 ensure_installable() {
   local target="$1"
-  if same_source "$target"; then
+  local source="$2"
+  if same_source "$target" "$source"; then
     return
   fi
   if [[ -L "$target" ]]; then
@@ -193,40 +225,56 @@ ensure_installable() {
   fi
 }
 
-install_target() {
+install_skill() {
   local runtime="$1"
+  local skill="$2"
   local target
-  target="$(target_path "$runtime")"
-  if same_source "$target"; then
-    echo "${runtime}: already installed → $SOURCE_DIR"
+  local source
+  target="$(target_path "$runtime" "$skill")"
+  source="$(skill_source "$skill")"
+  if same_source "$target" "$source"; then
+    echo "${runtime}: ${skill} already installed → $source"
     return
   fi
   mkdir -p "$(dirname "$target")"
-  if [[ -L "$target" ]]; then
-    rm "$target"
-  fi
-  ln -s "$SOURCE_DIR" "$target"
-  echo "${runtime}: installed → $target"
+  local temporary="${target}.tmp.$$"
+  rm -f "$temporary"
+  ln -s "$source" "$temporary"
+  mv -f "$temporary" "$target"
+  echo "${runtime}: installed ${skill} → $target"
 }
 
 is_skill_link() {
   local target="$1"
+  local skill="$2"
   [[ -L "$target" ]] && [[ -f "$target/SKILL.md" ]] \
-    && grep -Eq '^name: (converge|convergent-delivery)$' "$target/SKILL.md"
+    && grep -Eq "^name: (${skill}|convergent-delivery)$" "$target/SKILL.md"
 }
 
-uninstall_target() {
+ensure_uninstallable() {
   local runtime="$1"
+  local skill="$2"
   local target
-  target="$(target_path "$runtime")"
-  if is_skill_link "$target" || { [[ "$FORCE" -eq 1 ]] && [[ -L "$target" ]]; }; then
-    rm "$target"
-    echo "${runtime}: removed $target"
-  elif [[ -e "$target" || -L "$target" ]]; then
+  target="$(target_path "$runtime" "$skill")"
+  if is_skill_link "$target" "$skill" || { [[ "$FORCE" -eq 1 ]] && [[ -L "$target" ]]; }; then
+    return
+  fi
+  if [[ -e "$target" || -L "$target" ]]; then
     echo "Error: refusing to remove unrecognized path: $target (use --force for a symlink)." >&2
     exit 1
+  fi
+}
+
+uninstall_skill() {
+  local runtime="$1"
+  local skill="$2"
+  local target
+  target="$(target_path "$runtime" "$skill")"
+  if [[ -L "$target" ]]; then
+    rm "$target"
+    echo "${runtime}: removed $target"
   else
-    echo "${runtime}: not installed"
+    echo "${runtime}: ${skill} not installed"
   fi
 }
 
@@ -239,25 +287,34 @@ acquire_install_lock
 
 if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   prepare_source
-  if [[ "$TARGET" == "all" ]]; then
-    migrate_legacy_target codex
-    migrate_legacy_target claude
-    ensure_installable "$CODEX_TARGET"
-    ensure_installable "$CLAUDE_TARGET"
-    install_target codex
-    install_target claude
-  else
-    migrate_legacy_target "$TARGET"
-    ensure_installable "$(target_path "$TARGET")"
-    install_target "$TARGET"
-  fi
+  RUNTIMES=("$TARGET")
+  [[ "$TARGET" == "all" ]] && RUNTIMES=(codex claude)
+  for runtime in "${RUNTIMES[@]}"; do
+    for skill in "${SKILL_NAMES[@]}"; do
+      ensure_installable "$(target_path "$runtime" "$skill")" "$(skill_source "$skill")"
+    done
+  done
+  for runtime in "${RUNTIMES[@]}"; do
+    migrate_legacy_target "$runtime"
+  done
+  for runtime in "${RUNTIMES[@]}"; do
+    for skill in "${SKILL_NAMES[@]}"; do
+      install_skill "$runtime" "$skill"
+    done
+  done
   echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Restart the runtime if it is already open."
 elif [[ "$ACTION" == "uninstall" ]]; then
-  if [[ "$TARGET" == "all" ]]; then
-    uninstall_target codex
-    uninstall_target claude
-  else
-    uninstall_target "$TARGET"
-  fi
+  RUNTIMES=("$TARGET")
+  [[ "$TARGET" == "all" ]] && RUNTIMES=(codex claude)
+  for runtime in "${RUNTIMES[@]}"; do
+    for skill in "${SKILL_NAMES[@]}"; do
+      ensure_uninstallable "$runtime" "$skill"
+    done
+  done
+  for runtime in "${RUNTIMES[@]}"; do
+    for skill in "${SKILL_NAMES[@]}"; do
+      uninstall_skill "$runtime" "$skill"
+    done
+  done
   echo "✅ Uninstall completed. The managed source is retained at ${MANAGED_SOURCE}."
 fi

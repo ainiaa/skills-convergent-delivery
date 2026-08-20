@@ -1,0 +1,4 @@
+interface:
+  display_name: "Converge Batch · 长计划调度"
+  short_description: "按冻结计划顺序派发独立任务并校验结构化交接，不读取业务代码"
+  default_prompt: "使用 $converge-batch 预检并顺序执行已有 Batch 计划；每批显式委托 $converge。"

@@ -8,18 +8,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = ROOT / "install.sh"
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+SKILL_SOURCES = {
+    "converge": ROOT,
+    "converge-review": ROOT / "skills/converge-review",
+    "converge-batch": ROOT / "skills/converge-batch",
+}
 
 
 class InstallTest(unittest.TestCase):
-    def run_installer(self, home, *arguments):
+    def run_installer_from(self, home, source, *arguments):
         environment = os.environ | {"HOME": str(home)}
         return subprocess.run(
-            ["bash", str(INSTALLER), "--source", str(ROOT), *arguments],
+            ["bash", str(INSTALLER), "--source", str(source), *arguments],
             text=True,
             capture_output=True,
             check=False,
             env=environment,
         )
+
+    def run_installer(self, home, *arguments):
+        return self.run_installer_from(home, ROOT, *arguments)
 
     def test_install_version_and_uninstall_for_both_runtimes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -27,12 +35,11 @@ class InstallTest(unittest.TestCase):
             result = self.run_installer(home, "--target", "all")
             self.assertEqual(0, result.returncode, result.stderr)
 
-            codex = home / ".codex/skills/converge"
-            claude = home / ".claude/skills/converge"
-            self.assertTrue(codex.is_symlink())
-            self.assertTrue(claude.is_symlink())
-            self.assertEqual(ROOT, codex.resolve())
-            self.assertEqual(ROOT, claude.resolve())
+            for runtime in ("codex", "claude"):
+                for name, source in SKILL_SOURCES.items():
+                    target = home / f".{runtime}/skills/{name}"
+                    self.assertTrue(target.is_symlink(), target)
+                    self.assertEqual(source, target.resolve())
 
             result = self.run_installer(home, "--version", "--offline")
             self.assertEqual(0, result.returncode, result.stderr)
@@ -41,8 +48,10 @@ class InstallTest(unittest.TestCase):
 
             result = self.run_installer(home, "--uninstall", "--target", "all")
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertFalse(codex.exists() or codex.is_symlink())
-            self.assertFalse(claude.exists() or claude.is_symlink())
+            for runtime in ("codex", "claude"):
+                for name in SKILL_SOURCES:
+                    target = home / f".{runtime}/skills/{name}"
+                    self.assertFalse(target.exists() or target.is_symlink())
 
     def test_install_refuses_to_replace_an_existing_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -55,6 +64,55 @@ class InstallTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertTrue(target.is_dir())
             self.assertIn("refusing to replace existing directory", result.stderr)
+
+    def test_install_preflights_the_whole_suite_before_creating_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            conflict = home / ".codex/skills/converge-batch"
+            conflict.mkdir(parents=True)
+
+            result = self.run_installer(home, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertTrue(conflict.is_dir())
+            for name in ("converge", "converge-review"):
+                target = home / f".codex/skills/{name}"
+                self.assertFalse(target.exists() or target.is_symlink())
+
+    def test_suite_conflict_does_not_migrate_the_legacy_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            legacy = home / ".codex/skills/convergent-delivery"
+            legacy.parent.mkdir(parents=True)
+            legacy.symlink_to(ROOT)
+            conflict = home / ".codex/skills/converge-batch"
+            conflict.mkdir()
+
+            result = self.run_installer(home, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertTrue(legacy.is_symlink())
+            self.assertEqual(ROOT, legacy.resolve())
+
+    def test_install_rejects_a_suite_missing_mandatory_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "source"
+            for path in (
+                source / "SKILL.md",
+                source / "VERSION",
+                source / "skills/converge-review/SKILL.md",
+                source / "skills/converge-batch/SKILL.md",
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("0.7.0\n" if path.name == "VERSION" else "---\nname: test\n---\n")
+
+            result = self.run_installer_from(home, source, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("mandatory Suite file", result.stderr)
+            self.assertFalse((home / ".codex/skills/converge").exists())
 
     def test_install_refuses_when_another_install_is_in_progress(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -141,7 +199,9 @@ class InstallTest(unittest.TestCase):
         self.assertIn("--writer-id <writer-id>", readme)
         self.assertIn("--revision <revision>", readme)
         self.assertIn("~/.convergent-delivery/state/", usage)
-        self.assertIn("PDLC 不可用时", (ROOT / "SKILL.md").read_text(encoding="utf-8"))
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("pdlc-v1", skill)
+        self.assertIn("native-v1", skill)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Converge · 有限阶段闭环交付"
-  short_description: "闭环实现软件需求：优先委托 PDLC 或兼容 TDD，并以证据交付"
-  default_prompt: "使用 $converge 处理当前需求：优先使用可用 PDLC，其次兼容 TDD；有限收敛后输出面向用户的交付回执。"
+  display_name: "Converge · 单任务闭环交付"
+  short_description: "有限收敛一个软件任务，优先委托 PDLC 并以新鲜证据交付"
+  default_prompt: "使用 $converge 闭环处理当前单个软件任务：优先复用可用 PDLC，有限修复并用新鲜证据交付。"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
@@ -12,15 +13,7 @@ python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
 python3 scripts/test_delivery_state.py
 python3 scripts/test_reporting_contract.py
-python3 - <<'PY'
-from pathlib import Path
-
-skill = Path("SKILL.md").read_text(encoding="utf-8")
-assert skill.startswith("---\n"), "SKILL.md frontmatter is missing"
-assert "\nname: converge\n" in skill, "SKILL.md name is invalid"
-assert "\ndescription:" in skill, "SKILL.md description is missing"
-for trigger in ("闭环实现", "闭环处理", "闭环完成"):
-    assert trigger in skill, f"SKILL.md trigger is missing: {trigger}"
-PY
+python3 scripts/test_skill_contracts.py
+python3 skills/converge-batch/scripts/test_batch_state.py
 
 echo "All checks passed."

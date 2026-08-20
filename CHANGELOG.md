@@ -6,6 +6,10 @@
 
 ### 新增
 
+- 将单一 Skill 拆分为职责明确的 Converge Suite：`converge` 负责单任务闭环，`converge-review` 负责独立只读审查，`converge-batch` 负责长计划接力。
+- 新增 Review Protocol v1：区分意图审查与全新上下文盲审，finding 绑定源码指纹，并提供只复核原问题的 closure 规则。
+- 新增 Batch Protocol v1 与原子状态 helper：全量预检、最小上下文胶囊、幂等派发、结构化 receipt、暂停/恢复/停止和计划级最终验收。
+- 新增 Suite 行为契约、Batch 生命周期、并发 revision、回执与安装冲突预检回归测试。
 - 建立 `convergent-delivery`，提供有限阶段的需求实现、验证、复查和交接流程。
 - 同时支持 Codex 与 Claude Code，并使用单一 Skill 源文件避免流程规则漂移。
 - 新增 `VERSION`、`install.sh` 及安装器回归测试；支持安装、升级、卸载与版本检查。
@@ -25,6 +29,10 @@
 
 ### 变更
 
+- `converge` 收敛为单任务控制面，不再承担普通只读 review 或多 Batch 调度；高风险任务显式委托 `converge-review`。
+- 安装器一次预检并安装/卸载三个 Skill；发生任一入口冲突时保留原安装和旧版入口，不产生半迁移状态。
+- 安装前校验三个 Skill 的必需协议与 helper；Batch 仅允许 active 计划的当前批次派发，receipt 必须解析到当前 clean worktree 中的真实 Git commit/tree。
+- 默认交付回执在简洁结果之外保留交付轮数、修复问题数和待处理项数，减少术语同时避免信息过少。
 - Skill 正式名称从 `convergent-delivery` 调整为更易记的 `converge`；安装器会安全迁移指向同一源码的旧软链接。
 - 状态 Schema 先升级为 v3：共享跨运行时 ledger，并用 lease、writer 与 revision 保护写入和恢复。
 - 状态写入改为仅接受 stdin 候选 JSON，并由脚本推导正式路径，避免 `/tmp` 或任意路径成为恢复状态。
