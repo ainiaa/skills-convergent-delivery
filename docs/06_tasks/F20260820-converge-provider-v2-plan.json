@@ -1,0 +1,201 @@
+{
+  "schema_version": 2,
+  "plan_id": "plan-converge-provider-v2-20260820",
+  "requirement_fingerprint": "530b82f8532285e78d80966fd18f47f33d0b951ef81a7283f77d8594ae9ec844",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "goal": "Provider Schema v2 can describe, validate, select, and freeze PDLC, adapted TDD, generic TDD, and native providers without provider-specific controller branches",
+      "owned_paths": [
+        "docs/06_tasks/F20260820-converge-provider-v2-plan.json",
+        "providers",
+        "scripts/delivery_engine.py",
+        "scripts/test_delivery_engine.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "Replace hard-coded engine metadata with the minimum declarative Provider Schema v2 registry and provider binding resolver"
+      ],
+      "acceptance": [
+        "Explicit provider selection blocks when unavailable, auto selection falls back only before writes, native mode does not probe external providers, and frozen bindings expose stable fingerprints"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -B -m unittest scripts.test_delivery_engine"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T2",
+      "goal": "Plan Contract v2 represents controller plus provider bindings and permits multiple bounded provider runs in one finite plan",
+      "owned_paths": [
+        "skills/converge-plan/SKILL.md",
+        "skills/converge-plan/references/plan-contract.md",
+        "skills/converge-plan/scripts/plan_check.py",
+        "skills/converge-plan/scripts/test_plan_check.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "Migrate plan validation from one engine and one opaque PDLC run to bounded task-level provider bindings with safe waves"
+      ],
+      "acceptance": [
+        "A complex plan may contain several independently verifiable PDLC-backed tasks while recursive planning, overlapping writes, and unbounded PDLC internals remain rejected"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 -B skills/converge-plan/scripts/test_plan_check.py"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T3",
+      "goal": "State Schema v7 persists provider bindings and bounded worker progress with controller-trusted revisions and compatible migration",
+      "owned_paths": [
+        "references/state-schema.md",
+        "scripts/delivery_state.py",
+        "scripts/delivery_next.py",
+        "scripts/delivery_progress.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_delivery_next.py",
+        "scripts/test_delivery_progress.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "Add Provider Binding and Progress Receipt v1 state transitions without weakening lease, revision, terminal, or migration invariants"
+      ],
+      "acceptance": [
+        "The parent can record and render the latest worker milestone, repeated liveness does not count as objective progress, and v5/v6 state migrates without changing frozen task facts"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -B -m unittest scripts.test_delivery_state scripts.test_delivery_next scripts.test_delivery_progress"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T4",
+      "goal": "Converge runtime uses provider-neutral bounded execution, visible worker progress, native fallback, finite review, adaptive reporting, and explicit Batch commit authorization",
+      "owned_paths": [
+        "SKILL.md",
+        "references/execution-control.md",
+        "references/execution-protocol.md",
+        "references/reporting.md",
+        "references/tdd-providers.md",
+        "references/evaluation-scenarios.md",
+        "scripts/delivery_report.py",
+        "scripts/test_delivery_report.py",
+        "scripts/test_reporting_contract.py",
+        "skills/converge-batch/SKILL.md",
+        "skills/converge-batch/references/batch-contract.md",
+        "skills/converge-batch/scripts/batch_state.py",
+        "skills/converge-batch/scripts/test_batch_state.py"
+      ],
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
+      "steps": [
+        "Integrate the new contracts into the controller, review loop, report renderer, worker lifecycle, and Batch preflight"
+      ],
+      "acceptance": [
+        "Converge remains the only controller, PDLC is optional, long work stays visible, high-risk review remains finite, reports use plain language, and Batch blocks before dispatch without commit authorization"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -B -m unittest scripts.test_delivery_report scripts.test_reporting_contract",
+        "PYTHONDONTWRITEBYTECODE=1 python3 -B skills/converge-batch/scripts/test_batch_state.py"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T5",
+      "goal": "The v0.11.0 package documents and behaviorally validates the complete provider-neutral delivery flow",
+      "owned_paths": [
+        "README.md",
+        "CHANGELOG.md",
+        "VERSION",
+        "docs/usage-guide.md",
+        "install.sh",
+        "references/activation.md",
+        "docs/04_testing",
+        "docs/07_reviews",
+        "scripts/check.sh",
+        "scripts/test_check.py",
+        "scripts/test_skill_contracts.py",
+        "scripts/test_install.py"
+      ],
+      "depends_on": [
+        "T4"
+      ],
+      "steps": [
+        "Update user documentation and version metadata, replace wording-only checks with behavior tests, and run isolated forward validation"
+      ],
+      "acceptance": [
+        "README explains provider selection, no-PDLC operation, progress, recovery, triggers, and standard versus emergency delivery; all suite checks and official validators pass"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "PYTHONDONTWRITEBYTECODE=1 bash install.sh --doctor --target codex --offline",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "Converge controls the complete finite loop while interchangeable providers perform only their declared work",
+    "Complex work is split into bounded tasks and users can see meaningful worker progress without fake percentages",
+    "The suite completes feature, fix, and refactor delivery when PDLC and all third-party TDD skills are absent",
+    "Provider, state, review, Batch, reporting, migration, and documentation behavior is covered by fresh executable evidence"
+  ],
+  "decisions": [
+    "Use native-v1 for this self-hosting upgrade to avoid coupling the Provider Schema rewrite to the current PDLC-specific adapter",
+    "Treat T2 and T3 as parallel candidates but serialize writes in the shared worktree under the single-writer lease",
+    "Do not add arbitrary provider commands, a daemon, true multi-worktree execution, automatic AGENTS.md mutation, or a new Provider skill"
+  ]
+}

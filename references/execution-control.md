@@ -5,7 +5,7 @@
 - 简单、低风险、单文件任务：一个 task，立即进入 TDD/实现。
 - 跨文件、跨层、高风险或预计超过一个短执行段：先调用 `converge-plan`。
 - 已携带 `planned_task=true`：只执行 capsule 中冻结的任务，禁止再次规划或递归派发。
-- `pdlc-v1`：只创建一个 `pdlc-run`，保存派发引用后立即由全新上下文执行完整 PDLC；主上下文不得提前准备 PDLC 文档和代码补丁。
+- `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run，保存派发引用后由全新上下文执行该 task 的完整 PDLC；不得把 PDLC 内部阶段再次拆解。复杂计划可以包含多个业务切片级 Provider Run。
 
 一个执行段必须有一个清晰结果，并在结束时产生至少一项可观察活动：工具调用、状态更新、diff、测试输出或 worker receipt。不要在一个模型生成步骤中同时准备完整需求、设计、失败测试和实现补丁。
 
@@ -18,6 +18,8 @@
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
 单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。
+
+worker 在阶段切换、客观产物产生及长命令前后发送 Progress Receipt；父代理登记可信时间并只保存最新快照。父代理负责约 60 秒内给用户一次可见状态；worker 的 heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 
 ## 3. 决策门禁
 

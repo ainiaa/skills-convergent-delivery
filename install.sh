@@ -25,10 +25,15 @@ REQUIRED_SOURCE_FILES=(
   references/reporting.md
   references/state-schema.md
   references/tdd-providers.md
+  providers/generic-tdd-v1.json
+  providers/mattpocock-tdd-v1.json
+  providers/native-v1.json
   providers/pdlc-v1.json
+  providers/superpowers-tdd-v1.json
   scripts/delivery_engine.py
   scripts/delivery_lease.py
   scripts/delivery_next.py
+  scripts/delivery_progress.py
   scripts/delivery_report.py
   scripts/delivery_state.py
   scripts/delivery_task_key.py
@@ -249,10 +254,10 @@ do_doctor() {
     local engine_status=0
     engine="$(python3 "$source/scripts/delivery_engine.py" select --mode auto --kind feature 2>&1)" \
       || engine_status=$?
-    echo "  Engine:  ${engine:-unavailable}"
+    echo "  Provider: ${engine:-unavailable}"
     [[ "$engine_status" -eq 0 && -n "$engine" ]] || failed=1
   else
-    echo "  Engine:  unavailable"
+    echo "  Provider: unavailable"
     failed=1
   fi
   return "$failed"

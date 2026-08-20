@@ -45,7 +45,8 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(marker, skill + contract)
         for marker in (
             "planned_task=true",
-            "pdlc-run",
+            "Provider Binding",
+            "多个边界独立",
             "90",
             "180",
             "最多自动恢复一次",
@@ -57,13 +58,23 @@ class SkillContractTest(unittest.TestCase):
         for marker in ("--workspace", "commit_id", "tree_hash", "diff_fingerprint", "exit_code"):
             self.assertIn(marker, contract)
 
-    def test_root_skill_plans_before_non_planned_execution_without_splitting_pdlc(self):
+    def test_root_skill_plans_bounded_provider_runs_without_splitting_pdlc_internals(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("converge-plan", text)
         self.assertIn("planned_task=true", text)
-        self.assertIn("一个 `pdlc-run`", text)
-        self.assertIn("完整 PDLC", text)
+        self.assertIn("独立可验收的业务切片", text)
+        self.assertIn("PDLC task 内部仍整体委托", text)
         self.assertIn("execution-control.md", text)
+
+    def test_provider_and_progress_contracts_remain_controller_owned(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+
+        for marker in ("Converge 始终是 controller", "Provider Schema v2", "不能成为第二真相"):
+            self.assertIn(marker, skill)
+        for marker in ("Progress Receipt v1", "objective_revision", "不编造百分比或 ETA"):
+            self.assertIn(marker, state + control)
 
     def test_root_skill_no_longer_owns_plan_or_review_modes(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -130,6 +141,7 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, runtime)
         self.assertIn("Batch Protocol v1 默认顺序", skill)
+        self.assertIn("commit_authorized", contract)
 
     def test_watchdog_rules_do_not_claim_missing_host_capabilities(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")

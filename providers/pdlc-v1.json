@@ -1,7 +1,15 @@
 {
-  "schema_version": 1,
-  "provider_id": "kanfu-panda/pdlc-skills",
-  "provider_version": "1.6.0",
+  "schema_version": 2,
+  "provider": {
+    "id": "pdlc-v1",
+    "source_id": "kanfu-panda/pdlc-skills",
+    "version": "1.6.0",
+    "role": "workflow"
+  },
+  "capabilities": {
+    "task_kinds": ["feature", "fix", "refactor"],
+    "stages": ["plan", "tdd", "implement", "review"]
+  },
   "task_contracts": {
     "feature": {
       "entrypoint": "pdlc-feature/SKILL.md",
@@ -25,5 +33,9 @@
   "authorization": {
     "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
     "forbidden_actions": ["pdlc-ship", "commit", "tag", "push", "publish", "install"]
+  },
+  "outputs": {
+    "progress_protocol": 1,
+    "required_evidence": ["tests", "validation", "findings"]
   }
 }

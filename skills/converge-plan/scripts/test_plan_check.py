@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -7,10 +8,24 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("plan_check.py")
 SHA = "a" * 64
-SOURCE_SHA = "b" * 64
 
 
-def task(task_id, paths, depends_on=None, execution="auto"):
+def provider_binding(workflow="native-v1", tdd=None):
+    stages = {"tdd": tdd} if tdd else {}
+    payload = {
+        "controller": "converge",
+        "workflow_provider": workflow,
+        "stage_providers": stages,
+    }
+    return {
+        **payload,
+        "binding_fingerprint": hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     return {
         "task_id": task_id,
         "goal": f"deliver {task_id}",
@@ -21,17 +36,18 @@ def task(task_id, paths, depends_on=None, execution="auto"):
         "verification": [f"check-{task_id}"],
         "execution": execution,
         "status": "pending",
+        "provider_binding": provider or provider_binding(),
+        "provider_run": {"scope": "task", "recursive_planning": False},
     }
 
 
-def plan(tasks, engine="native-v1", context="short", planner=None):
+def plan(tasks, context="short", planner=None):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "plan_id": "plan-example",
         "requirement_fingerprint": SHA,
-        "engine": engine,
         "planner": planner or {
-            "name": "pdlc-delegation-v1" if engine == "pdlc-v1" else "native-plan-v1",
+            "name": "native-plan-v1",
             "source_path": None,
             "source_fingerprint": None,
         },
@@ -126,20 +142,53 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual([["T1"], ["T2"]], json.loads(result.stdout)["waves"])
 
-    def test_pdlc_is_one_fresh_pdlc_run_task(self):
-        valid = plan([task("pdlc-run", ["."])], engine="pdlc-v1")
-        invalid = plan(
-            [task("requirements", ["docs"]), task("implementation", ["src"])],
-            engine="pdlc-v1",
+    def test_multiple_bounded_pdlc_runs_are_allowed_in_one_plan(self):
+        value = plan(
+            [
+                task("schema", ["providers"], provider=provider_binding("pdlc-v1")),
+                task(
+                    "runtime",
+                    ["scripts"],
+                    ["schema"],
+                    provider=provider_binding("pdlc-v1"),
+                ),
+            ]
         )
 
-        accepted = self.run_check("validate", valid)
-        rejected = self.run_check("validate", invalid)
+        result = self.run_check("validate", value)
 
-        self.assertEqual(0, accepted.returncode, accepted.stderr)
-        self.assertEqual("fresh", json.loads(accepted.stdout)["execution_mode"])
-        self.assertNotEqual(0, rejected.returncode)
-        self.assertIn("pdlc-run", rejected.stderr)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([["schema"], ["runtime"]], json.loads(result.stdout)["waves"])
+        self.assertEqual("batch", json.loads(result.stdout)["execution_mode"])
+
+    def test_rejects_a_forged_provider_binding_fingerprint(self):
+        value = plan([task("T1", ["src"])])
+        value["tasks"][0]["provider_binding"]["binding_fingerprint"] = "b" * 64
+
+        self.assertNotEqual(0, self.run_check("validate", value).returncode)
+
+    def test_rejects_recursive_or_unbounded_provider_runs(self):
+        for provider_run in (
+            {"scope": "plan", "recursive_planning": False},
+            {"scope": "task", "recursive_planning": True},
+        ):
+            with self.subTest(provider_run=provider_run):
+                value = plan([task("T1", ["src"], provider=provider_binding("pdlc-v1"))])
+                value["tasks"][0]["provider_run"] = provider_run
+
+                self.assertNotEqual(0, self.run_check("validate", value).returncode)
+
+    def test_v1_engine_plan_is_migrated_to_provider_bindings(self):
+        value = plan([task("pdlc-run", ["."])])
+        value["schema_version"] = 1
+        value["engine"] = "pdlc-v1"
+        value["planner"]["name"] = "pdlc-delegation-v1"
+        value["tasks"][0].pop("provider_binding")
+
+        result = self.run_check("validate", value)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(2, json.loads(result.stdout)["normalized_schema_version"])
 
     def test_rejects_cycles_unknown_dependencies_and_duplicate_ids(self):
         cases = [
@@ -152,8 +201,10 @@ class PlanCheckTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertNotEqual(0, self.run_check("validate", value).returncode)
 
-    def test_rejects_unknown_engines_and_unfrozen_third_party_planners(self):
-        unknown_engine = plan([task("T1", ["a"])], engine="invented-v1")
+    def test_rejects_unknown_providers_and_unfrozen_third_party_planners(self):
+        unknown_provider = plan(
+            [task("T1", ["a"], provider=provider_binding("invented-v1"))]
+        )
         unfrozen_planner = plan(
             [task("T1", ["a"])],
             planner={
@@ -163,7 +214,7 @@ class PlanCheckTest(unittest.TestCase):
             },
         )
 
-        self.assertNotEqual(0, self.run_check("validate", unknown_engine).returncode)
+        self.assertNotEqual(0, self.run_check("validate", unknown_provider).returncode)
         self.assertNotEqual(0, self.run_check("validate", unfrozen_planner).returncode)
 
     def test_long_single_task_uses_a_fresh_context(self):

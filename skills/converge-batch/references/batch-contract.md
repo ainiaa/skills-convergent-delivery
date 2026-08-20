@@ -17,16 +17,24 @@
   "produces": ["interface/artifact for later batches"],
   "baseline": "commit",
   "acceptance": ["criterion"],
-  "verification": ["real command or objective check"]
+  "verification": ["real command or objective check"],
+  "provider_binding": {
+    "controller": "converge",
+    "workflow_provider": "native-v1",
+    "stage_providers": {},
+    "binding_fingerprint": "<sha256>"
+  }
 }
 ```
 
 调度器只能复制和裁剪计划，不能通过读取业务代码自行填充缺失字段。
 Schema v2+ capsule 的 `planned_task` 必须严格为 `true`，`plan_id` 必须匹配冻结计划，`task_id` 必须匹配 Batch 记录；任一缺失或错配都拒绝初始化，避免执行者递归规划。
 
+Schema v3 capsule 还必须携带计划中冻结且摘要匹配的 Provider Binding；缺失或伪造时不得初始化。`preflight.commit_authorized` 必须严格为 `true`。该值只能来自用户对本计划的一次性本地 commit 授权；旧 v1/v2 迁移时必须显式补入授权和 Provider Binding，不能由 helper 推断。push、merge、tag、publish 仍不在授权内。
+
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 升级为 v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 持久化 `task_id`、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。`worker_status` 活动态为 `working`，宿主终态只能是 `completed|interrupted|blocked`。reader 可读取旧 Schema v1/v2，但下一次写入必须先做一次只添加 capsule identity、recovery 和 worker lifecycle 的原子迁移；迁移不得同时改变计划或 Batch 行为状态。旧状态已有 active worker 时，迁移前必须用保存的 ref 查询真实宿主状态，不能猜测终态。新状态不能再以 v1/v2 初始化。
+Batch Protocol 保持 v1，持久化 state Schema 升级为 v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 持久化 `task_id`、Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。`worker_status` 活动态为 `working`，宿主终态只能是 `completed|interrupted|blocked`。reader 可读取旧 Schema v1/v2，但下一次写入必须先做一次只添加 capsule identity、Provider Binding、recovery 和 worker lifecycle 的原子迁移；迁移不得同时改变计划或 Batch 行为状态。旧状态已有 active worker 时，迁移前必须用保存的 ref 查询真实宿主状态，不能猜测终态。新状态不能再以 v1/v2 初始化。
 
 helper 另以 `repo_id + plan_id` 建立默认两小时的 scheduler lease，并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管，活动 lease 即使带 takeover 也不能抢占。该 lease 只保护计划派发权，不授予代码写权，也不替代每个 `$converge` worker 的 worktree/task writer lease。
 

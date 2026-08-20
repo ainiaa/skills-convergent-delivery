@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -10,6 +11,20 @@ MODULE_PATH = Path(__file__).with_name("batch_state.py")
 SPEC = importlib.util.spec_from_file_location("batch_state", MODULE_PATH)
 batch_state = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(batch_state)
+
+
+def provider_binding(workflow="native-v1"):
+    binding = {
+        "controller": "converge",
+        "workflow_provider": workflow,
+        "stage_providers": {},
+    }
+    return {
+        **binding,
+        "binding_fingerprint": hashlib.sha256(
+            json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
 
 
 def capsule(batch_id, plan_id="plan-1", task_id=None):
@@ -26,6 +41,7 @@ def capsule(batch_id, plan_id="plan-1", task_id=None):
         "baseline": "abc123",
         "acceptance": [f"accept-{batch_id}"],
         "verification": [f"test-{batch_id}"],
+        "provider_binding": provider_binding(),
     }
 
 
@@ -62,7 +78,12 @@ def candidate(workspace, revision=0):
             "plan_revision": 1,
             "plan_fingerprint": "f" * 64,
         },
-        "preflight": {"passed": True, "checked_at": "2026-08-20T00:00:00Z", "issues": []},
+        "preflight": {
+            "passed": True,
+            "checked_at": "2026-08-20T00:00:00Z",
+            "issues": [],
+            "commit_authorized": True,
+        },
         "status": "active",
         "current_batch": "B1",
         "batches": [
@@ -139,6 +160,28 @@ class BatchStateTest(unittest.TestCase):
 
     def write(self, state, expected_revision):
         return batch_state.write_state(self.root, state, expected_revision)
+
+    def test_preflight_requires_one_time_commit_authorization_before_dispatch(self):
+        missing = candidate(self.workspace)
+        missing["preflight"].pop("commit_authorized")
+        denied = candidate(self.workspace)
+        denied["preflight"]["commit_authorized"] = False
+
+        for value in (missing, denied):
+            with self.subTest(preflight=value["preflight"]):
+                with self.assertRaisesRegex(ValueError, "commit authorization"):
+                    self.write(value, -1)
+
+    def test_schema_v3_capsule_requires_the_frozen_provider_binding(self):
+        missing = candidate(self.workspace)
+        missing["batches"][0]["capsule"].pop("provider_binding")
+        forged = candidate(self.workspace)
+        forged["batches"][0]["capsule"]["provider_binding"]["binding_fingerprint"] = "0" * 64
+
+        for value in (missing, forged):
+            with self.subTest(capsule=value["batches"][0]["capsule"]):
+                with self.assertRaisesRegex(ValueError, "provider binding"):
+                    batch_state.validate_state(value)
 
     def test_init_and_legal_batch_lifecycle(self):
         state = candidate(self.workspace)

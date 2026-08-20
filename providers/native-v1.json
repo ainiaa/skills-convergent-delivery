@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "provider": {
+    "id": "native-v1",
+    "source_id": "converge/native",
+    "version": "1",
+    "role": "workflow"
+  },
+  "capabilities": {
+    "task_kinds": ["feature", "fix", "refactor"],
+    "stages": ["plan", "tdd", "implement", "review"]
+  },
+  "task_contracts": {
+    "feature": {"entrypoint": "references/execution-protocol.md", "closure": [], "preserve_external_behavior": false},
+    "fix": {"entrypoint": "references/execution-protocol.md", "closure": [], "preserve_external_behavior": false},
+    "refactor": {"entrypoint": "references/execution-protocol.md", "closure": [], "preserve_external_behavior": true}
+  },
+  "authorization": {
+    "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
+    "forbidden_actions": ["commit", "tag", "push", "publish", "install"]
+  },
+  "outputs": {
+    "progress_protocol": 1,
+    "required_evidence": ["tests", "validation", "findings"]
+  }
+}

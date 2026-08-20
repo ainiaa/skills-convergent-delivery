@@ -23,10 +23,133 @@ REQUIRED = (
 
 
 class DeliveryEngineTest(unittest.TestCase):
+    def provider_registry(self, directory, *manifests):
+        provider_dir = Path(directory) / "providers"
+        provider_dir.mkdir()
+        native = json.loads(engine_module.PROVIDER_MANIFEST.with_name("native-v1.json").read_text())
+        for manifest in (native, *manifests):
+            provider_id = manifest["provider"]["id"]
+            (provider_dir / f"{provider_id}.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+        return provider_dir
+
+    def test_auto_selects_a_new_workflow_provider_from_schema_v2_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "workflow"
+            entrypoint = root / "skills/custom-feature/SKILL.md"
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text("custom workflow\n", encoding="utf-8")
+            digest = hashlib.sha256(
+                b"custom-feature/SKILL.md\0" + entrypoint.read_bytes()
+            ).hexdigest()
+            manifest = {
+                "schema_version": 2,
+                "provider": {
+                    "id": "custom-workflow-v1",
+                    "source_id": "example/custom-workflow",
+                    "version": "1",
+                    "role": "workflow",
+                },
+                "capabilities": {
+                    "task_kinds": ["feature"],
+                    "stages": ["plan", "tdd", "implement", "review"],
+                },
+                "task_contracts": {
+                    "feature": {
+                        "entrypoint": "custom-feature/SKILL.md",
+                        "closure": [],
+                        "source_fingerprint": digest,
+                        "preserve_external_behavior": False,
+                    }
+                },
+                "authorization": {
+                    "stop_for": sorted(engine_module.REQUIRED_STOP_POINTS),
+                    "forbidden_actions": sorted(engine_module.REQUIRED_FORBIDDEN_ACTIONS),
+                },
+                "outputs": {"progress_protocol": 1, "required_evidence": ["tests"]},
+            }
+            provider_dir = self.provider_registry(directory, manifest)
+
+            with patch.object(engine_module, "PROVIDER_DIR", provider_dir):
+                result = engine_module.selection("auto", str(root), [], "feature")
+
+        self.assertEqual("custom-workflow-v1", result["engine"])
+        self.assertEqual(
+            "custom-workflow-v1", result["binding"]["workflow_provider"]["id"]
+        )
+
+    def test_auto_selects_a_new_adapted_tdd_provider_from_schema_v2_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.tdd_root(directory, "custom-tdd", "custom test protocol\n")
+            manifest = {
+                "schema_version": 2,
+                "provider": {
+                    "id": "custom-tdd-v1",
+                    "source_id": "example/custom-tdd",
+                    "version": "1",
+                    "role": "stage",
+                },
+                "capabilities": {"task_kinds": ["feature"], "stages": ["tdd"]},
+                "task_contracts": {
+                    "feature": {
+                        "entrypoint_candidates": ["custom-tdd/SKILL.md"],
+                        "source_fingerprint": engine_module.file_fingerprint(path),
+                    }
+                },
+                "authorization": {
+                    "stop_for": sorted(engine_module.REQUIRED_STOP_POINTS),
+                    "forbidden_actions": ["commit", "tag", "push", "publish", "install"],
+                },
+                "outputs": {"progress_protocol": 1, "required_evidence": ["tests"]},
+            }
+            provider_dir = self.provider_registry(directory, manifest)
+
+            with patch.object(engine_module, "PROVIDER_DIR", provider_dir):
+                result = engine_module.selection(
+                    "auto", str(Path(directory) / "missing-workflow"), [root], "feature"
+                )
+
+        self.assertEqual("custom-tdd-v1", result["engine"])
+        self.assertEqual("custom-tdd-v1", result["binding"]["stage_providers"]["tdd"]["id"])
+
     def test_bundled_adapter_identifies_the_supported_pdlc_release(self):
         manifest = json.loads(engine_module.PROVIDER_MANIFEST.read_text(encoding="utf-8"))
 
-        self.assertEqual("1.6.0", manifest["provider_version"])
+        self.assertEqual(2, manifest["schema_version"])
+        self.assertEqual("1.6.0", manifest["provider"]["version"])
+        self.assertEqual("workflow", manifest["provider"]["role"])
+
+    def test_bundled_registry_uses_one_provider_schema_for_every_adapter(self):
+        manifests = engine_module.load_provider_registry()
+
+        self.assertEqual(
+            {"native-v1", "pdlc-v1", "superpowers-tdd-v1", "mattpocock-tdd-v1", "generic-tdd-v1"},
+            set(manifests),
+        )
+        for provider_id, manifest in manifests.items():
+            with self.subTest(provider=provider_id):
+                self.assertEqual(2, manifest["schema_version"])
+                self.assertEqual(provider_id, manifest["provider"]["id"])
+                self.assertIn(manifest["provider"]["role"], {"workflow", "stage"})
+                self.assertIn("feature", manifest["capabilities"]["task_kinds"])
+                self.assertEqual(1, manifest["outputs"]["progress_protocol"])
+
+    def test_provider_manifest_rejects_executable_or_escaping_contract_fields(self):
+        manifest = engine_module.load_provider_registry()["native-v1"]
+        executable = json.loads(json.dumps(manifest))
+        executable["command"] = "run-provider"
+        nested_executable = json.loads(json.dumps(manifest))
+        nested_executable["provider"]["shell"] = "run-provider"
+        escaping = json.loads(json.dumps(manifest))
+        escaping["task_contracts"]["feature"]["entrypoint"] = "../SKILL.md"
+
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            engine_module.validate_provider_manifest(executable)
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            engine_module.validate_provider_manifest(nested_executable)
+        with self.assertRaisesRegex(ValueError, "entrypoint"):
+            engine_module.validate_provider_manifest(escaping)
 
     def run_engine(self, *arguments, environment=None):
         arguments = list(arguments)
@@ -71,9 +194,17 @@ class DeliveryEngineTest(unittest.TestCase):
         (root / "converge-provider.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
-                    "provider_id": "pdlc-skills",
-                    "provider_version": "test-v1",
+                    "schema_version": 2,
+                    "provider": {
+                        "id": "pdlc-v1",
+                        "source_id": "pdlc-skills",
+                        "version": "test-v1",
+                        "role": "workflow",
+                    },
+                    "capabilities": {
+                        "task_kinds": ["feature", "fix", "refactor"],
+                        "stages": ["plan", "tdd", "implement", "review"],
+                    },
                     "task_contracts": task_contracts,
                     "authorization": {
                         "stop_for": [
@@ -91,6 +222,10 @@ class DeliveryEngineTest(unittest.TestCase):
                             "publish",
                             "install",
                         ],
+                    },
+                    "outputs": {
+                        "progress_protocol": 1,
+                        "required_evidence": ["tests", "validation", "findings"],
                     },
                 },
                 sort_keys=True,
@@ -120,7 +255,12 @@ class DeliveryEngineTest(unittest.TestCase):
             result = self.run_engine("--pdlc-root", str(self.pdlc_root(directory)))
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual("pdlc-v1", json.loads(result.stdout)["engine"])
+        payload = json.loads(result.stdout)
+        self.assertEqual("pdlc-v1", payload["engine"])
+        self.assertEqual("converge", payload["binding"]["controller"])
+        self.assertEqual("pdlc-v1", payload["binding"]["workflow_provider"]["id"])
+        self.assertEqual({}, payload["binding"]["stage_providers"])
+        self.assertEqual(64, len(payload["binding_fingerprint"]))
 
     def test_auto_prefers_pdlc_over_an_adapted_tdd_provider(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -143,6 +283,7 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual("native-v1", payload["engine"])
+        self.assertEqual("native-v1", payload["binding"]["workflow_provider"]["id"])
         self.assertIn("fell back", payload["reason"])
 
     def test_auto_prefers_adapted_superpowers_tdd_after_pdlc(self):
@@ -156,6 +297,10 @@ class DeliveryEngineTest(unittest.TestCase):
 
         self.assertEqual("superpowers-tdd-v1", payload["engine"])
         self.assertEqual(str(path.resolve()), payload["tdd_skill_path"])
+        self.assertEqual("native-v1", payload["binding"]["workflow_provider"]["id"])
+        self.assertEqual(
+            "superpowers-tdd-v1", payload["binding"]["stage_providers"]["tdd"]["id"]
+        )
 
     def test_auto_prefers_superpowers_over_mattpocock(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -370,7 +515,7 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("changed", json.loads(result.stdout)["reason"])
 
-    def test_installed_but_unadapted_pdlc_is_explicitly_blocked(self):
+    def test_auto_falls_back_when_an_installed_pdlc_adapter_is_incompatible(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "unadapted"
             for skill in REQUIRED:
@@ -378,6 +523,22 @@ class DeliveryEngineTest(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("unknown version\n", encoding="utf-8")
             result = self.run_engine("--pdlc-root", str(root), "--kind", "feature")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("native-v1", payload["engine"])
+        self.assertIn("incompatible", payload["reason"])
+
+    def test_explicit_pdlc_blocks_when_an_installed_adapter_is_incompatible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "unadapted"
+            for skill in REQUIRED:
+                path = root / "skills" / skill / "SKILL.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unknown version\n", encoding="utf-8")
+            result = self.run_engine(
+                "--mode", "pdlc", "--pdlc-root", str(root), "--kind", "feature"
+            )
 
         self.assertEqual(2, result.returncode)
         payload = json.loads(result.stdout)

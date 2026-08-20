@@ -36,7 +36,7 @@ bash install.sh --upgrade --target all
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 四个入口是否来自同一版本、必需文件、Git、Python 和执行引擎，不修改安装。
+`--doctor` 检查 Suite 四个入口是否来自同一版本、必需文件、Git、Python 和 Provider 解析，不修改安装。
 
 安装器先预检两个运行时的全部四个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
@@ -60,7 +60,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 helper 推导；Schema v6 冻结 controller/provider，持久化当前 run worker，并继续校验 lease、CAS、冻结契约、阶段与追加证据。旧 v5 第一次写入只添加迁移。PDLC manifest、真实入口或依赖闭包变化会明确阻塞，细节见 [状态 Schema](../references/state-schema.md)。无需恢复的简单任务不创建 state/lease，直接用 `delivery_report.py --input -` 生成报告；持久任务继续使用 `--state`。
+单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 helper 推导；Schema v7 冻结 controller protocol 和 Provider Binding，持久化当前 run worker 的最新 Progress Receipt，并继续校验 lease、CAS、阶段与追加证据。旧 v5/v6 第一次写入只添加迁移。包版本变化不再误阻塞兼容协议，manifest、真实入口或依赖闭包变化仍会明确阻塞。无需恢复的简单任务不创建 state/lease，直接用 `delivery_report.py --input -` 生成报告。
 
 Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v3。reader 可读取旧 v1/v2，下一次写入先做只添加 capsule/task identity、recovery 和 worker lifecycle 的原子迁移；新状态必须是 v3。路径由 repo、`plan_id` 和 `run_id` 推导，另以 `repo_id + plan_id` 建立默认两小时且每次写入续期的 scheduler lease；活动 owner 阻止第二个 run/window，过期后仅允许显式 `--takeover`。`plan_revision` 与 fingerprint 在状态内冻结，任何漂移都会阻塞。写入同样使用 stdin、文件锁、revision CAS、私有临时文件、`fsync` 和同目录原子替换。
 
@@ -77,9 +77,11 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
 
-PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口互斥。Converge 的 JSON adapter manifest 校验 provider id/version、feature/fix/refactor 入口、授权边界和显式源码闭包；已安装但未适配或冻结后变化会明确阻塞。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
+PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Converge 的跨窗口互斥和外层完成判定。Provider Schema v2 统一校验 PDLC、第三方 TDD 和 Native 的身份、能力、授权、输出及源码闭包。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
-复杂任务先由 `converge-plan` 生成并校验 Plan Contract。PDLC 路径只有一个 `pdlc-run`，宿主支持时完整流程在 fresh context 中执行，否则手工交接；非 PDLC 路径按依赖和 `owned_paths` 生成 wave。每个派发 capsule 都携带并由 Schema 校验 `planned_task=true`、正确 `plan_id/task_id`，避免子执行者再次规划。计划结束后必须把真实 workspace 交给 audit，由 helper 自行读取 Git commit/tree/diff/changed paths 并核对结构化证据。
+复杂任务先由 `converge-plan` 生成并校验 Plan Contract v2。任务按独立业务切片和 `owned_paths` 生成 wave，每个 task 冻结 Provider Binding；PDLC 只完整负责该 task 内部阶段。每个 capsule 都携带并校验 `planned_task=true`、正确 `plan_id/task_id`，避免子执行者再次规划。计划结束后 audit 从真实 workspace 读取 Git commit/tree/diff/changed paths 并核对结构化证据。
+
+子代理在阶段变化、客观产物产生和长命令前后发送 Progress Receipt；父代理只保存最新快照并负责用户可见更新。heartbeat 不计为新客观进展，进度展示不使用百分比或 ETA，也不替代验证证据。
 
 `converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 

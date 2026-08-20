@@ -47,6 +47,7 @@ def build_report(state):
         "verification": state["handoff"]["last_verification"],
         "completed_rounds": state["ledger"]["completed_rounds"],
         "repaired_issues": len(state["ledger"]["repair_fingerprints"]),
+        "key_changes": state["ledger"].get("key_changes", []),
         "pending_items": pending_items,
         "acceptance": [
             {
@@ -65,12 +66,16 @@ def build_report(state):
 def render_text(report):
     lines = [
         f"结果：{report['title']}：{report['goal']}",
+    ]
+    if report["key_changes"]:
+        lines.append(f"关键改动：{'；'.join(report['key_changes'])}")
+    lines.extend([
         f"已验证：{report['verification']}",
         "过程："
         f"{report['completed_rounds']} 个交付轮；"
         f"修复 {report['repaired_issues']} 个问题；"
         f"待处理 {report['pending_items']} 项",
-    ]
+    ])
     if report["outcome"] != "ready" and has_open_issues(report["reason"]):
         lines.append(f"未验证/影响：{report['reason']}")
     if report["next_action"].strip().lower() not in NO_NEXT_ACTION:

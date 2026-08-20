@@ -7,7 +7,7 @@ description: Create and validate a finite software execution plan before impleme
 
 只负责把已授权需求变成可执行、可验证的有限计划。**不修改业务代码**、不做代码评审、不运行实现，也不拆解 PDLC 内部阶段。
 
-先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v1](references/plan-contract.md)。
+先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v2](references/plan-contract.md)。
 
 ## 1. 冻结输入
 
@@ -27,7 +27,7 @@ description: Create and validate a finite software execution plan before impleme
 - 每个 step 只描述一个动作；不得把“文档 + 测试 + 实现 + review”塞进一步。
 - 明确 `owned_paths`、`depends_on`、验收行为和真实验证命令。
 - 简单任务仍可只有一个 task，不为它增加虚构阶段。
-- `pdlc-v1` 只能形成一个 `pdlc-run` task，由全新上下文执行完整 PDLC。
+- 每个 task 冻结自己的 Provider Binding，并声明 `provider_run={scope: task, recursive_planning: false}`。PDLC 仍完整负责一个 task 内部阶段，但一个计划可以包含多个边界独立、可分别验收的 PDLC-backed task。
 
 将完整 JSON 经 stdin 校验：
 
@@ -45,7 +45,7 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" validate --input -
 - `fresh`：PDLC、单个复杂任务或当前上下文已长/压缩。
 - `batch`：多个任务交给 `converge-batch`。wave 用于标识依赖和潜在并行候选；内置 Batch Protocol v1 仍按原顺序执行，避免多 worktree 集成和 receipt 无法可靠恢复。
 
-所有派发 capsule 写入 `planned_task=true`、`plan_id`、`task_id`、冻结范围和验收。执行者看到 `planned_task=true` 后只执行该 task，不再次规划。
+所有派发 capsule 写入 `planned_task=true`、`plan_id`、`task_id`、Provider Binding、冻结范围和验收。执行者看到 `planned_task=true` 后只执行该 task，不再次规划。
 
 ## 5. 交接
 

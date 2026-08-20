@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint
+from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_reference
+from delivery_next import upgrade_state, validate_provider_reference
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -57,6 +58,44 @@ def state(**overrides):
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_v6_migration_rejects_an_unknown_frozen_controller(self):
+        payload = state(
+            schema_version=6,
+            controller={"version": "forged", "fingerprint": "0" * 64},
+        )
+
+        with self.assertRaisesRegex(ValueError, "legacy controller"):
+            upgrade_state(payload)
+
+    def test_v6_migration_accepts_the_published_0_10_controller(self):
+        payload = state(
+            schema_version=6,
+            controller={
+                "version": "0.10.0",
+                "fingerprint": "843047313fb0c0c7b068e4a7033fe51a7ffec62aaf4234aaf86893c48144a485",
+            },
+        )
+
+        self.assertEqual(7, upgrade_state(payload)["schema_version"])
+
+    def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(__file__).resolve().parent.parent / "providers" / "native-v1.json"
+            for field, value in (("version", "2"), ("role", "stage")):
+                with self.subTest(field=field):
+                    manifest = json.loads(source.read_text(encoding="utf-8"))
+                    manifest["provider"][field] = value
+                    path = Path(directory) / f"native-{field}.json"
+                    path.write_text(json.dumps(manifest), encoding="utf-8")
+                    reference = provider_reference("native-v1")
+                    reference.update(
+                        manifest=str(path.resolve()),
+                        manifest_fingerprint=file_fingerprint(path),
+                    )
+
+                    with self.assertRaisesRegex(ValueError, "identity changed"):
+                        validate_provider_reference(reference, "workflow", "feature")
+
     def pdlc_engine(self, directory):
         root = Path(directory) / "pdlc"
         for name in ("pdlc-tdd", "pdlc-implement", "pdlc-review", "pdlc-feature"):
@@ -75,9 +114,17 @@ class DeliveryNextTest(unittest.TestCase):
         (root / "converge-provider.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
-                    "provider_id": "pdlc-skills",
-                    "provider_version": "test-v1",
+                    "schema_version": 2,
+                    "provider": {
+                        "id": "pdlc-v1",
+                        "source_id": "pdlc-skills",
+                        "version": "test-v1",
+                        "role": "workflow",
+                    },
+                    "capabilities": {
+                        "task_kinds": ["feature"],
+                        "stages": ["plan", "tdd", "implement", "review"],
+                    },
                     "task_contracts": {
                         "feature": {
                             "entrypoint": files[0],
@@ -94,6 +141,10 @@ class DeliveryNextTest(unittest.TestCase):
                         "forbidden_actions": [
                             "pdlc-ship", "commit", "tag", "push", "publish", "install",
                         ],
+                    },
+                    "outputs": {
+                        "progress_protocol": 1,
+                        "required_evidence": ["tests", "validation", "findings"],
                     },
                 }
             ),

@@ -27,6 +27,7 @@ def state(status="complete"):
         "ledger": {
             "completed_rounds": 2,
             "repair_fingerprints": ["issue-a", "issue-b"],
+            "key_changes": ["统一 Provider 契约", "增加可见进度"],
             "checks": [{"stage": "final", "command": "check", "result": "pass"}],
             "acceptance": [
                 {
@@ -79,6 +80,15 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(2, report["repaired_issues"])
         self.assertEqual(0, report["pending_items"])
         self.assertEqual("pass", report["acceptance"][0]["result"])
+        self.assertEqual(["统一 Provider 契约", "增加可见进度"], report["key_changes"])
+
+    def test_ready_text_leads_with_useful_changes_without_internal_terms(self):
+        result = self.run_report(state(), "text")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("关键改动：统一 Provider 契约；增加可见进度", result.stdout)
+        self.assertNotIn("lease", result.stdout)
+        self.assertNotIn("fingerprint", result.stdout)
 
     def test_blocked_report_is_not_ready(self):
         result = self.run_report(state("blocked"), "text")

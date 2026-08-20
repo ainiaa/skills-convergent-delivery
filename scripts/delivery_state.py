@@ -24,7 +24,7 @@ IMMUTABLE_FIELDS = (
     "baseline",
     "scope_fingerprint",
     "controller",
-    "engine",
+    "provider_binding",
 )
 NATIVE_STAGE_TRANSITIONS = {
     "scope": "round-1-build",
@@ -140,13 +140,26 @@ def validate_transition(previous, candidate):
             "working", *WORKER_TERMINAL_STATUSES
         }:
             raise ValueError("invalid worker status transition")
+        old_progress = old_worker["progress"]
+        new_progress = new_worker["progress"]
+        if old_progress is not None and new_progress is None:
+            raise ValueError("worker progress cannot be removed")
+        if new_progress is not None and new_progress != old_progress:
+            old_sequence = old_progress["sequence"] if old_progress else 0
+            old_objective = old_progress["objective_revision"] if old_progress else 0
+            if new_progress["sequence"] != old_sequence + 1:
+                raise ValueError("worker progress sequence must advance by one")
+            objective_step = 1 if new_progress["event"] == "milestone" else 0
+            if new_progress["objective_revision"] != old_objective + objective_step:
+                raise ValueError("worker objective progress is invalid")
     for ref in candidate_workers.keys() - previous_workers.keys():
         if candidate_workers[ref]["status"] != "working":
             raise ValueError("new workers must be registered as working")
 
     old_stage = previous["current_stage"]
     new_stage = candidate["current_stage"]
-    if previous["engine"]["name"] == "pdlc-v1":
+    workflow_provider = previous["provider_binding"]["binding"]["workflow_provider"]["id"]
+    if workflow_provider != "native-v1":
         allowed_next = "pdlc-run"
     else:
         allowed_next = next_native_stage(old_stage, candidate)
@@ -155,7 +168,7 @@ def validate_transition(previous, candidate):
     if candidate["status"] == "blocked" and new_stage != old_stage:
         raise ValueError("blocked state must retain the current stage")
     if candidate["status"] == "complete":
-        expected_final = "pdlc-run" if previous["engine"]["name"] == "pdlc-v1" else "verify-final"
+        expected_final = "verify-final" if workflow_provider == "native-v1" else "pdlc-run"
         if new_stage != expected_final or allowed_next != expected_final:
             raise ValueError("complete state must follow final verification")
 
@@ -171,6 +184,11 @@ def validate_transition(previous, candidate):
         "ledger.repair_fingerprints",
     )
     require_prefix(old_ledger["checks"], new_ledger["checks"], "ledger.checks")
+    require_prefix(
+        old_ledger.get("key_changes", []),
+        new_ledger.get("key_changes", []),
+        "ledger.key_changes",
+    )
     validate_acceptance_transition(
         old_ledger["acceptance"],
         new_ledger["acceptance"],
@@ -194,7 +212,7 @@ def write(arguments):
             current_revision = -1
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
-                migrating_v5 = stored.get("schema_version") == 5
+                migrating_legacy = stored.get("schema_version") in {5, 6}
                 current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
@@ -203,11 +221,11 @@ def write(arguments):
             if candidate["revision"] != current_revision + 1:
                 raise ValueError("candidate revision must be the next revision")
             if managed_path.exists():
-                if migrating_v5:
+                if migrating_legacy:
                     expected = dict(current)
                     expected["revision"] = candidate["revision"]
                     if candidate != expected:
-                        raise ValueError("v5 migration may only add schema v6 fields")
+                        raise ValueError("legacy migration may only add schema v7 fields")
                 else:
                     validate_transition(current, candidate)
             write_private(managed_path, candidate)

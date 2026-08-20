@@ -12,13 +12,25 @@ from pathlib import Path, PurePosixPath
 TASK_STATUSES = {"pending"}
 EXECUTIONS = {"auto", "current", "fresh"}
 AUDIT_STATUSES = {"DONE", "PARTIAL", "NOT_DONE", "CHANGED"}
-ENGINES = {
-    "pdlc-v1",
-    "superpowers-tdd-v1",
-    "mattpocock-tdd-v1",
-    "generic-tdd-v1",
-    "native-v1",
-}
+PROVIDER_DIR = Path(__file__).resolve().parents[3] / "providers"
+
+
+def registered_provider_roles():
+    roles = {}
+    for path in PROVIDER_DIR.glob("*.json"):
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            provider = manifest["provider"]
+            if manifest.get("schema_version") == 2 and provider["role"] in {"workflow", "stage"}:
+                roles[provider["id"]] = provider["role"]
+        except (OSError, KeyError, json.JSONDecodeError, TypeError):
+            continue
+    return roles
+
+
+PROVIDER_ROLES = registered_provider_roles()
+WORKFLOW_PROVIDERS = {provider for provider, role in PROVIDER_ROLES.items() if role == "workflow"}
+STAGE_PROVIDERS = {provider for provider, role in PROVIDER_ROLES.items() if role == "stage"}
 PLANNERS = {
     "project-plan-v1",
     "superpowers-writing-plans-v1",
@@ -155,7 +167,7 @@ def valid_evidence_receipts(value, source):
     )
 
 
-def validate_planner(value, engine):
+def validate_planner(value):
     if not isinstance(value, dict):
         raise ValueError("planner must be an object")
     name = value.get("name")
@@ -172,23 +184,80 @@ def validate_planner(value, engine):
             raise ValueError("planner source is unavailable or changed")
     elif source_path is not None or source_fingerprint is not None:
         raise ValueError("built-in planners cannot declare a source")
-    if engine == "pdlc-v1" and name != "pdlc-delegation-v1":
-        raise ValueError("pdlc-v1 requires pdlc-delegation-v1")
-    if engine != "pdlc-v1" and name == "pdlc-delegation-v1":
-        raise ValueError("pdlc-delegation-v1 requires pdlc-v1")
+
+
+def binding_fingerprint(workflow_provider, stage_providers):
+    payload = {
+        "controller": "converge",
+        "workflow_provider": workflow_provider,
+        "stage_providers": stage_providers,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def upgrade_plan(plan):
+    if not isinstance(plan, dict) or plan.get("schema_version") != 1:
+        return plan
+    upgraded = json.loads(json.dumps(plan))
+    engine = upgraded.pop("engine", None)
+    if engine not in WORKFLOW_PROVIDERS | STAGE_PROVIDERS:
+        raise ValueError("legacy engine is invalid")
+    workflow = engine if engine in WORKFLOW_PROVIDERS else "native-v1"
+    stages = {"tdd": engine} if engine in STAGE_PROVIDERS else {}
+    fingerprint = binding_fingerprint(workflow, stages)
+    for task in upgraded.get("tasks", []):
+        if isinstance(task, dict):
+            task["provider_binding"] = {
+                "controller": "converge",
+                "workflow_provider": workflow,
+                "stage_providers": stages,
+                "binding_fingerprint": fingerprint,
+            }
+            task.setdefault("provider_run", {"scope": "task", "recursive_planning": False})
+    upgraded["schema_version"] = 2
+    return upgraded
+
+
+def validate_provider_binding(value, name):
+    if not isinstance(value, dict) or set(value) != {
+        "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
+    }:
+        raise ValueError(f"{name} is invalid")
+    if value["controller"] != "converge":
+        raise ValueError(f"{name}.controller must be converge")
+    workflow = value["workflow_provider"]
+    if workflow not in WORKFLOW_PROVIDERS:
+        raise ValueError(f"{name}.workflow_provider is invalid")
+    stages = value["stage_providers"]
+    if not isinstance(stages, dict) or set(stages) - {"tdd"}:
+        raise ValueError(f"{name}.stage_providers is invalid")
+    if any(provider not in STAGE_PROVIDERS for provider in stages.values()):
+        raise ValueError(f"{name}.stage provider is invalid")
+    if workflow != "native-v1" and stages:
+        raise ValueError(f"{name} cannot mix external workflow and stage providers")
+    require_sha256(value["binding_fingerprint"], f"{name}.binding_fingerprint")
+    if value["binding_fingerprint"] != binding_fingerprint(workflow, stages):
+        raise ValueError(f"{name}.binding_fingerprint does not match the binding")
+    return value
+
+
+def validate_provider_run(value, name):
+    if value != {"scope": "task", "recursive_planning": False}:
+        raise ValueError(f"{name} must be one bounded non-recursive task run")
+    return value
 
 
 def validate_plan(plan):
+    plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if plan.get("schema_version") != 1:
-        raise ValueError("schema_version must be 1")
+    if plan.get("schema_version") != 2:
+        raise ValueError("schema_version must be 2")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
-    engine = require_string(plan.get("engine"), "engine")
-    if engine not in ENGINES:
-        raise ValueError("engine is invalid")
-    validate_planner(plan.get("planner"), engine)
+    validate_planner(plan.get("planner"))
     context = plan.get("context")
     if context not in {"short", "long"}:
         raise ValueError("context must be short or long")
@@ -231,6 +300,12 @@ def validate_plan(plan):
                 raw.get("verification"), f"tasks[{index}].verification", non_empty=True
             ),
             "execution": execution,
+            "provider_binding": validate_provider_binding(
+                raw.get("provider_binding"), f"tasks[{index}].provider_binding"
+            ),
+            "provider_run": validate_provider_run(
+                raw.get("provider_run"), f"tasks[{index}].provider_run"
+            ),
         }
         tasks.append(task)
 
@@ -241,8 +316,10 @@ def validate_plan(plan):
         if task["task_id"] in task["depends_on"]:
             raise ValueError("a task cannot depend on itself")
 
-    if engine == "pdlc-v1" and (len(tasks) != 1 or tasks[0]["task_id"] != "pdlc-run"):
-        raise ValueError("pdlc-v1 requires exactly one pdlc-run task")
+    if plan["planner"]["name"] == "pdlc-delegation-v1" and any(
+        task["provider_binding"]["workflow_provider"] != "pdlc-v1" for task in tasks
+    ):
+        raise ValueError("pdlc-delegation-v1 requires PDLC-backed tasks")
 
     waves = []
     completed = set()
@@ -259,21 +336,26 @@ def validate_plan(plan):
         completed.update(task["task_id"] for task in wave)
         remaining = [task for task in remaining if task not in wave]
 
-    if engine == "pdlc-v1":
-        execution_mode = "fresh"
-    elif len(tasks) > 1:
+    if len(tasks) > 1:
         execution_mode = "batch"
+    elif tasks[0]["provider_binding"]["workflow_provider"] == "pdlc-v1":
+        execution_mode = "fresh"
     elif tasks[0]["execution"] != "auto":
         execution_mode = tasks[0]["execution"]
     else:
         execution_mode = "fresh" if context == "long" else "current"
-    return {"status": "valid", "execution_mode": execution_mode, "waves": waves}
+    return {
+        "status": "valid",
+        "normalized_schema_version": 2,
+        "execution_mode": execution_mode,
+        "waves": waves,
+    }
 
 
 def audit(envelope, workspace):
     if not isinstance(envelope, dict):
         raise ValueError("audit input must be an object")
-    plan = envelope.get("plan")
+    plan = upgrade_plan(envelope.get("plan"))
     validate_plan(plan)
     source = workspace_source(workspace)
     results = envelope.get("task_results")

@@ -5,7 +5,7 @@ description: Implement, fix, or refactor one authorized software task through fi
 
 # Converge：单任务闭环执行
 
-负责一个边界明确的软件任务：冻结范围、选择实现引擎、限制修复、收集新鲜证据并交付明确结果。它是控制面，不是第二套 PDLC，也不调度长计划。
+负责一个边界明确的软件任务：冻结范围、解析 Provider、限制修复、收集新鲜证据并交付明确结果。它是控制面，不是第二套 PDLC，也不调度长计划。
 
 如果用户只要求制定计划，使用 `converge-plan`；只要求检查代码时使用 `converge-review`；按已有多个 Batch 持续接力时使用 `converge-batch`。不要在本 Skill 内模拟这些角色。
 
@@ -26,7 +26,7 @@ description: Implement, fix, or refactor one authorized software task through fi
 
 仅文档、格式或不改变运行时行为的配置可以使用确定性检查替代行为测试；其他行为变更必须有回归测试。
 
-## 3. 选择执行引擎
+## 3. 解析并冻结 Provider Binding
 
 写入前运行：
 
@@ -35,19 +35,23 @@ CONVERGE_SKILL_DIR="<absolute directory containing this SKILL.md>"
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
 
-顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → 通过预检的通用 TDD → `native-v1`。用户明确要求 PDLC 而能力不完整时阻塞，不得静默降级。
+Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → 通过预检的通用 TDD → `native-v1`。
 
-- `pdlc-v1`：PDLC 独占需求、设计、TDD、实现和阶段 review；本 Skill 不再创建 native TDD、重复阶段状态或同类意图审查。
+- 显式 Provider 不可用或不兼容时阻塞，不静默替换。
+- auto 模式只在尚未产生业务写入时说明一次原因并降级；已有冻结 binding 时任一来源变化都阻塞。
+- 显式 native 不探测外部 Provider。
+
+- `pdlc-v1`：PDLC 完成当前有界 task 内的需求、设计、TDD、实现和阶段 review；本 Skill 不重复这些内部阶段，但仍控制外层范围、权限、进度、有限修复和最终验收。
 - 第三方 TDD：只委托一次红绿实现方法；范围、复查、最终验证和报告仍归本 Skill。选择后读取 [TDD 提供者](references/tdd-providers.md)。
 - `native-v1`：读取 [原生执行协议](references/execution-protocol.md)，执行根因定位、TDD、语义审查和有限风险闭环。
 
-开始时只向用户报告一次执行引擎和原因。PDLC 必须通过 Suite 的 adapter manifest 校验 provider id/version、真实入口、任务类型、授权边界和显式依赖闭包；已安装但未适配时明确阻塞。活动任务冻结 controller、provider、来源路径和内容摘要；任一来源变化时阻塞，不自动换源。
+开始时只向用户报告一次 Provider 选择和原因。所有 Provider 使用 Suite 的 Provider Schema v2 校验身份、能力、真实入口、授权边界、输出证据和来源摘要。manifest 只能声明能力，不得携带命令、优先级或放宽 Converge 权限。
 
 ## 4. 建立有限执行计划
 
 读取 [计划执行与无响应保护](references/execution-control.md)。若 capsule 已包含 `planned_task=true`，跳过规划，只执行其中冻结的 `plan_id/task_id`、范围、验收和验证。
 
-其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。选择 `pdlc-v1` 时不调用普通 planner，只形成**一个 `pdlc-run`** task；宿主确实支持可恢复新上下文时保存 `worker_ref` 后委托**完整 PDLC**，否则输出同一 capsule 手工交接并暂停。capsule 必须保留 Converge 的决策门禁和禁止动作，provider 的“自行假设”或“自动发布”不得覆盖它。不得在当前上下文准备 PDLC 文档、native TDD 或实现补丁，也不得把 Skill 规则描述成宿主已经执行的中断或恢复。
+其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 
 计划校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文；`batch` 时交给 `converge-batch`。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 
@@ -57,7 +61,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，终态释放，过期后不自动抢占。
 
-跨服务、公共契约、预计跨会话或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，使用 `$CONVERGE_SKILL_DIR/scripts/` 下的 `delivery_task_key.py`、`delivery_lease.py`、`delivery_state.py` 和 `delivery_next.py`。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
+跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，使用 `$CONVERGE_SKILL_DIR/scripts/` 下的 `delivery_task_key.py`、`delivery_lease.py`、`delivery_state.py`、`delivery_progress.py` 和 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 Progress Receipt。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
 
 ## 6. 审查策略
 
@@ -83,7 +87,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
-持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的结果。默认包含：做了什么、是否可使用、已验证范围，以及一行“交付轮数 / 修复问题数 / 待处理项”；命令、内部状态、lease 和严重度只在用户要求详细报告时展示。
+持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的结果。默认包含：做了什么、关键改动、是否可使用、已验证范围，以及一行“交付轮数 / 修复问题数 / 待处理项”；命令、内部状态、lease 和严重度只在用户要求详细报告时展示。
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 

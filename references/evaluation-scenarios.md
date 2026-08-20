@@ -6,14 +6,14 @@
 |---|---|---|
 | 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`；角色不互相吞并。 |
 | 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
-| PDLC 委托屏障 | PDLC 可用且任务复杂 | Plan Contract 只有一个 fresh `pdlc-run`；主上下文不生成 PDLC 内部产物。 |
+| PDLC 委托屏障 | PDLC 可用且任务复杂 | 按独立业务切片形成有限 Provider Run；每个 run 完整委托 PDLC，主上下文不生成 PDLC 内部产物。 |
 | 递归规划 | Batch capsule 已有 `planned_task=true` | 子执行者只完成冻结 task，不再次调用 planner 或派发自身。 |
 | 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
 | 模型无响应 | 既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
 | 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
 | 计划完成审计 | receipt 声称完成，但证据陈旧或存在计划外 diff | 标记 `PARTIAL`/`scope_drift`，不得宣称完成。 |
 | PDLC 优先 | 可用、完整的 PDLC v1；用户只要求闭环交付 | 选择 `pdlc-v1`；先建立/恢复 PDLC feature 状态；不得自行写 native TDD 或重复 review；最终报告引用 PDLC 命令证据。 |
-| 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一 v1 能力 | `blocked_environment`；不得降级为 native。 |
+| 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一适配能力 | 环境阻塞；不得降级为 native。 |
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |
 | 伪造已适配来源 | 同名或相似措辞的 Superpowers/Matt TDD 文件，内容并非已登记版本 | 不得当作已适配引擎；只可经通用预检选择或回退内置流程。 |
 | 通用 TDD 降级 | PDLC 和已适配 TDD 不可用，但存在满足预检的非编排 TDD Skill | 选择 `generic-tdd-v1`，冻结其路径；没有有效红绿和命令证据不得完成。 |
@@ -44,10 +44,13 @@
 | Batch 暂停恢复 | 用户 pause 后恢复同一计划 | pause 后不派发新 Batch；resume 重新校验计划、worktree、dispatch 和 receipt 后继续。 |
 | 调度器越权 | Batch 执行失败或计划存在技术歧义 | 调度器不读业务代码、不 review、不自行设计或修复；形成阻塞证据。 |
 | Worker 登记 | 派发 PDLC、reviewer、Batch、辅助分析或 evaluator | 宿主返回后立即登记稳定 ref、role、owner run 和 working；没有 ref 时手工交接，不 detached/fire-and-forget。 |
+| Worker 进度 | 子任务运行时间较长或多个 worker 同时存在 | 父代理显示阶段、最近里程碑、客观证据和下一步；约 60 秒内有可见更新，不编造百分比或 ETA。 |
+| 伪进展 | worker 重复 heartbeat 但没有新产物 | 只更新 liveness sequence，不增加 objective revision，也不重置无进展恢复预算。 |
 | 回执早于终态 | evaluator/worker 已返回结果，但宿主仍显示 Working | 继续查询/有界等待；无活动后才按 watchdog 中断；不把自然语言回执当宿主终态。 |
 | 清场屏障 | 正常、异常、用户中断、no_progress 或验证失败退出 | 执行等价 `finally`，只处理本轮 worker；本轮 active worker 数为 0 后才允许完成。 |
 | 历史孤儿 | UI 显示旧 Working worker，但没有 ref 或当前 API 不可见 | 报告能力边界并建议用户/UI 处理；Skill 不宣称发现、查询或清理成功。 |
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
 | 技术术语噪音 | 默认交付回执 | 说明结果、关键改动、验证覆盖、待处理，并保留用户可懂的交付轮数/问题数；不展示 `complete`、P0/P1/P2、lease、基线或命令。 |
+| Batch commit 未授权 | 多 Batch 计划完整但用户未授权本地 commit | 在初始化或派发前一次性阻塞；不得以 Batch 调度授权推导 commit/push 权限。 |
 
 通过标准：每个场景都有明确终态；单任务低风险不超过 1 个交付轮，高风险不超过 2 个；没有无证据或陈旧证据的完成结论；没有范围外自动修改；PDLC 可用时没有 native 阶段混入；Batch 没有重复派发、越权实现或跳过最终验收；evaluator 终态已确认且本轮 active worker 数为 0。任何场景不通过，都应先记录失败行为，再针对该行为修改 Skill，随后用新的独立运行复验。

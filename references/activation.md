@@ -17,3 +17,7 @@
 ```
 
 安装和升级脚本不自动修改 `AGENTS.md`、全局指令或项目配置，避免在用户不知情时改变所有任务的行为。
+
+## 诊断
+
+隐式触发最终由宿主决定，Skill 无法强制。未触发时先显式使用 `$converge`，再运行 `bash install.sh --doctor --target codex --offline` 检查入口、版本、必需 Provider manifest 和本地解析结果；不要通过安装器自动改写项目或全局 `AGENTS.md`。

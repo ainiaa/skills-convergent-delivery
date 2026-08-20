@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "provider": {
+    "id": "generic-tdd-v1",
+    "source_id": "discovered/generic-tdd",
+    "version": "policy-v1",
+    "role": "stage"
+  },
+  "capabilities": {
+    "task_kinds": ["feature", "fix", "refactor"],
+    "stages": ["tdd"]
+  },
+  "task_contracts": {
+    "feature": {"required_terms": ["test first", "red", "green"]},
+    "fix": {"required_terms": ["test first", "red", "green"]},
+    "refactor": {"required_terms": ["test first", "red", "green"]}
+  },
+  "authorization": {
+    "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
+    "forbidden_actions": ["commit", "tag", "push", "publish", "install", "deploy", "delete", "worktree", "recursive"]
+  },
+  "outputs": {
+    "progress_protocol": 1,
+    "required_evidence": ["red_test", "green_test", "validation"]
+  }
+}

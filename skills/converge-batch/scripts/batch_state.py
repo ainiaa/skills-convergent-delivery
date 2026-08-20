@@ -41,6 +41,7 @@ CAPSULE_FIELDS = (
     "acceptance",
     "verification",
 )
+CAPSULE_FIELDS_V3 = (*CAPSULE_FIELDS, "provider_binding")
 BATCH_TRANSITIONS = {
     "pending": {"pending", "dispatching", "blocked"},
     "dispatching": {"dispatching", "running", "blocked"},
@@ -88,6 +89,30 @@ def canonical_path(value):
 
 def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def validate_provider_binding(value):
+    value = require_mapping(value, "capsule provider binding")
+    if set(value) != {
+        "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
+    }:
+        raise ValueError("capsule provider binding fields are invalid")
+    if value["controller"] != "converge":
+        raise ValueError("capsule provider binding controller is invalid")
+    require_string(value.get("workflow_provider"), "capsule provider binding workflow_provider")
+    stages = require_mapping(value.get("stage_providers"), "capsule provider binding stage_providers")
+    for stage, provider in stages.items():
+        require_string(stage, "capsule provider binding stage")
+        require_string(provider, "capsule provider binding provider")
+    binding = {
+        "controller": value["controller"],
+        "workflow_provider": value["workflow_provider"],
+        "stage_providers": stages,
+    }
+    if value.get("binding_fingerprint") != digest(
+        json.dumps(binding, sort_keys=True, separators=(",", ":"))
+    ):
+        raise ValueError("capsule provider binding fingerprint is invalid")
 
 
 def state_path(root, repo_id, plan_id, run_id):
@@ -180,10 +205,15 @@ def validate_evidence(entries, name, *, require_pass=False):
 
 def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
     capsule = require_mapping(capsule, f"capsule {batch_id}")
-    fields = LEGACY_CAPSULE_FIELDS if schema_version == 1 else CAPSULE_FIELDS
+    fields = (
+        LEGACY_CAPSULE_FIELDS
+        if schema_version == 1
+        else CAPSULE_FIELDS_V3 if schema_version == 3 else CAPSULE_FIELDS
+    )
     for field in fields:
         if field not in capsule:
-            raise ValueError(f"capsule {batch_id} is missing {field}")
+            label = "provider binding" if field == "provider_binding" else field
+            raise ValueError(f"capsule {batch_id} is missing {label}")
     if capsule["batch_id"] != batch_id:
         raise ValueError("capsule batch_id does not match")
     if schema_version >= 2:
@@ -193,6 +223,8 @@ def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
             raise ValueError("capsule plan_id does not match")
         if capsule["task_id"] != task_id:
             raise ValueError("capsule task_id does not match")
+    if schema_version == 3:
+        validate_provider_binding(capsule["provider_binding"])
     for field in ("goal", "baseline"):
         require_string(capsule[field], f"capsule.{field}")
     if schema_version >= 2:
@@ -265,6 +297,8 @@ def validate_state(state):
     if preflight.get("passed") is not True or require_list(preflight.get("issues"), "preflight.issues"):
         raise ValueError("preflight must pass without issues")
     require_string(preflight.get("checked_at"), "preflight.checked_at")
+    if schema_version == 3 and preflight.get("commit_authorized") is not True:
+        raise ValueError("preflight requires one-time commit authorization")
 
     status = state.get("status")
     if status not in PLAN_TRANSITIONS:
@@ -386,8 +420,17 @@ def validate_transition(previous, candidate):
         if set(candidate) != set(previous):
             raise ValueError("schema upgrade must preserve state fields")
         for field in previous:
-            if field not in {"schema_version", "revision", "batches"} \
-                and candidate.get(field) != previous[field]:
+            if field in {"schema_version", "revision", "batches"}:
+                continue
+            if field == "preflight":
+                if previous[field].get("commit_authorized") is True:
+                    if candidate[field] != previous[field]:
+                        raise ValueError("schema upgrade must preserve commit authorization")
+                else:
+                    migrated = dict(candidate["preflight"])
+                    if migrated.pop("commit_authorized", None) is not True or migrated != previous[field]:
+                        raise ValueError("schema upgrade requires explicit commit authorization")
+            elif candidate.get(field) != previous[field]:
                 raise ValueError("schema upgrade must not change plan state")
         if len(candidate["batches"]) != len(previous["batches"]):
             raise ValueError("batch list is immutable")
@@ -414,6 +457,12 @@ def validate_transition(previous, candidate):
                     if old_value is not None and new_capsule.get(field) != old_value:
                         raise ValueError("schema upgrade must preserve capsule identity")
                     new_capsule.pop(field, None)
+            old_binding = old_capsule.pop("provider_binding", None)
+            new_binding = new_capsule.pop("provider_binding", None)
+            if old_binding is not None and new_binding != old_binding:
+                raise ValueError("schema upgrade must preserve provider binding")
+            if new_binding is None:
+                raise ValueError("schema upgrade requires provider binding")
             old_without_upgrade["capsule"] = old_capsule
             new_without_upgrade["capsule"] = new_capsule
             if new_without_upgrade != old_without_upgrade or new_capsule != old_capsule:

@@ -1,6 +1,6 @@
 # 原生单任务执行协议
 
-仅当引擎为 `native-v1` 或第三方 TDD 提供者时读取。PDLC 任务不得映射到这些阶段。
+仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。
 
 ## 状态机
 

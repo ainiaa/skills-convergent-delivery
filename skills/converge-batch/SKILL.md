@@ -22,6 +22,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 存在计划级 `final_acceptance`；
 - 使用一个专用分支和 worktree，且没有不属于计划的脏改动；
 - `converge` 已安装；宿主是否能创建/监控全新任务已记录。
+- 用户已一次性授权各 Batch 产生本地 commit；未授权时在任何派发前阻塞或改用普通单任务流程，不能把 Batch 权限解释为 commit 权限。
 
 缺口一次性报告并阻塞。不得运行到后续 Batch 才逐项询问，也不得自行补技术方案。
 
@@ -33,7 +34,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 3. 生成 context capsule
 
-只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
+只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、Provider Binding、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
 按 Runtime Adapters 选择宿主能力，并遵循 [执行控制](../../references/execution-control.md) 的公共 worker/watchdog 规则。capsule 显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
@@ -47,7 +48,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 只允许对查询/连接错误恢复一次；先将同一 Batch 的 `worker_ref` 和 `recovery_count=1` 持久化。测试、实现、环境或业务失败不得自动重跑整个 Batch。
 - 只有当前 Batch completed 后才能派发下一批；顺序计划不并发执行代码。
 - 自然语言回执不能替代宿主终态。receipt 通过但 worker 仍 Working 时继续查询/有界等待；只有 `worker_status=completed` 才能完成当前 Batch。
-- 进度只在 Batch 开始、完成、阻塞、用户查询或整体结束时汇报。
+- 子任务进度由 `$converge` 的 Progress Receipt 提供；调度器只转述最新里程碑，长运行期间保证约 60 秒内有一次可见状态，不编造百分比或 ETA。
 
 ## 5. Receipt 与最终验收
 

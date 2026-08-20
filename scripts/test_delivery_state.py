@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from delivery_engine import legacy_pdlc_fingerprint
+from delivery_progress import apply_event
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -199,7 +200,7 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
 
-    def test_v5_write_migrates_only_controller_and_empty_worker_registry(self):
+    def test_v5_write_migrates_to_provider_binding_and_empty_worker_registry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
             state_home = Path(directory) / "home"
@@ -212,9 +213,14 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(6, written["schema_version"])
+            self.assertEqual(7, written["schema_version"])
             self.assertEqual([], written["workers"])
-            self.assertEqual({"version", "fingerprint"}, set(written["controller"]))
+            self.assertEqual(
+                {"package_version", "protocol_version", "protocol_fingerprint"},
+                set(written["controller"]),
+            )
+            self.assertEqual("native-v1", written["provider_binding"]["binding"]["workflow_provider"]["id"])
+            self.assertNotIn("engine", written)
 
     def test_v5_migration_rejects_stage_or_ledger_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -253,6 +259,7 @@ class DeliveryStateTest(unittest.TestCase):
                     "role": "pdlc",
                     "owner_run_id": "run-1",
                     "status": "working",
+                    "progress": None,
                 }
             ]
 
@@ -270,12 +277,77 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
             candidate = json.loads(state_path.read_text(encoding="utf-8"))
             candidate["revision"] = 1
-            candidate["controller"]["fingerprint"] = "0" * 64
+            candidate["controller"]["protocol_fingerprint"] = "0" * 64
 
             result = self.write(root, state_home, candidate, 0)
 
             self.assertNotEqual(0, result.returncode)
             self.assertIn("controller", result.stderr.lower())
+
+    def test_package_version_change_does_not_break_a_compatible_controller_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            stored = json.loads(state_path.read_text(encoding="utf-8"))
+            stored["controller"]["package_version"] = "older-package"
+            state_path.write_text(json.dumps(stored), encoding="utf-8")
+            candidate = json.loads(json.dumps(stored))
+            candidate["revision"] = 1
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_worker_progress_is_latest_only_and_objective_progress_is_monotonic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            registered = json.loads(state_path.read_text(encoding="utf-8"))
+            registered["revision"] = 1
+            registered["workers"] = [{
+                "ref": "worker-1",
+                "role": "implementation",
+                "owner_run_id": "run-1",
+                "status": "working",
+                "progress": None,
+            }]
+            self.assertEqual(0, self.write(root, state_home, registered, 0).returncode)
+
+            first_heartbeat = apply_event(
+                registered, "worker-1", "heartbeat", "testing", "Test still running",
+                "process active", "worker responded", "wait for first result",
+                now="2026-08-20T09:59:00Z",
+            )
+            self.assertEqual(
+                0,
+                self.write(root, state_home, first_heartbeat, 1).returncode,
+            )
+            registered = first_heartbeat
+
+            milestone = apply_event(
+                registered, "worker-1", "milestone", "implementing", "Schema green",
+                "target tests pass", "26 passed", "run state tests",
+                now="2026-08-20T10:00:00Z",
+            )
+            self.assertEqual(0, self.write(root, state_home, milestone, 2).returncode)
+            heartbeat = apply_event(
+                milestone, "worker-1", "heartbeat", "verifying", "Schema green",
+                "full suite running", "process active", "wait for result",
+                now="2026-08-20T10:01:00Z",
+            )
+
+            result = self.write(root, state_home, heartbeat, 3)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            written = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(3, written["workers"][0]["progress"]["sequence"])
+            self.assertEqual(1, written["workers"][0]["progress"]["objective_revision"])
 
     def test_write_rejects_stale_revision_or_wrong_writer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -326,9 +398,17 @@ class DeliveryStateTest(unittest.TestCase):
             (pdlc_root / "converge-provider.json").write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
-                        "provider_id": "pdlc-skills",
-                        "provider_version": "test-v1",
+                        "schema_version": 2,
+                        "provider": {
+                            "id": "pdlc-v1",
+                            "source_id": "pdlc-skills",
+                            "version": "test-v1",
+                            "role": "workflow",
+                        },
+                        "capabilities": {
+                            "task_kinds": ["feature"],
+                            "stages": ["plan", "tdd", "implement", "review"],
+                        },
                         "task_contracts": {
                             "feature": {
                                 "entrypoint": files[0],
@@ -354,6 +434,10 @@ class DeliveryStateTest(unittest.TestCase):
                                 "install",
                             ],
                         },
+                        "outputs": {
+                            "progress_protocol": 1,
+                            "required_evidence": ["tests", "validation", "findings"],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -375,7 +459,10 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual("pdlc-v1", written["engine"]["name"])
+            self.assertEqual(
+                "pdlc-v1",
+                written["provider_binding"]["binding"]["workflow_provider"]["id"],
+            )
             self.assertEqual("pdlc-run", written["current_stage"])
 
     def test_write_rejects_external_candidate_file(self):

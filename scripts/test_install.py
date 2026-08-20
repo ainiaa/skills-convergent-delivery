@@ -94,7 +94,7 @@ class InstallTest(unittest.TestCase):
             self.assertEqual(0, doctor.returncode, doctor.stderr)
             self.assertIn("Suite: complete", doctor.stdout)
             self.assertIn("Python:", doctor.stdout)
-            self.assertIn("Engine:", doctor.stdout)
+            self.assertIn("Provider:", doctor.stdout)
 
     def test_version_and_doctor_reject_a_linked_suite_with_missing_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -153,7 +153,7 @@ class InstallTest(unittest.TestCase):
             )
 
             self.assertNotEqual(0, doctor.returncode)
-            self.assertIn("Engine:  engine failed after partial output", doctor.stdout)
+            self.assertIn("Provider: engine failed after partial output", doctor.stdout)
 
     def test_install_refuses_to_replace_an_existing_directory(self):
         with tempfile.TemporaryDirectory() as directory:

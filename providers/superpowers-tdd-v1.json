@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "provider": {
+    "id": "superpowers-tdd-v1",
+    "source_id": "obra/superpowers:test-driven-development",
+    "version": "adapted-v1",
+    "role": "stage"
+  },
+  "capabilities": {
+    "task_kinds": ["feature", "fix", "refactor"],
+    "stages": ["tdd"]
+  },
+  "task_contracts": {
+    "feature": {
+      "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
+      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+    },
+    "fix": {
+      "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
+      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+    },
+    "refactor": {
+      "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
+      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+    }
+  },
+  "authorization": {
+    "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
+    "forbidden_actions": ["commit", "tag", "push", "publish", "install"]
+  },
+  "outputs": {
+    "progress_protocol": 1,
+    "required_evidence": ["red_test", "green_test", "validation"]
+  }
+}

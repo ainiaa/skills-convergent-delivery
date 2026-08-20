@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -12,9 +13,13 @@ from delivery_engine import (
     compatible_root,
     compatible_tdd_provider,
     controller_identity,
+    file_fingerprint,
     legacy_pdlc_fingerprint,
+    load_provider_registry,
     pdlc_fingerprint,
     pdlc_metadata,
+    provider_reference,
+    validate_provider_manifest,
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
 
@@ -49,6 +54,14 @@ BLOCKED_CODES = {
 DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
 WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
+PROGRESS_EVENTS = {"heartbeat", "milestone"}
+PROGRESS_PHASES = {
+    "understanding", "planning", "reproducing", "testing", "implementing",
+    "verifying", "reviewing", "closing",
+}
+LEGACY_V6_CONTROLLERS = {
+    ("0.10.0", "843047313fb0c0c7b068e4a7033fe51a7ffec62aaf4234aaf86893c48144a485"),
+}
 
 
 def require_string(value, name):
@@ -66,20 +79,84 @@ def require_mapping(value, name):
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") == 6:
+    if value.get("schema_version") == 7:
         return value
-    if value.get("schema_version") != 5:
+    if value.get("schema_version") not in {5, 6}:
         raise ValueError("unsupported schema_version")
     state = copy.deepcopy(value)
-    engine = state.get("engine")
+    source_schema = state["schema_version"]
+    if source_schema == 6:
+        controller = state.get("controller")
+        identity = (
+            controller.get("version"), controller.get("fingerprint")
+        ) if isinstance(controller, dict) and set(controller) == {"version", "fingerprint"} else None
+        if identity not in LEGACY_V6_CONTROLLERS:
+            raise ValueError("legacy controller is unavailable or incompatible")
+    engine = state.pop("engine", None)
+    if not isinstance(engine, dict):
+        raise ValueError("legacy engine is invalid")
     if isinstance(engine, dict) and engine.get("name") == "pdlc-v1":
         root = engine.get("pdlc_root")
         task_kind = engine.get("task_kind")
-        if engine.get("pdlc_fingerprint") != legacy_pdlc_fingerprint(root, task_kind):
+        if source_schema == 5 and engine.get("pdlc_fingerprint") != legacy_pdlc_fingerprint(root, task_kind):
             raise ValueError("legacy frozen PDLC capability is unavailable or changed")
-        engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
-    state.update(schema_version=6, controller=controller_identity(), workers=[])
+        if source_schema == 5:
+            engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
+    state.update(
+        schema_version=7,
+        controller=controller_identity(),
+        provider_binding=legacy_provider_binding(engine),
+        workers=state.get("workers", []),
+    )
+    for worker in state["workers"]:
+        worker.setdefault("progress", None)
     return state
+
+
+def binding_fingerprint(binding):
+    return hashlib.sha256(
+        json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def legacy_provider_binding(engine):
+    name = validate_engine(engine)
+    if name == "pdlc-v1":
+        root = require_string(engine.get("pdlc_root"), "engine.pdlc_root")
+        task_kind = engine.get("task_kind")
+        metadata = pdlc_metadata(root, task_kind, engine.get("provider_manifest"))
+        workflow = provider_reference(
+            "pdlc-v1",
+            version=metadata["provider_version"],
+            manifest=metadata["provider_manifest"],
+            manifest_fingerprint=metadata["provider_fingerprint"],
+            root=str(Path(root).expanduser().resolve()),
+            source_fingerprint=metadata["provider_source_fingerprint"],
+        )
+        stages = {}
+    else:
+        workflow = provider_reference("native-v1")
+        stages = {}
+        if name != "native-v1":
+            path = require_string(engine.get("tdd_skill_path"), "engine.tdd_skill_path")
+            stages["tdd"] = provider_reference(
+                name,
+                source_path=str(Path(path).expanduser().resolve()),
+                source_fingerprint=engine.get("tdd_skill_fingerprint"),
+            )
+        task_kind = engine.get("task_kind", "feature")
+    binding = {
+        "controller": "converge",
+        "workflow_provider": workflow,
+        "stage_providers": stages,
+    }
+    return {
+        "selection": engine.get("selection"),
+        "reason": engine.get("reason"),
+        "task_kind": task_kind,
+        "binding": binding,
+        "binding_fingerprint": binding_fingerprint(binding),
+    }
 
 
 def validate_engine(value):
@@ -132,14 +209,94 @@ def validate_engine(value):
     return name
 
 
+def validate_provider_reference(reference, expected_role, task_kind):
+    reference = require_mapping(reference, "provider reference")
+    allowed = {
+        "id", "version", "role", "manifest", "manifest_fingerprint",
+        "source_path", "source_fingerprint", "root",
+    }
+    if set(reference) - allowed:
+        raise ValueError("provider reference contains unsupported fields")
+    provider_id = require_string(reference.get("id"), "provider reference.id")
+    if provider_id not in load_provider_registry():
+        raise ValueError("provider reference.id is unknown")
+    if reference.get("role") != expected_role:
+        raise ValueError("provider reference.role is invalid")
+    require_string(reference.get("version"), "provider reference.version")
+    manifest_path = Path(require_string(reference.get("manifest"), "provider reference.manifest"))
+    if not manifest_path.is_absolute() or file_fingerprint(manifest_path) != reference.get(
+        "manifest_fingerprint"
+    ):
+        raise ValueError("frozen provider manifest is unavailable or changed")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("frozen provider manifest is unavailable or changed") from error
+    validate_provider_manifest(manifest, manifest_path)
+    if (
+        manifest["provider"]["id"] != provider_id
+        or manifest["provider"]["version"] != reference["version"]
+        or manifest["provider"]["role"] != reference["role"]
+    ):
+        raise ValueError("frozen provider identity changed")
+    if task_kind not in manifest["capabilities"]["task_kinds"]:
+        raise ValueError("provider does not support the frozen task kind")
+    source_path = reference.get("source_path")
+    if source_path is not None:
+        path = Path(require_string(source_path, "provider reference.source_path"))
+        if not path.is_absolute() or file_fingerprint(path) != reference.get("source_fingerprint"):
+            raise ValueError("frozen provider source is unavailable or changed")
+    if expected_role == "workflow" and provider_id != "native-v1":
+        root = require_string(reference.get("root"), "provider reference.root")
+        metadata = pdlc_metadata(root, task_kind, str(manifest_path))
+        if metadata["provider_source_fingerprint"] != reference.get("source_fingerprint"):
+            raise ValueError("frozen provider source is unavailable or changed")
+    return provider_id
+
+
+def validate_provider_binding(value):
+    value = require_mapping(value, "provider_binding")
+    if set(value) != {"selection", "reason", "task_kind", "binding", "binding_fingerprint"}:
+        raise ValueError("provider_binding fields are invalid")
+    if value.get("selection") not in ENGINE_SELECTIONS:
+        raise ValueError("provider_binding.selection must be auto or explicit")
+    require_string(value.get("reason"), "provider_binding.reason")
+    task_kind = value.get("task_kind")
+    if task_kind not in TASK_KINDS:
+        raise ValueError("provider_binding.task_kind is invalid")
+    binding = require_mapping(value.get("binding"), "provider_binding.binding")
+    if set(binding) != {"controller", "workflow_provider", "stage_providers"}:
+        raise ValueError("provider_binding.binding fields are invalid")
+    if binding.get("controller") != "converge":
+        raise ValueError("provider binding controller must be converge")
+    workflow = validate_provider_reference(binding.get("workflow_provider"), "workflow", task_kind)
+    stages = require_mapping(binding.get("stage_providers"), "provider_binding.stage_providers")
+    if set(stages) - {"tdd"}:
+        raise ValueError("provider stage is invalid")
+    for stage, reference in stages.items():
+        provider_id = validate_provider_reference(reference, "stage", task_kind)
+        if stage not in load_provider_registry()[provider_id]["capabilities"]["stages"]:
+            raise ValueError("provider stage capability is invalid")
+    if workflow != "native-v1" and stages:
+        raise ValueError("external workflow cannot mix stage providers")
+    if value.get("binding_fingerprint") != binding_fingerprint(binding):
+        raise ValueError("provider binding fingerprint changed")
+    return workflow
+
+
 def validate_state(state, arguments):
     state = upgrade_state(state)
 
     controller = require_mapping(state.get("controller"), "controller")
-    if set(controller) != {"version", "fingerprint"}:
-        raise ValueError("controller must contain version and fingerprint")
-    if controller != controller_identity():
-        raise ValueError("frozen Converge controller version or fingerprint changed")
+    if set(controller) != {"package_version", "protocol_version", "protocol_fingerprint"}:
+        raise ValueError("controller fields are invalid")
+    require_string(controller.get("package_version"), "controller.package_version")
+    current_controller = controller_identity()
+    if any(
+        controller.get(field) != current_controller[field]
+        for field in ("protocol_version", "protocol_fingerprint")
+    ):
+        raise ValueError("frozen Converge controller protocol changed")
 
     run_id = require_string(state.get("run_id"), "run_id")
     repo_id = require_string(state.get("repo_id"), "repo_id")
@@ -157,16 +314,16 @@ def validate_state(state, arguments):
     require_string(baseline.get("commit"), "baseline.commit")
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
-    engine_name = validate_engine(state.get("engine"))
+    workflow_provider = validate_provider_binding(state.get("provider_binding"))
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")
     worker_refs = set()
     for worker in workers:
         if not isinstance(worker, dict) or set(worker) != {
-            "ref", "role", "owner_run_id", "status"
+            "ref", "role", "owner_run_id", "status", "progress"
         }:
-            raise ValueError("workers[] must contain ref, role, owner_run_id, and status")
+            raise ValueError("workers[] fields are invalid")
         ref = require_string(worker.get("ref"), "workers[].ref")
         require_string(worker.get("role"), "workers[].role")
         if ref in worker_refs:
@@ -176,6 +333,31 @@ def validate_state(state, arguments):
             raise ValueError("workers[] may only belong to the current run")
         if worker.get("status") not in WORKER_STATUSES:
             raise ValueError("workers[].status is invalid")
+        progress = worker.get("progress")
+        if progress is not None:
+            if not isinstance(progress, dict) or set(progress) != {
+                "sequence", "objective_revision", "event", "phase", "milestone",
+                "activity", "evidence", "next_action", "observed_at",
+            }:
+                raise ValueError("workers[].progress fields are invalid")
+            if (
+                not isinstance(progress["sequence"], int)
+                or isinstance(progress["sequence"], bool)
+                or progress["sequence"] < 1
+            ):
+                raise ValueError("workers[].progress.sequence is invalid")
+            if (
+                not isinstance(progress["objective_revision"], int)
+                or isinstance(progress["objective_revision"], bool)
+                or progress["objective_revision"] < 0
+            ):
+                raise ValueError("workers[].progress.objective_revision is invalid")
+            if progress["objective_revision"] > progress["sequence"]:
+                raise ValueError("workers[].progress objective revision is invalid")
+            if progress["event"] not in PROGRESS_EVENTS or progress["phase"] not in PROGRESS_PHASES:
+                raise ValueError("workers[].progress event or phase is invalid")
+            for field in ("milestone", "activity", "evidence", "next_action", "observed_at"):
+                require_string(progress.get(field), f"workers[].progress.{field}")
     ledger = require_mapping(state.get("ledger"), "ledger")
     completed_rounds = ledger.get("completed_rounds")
     if (
@@ -192,6 +374,11 @@ def validate_state(state, arguments):
         raise ValueError("ledger.repair_fingerprints must be a list of strings")
     if len(set(repair_fingerprints)) != len(repair_fingerprints):
         raise ValueError("ledger.repair_fingerprints must not contain duplicates")
+    key_changes = ledger.get("key_changes", [])
+    if not isinstance(key_changes, list) or len(key_changes) > 5 or not all(
+        isinstance(item, str) and item.strip() and len(item) <= 120 for item in key_changes
+    ):
+        raise ValueError("ledger.key_changes must contain at most five short strings")
     checks = ledger.get("checks")
     if not isinstance(checks, list) or not all(isinstance(item, dict) for item in checks):
         raise ValueError("ledger.checks must be a list of objects")
@@ -237,7 +424,7 @@ def validate_state(state, arguments):
     if not isinstance(state.get("requires_stability_round"), bool):
         raise ValueError("requires_stability_round must be boolean")
     stage = state.get("current_stage")
-    active_stages = NATIVE_ACTIVE_STAGES if engine_name in TDD_ENGINES else PDLC_ACTIVE_STAGES
+    active_stages = NATIVE_ACTIVE_STAGES if workflow_provider == "native-v1" else PDLC_ACTIVE_STAGES
     if stage not in active_stages:
         raise ValueError("invalid current_stage")
 
@@ -266,7 +453,7 @@ def validate_state(state, arguments):
             item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
         ):
             raise ValueError("complete state requires fresh passing acceptance evidence")
-        expected_final = "verify-final" if engine_name in TDD_ENGINES else "pdlc-run"
+        expected_final = "verify-final" if workflow_provider == "native-v1" else "pdlc-run"
         if stage != expected_final:
             raise ValueError("complete state must follow final verification")
         return "complete"
@@ -278,7 +465,7 @@ def validate_state(state, arguments):
     if status != "active":
         raise ValueError("status must be active, complete, or blocked")
 
-    if engine_name == "pdlc-v1":
+    if workflow_provider != "native-v1":
         return "pdlc-run"
     if stage == "scope":
         return "round-1-build"

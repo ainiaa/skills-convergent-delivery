@@ -4,8 +4,21 @@
 
 ## [Unreleased]
 
+### 0.11.0
+
+- Provider Schema v2 统一描述 PDLC、适配 TDD、通用 TDD 和 Native；Converge 固定为 controller，执行结果冻结 workflow/stage Provider Binding。
+- Plan Contract v2 支持多个独立业务切片级 Provider Run，不再把整个复杂 PDLC 计划塞进一个黑盒任务；旧 v1 只添加迁移。
+- 单任务状态升级到 Schema v7：分离包版本、控制协议和 Provider Schema，旧 v5/v6 转换为 binding；包文档升级不再误阻塞恢复。
+- 新增 Progress Receipt v1 和 `delivery_progress.py`：父代理展示子任务阶段、里程碑、证据和下一步，heartbeat 不计为客观进展。
+- Batch preflight 新增一次性本地 commit 授权；缺失时在派发前阻塞，不扩大到 push、merge 或发布。
+- 最终报告新增最多五项关键改动，默认继续隐藏 lease、fingerprint 和状态机术语。
+- 自动模式可在业务写入前说明不兼容 Provider 并降级；显式或已冻结 Provider 仍严格阻塞，Native 模式不探测外部 Provider。
+
 ### 修复
 
+- 修复合法 Provider Schema v2 manifest 仍需控制器增加 ID 特判才能被选择的问题；workflow 与 TDD stage 现按 role、capability 和 task contract 统一发现。
+- 修复 Plan Provider Binding 摘要未核对、Provider Run 递归/无界约束只停留在文档，以及 Batch capsule 丢失冻结 binding 的问题。
+- 修复首次 heartbeat 因客观进度为 0 被拒绝、未知 v6 controller 被迁移为当前可信身份，以及冻结计划内验证命令无法执行的问题。
 - 修复旧单任务 v5 状态首次迁移时可同时推进阶段或修改 ledger 的问题；迁移现在只能增加 v6 字段并递增 revision。
 - 修复单任务 complete 可忽略仍处于 Working 的本轮 worker、恢复时无法发现 controller/provider 漂移，以及已安装但未适配 PDLC 被静默视为不存在的问题。
 - 修复 PDLC、reviewer、Batch、辅助分析和独立前向测试 worker 缺少统一登记与退出清场的问题（结果已返回但宿主仍 Working，或异常路径提前结束时）。

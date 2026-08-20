@@ -1,6 +1,6 @@
 # 第三方 TDD 提供者
 
-仅当 `delivery_engine.py select --mode auto` 选择了第三方 TDD 引擎时读取。本文件约束委托边界，不复制提供者的完整说明。
+仅当 Provider Binding 给 native workflow 绑定了第三方 `tdd` stage provider 时读取。本文件约束委托边界，不复制提供者的完整说明。
 
 ## 选择顺序
 
@@ -11,7 +11,7 @@
 
 已适配提供者必须位于 `--tdd-root`、`CONVERGE_TDD_ROOT`、`~/.codex/skills`、`~/.claude/skills` 或 `~/.agents/skills`，且内容摘要与已登记的上游版本完全一致；同名文件或相似措辞不能冒充已适配提供者。上游更新后需重新审查并发布新的适配版本。通用提供者仅接受名称含 `tdd` 或 `test`、说明包含“test first”及红绿循环的非编排 Skill；`pdlc-*`、名称含 `orchestrator`，或声明发布、部署、删除文件、worktree、递归/循环重试的 Skill 不进入候选。
 
-PDLC 使用 Suite 自带或 provider root 内的 `converge-provider.json` adapter manifest。manifest 校验 provider id/version、task kind、实际 entrypoint、显式 closure 与授权边界；fingerprint 覆盖 entrypoint 和 closure 的真实内容。发现 PDLC 入口但 manifest 缺失、版本未适配或闭包变化时返回 incompatible/blocked，不当作不存在，也不回退 native。
+所有已适配执行者使用 Provider Schema v2。manifest 校验身份、role、task kind/stage capability、实际 entrypoint、显式 closure、授权边界、Progress Receipt 和证据要求；fingerprint 覆盖 manifest 与真实来源。auto 首次解析可在写入前说明并降级，显式或已冻结 Provider 不可用时阻塞。
 
 ## 委托契约
 
