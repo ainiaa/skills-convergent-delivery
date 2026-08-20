@@ -11,6 +11,7 @@ class ReportingContractTest(unittest.TestCase):
 
         self.assertIn("[交付回执](references/reporting.md)", skill)
         self.assertIn("交付轮数 / 修复问题数 / 待处理项", skill)
+        self.assertIn("delivery_report.py", skill)
 
     def test_reporting_contract_protects_decisions_and_hides_internal_noise(self):
         report = (ROOT / "references/reporting.md").read_text(encoding="utf-8")

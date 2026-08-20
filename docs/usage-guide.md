@@ -30,6 +30,14 @@ bash install.sh --target all
 bash install.sh --upgrade --target all
 ```
 
+安装后或排查“Skill 没触发”时，先运行只读诊断：
+
+```bash
+bash install.sh --doctor --target codex --offline
+```
+
+`--doctor` 检查 Suite 三个入口是否来自同一版本、必需文件、Git、Python 和执行引擎，不修改安装。
+
 安装器先预检两个运行时的全部三个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
@@ -71,7 +79,7 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。默认可用时选择 `pdlc-v1`，由 PDLC 独占 TDD、实现与阶段评审；`converge` 只保存协调信息并聚合交付证据。PDLC 不可用时，依次尝试适配的 Superpowers、Matt Pocock TDD Skill、通过预检的通用 TDD Skill，最后才使用内置 TDD；第三方路径和内容摘要会冻结进状态，恢复时不可静默换用另一提供者。强制 PDLC 的任务如果在恢复时失去所需能力或内容不一致，会明确阻塞而不会静默降级。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
-`converge-batch` 不持有代码 writer lease，也不读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器只校验 dispatch、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。宿主无法创建任务时，它输出最小 capsule 并暂停，等待用户交接。
+`converge-batch` 不持有代码 writer lease，也不读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器只校验 dispatch、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。连接异常时必须查询已保存的 `worker_ref`；宿主无法提供可恢复任务时，输出最小 capsule 并暂停，等待手工交接。
 
 ## 维护版本
 

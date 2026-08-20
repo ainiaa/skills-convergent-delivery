@@ -41,6 +41,17 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("converge-batch", text)
         self.assertIn('"$CONVERGE_SKILL_DIR/scripts/delivery_engine.py"', text)
 
+    def test_activation_is_discoverable_but_never_edits_user_configuration(self):
+        skill, header = frontmatter(ROOT / "SKILL.md")
+        activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
+        metadata = (ROOT / "agents/openai.yaml").read_text(encoding="utf-8")
+        for marker in ("实现", "修复", "重构", "按方案修改", "修复已知问题"):
+            self.assertIn(marker, header)
+        self.assertIn("references/activation.md", skill)
+        self.assertIn("AGENTS.md", activation)
+        self.assertIn("不自动修改", activation)
+        self.assertIn("allow_implicit_invocation: true", metadata)
+
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
         contract = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
@@ -56,9 +67,13 @@ class SkillContractTest(unittest.TestCase):
         contract = (ROOT / "skills/converge-batch/references/batch-contract.md").read_text(
             encoding="utf-8"
         )
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
         for marker in ("不读取业务代码", "不做代码评审", "$converge", "预检"):
             self.assertIn(marker, skill)
         self.assertIn('"$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py"', skill)
+        self.assertIn("runtime-adapters.md", skill)
         for marker in (
             "dispatch_id",
             "context capsule",
@@ -69,6 +84,15 @@ class SkillContractTest(unittest.TestCase):
             "stop",
         ):
             self.assertIn(marker, contract)
+        for marker in (
+            "Codex",
+            "Claude Code",
+            "worker_ref",
+            "先查询原任务",
+            "不重复派发",
+            "手工交接",
+        ):
+            self.assertIn(marker, runtime)
 
 
 if __name__ == "__main__":

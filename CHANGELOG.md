@@ -6,6 +6,10 @@
 
 ### 新增
 
+- 新增 `install.sh --doctor`：只读检查 Suite 完整性、必需资源、Python/Git 和引擎选择；版本查询会明确区分完整与残缺安装。
+- 新增 Codex/Claude Code Runtime Adapter 契约和 `batch_next.py`：连接中断时恢复查询原任务，派发结果不确定时阻塞而不重复派发。
+- 新增 `delivery_report.py`，从已验证 Schema v5 状态确定性生成结果、交付轮、修复数和待处理数。
+- 新增激活指南和可选 `AGENTS.md` 片段，增强普通实现/修复/重构请求的发现，不自动改写用户配置。
 - 将单一 Skill 拆分为职责明确的 Converge Suite：`converge` 负责单任务闭环，`converge-review` 负责独立只读审查，`converge-batch` 负责长计划接力。
 - 新增 Review Protocol v1：区分意图审查与全新上下文盲审，finding 绑定源码指纹，并提供只复核原问题的 closure 规则。
 - 新增 Batch Protocol v1 与原子状态 helper：全量预检、最小上下文胶囊、幂等派发、结构化 receipt、暂停/恢复/停止和计划级最终验收。

@@ -18,6 +18,7 @@ SKILL_NAMES=(converge converge-review converge-batch)
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
+  references/activation.md
   references/evaluation-scenarios.md
   references/execution-protocol.md
   references/reporting.md
@@ -26,12 +27,15 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_engine.py
   scripts/delivery_lease.py
   scripts/delivery_next.py
+  scripts/delivery_report.py
   scripts/delivery_state.py
   scripts/delivery_task_key.py
   skills/converge-review/SKILL.md
   skills/converge-review/references/review-contract.md
   skills/converge-batch/SKILL.md
   skills/converge-batch/references/batch-contract.md
+  skills/converge-batch/references/runtime-adapters.md
+  skills/converge-batch/scripts/batch_next.py
   skills/converge-batch/scripts/batch_state.py
 )
 
@@ -51,6 +55,7 @@ Usage:
   bash install.sh --upgrade [--target codex|claude|all]
   bash install.sh --uninstall [--target codex|claude|all]
   bash install.sh --version [--offline]
+  bash install.sh --doctor [--target codex|claude|all] [--offline]
 
 The default target is all (Codex and Claude Code). Installation creates the
 converge, converge-review, and converge-batch symlinks as one Suite. It never
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --uninstall) ACTION="uninstall"; shift ;;
     --upgrade) ACTION="upgrade"; shift ;;
     --version) ACTION="version"; shift ;;
+    --doctor) ACTION="doctor"; shift ;;
     --offline) OFFLINE=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -102,12 +108,43 @@ legacy_target_path() {
   esac
 }
 
-version_at() {
-  local path="$1"
-  if [[ -f "$path/VERSION" ]]; then
-    head -1 "$path/VERSION"
-  else
+suite_status() {
+  local runtime="$1"
+  local root
+  root="$(target_path "$runtime" converge)"
+  if [[ ! -f "$root/VERSION" || ! -f "$root/SKILL.md" ]]; then
     echo "not installed"
+    return
+  fi
+
+  local version
+  local source
+  local missing=()
+  version="$(head -1 "$root/VERSION")"
+  source="$(cd "$root" 2>/dev/null && pwd -P)" || {
+    echo "${version} (incomplete: invalid converge)"
+    return
+  }
+  [[ -L "$root" ]] || missing+=(converge)
+  local skill
+  for skill in converge-review converge-batch; do
+    if ! same_source "$(target_path "$runtime" "$skill")" "$source/skills/$skill"; then
+      missing+=("$skill")
+    fi
+  done
+  local relative
+  for relative in "${REQUIRED_SOURCE_FILES[@]}"; do
+    if [[ ! -f "$source/$relative" ]]; then
+      missing+=(assets)
+      break
+    fi
+  done
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    echo "${version} (complete)"
+  else
+    local joined
+    joined="$(IFS=', '; echo "${missing[*]}")"
+    echo "${version} (incomplete: missing ${joined})"
   fi
 }
 
@@ -128,9 +165,92 @@ do_version() {
   echo "converge version status"
   echo "──────────────────────────────────────"
   echo "  Local source: ${local_version}"
-  echo "  Codex:       $(version_at "$(target_path codex converge)")"
-  echo "  Claude Code: $(version_at "$(target_path claude converge)")"
+  echo "  Codex:       $(suite_status codex)"
+  echo "  Claude Code: $(suite_status claude)"
   echo "  GitHub main: $(latest_version)"
+}
+
+doctor_source() {
+  if [[ -n "$SOURCE_OVERRIDE" ]]; then
+    printf '%s\n' "$SOURCE_OVERRIDE"
+  else
+    local runtime="$TARGET"
+    [[ "$runtime" == "all" ]] && runtime="codex"
+    local installed
+    installed="$(target_path "$runtime" converge)"
+    if [[ ! -f "$installed/SKILL.md" && "$TARGET" == "all" ]]; then
+      installed="$(target_path claude converge)"
+    fi
+    if [[ -f "$installed/SKILL.md" ]]; then
+      (cd "$installed" && pwd -P)
+    elif [[ -f "$SCRIPT_DIR/SKILL.md" ]]; then
+      printf '%s\n' "$SCRIPT_DIR"
+    else
+      printf '%s\n' "$MANAGED_SOURCE"
+    fi
+  fi
+}
+
+do_doctor() {
+  local failed=0
+  local runtimes=("$TARGET")
+  [[ "$TARGET" == "all" ]] && runtimes=(codex claude)
+  echo "converge doctor"
+  echo "──────────────────────────────────────"
+  local runtime
+  for runtime in "${runtimes[@]}"; do
+    local status
+    status="$(suite_status "$runtime")"
+    if [[ "$status" == *"(complete)" ]]; then
+      echo "  ${runtime} Suite: complete (${status% (complete)})"
+    else
+      echo "  ${runtime} Suite: incomplete (${status})"
+      failed=1
+    fi
+  done
+
+  if command -v git >/dev/null 2>&1; then
+    echo "  Git:     $(git --version)"
+  else
+    echo "  Git:     missing"
+    failed=1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    local python_version
+    python_version="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
+    echo "  Python:  ${python_version}"
+    python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))' || failed=1
+  else
+    echo "  Python:  missing"
+    failed=1
+  fi
+
+  local source
+  source="$(doctor_source)"
+  local relative
+  local source_complete=1
+  for relative in "${REQUIRED_SOURCE_FILES[@]}"; do
+    if [[ ! -f "$source/$relative" ]]; then
+      echo "  Source:  incomplete (missing $relative)"
+      failed=1
+      source_complete=0
+      break
+    fi
+  done
+  [[ "$source_complete" -eq 0 ]] || echo "  Source:  complete"
+
+  if [[ -f "$source/scripts/delivery_engine.py" ]] && command -v python3 >/dev/null 2>&1; then
+    local engine
+    local engine_status=0
+    engine="$(python3 "$source/scripts/delivery_engine.py" select --mode auto --kind feature 2>&1)" \
+      || engine_status=$?
+    echo "  Engine:  ${engine:-unavailable}"
+    [[ "$engine_status" -eq 0 && -n "$engine" ]] || failed=1
+  else
+    echo "  Engine:  unavailable"
+    failed=1
+  fi
+  return "$failed"
 }
 
 release_install_lock() {
@@ -281,6 +401,11 @@ uninstall_skill() {
 if [[ "$ACTION" == "version" ]]; then
   do_version
   exit 0
+fi
+
+if [[ "$ACTION" == "doctor" ]]; then
+  do_doctor
+  exit $?
 fi
 
 acquire_install_lock

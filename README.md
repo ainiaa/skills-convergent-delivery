@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：让单个任务有限收敛，让独立审查保持只读，让长计划按 Batch 稳定接力。
 
-当前开发版本：[0.7.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.8.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -25,8 +25,9 @@ Converge Suite 将三个职责拆开：执行者只交付一个任务，reviewer
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
 - Batch 调度具备计划预检、最小上下文胶囊、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
+- Batch 运行时明确适配 Codex 与 Claude Code；断线后查询原 `worker_ref`，不确定时阻塞而不重复派发。
 - 单任务与 Batch 状态都使用私有、原子写入和 revision 校验；多窗口不会互相覆盖。
-- 默认报告面向结果，保留必要的轮数、问题数和待处理项，不倾倒内部状态机术语。
+- 默认报告由状态确定性生成，保留必要的轮数、问题数和待处理项，不倾倒内部状态机术语。
 
 ## Install
 
@@ -65,6 +66,12 @@ bash install.sh --uninstall --target all
 ```bash
 bash install.sh --version
 bash install.sh --version --offline
+```
+
+运行只读安装诊断：
+
+```bash
+bash install.sh --doctor --target codex --offline
 ```
 
 ## 3 步快速开始
@@ -108,7 +115,7 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 `converge-batch`： “按 Batch 计划执行”“逐批接力”“调度多个独立任务完成计划”。
 
-只要方案时明确说“只给方案”；只检查时明确说“不修改代码”。Skill frontmatter 只是发现线索，无法保证任意自然语言都自动触发；显式点名最可靠。
+只要方案时明确说“只给方案”；只检查时明确说“不修改代码”。Skill frontmatter 只是发现线索，无法保证任意自然语言都自动触发；显式点名最可靠。如需团队默认启用，可手工复制 [激活与触发](references/activation.md) 中的 `AGENTS.md` 片段；安装器不会自动改配置。
 
 ## 工作方式
 
@@ -129,6 +136,8 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 ```
 
 调度器不读业务代码、不 review、不替 Batch 决定技术方案。每批使用最小 context capsule，只有上一批的真实 Git commit/tree、验收证据和约定产出验证通过后才继续；只有 active 计划的当前 Batch 能派发，派发结果不确定时阻塞，不重复创建任务。
+
+Codex 保存 task/thread id，Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；否则输出 capsule 手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
 ### 引擎选择
 
@@ -177,8 +186,10 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
 - [安全策略](SECURITY.md)
 - [压力场景](references/evaluation-scenarios.md)
 - [交付回执规范](references/reporting.md)
+- [激活与触发](references/activation.md)
 - [单任务状态 Schema](references/state-schema.md)
 - [Batch Protocol](skills/converge-batch/references/batch-contract.md)
+- [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)
 - [Review Protocol](skills/converge-review/references/review-contract.md)
 
 ## 开发

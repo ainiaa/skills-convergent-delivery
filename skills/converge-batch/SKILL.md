@@ -13,7 +13,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 1. 全量预检
 
-开始前读取 [Batch Protocol v1](references/batch-contract.md)，一次性检查：
+开始前读取 [Batch Protocol v1](references/batch-contract.md) 和 [Runtime Adapters](references/runtime-adapters.md)，一次性检查：
 
 - 计划有限且 Batch 顺序明确；
 - 每批有目标、范围、消费/产出接口、基线、验收和真实验证方式；
@@ -35,10 +35,11 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只从已冻结计划复制当前 Batch 必需信息：全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
-宿主支持任务/子代理时，创建全新上下文并发送 capsule，显式要求使用 `$converge`；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，保存 `worker_ref` 后发送 capsule，显式要求使用 `$converge`；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
 ## 4. 幂等派发和监控
 
+- 每次继续前将完整 Batch state 通过 stdin 传给 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_next.py" --input -`，只执行其返回的一个动作。
 - 派发前生成唯一 `dispatch_id`，状态依次为 `pending → dispatching → running → validating-receipt → completed`。
 - 无法确认 dispatch 是否成功时进入 blocked，不重派相同 Batch。
 - 只允许对查询/连接错误进行有限重试；测试、实现、环境或业务失败不得自动重跑整个 Batch。

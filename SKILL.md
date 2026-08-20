@@ -1,6 +1,6 @@
 ---
 name: converge
-description: Implement, fix, or refactor one authorized software task through finite, evidence-backed delivery. Use for “闭环实现/处理/完成”, end-to-end implementation, or a request to keep fixing until verified. Do not use for read-only review or multi-Batch plan coordination.
+description: Implement, fix, or refactor one authorized software task through finite, evidence-backed delivery. Use for “实现/修复/重构/按方案修改/修复已知问题/闭环完成”, end-to-end implementation, or requests to keep fixing until verified. Do not use for read-only review or multi-Batch plan coordination.
 ---
 
 # Converge：单任务闭环执行
@@ -8,6 +8,8 @@ description: Implement, fix, or refactor one authorized software task through fi
 负责一个边界明确的软件任务：冻结范围、选择实现引擎、限制修复、收集新鲜证据并交付明确结果。它是控制面，不是第二套 PDLC，也不调度长计划。
 
 如果用户只要求检查代码，使用 `converge-review`；如果用户要求按已有多个 Batch 持续接力，使用 `converge-batch`。不要在本 Skill 内模拟这两个角色。
+
+当团队希望普通开发请求也稳定命中本 Skill 时，读取 [激活与触发](references/activation.md)。只提供可选配置片段，不自动修改用户的 `AGENTS.md` 或全局配置。
 
 先将当前已选中 `converge/SKILL.md` 所在目录的绝对路径记为 `CONVERGE_SKILL_DIR`。所有 helper 和 reference 都从该目录解析，不能假设当前工作区包含本 Suite 的 `scripts/`。
 
@@ -69,7 +71,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
-按 [交付回执](references/reporting.md) 输出面向用户的结果。默认包含：做了什么、是否可使用、已验证范围，以及一行“交付轮数 / 修复问题数 / 待处理项”；命令、内部状态、lease 和严重度只在用户要求详细报告时展示。
+终态写入后，运行 `python3 "$CONVERGE_SKILL_DIR/scripts/delivery_report.py" --state <derived-state-path> --format text`，以其确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的结果。默认包含：做了什么、是否可使用、已验证范围，以及一行“交付轮数 / 修复问题数 / 待处理项”；命令、内部状态、lease 和严重度只在用户要求详细报告时展示。
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 

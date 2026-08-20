@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -29,6 +30,15 @@ class InstallTest(unittest.TestCase):
     def run_installer(self, home, *arguments):
         return self.run_installer_from(home, ROOT, *arguments)
 
+    def run_installer_without_source(self, home, *arguments):
+        return subprocess.run(
+            ["bash", str(INSTALLER), *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=os.environ | {"HOME": str(home)},
+        )
+
     def test_install_version_and_uninstall_for_both_runtimes(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -52,6 +62,94 @@ class InstallTest(unittest.TestCase):
                 for name in SKILL_SOURCES:
                     target = home / f".{runtime}/skills/{name}"
                     self.assertFalse(target.exists() or target.is_symlink())
+
+    def test_version_and_doctor_detect_an_incomplete_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            root = home / ".claude/skills/converge"
+            root.parent.mkdir(parents=True)
+            root.symlink_to(ROOT)
+
+            version = self.run_installer(home, "--version", "--offline")
+            doctor = self.run_installer(home, "--doctor", "--target", "claude", "--offline")
+
+            self.assertEqual(0, version.returncode, version.stderr)
+            self.assertIn(f"Claude Code: {VERSION} (incomplete", version.stdout)
+            self.assertIn("converge-review", version.stdout)
+            self.assertIn("converge-batch", version.stdout)
+            self.assertNotEqual(0, doctor.returncode)
+            self.assertIn("Suite: incomplete", doctor.stdout)
+
+    def test_doctor_accepts_a_complete_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            installed = self.run_installer(home, "--target", "codex")
+            doctor = self.run_installer_without_source(
+                home, "--doctor", "--target", "codex", "--offline"
+            )
+
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            self.assertEqual(0, doctor.returncode, doctor.stderr)
+            self.assertIn("Suite: complete", doctor.stdout)
+            self.assertIn("Python:", doctor.stdout)
+            self.assertIn("Engine:", doctor.stdout)
+
+    def test_version_and_doctor_reject_a_linked_suite_with_missing_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "partial-source"
+            (source / "skills/converge-review").mkdir(parents=True)
+            (source / "skills/converge-batch").mkdir(parents=True)
+            (source / "SKILL.md").write_text("---\nname: converge\n---\n", encoding="utf-8")
+            (source / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
+            for name in ("converge-review", "converge-batch"):
+                (source / f"skills/{name}/SKILL.md").write_text(
+                    f"---\nname: {name}\n---\n", encoding="utf-8"
+                )
+                target = home / f".codex/skills/{name}"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(source / f"skills/{name}")
+            (home / ".codex/skills/converge").symlink_to(source)
+
+            version = self.run_installer(home, "--version", "--offline")
+            doctor = self.run_installer(home, "--doctor", "--target", "codex", "--offline")
+
+            self.assertIn("incomplete", version.stdout)
+            self.assertNotEqual(0, doctor.returncode)
+            self.assertIn("Suite: incomplete", doctor.stdout)
+
+    def test_doctor_runs_the_installed_engine_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "installed-source"
+            shutil.copytree(
+                ROOT,
+                source,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".claude", ".codex", "__pycache__", "25761b*"
+                ),
+            )
+            (source / "scripts/delivery_engine.py").write_text(
+                "print('engine failed after partial output')\nraise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            for name, relative in (
+                ("converge", "."),
+                ("converge-review", "skills/converge-review"),
+                ("converge-batch", "skills/converge-batch"),
+            ):
+                target = home / f".codex/skills/{name}"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to((source / relative).resolve())
+
+            doctor = self.run_installer_without_source(
+                home, "--doctor", "--target", "codex", "--offline"
+            )
+
+            self.assertNotEqual(0, doctor.returncode)
+            self.assertIn("Engine:  engine failed after partial output", doctor.stdout)
 
     def test_install_refuses_to_replace_an_existing_directory(self):
         with tempfile.TemporaryDirectory() as directory:
