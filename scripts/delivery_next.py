@@ -150,9 +150,36 @@ def validate_state(state, arguments):
             raise ValueError("ledger.acceptance[].result must be pass, fail, or unknown")
         if item.get("freshness") not in FRESHNESS:
             raise ValueError("ledger.acceptance[].freshness is invalid")
+    acceptance_history = ledger.get("acceptance_history", [])
+    if not isinstance(acceptance_history, list):
+        raise ValueError("ledger.acceptance_history must be a list")
+    for item in acceptance_history:
+        if not isinstance(item, dict):
+            raise ValueError("ledger.acceptance_history[] must be an object")
+        history_revision = item.get("revision")
+        if (
+            not isinstance(history_revision, int)
+            or isinstance(history_revision, bool)
+            or history_revision < 0
+        ):
+            raise ValueError("ledger.acceptance_history[].revision must be non-negative")
+        snapshot = require_mapping(item.get("acceptance"), "ledger.acceptance_history[].acceptance")
+        require_string(snapshot.get("criterion"), "ledger.acceptance_history[].criterion")
+        require_string(snapshot.get("evidence"), "ledger.acceptance_history[].evidence")
+        if snapshot.get("result") not in CHECK_RESULTS:
+            raise ValueError("ledger.acceptance_history[].result is invalid")
+        if snapshot.get("freshness") not in FRESHNESS:
+            raise ValueError("ledger.acceptance_history[].freshness is invalid")
     handoff = require_mapping(state.get("handoff"), "handoff")
     for field in ("goal", "last_verification", "open_issues", "next_action"):
         require_string(handoff.get(field), f"handoff.{field}")
+
+    if not isinstance(state.get("requires_stability_round"), bool):
+        raise ValueError("requires_stability_round must be boolean")
+    stage = state.get("current_stage")
+    active_stages = NATIVE_ACTIVE_STAGES if engine_name in TDD_ENGINES else PDLC_ACTIVE_STAGES
+    if stage not in active_stages:
+        raise ValueError("invalid current_stage")
 
     if getattr(arguments, "run_id", None) and arguments.run_id != run_id:
         raise ValueError("run_id does not match")
@@ -177,6 +204,9 @@ def validate_state(state, arguments):
             item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
         ):
             raise ValueError("complete state requires fresh passing acceptance evidence")
+        expected_final = "verify-final" if engine_name in TDD_ENGINES else "pdlc-run"
+        if stage != expected_final:
+            raise ValueError("complete state must follow final verification")
         return "complete"
     if status == "blocked":
         if state.get("blocked_code") not in BLOCKED_CODES:
@@ -186,12 +216,6 @@ def validate_state(state, arguments):
     if status != "active":
         raise ValueError("status must be active, complete, or blocked")
 
-    if not isinstance(state.get("requires_stability_round"), bool):
-        raise ValueError("requires_stability_round must be boolean")
-    stage = state.get("current_stage")
-    active_stages = NATIVE_ACTIVE_STAGES if engine_name in TDD_ENGINES else PDLC_ACTIVE_STAGES
-    if stage not in active_stages:
-        raise ValueError("invalid current_stage")
     if engine_name == "pdlc-v1":
         return "pdlc-run"
     if stage == "scope":

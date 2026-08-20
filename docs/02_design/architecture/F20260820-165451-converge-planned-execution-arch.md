@@ -70,7 +70,7 @@ PDLC 委托屏障要求：选择 `pdlc-v1` 后，Converge 只创建一个 `pdlc-
 
 `plan_check.py validate` 校验必填字段、哈希、唯一任务 ID、依赖存在、无循环；按依赖和 `owned_paths` 生成执行 wave。无依赖但路径重叠的任务不能位于同一 wave。`pdlc-v1` 只接受唯一 `pdlc-run` 任务。
 
-`planned_task=true` 是递归保护：接到 capsule 的执行者只执行冻结任务，不再调用 `converge-plan` 或创建子计划。
+`planned_task=true` 是递归保护：接到 capsule 的执行者只执行冻结任务，不再调用 `converge-plan` 或创建子计划。Batch Schema 同时校验 `plan_id/task_id` 与冻结映射，避免该保护只停留在提示词。
 
 ## 5. 计划提供者与仲裁
 
@@ -88,14 +88,17 @@ PDLC 委托屏障要求：选择 `pdlc-v1` 后，Converge 只创建一个 `pdlc-
 
 ## 7. 无响应与恢复
 
+本节是 Runtime Adapter 在宿主具备计时、活动/进程查询、中断和恢复 API 时的行为约束；Skill 文本本身不实现后台 watchdog。能力不全时只允许保存 capsule/receipt 并手工交接，不得宣称已中断或自动恢复。
+
 - 软探测：约 90 秒内没有 commentary、工具调用、状态、diff 或 worker 回执，且没有运行进程时，输出进度并检查原任务。
 - 硬中断：约 180 秒仍满足全部无活动条件时才中断当前生成；保存任务/计划项引用，最多自动恢复一次。
 - 恢复必须查询同一 `worker_ref` 或继续同一 `plan_id/task_id`，不能重新派发。
+- Batch Protocol 保持 v1，state Schema v2 持久化 `worker_ref/recovery_count`，并允许旧 v1 先做身份字段迁移；恢复计数最多为 1。`repo_id + plan_id` scheduler lease 默认两小时、随写入续期，活动 owner 不可抢占，过期后仅显式 takeover；它不替代 worker writer lease。
 - 有真实测试、构建、PDLC 或子任务进程运行时只等待并汇报，不中断。
 
 ## 8. 完成审计
 
-计划结束时，对每项任务输出 `DONE`、`PARTIAL`、`NOT_DONE` 或 `CHANGED`；每个 `DONE` 必须绑定当前源码的通过证据。计划外 diff 标记 `scope_drift`。存在 P0 验收未完成、证据陈旧或未授权漂移时不得交付。
+计划结束时，对每项任务输出 `DONE`、`PARTIAL`、`NOT_DONE` 或 `CHANGED`；audit 从真实 workspace 自行读取 Git commit/tree/diff/changed paths，每个 `DONE` 必须携带绑定该 source receipt 的结构化通过证据。receipt 中的命令文本不由 audit 执行。计划外 diff 标记 `scope_drift`。存在 P0 验收未完成、证据陈旧或未授权漂移时不得交付。
 
 ## 9. 风险与控制
 

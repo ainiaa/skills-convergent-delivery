@@ -41,6 +41,9 @@
     "acceptance": [
       {"criterion": "验收项", "evidence": "测试或命令", "result": "pass | fail | unknown", "freshness": "fresh | stale | unavailable"}
     ],
+    "acceptance_history": [
+      {"revision": 0, "acceptance": {"criterion": "验收项", "evidence": "被替换的旧证据", "result": "pass", "freshness": "fresh"}}
+    ],
     "report_history": {
       "last_outcome": "ready | attention | decision | blocked",
       "reported_fingerprints": ["已向用户说明的问题或待决项指纹"],
@@ -56,11 +59,11 @@
 }
 ```
 
-`repo_id`、`task_key`、`writer_id`、`revision` 是写入归属信息：`repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`task_key` 必须由 `scripts/delivery_task_key.py` 生成；`writer_id` 来自成功获取的 lease；每次成功状态写入将 `revision` 加一。`ledger` 保留跨会话防重复修复、最终验收和增量回执所需的最小证据，命令参数必须脱敏。`report_history` 仅用于避免重复汇报，不保存用户原文、密钥或业务敏感数据。
+`repo_id`、`task_key`、`writer_id`、`revision` 是写入归属信息：`repo_id` 使用 `git rev-parse --git-common-dir` 解析后的绝对路径；`task_key` 必须由 `scripts/delivery_task_key.py` 生成；`writer_id` 来自成功获取的 lease；每次成功状态写入将 `revision` 加一。写入时还必须把冻结值作为 `--repo-id`、`--task-key` 传给 helper，防止候选 JSON 把正式路径重定向到另一个任务。`ledger` 保留跨会话防重复修复、最终验收和增量回执所需的最小证据，命令参数必须脱敏。`report_history` 仅用于避免重复汇报，不保存用户原文、密钥或业务敏感数据。
 
 `engine` 是任务开始后不可静默改变的执行契约。`native-v1` 不填写第三方或 PDLC 路径；`superpowers-tdd-v1`、`mattpocock-tdd-v1`、`generic-tdd-v1` 必须填写 `tdd_skill_path` 与 `tdd_skill_fingerprint`，并使用原生阶段；`pdlc-v1` 必须填写 `pdlc_root`、`feature_id`、`task_kind` 与 `pdlc_fingerprint`，且 `current_stage` 只能为 `pdlc-run`。每次写入或恢复都会重新核验对应文件内容；路径、版本或内容变化一律环境阻塞，不能换一个来源继续。PDLC 的细粒度阶段、检查和产物继续只保存在 `docs/.pdlc-state/<feature-id>.json`；本 state 只记录协调层事实，不能复制或覆盖其状态。
 
-状态根目录固定为 `~/.convergent-delivery/state/`，供 Codex 与 Claude Code 共用。正式路径只能由 `repo_id`、`task_key` 和 `run_id` 推导；更新时先续期 lease，再将完整 JSON 通过 `delivery_state.py write --input -` 的 stdin 提交。脚本不接受任意 `--state` 路径或外部候选文件，校验活动 lease、writer 和 expected revision 后在正式文件同目录原子写入。恢复时必须指定 `run_id`、`writer_id` 和 `revision`；未指定时一律阻塞。
+状态根目录固定为 `~/.convergent-delivery/state/`，供 Codex 与 Claude Code 共用。正式路径只能由 `repo_id`、`task_key` 和 `run_id` 推导；更新时先续期 lease，再将完整 JSON 通过 `delivery_state.py write --input - --repo-id <repo> --task-key <task>` 的 stdin 提交。脚本不接受任意 `--state` 路径或外部候选文件，校验活动 lease、writer 和 expected revision 后在正式文件同目录原子写入。每次回写还会冻结 repo/task/run/writer/baseline/scope/engine，限制阶段只沿协议前进，并保持 repair/checks/history 追加和轮次单步递增。`acceptance` 表示当前事实，允许 pass→fail 或 fresh→stale；每次改变必须把完整旧项连同旧 revision 追加到 `acceptance_history`，criterion 始终不变，complete 仍只接受当前全部 fresh pass。只有同 owner 的有效 lease move 可以改变 workspace，complete/blocked 终态按完整字段对称冻结。恢复时必须指定 `run_id`、`writer_id` 和 `revision`；未指定时一律阻塞。
 
 恢复或外层循环前运行：
 

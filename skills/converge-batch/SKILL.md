@@ -5,7 +5,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 # Converge Batch：长计划调度器
 
-只负责读取计划、预检 Batch、生成最小上下文胶囊、派发/恢复执行者并校验结构化 receipt。不读取业务代码，不做代码评审，不修改技术方案，不执行实现，也不持有代码 writer lease。
+只负责读取计划、预检 Batch、生成最小上下文胶囊、派发/恢复执行者并校验结构化 receipt。不读取业务代码，不做代码评审，不修改技术方案，不执行实现，也不持有代码 writer lease；计划级 scheduler lease 只防重复调度。
 
 每个执行 Batch 必须在新上下文中显式调用 `$converge`。调度器只根据状态和 receipt 判断完成或阻塞，不能根据执行者的自然语言自评放行。
 
@@ -27,13 +27,13 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 2. 冻结计划并初始化
 
-冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch Schema v1；后续所有更新必须校验 owner 和 revision。
+冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch state Schema v2；旧 v1 先做仅身份字段迁移。helper 同时以 `repo_id + plan_id` 获取默认两小时的 scheduler lease，第二个活动 run/window 必须阻塞；过期 owner 仅在确认已停止后用 `--takeover` 接管。后续所有更新必须校验 owner 和 revision。
 
 计划内容变化时暂停并要求重新协调，不把新要求静默塞入当前 Batch。Batch state 与 `converge` 的单任务 state 分离。
 
 ## 3. 生成 context capsule
 
-只从已冻结计划复制当前 Batch 必需信息：全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
+只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
 按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，保存 `worker_ref` 后发送 capsule，显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
@@ -44,7 +44,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 每次继续前将完整 Batch state 通过 stdin 传给 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_next.py" --input -`，只执行其返回的一个动作。
 - 派发前生成唯一 `dispatch_id`，状态依次为 `pending → dispatching → running → validating-receipt → completed`。
 - 无法确认 dispatch 是否成功时进入 blocked，不重派相同 Batch。
-- 只允许对查询/连接错误进行有限重试；测试、实现、环境或业务失败不得自动重跑整个 Batch。
+- 只允许对查询/连接错误恢复一次；先将同一 Batch 的 `worker_ref` 和 `recovery_count=1` 持久化。测试、实现、环境或业务失败不得自动重跑整个 Batch。
 - 只有当前 Batch completed 后才能派发下一批；顺序计划不并发执行代码。
 - 进度只在 Batch 开始、完成、阻塞、用户查询或整体结束时汇报。
 

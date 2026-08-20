@@ -54,6 +54,8 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(marker, skill + contract + control)
         for marker in ("DONE", "PARTIAL", "NOT_DONE", "CHANGED", "scope_drift"):
             self.assertIn(marker, contract)
+        for marker in ("--workspace", "commit_id", "tree_hash", "diff_fingerprint", "exit_code"):
+            self.assertIn(marker, contract)
 
     def test_root_skill_plans_before_non_planned_execution_without_splitting_pdlc(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -109,6 +111,11 @@ class SkillContractTest(unittest.TestCase):
             "context capsule",
             "receipt",
             "final_acceptance",
+            "planned_task",
+            "plan_id",
+            "task_id",
+            "scheduler lease",
+            "recovery_count",
             "pause",
             "resume",
             "stop",
@@ -124,6 +131,16 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, runtime)
         self.assertIn("Batch Protocol v1 默认顺序", skill)
+
+    def test_watchdog_rules_do_not_claim_missing_host_capabilities(self):
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+        for marker in ("不是 `SKILL.md` 自带", "宿主", "不能声称", "手工恢复"):
+            self.assertIn(marker, control)
+        for marker in ("不能创建、计时、中断或恢复", "实际提供对应 API", "recovery_count=1"):
+            self.assertIn(marker, runtime)
 
 
 if __name__ == "__main__":

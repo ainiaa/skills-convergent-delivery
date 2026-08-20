@@ -109,7 +109,7 @@ class DeliveryStateTest(unittest.TestCase):
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}
 
-    def acquire(self, root):
+    def acquire(self, root, workspace="/repo/worktree-a"):
         result = subprocess.run(
             [
                 sys.executable,
@@ -120,7 +120,7 @@ class DeliveryStateTest(unittest.TestCase):
                 "--repo",
                 "/repo/common.git",
                 "--workspace",
-                "/repo/worktree-a",
+                workspace,
                 "--task-key",
                 "task-payment",
                 "--run-id",
@@ -169,6 +169,10 @@ class DeliveryStateTest(unittest.TestCase):
                 "run-1",
                 "--writer-id",
                 writer_id,
+                "--repo-id",
+                "/repo/common.git",
+                "--task-key",
+                "task-payment",
                 "--expected-revision",
                 str(expected_revision),
             ],
@@ -267,6 +271,10 @@ class DeliveryStateTest(unittest.TestCase):
                     "run-1",
                     "--writer-id",
                     "writer-1",
+                    "--repo-id",
+                    "/repo/common.git",
+                    "--task-key",
+                    "task-payment",
                     "--expected-revision",
                     "-1",
                 ],
@@ -302,6 +310,10 @@ class DeliveryStateTest(unittest.TestCase):
                     "run-1",
                     "--writer-id",
                     "writer-1",
+                    "--repo-id",
+                    "/repo/common.git",
+                    "--task-key",
+                    "task-payment",
                     "--expected-revision",
                     "0",
                 ],
@@ -325,6 +337,222 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
             self.assertFalse(state_path.parent.exists())
+
+    def test_应该_当状态被回写时_拒绝冻结契约和证据倒退(self):
+        def cases():
+            changed_repo = state(revision=1)
+            changed_repo["repo_id"] = "/repo/other.git"
+            changed_task = state(revision=1)
+            changed_task["task_key"] = "task-other"
+            changed_run = state(revision=1)
+            changed_run["run_id"] = "run-2"
+            changed_writer = state(revision=1, writer_id="writer-2")
+            changed_baseline = state(revision=1)
+            changed_baseline["baseline"]["commit"] = "rewritten"
+            changed_scope = state(revision=1)
+            changed_scope["scope_fingerprint"] = "rewritten"
+            changed_engine = state(revision=1)
+            changed_engine["engine"]["reason"] = "silently switched"
+            regressed_stage = state(revision=1)
+            regressed_stage["current_stage"] = "round-1-build"
+            skipped_stage = state(revision=1)
+            skipped_stage["current_stage"] = "round-2-risk-review"
+            regressed_rounds = state(revision=1)
+            regressed_rounds["ledger"]["completed_rounds"] = 0
+            skipped_rounds = state(revision=1)
+            skipped_rounds["ledger"]["completed_rounds"] = 2
+            removed_repair = state(revision=1)
+            removed_repair["ledger"]["repair_fingerprints"] = []
+            removed_check = state(revision=1)
+            removed_check["ledger"]["checks"] = []
+            changed_acceptance = state(revision=1)
+            changed_acceptance["ledger"]["acceptance"][0]["evidence"] = "invented evidence"
+            terminal = state()
+            terminal["status"] = "complete"
+            terminal["current_stage"] = "verify-final"
+            changed_terminal = state(revision=1)
+            changed_terminal["status"] = "complete"
+            changed_terminal["current_stage"] = "verify-final"
+            changed_terminal["handoff"]["goal"] = "rewritten after completion"
+            return {
+                "repo": (state(), changed_repo),
+                "task": (state(), changed_task),
+                "run": (state(), changed_run),
+                "writer": (state(), changed_writer),
+                "baseline": (state(), changed_baseline),
+                "scope": (state(), changed_scope),
+                "engine": (state(), changed_engine),
+                "stage": (state(), regressed_stage),
+                "stage_skip": (
+                    {**state(), "current_stage": "round-1-build"},
+                    skipped_stage,
+                ),
+                "completed_rounds": (
+                    {**state(), "ledger": {**state()["ledger"], "completed_rounds": 1}},
+                    regressed_rounds,
+                ),
+                "completed_rounds_skip": (state(), skipped_rounds),
+                "repair_fingerprints": (
+                    {
+                        **state(),
+                        "ledger": {
+                            **state()["ledger"],
+                            "repair_fingerprints": ["fixed-once"],
+                        },
+                    },
+                    removed_repair,
+                ),
+                "checks": (
+                    {
+                        **state(),
+                        "ledger": {
+                            **state()["ledger"],
+                            "checks": [
+                                {"stage": "build", "command": "test-one", "result": "pass"}
+                            ],
+                        },
+                    },
+                    removed_check,
+                ),
+                "acceptance": (state(), changed_acceptance),
+                "terminal": (terminal, changed_terminal),
+            }
+
+        for name, (initial, candidate) in cases().items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "leases"
+                state_home = Path(directory) / "home"
+                self.acquire(root)
+                self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+
+                result = self.write(root, state_home, candidate, 0)
+
+                self.assertNotEqual(0, result.returncode, name)
+
+    def test_应该_当状态合法前进时_保留追加证据并允许工作区迁移(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+
+            candidate = state(revision=1)
+            candidate["current_stage"] = "verify-final"
+            candidate["status"] = "complete"
+            candidate["ledger"]["completed_rounds"] = 1
+            candidate["ledger"]["repair_fingerprints"] = ["fixed-once"]
+            candidate["ledger"]["checks"] = [
+                {"stage": "verify-final", "command": "test-one", "result": "pass"}
+            ]
+            completed = self.write(root, state_home, candidate, 0)
+            self.assertEqual(0, completed.returncode, completed.stderr)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            moved = subprocess.run(
+                [
+                    sys.executable,
+                    str(LEASE_SCRIPT),
+                    "move",
+                    "--root",
+                    str(root),
+                    "--repo",
+                    "/repo/common.git",
+                    "--from-workspace",
+                    "/repo/worktree-a",
+                    "--workspace",
+                    "/repo/worktree-b",
+                    "--task-key",
+                    "task-payment",
+                    "--run-id",
+                    "run-1",
+                    "--writer-id",
+                    "writer-1",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, moved.returncode, moved.stderr)
+            candidate = state(revision=1)
+            candidate["workspace"] = "/repo/worktree-b"
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            candidate = state(revision=1)
+            previous_acceptance = initial["ledger"]["acceptance"][0]
+            candidate["ledger"]["acceptance_history"] = [
+                {"revision": 0, "acceptance": previous_acceptance}
+            ]
+            candidate["ledger"]["acceptance"][0] = {
+                "criterion": "Requested behavior",
+                "evidence": "source changed after the passing verification",
+                "result": "pass",
+                "freshness": "stale",
+            }
+
+            stale = self.write(root, state_home, candidate, 0)
+            self.assertEqual(0, stale.returncode, stale.stderr)
+
+            failed_candidate = state(revision=2)
+            failed_candidate["ledger"]["acceptance_history"] = [
+                {"revision": 0, "acceptance": previous_acceptance},
+                {"revision": 1, "acceptance": candidate["ledger"]["acceptance"][0]},
+            ]
+            failed_candidate["ledger"]["acceptance"][0] = {
+                "criterion": "Requested behavior",
+                "evidence": "latest verification exited non-zero",
+                "result": "fail",
+                "freshness": "fresh",
+            }
+
+            failed = self.write(root, state_home, failed_candidate, 1)
+
+            self.assertEqual(0, failed.returncode, failed.stderr)
+
+    def test_应该_当终态候选删除字段时_对称比较并拒绝(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            terminal = state()
+            terminal["status"] = "complete"
+            terminal["current_stage"] = "verify-final"
+            self.assertEqual(0, self.write(root, state_home, terminal, -1).returncode)
+            candidate = state(revision=1)
+            candidate["status"] = "complete"
+            candidate["current_stage"] = "verify-final"
+            candidate.pop("requires_stability_round")
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
+
+    def test_应该_当未执行租约迁移时_拒绝直接改写工作区(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            self.acquire(root, "/repo/worktree-b")
+            candidate = state(revision=1)
+            candidate["workspace"] = "/repo/worktree-b"
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
 
 
 if __name__ == "__main__":

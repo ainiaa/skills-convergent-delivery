@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.9.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.9.1](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -26,12 +26,12 @@ Converge Suite 将四个职责拆开：planner 只拆任务，执行者只交付
 - PDLC 只形成一个 fresh `pdlc-run`，完整委托需求、设计、TDD、实现和阶段评审，避免双流程。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - 依赖 wave 会标识潜在并行候选；内置 Batch Protocol v1 保持顺序执行，避免多 worktree 和 receipt 无法可靠恢复。
-- 90 秒无活动先软探测，180 秒仍无活动且没有运行进程才中断；只恢复原任务一次。
+- 宿主提供计时、进程查询、中断和恢复 API 时，90 秒无活动先软探测、180 秒仍无活动才中断；Skill 本身不伪造这些宿主能力。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
-- Batch 调度具备计划预检、最小上下文胶囊、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
+- Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - Batch 运行时明确适配 Codex 与 Claude Code；断线后查询原 `worker_ref`，不确定时阻塞而不重复派发。
-- 单任务与 Batch 状态都使用私有、原子写入和 revision 校验；多窗口不会互相覆盖。
+- 单任务状态校验冻结契约和合法阶段，当前 acceptance 变化会归档旧 revision；Batch state Schema v2 用有期限的 `repo_id + plan_id` lease 防第二个活动调度窗口，并持久化 worker/recovery 身份。
 - 默认报告由状态确定性生成，保留必要的轮数、问题数和待处理项，不倾倒内部状态机术语。
 
 ## Install
@@ -137,9 +137,9 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 同一问题在同一阶段最多自动修一次；问题复现或没有客观进展时阻塞，不无限循环。高风险改动使用全新上下文的 `converge-review` 盲审；极高风险或用户明确要求时再增加意图审查。
 
-复杂任务由 `converge-plan` 生成 Plan Contract。若 PDLC 可用，计划只有一个 `pdlc-run`，主上下文立即把完整 PDLC 交给可恢复的新任务，不提前生成整套文档和补丁。已派发任务携带 `planned_task=true`，子执行者不会再次规划。
+复杂任务由 `converge-plan` 生成 Plan Contract。若 PDLC 可用，计划只有一个 `pdlc-run`；宿主支持可恢复新任务时整体委托，否则输出 capsule 手工交接，不提前生成整套文档和补丁。已派发任务携带严格校验的 `planned_task=true`、`plan_id` 和 `task_id`，子执行者不会再次规划。
 
-无响应保护区分“模型没有活动”和“测试/构建仍在运行”：约 90 秒无任何活动时先探测，约 180 秒仍无活动且没有进程时才中断，并且只恢复同一任务一次。详见 [执行控制](references/execution-control.md)。
+无响应保护区分“模型没有活动”和“测试/构建仍在运行”。约 90/180 秒的探测、中断和一次恢复是 Runtime Adapter 对具备相应 API 的宿主的行为协议；Skill 文本本身没有后台计时或强杀能力。详见 [执行控制](references/execution-control.md)。
 
 ### 长计划调度
 
@@ -166,7 +166,8 @@ Codex 保存 task/thread id，Claude Code 只在能获取可恢复 Task/subagent
 ## 状态、多窗口与恢复
 
 - 单任务状态：`~/.convergent-delivery/state/`，Schema v5。
-- Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1。
+- Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1 / state Schema v2；旧 v1 先迁移再写。
+- Batch scheduler lease：位于 Batch state 根下，按 `repo_id + plan_id` 唯一，默认两小时；过期后仅显式 takeover。
 - writer lease：`~/.convergent-delivery/leases/`，默认两小时。
 
 状态正式路径由 helper 推导；候选 JSON 只通过 stdin 传递，在目标目录内以 `0600` 临时文件、`fsync` 和原子替换写入，不把 `/tmp` 当真源。repo、任务/计划、run 与单调 revision 共同防止不同项目或窗口覆盖同一状态。
@@ -178,7 +179,9 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
   --writer-id <writer-id> --revision <revision>
 ```
 
-每个执行任务应使用独立 worktree；同一 worktree 只允许一个 writer。Batch scheduler 自己不持有代码 writer lease，每个 Batch 执行者由 `$converge` 独立管理。
+每个执行任务应使用独立 worktree；同一 worktree 只允许一个 writer。Batch scheduler 只持有防重复派发的计划级 lease，不持有代码 writer lease；每个 Batch 执行者仍由 `$converge` 独立管理。
+
+计划完成审计必须传入真实 Git workspace。helper 自己绑定 `HEAD` commit/tree、当前 diff、未跟踪文件与 Git 原生 changed paths，只接受绑定同一 source receipt 的结构化验证证据；它不会执行 receipt 中的任意命令文本，也不会把文件名中的反斜杠改写成目录分隔符。
 
 ## 最终报告
 

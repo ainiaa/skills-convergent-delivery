@@ -15,6 +15,23 @@ from delivery_next import validate_state
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "state"
+IMMUTABLE_FIELDS = (
+    "schema_version",
+    "run_id",
+    "repo_id",
+    "task_key",
+    "writer_id",
+    "baseline",
+    "scope_fingerprint",
+    "engine",
+)
+NATIVE_STAGE_TRANSITIONS = {
+    "scope": "round-1-build",
+    "round-1-build": "round-1-semantic-review",
+    "verify-round-1": "round-2-risk-review",
+    "round-2-risk-review": "verify-final",
+}
+TERMINAL_STATUSES = {"complete", "blocked"}
 
 
 def state_path(root, repo, task_key, run_id):
@@ -53,6 +70,8 @@ def active_lease(state, lease_root, run_id, writer_id):
             record = read_record(path)
             if not same_owner(record, run_id, writer_id) or is_expired(record):
                 raise ValueError("active lease is not owned by this writer")
+            if any(record.get(field) != state[field] for field in ("repo_id", "workspace", "task_key")):
+                raise ValueError("active lease does not match candidate workspace")
         yield
 
 
@@ -60,6 +79,86 @@ def validate_candidate(candidate, arguments):
     validate_state(candidate, arguments)
     if candidate["run_id"] != arguments.run_id or candidate["writer_id"] != arguments.writer_id:
         raise ValueError("candidate owner does not match")
+    if candidate["repo_id"] != arguments.repo_id or candidate["task_key"] != arguments.task_key:
+        raise ValueError("candidate task identity does not match")
+
+
+def require_prefix(previous, candidate, name):
+    if candidate[: len(previous)] != previous:
+        raise ValueError(f"{name} is append-only")
+
+
+def validate_acceptance_transition(previous, candidate, previous_history, candidate_history, revision):
+    if len(candidate) != len(previous):
+        raise ValueError("ledger.acceptance criteria are immutable")
+    changed = []
+    for old, new in zip(previous, candidate):
+        if old["criterion"] != new["criterion"]:
+            raise ValueError("ledger.acceptance criteria are immutable")
+        if new != old:
+            changed.append({"revision": revision, "acceptance": old})
+    require_prefix(previous_history, candidate_history, "ledger.acceptance_history")
+    if candidate_history[len(previous_history) :] != changed:
+        raise ValueError("acceptance changes must archive the previous evidence")
+
+
+def next_native_stage(stage, state):
+    if stage == "round-1-semantic-review":
+        return "verify-round-1" if state["requires_stability_round"] else "verify-final"
+    return NATIVE_STAGE_TRANSITIONS.get(stage)
+
+
+def validate_transition(previous, candidate):
+    for field in IMMUTABLE_FIELDS:
+        if candidate[field] != previous[field]:
+            raise ValueError(f"{field} is immutable")
+    if previous["status"] in TERMINAL_STATUSES:
+        if candidate["status"] != previous["status"]:
+            raise ValueError("terminal status is immutable")
+        expected = dict(previous)
+        expected["revision"] = candidate["revision"]
+        if candidate != expected:
+            raise ValueError("terminal state is immutable")
+        return
+    if candidate["status"] not in {"active", "complete", "blocked"}:
+        raise ValueError("invalid status transition")
+    if previous["requires_stability_round"] and not candidate["requires_stability_round"]:
+        raise ValueError("requires_stability_round must not regress")
+
+    old_stage = previous["current_stage"]
+    new_stage = candidate["current_stage"]
+    if previous["engine"]["name"] == "pdlc-v1":
+        allowed_next = "pdlc-run"
+    else:
+        allowed_next = next_native_stage(old_stage, candidate)
+    if candidate["status"] == "active" and new_stage not in {old_stage, allowed_next}:
+        raise ValueError("current_stage must advance through the protocol")
+    if candidate["status"] == "blocked" and new_stage != old_stage:
+        raise ValueError("blocked state must retain the current stage")
+    if candidate["status"] == "complete":
+        expected_final = "pdlc-run" if previous["engine"]["name"] == "pdlc-v1" else "verify-final"
+        if new_stage != expected_final or allowed_next != expected_final:
+            raise ValueError("complete state must follow final verification")
+
+    old_ledger = previous["ledger"]
+    new_ledger = candidate["ledger"]
+    if new_ledger["completed_rounds"] < old_ledger["completed_rounds"]:
+        raise ValueError("ledger.completed_rounds must not regress")
+    if new_ledger["completed_rounds"] > old_ledger["completed_rounds"] + 1:
+        raise ValueError("ledger.completed_rounds must advance one round at a time")
+    require_prefix(
+        old_ledger["repair_fingerprints"],
+        new_ledger["repair_fingerprints"],
+        "ledger.repair_fingerprints",
+    )
+    require_prefix(old_ledger["checks"], new_ledger["checks"], "ledger.checks")
+    validate_acceptance_transition(
+        old_ledger["acceptance"],
+        new_ledger["acceptance"],
+        old_ledger.get("acceptance_history", []),
+        new_ledger.get("acceptance_history", []),
+        previous["revision"],
+    )
 
 
 def write(arguments):
@@ -68,7 +167,7 @@ def write(arguments):
     candidate = json.load(sys.stdin)
     validate_candidate(candidate, arguments)
     managed_path = state_path(
-        DEFAULT_STATE_ROOT, candidate["repo_id"], candidate["task_key"], candidate["run_id"]
+        DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
     )
     with active_lease(candidate, arguments.lease_root, arguments.run_id, arguments.writer_id):
         managed_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +181,8 @@ def write(arguments):
                 raise ValueError("expected revision does not match current state")
             if candidate["revision"] != current_revision + 1:
                 raise ValueError("candidate revision must be the next revision")
+            if managed_path.exists():
+                validate_transition(current, candidate)
             write_private(managed_path, candidate)
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
@@ -95,6 +196,7 @@ def main():
     parser.add_argument("--task-key")
     parser.add_argument("--run-id")
     parser.add_argument("--writer-id")
+    parser.add_argument("--repo-id")
     parser.add_argument("--expected-revision", type=int)
     arguments = parser.parse_args()
     try:
@@ -103,8 +205,18 @@ def main():
                 raise ValueError("path requires --repo, --task-key, and --run-id")
             print(state_path(DEFAULT_STATE_ROOT, arguments.repo, arguments.task_key, arguments.run_id))
             return 0
-        if not all((arguments.input, arguments.run_id, arguments.writer_id)):
-            raise ValueError("write requires --input, --run-id, and --writer-id")
+        if not all(
+            (
+                arguments.input,
+                arguments.run_id,
+                arguments.writer_id,
+                arguments.repo_id,
+                arguments.task_key,
+            )
+        ):
+            raise ValueError(
+                "write requires --input, --run-id, --writer-id, --repo-id, and --task-key"
+            )
         if arguments.expected_revision is None:
             raise ValueError("write requires --expected-revision")
         write(arguments)

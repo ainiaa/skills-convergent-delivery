@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -59,6 +60,16 @@ def clean_path(value, name):
     return str(parsed)
 
 
+def clean_git_path(value, name):
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    path = value
+    parsed = PurePosixPath(path)
+    if parsed.is_absolute() or ".." in parsed.parts:
+        raise ValueError(f"{name} must stay inside the workspace")
+    return path
+
+
 def path_contains(owner, changed):
     if owner == ".":
         return True
@@ -71,6 +82,77 @@ def paths_overlap(left, right):
 
 def task_conflicts(left, right):
     return any(paths_overlap(a, b) for a in left["owned_paths"] for b in right["owned_paths"])
+
+
+def git_bytes(workspace, *arguments):
+    result = subprocess.run(
+        ["git", "-C", str(workspace), *arguments],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("workspace must be a readable Git worktree")
+    return result.stdout
+
+
+def workspace_source(workspace):
+    workspace = Path(require_string(str(workspace), "workspace")).expanduser().resolve()
+    root = Path(git_bytes(workspace, "rev-parse", "--show-toplevel").decode().strip()).resolve()
+    commit_id = git_bytes(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    tree_hash = git_bytes(root, "rev-parse", "HEAD^{tree}").decode().strip()
+    tracked_diff = git_bytes(
+        root, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"
+    )
+    tracked_paths = git_bytes(
+        root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"
+    ).split(b"\0")
+    untracked_paths = git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z").split(
+        b"\0"
+    )
+    changed_paths = sorted(
+        {
+            path.decode("utf-8")
+            for path in tracked_paths + untracked_paths
+            if path
+        }
+    )
+    diff_digest = hashlib.sha256(tracked_diff)
+    for relative in sorted(path for path in untracked_paths if path):
+        path = root / relative.decode("utf-8")
+        diff_digest.update(relative)
+        diff_digest.update(b"\0")
+        if path.is_symlink():
+            diff_digest.update(str(path.readlink()).encode("utf-8"))
+        elif path.is_file():
+            diff_digest.update(path.read_bytes())
+        diff_digest.update(b"\0")
+    source = {
+        "commit_id": commit_id,
+        "tree_hash": tree_hash,
+        "diff_fingerprint": diff_digest.hexdigest(),
+        "changed_paths": changed_paths,
+    }
+    source["source_fingerprint"] = hashlib.sha256(
+        json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return source
+
+
+def valid_evidence_receipts(value, source):
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("command"), str)
+            and bool(item["command"].strip())
+            and isinstance(item.get("exit_code"), int)
+            and not isinstance(item["exit_code"], bool)
+            and item["exit_code"] == 0
+            and item.get("source") == source
+            for item in value
+        )
+    )
 
 
 def validate_planner(value, engine):
@@ -188,21 +270,16 @@ def validate_plan(plan):
     return {"status": "valid", "execution_mode": execution_mode, "waves": waves}
 
 
-def audit(envelope):
+def audit(envelope, workspace):
     if not isinstance(envelope, dict):
         raise ValueError("audit input must be an object")
     plan = envelope.get("plan")
     validate_plan(plan)
-    source_fingerprint = require_sha256(
-        envelope.get("source_fingerprint"), "source_fingerprint"
-    )
+    source = workspace_source(workspace)
     results = envelope.get("task_results")
     if not isinstance(results, dict):
         raise ValueError("task_results must be an object")
-    changed_paths = [
-        clean_path(path, "changed_paths")
-        for path in require_strings(envelope.get("changed_paths"), "changed_paths")
-    ]
+    changed_paths = [clean_git_path(path, "changed_paths") for path in source["changed_paths"]]
 
     statuses = {}
     for task in plan["tasks"]:
@@ -215,16 +292,9 @@ def audit(envelope):
             raise ValueError(f"task_results.{task_id} is invalid")
         status = result["status"]
         if status == "DONE":
-            evidence = result.get("evidence")
-            bound_evidence = (
-                isinstance(evidence, list)
-                and bool(evidence)
-                and all(isinstance(item, str) and item.strip() for item in evidence)
-            )
             if (
                 result.get("fresh_pass") is not True
-                or result.get("verified_source_fingerprint") != source_fingerprint
-                or not bound_evidence
+                or not valid_evidence_receipts(result.get("evidence"), source)
             ):
                 status = "PARTIAL"
         statuses[task_id] = status
@@ -237,14 +307,11 @@ def audit(envelope):
     for entry in final_entries:
         if not isinstance(entry, dict):
             continue
-        evidence = entry.get("evidence")
         if (
             entry.get("criterion") in expected_final
             and entry.get("result") == "pass"
             and entry.get("freshness") == "fresh"
-            and isinstance(evidence, str)
-            and evidence.strip()
-            and entry.get("verified_source_fingerprint") == source_fingerprint
+            and valid_evidence_receipts([entry.get("evidence")], source)
         ):
             passed_final.add(entry["criterion"])
     final_acceptance_pass = passed_final == expected_final
@@ -263,6 +330,7 @@ def audit(envelope):
         ),
         "final_acceptance": final_acceptance_pass,
         "scope_drift": scope_drift,
+        "source": source,
         "tasks": statuses,
     }
 
@@ -280,10 +348,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("validate", "audit"))
     parser.add_argument("--input", required=True)
+    parser.add_argument("--workspace")
     arguments = parser.parse_args()
     try:
         payload = read_input(arguments.input)
-        output = validate_plan(payload) if arguments.command == "validate" else audit(payload)
+        if arguments.command == "validate":
+            output = validate_plan(payload)
+        else:
+            if not arguments.workspace:
+                raise ValueError("audit requires --workspace")
+            output = audit(payload, arguments.workspace)
     except (OSError, ValueError) as error:
         print(f"plan check failed: {error}", file=sys.stderr)
         return 2

@@ -60,9 +60,9 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 Schema v5 JSON 经 `delivery_state.py write --input -` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer、revision、冻结的执行引擎、来源路径和内容摘要。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`；若 PDLC 或第三方 TDD Skill 更新、缺失或换了位置，helper 会阻塞而不会静默换源。
+单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 Schema v5 JSON 经 `delivery_state.py write --input - --repo-id <repo> --task-key <task>` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer、revision、冻结契约、合法阶段和追加型 repair/check/history。当前 acceptance 可真实变为 fail/stale，但必须将旧值和 revision 追加到 `acceptance_history`；criterion 不变且 complete 仍要求当前 fresh pass。同 owner 完成 lease move 后仍可迁移 workspace。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`；若 PDLC 或第三方 TDD Skill 更新、缺失或换了位置，helper 会阻塞而不会静默换源。
 
-Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1。路径由 repo、`plan_id` 和 `run_id` 推导，避免计划内容修订把旧状态悄悄变成另一个文件；`plan_revision` 与 fingerprint 在状态内冻结，任何漂移都会阻塞。写入同样使用 stdin、文件锁、revision CAS、私有临时文件、`fsync` 和同目录原子替换。
+Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v2。reader 可读取旧 v1，下一次写入先做只添加 capsule/task identity 的原子迁移；新状态必须是 v2。路径由 repo、`plan_id` 和 `run_id` 推导，另以 `repo_id + plan_id` 建立默认两小时且每次写入续期的 scheduler lease；活动 owner 阻止第二个 run/window，过期后仅允许显式 `--takeover`。`plan_revision` 与 fingerprint 在状态内冻结，任何漂移都会阻塞。写入同样使用 stdin、文件锁、revision CAS、私有临时文件、`fsync` 和同目录原子替换。
 
 ## 多窗口并行
 
@@ -79,11 +79,11 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。默认可用时选择 `pdlc-v1`，由 PDLC 独占 TDD、实现与阶段评审；`converge` 只保存协调信息并聚合交付证据。PDLC 不可用时，依次尝试适配的 Superpowers、Matt Pocock TDD Skill、通过预检的通用 TDD Skill，最后才使用内置 TDD；第三方路径和内容摘要会冻结进状态，恢复时不可静默换用另一提供者。强制 PDLC 的任务如果在恢复时失去所需能力或内容不一致，会明确阻塞而不会静默降级。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
-复杂任务先由 `converge-plan` 生成并校验 Plan Contract。PDLC 路径只有一个 `pdlc-run`，完整流程在 fresh context 中执行；非 PDLC 路径按依赖和 `owned_paths` 生成 wave。每个派发 capsule 都携带 `planned_task=true`，避免子执行者再次规划。计划结束后必须对账任务状态、当前 diff 和新鲜证据。
+复杂任务先由 `converge-plan` 生成并校验 Plan Contract。PDLC 路径只有一个 `pdlc-run`，宿主支持时完整流程在 fresh context 中执行，否则手工交接；非 PDLC 路径按依赖和 `owned_paths` 生成 wave。每个派发 capsule 都携带并由 Schema 校验 `planned_task=true`、正确 `plan_id/task_id`，避免子执行者再次规划。计划结束后必须把真实 workspace 交给 audit，由 helper 自行读取 Git commit/tree/diff/changed paths 并核对结构化证据。
 
-`converge-batch` 不持有代码 writer lease，也不读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器只校验 dispatch、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。连接异常时必须查询已保存的 `worker_ref`；宿主无法提供可恢复任务时，输出最小 capsule 并暂停，等待手工交接。
+`converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease，也不允许读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器持久化 `worker_ref/recovery_count`，只校验 dispatch、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。连接异常时最多恢复已保存的原 worker 一次；宿主无法提供可恢复任务时，输出最小 capsule 并暂停，等待手工交接。
 
-宿主无响应保护只在 commentary、工具、状态、diff、日志、回执和运行进程全部无活动时启动：约 90 秒软探测，约 180 秒硬中断；随后只恢复同一任务一次。测试、构建或 PDLC 仍运行时不会误中断。
+约 90 秒软探测、180 秒硬中断和一次恢复只在宿主实际提供活动/进程查询、计时、中断与同任务恢复 API 时自动执行。Skill 内规则不是后台 watchdog；能力不足时只保存状态并手工交接，不能宣称已中断。测试、构建或 PDLC 仍运行时不会误中断。
 
 ## 维护版本
 

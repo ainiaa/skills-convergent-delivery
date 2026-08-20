@@ -12,8 +12,11 @@ batch_state = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(batch_state)
 
 
-def capsule(batch_id):
+def capsule(batch_id, plan_id="plan-1", task_id=None):
     return {
+        "planned_task": True,
+        "plan_id": plan_id,
+        "task_id": task_id or batch_id.replace("B", "T"),
         "batch_id": batch_id,
         "goal": f"goal-{batch_id}",
         "scope": [f"module-{batch_id}"],
@@ -48,7 +51,7 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash):
 
 def candidate(workspace, revision=0):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": "batch-run-1",
         "writer_id": "scheduler-1",
         "revision": revision,
@@ -65,18 +68,22 @@ def candidate(workspace, revision=0):
         "batches": [
             {
                 "batch_id": "B1",
+                "task_id": "T1",
                 "status": "pending",
                 "capsule": capsule("B1"),
                 "dispatch_id": None,
                 "worker_ref": None,
+                "recovery_count": 0,
                 "receipt": None,
             },
             {
                 "batch_id": "B2",
+                "task_id": "T2",
                 "status": "pending",
                 "capsule": capsule("B2"),
                 "dispatch_id": None,
                 "worker_ref": None,
+                "recovery_count": 0,
                 "receipt": None,
             },
         ],
@@ -285,6 +292,113 @@ class BatchStateTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "Git commit"):
             self.write(state, 2)
+
+    def test_应该_当胶囊缺少计划身份时_拒绝递归规划风险(self):
+        for name, mutate in (
+            ("missing planned_task", lambda value: value.pop("planned_task")),
+            ("false planned_task", lambda value: value.update(planned_task=False)),
+            ("wrong plan_id", lambda value: value.update(plan_id="another-plan")),
+            ("missing task_id", lambda value: value.pop("task_id")),
+        ):
+            with self.subTest(name=name):
+                value = candidate(self.workspace)
+                mutate(value["batches"][0]["capsule"])
+                with self.assertRaises(ValueError):
+                    self.write(value, -1)
+
+    def test_应该_当同一计划已有调度者时_拒绝第二个运行窗口(self):
+        first = candidate(self.workspace)
+        self.write(first, -1)
+        second = candidate(self.workspace)
+        second["run_id"] = "batch-run-2"
+        second["writer_id"] = "scheduler-2"
+
+        with self.assertRaisesRegex(ValueError, "scheduler lease"):
+            self.write(second, -1)
+
+        with self.assertRaisesRegex(ValueError, "scheduler lease"):
+            batch_state.write_state(self.root, second, -1, takeover=True)
+
+    def test_应该_当调度租约已过期且状态未落盘时_允许显式接管(self):
+        stale = candidate(self.workspace)
+        lease_path = batch_state.scheduler_lease_path(
+            self.root, stale["repo_id"], stale["plan"]["plan_id"]
+        )
+        lease_path.parent.mkdir(parents=True, exist_ok=True)
+        lease_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": "crashed-run",
+                    "writer_id": "crashed-scheduler",
+                    "lease_expires_at": "2000-01-01T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        replacement = candidate(self.workspace)
+        replacement["run_id"] = "batch-run-2"
+        replacement["writer_id"] = "scheduler-2"
+
+        path = batch_state.write_state(self.root, replacement, -1, takeover=True)
+
+        self.assertTrue(path.exists())
+
+    def test_应该_当恢复真实旧v1状态时_迁移到新Schema并继续(self):
+        legacy = candidate(self.workspace)
+        legacy["schema_version"] = 1
+        for batch in legacy["batches"]:
+            batch.pop("task_id")
+            batch.pop("recovery_count")
+            for field in ("planned_task", "plan_id", "task_id"):
+                batch["capsule"].pop(field)
+        batch_state.validate_state(legacy)
+        with self.assertRaisesRegex(ValueError, "schema_version 2"):
+            batch_state.write_state(self.root / "new-state", legacy, -1)
+        path = batch_state.state_path(
+            self.root, legacy["repo_id"], legacy["plan"]["plan_id"], legacy["run_id"]
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+        upgraded = candidate(self.workspace, revision=1)
+        upgraded["schema_version"] = 2
+
+        written = self.write(upgraded, 0)
+
+        self.assertEqual(2, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
+
+    def test_应该_当恢复次数倒退或超过一次时_拒绝状态更新(self):
+        state = candidate(self.workspace)
+        self.write(state, -1)
+        state["revision"] = 1
+        state["batches"][0]["status"] = "dispatching"
+        state["batches"][0]["dispatch_id"] = "dispatch-B1"
+        self.write(state, 0)
+        state["revision"] = 2
+        state["batches"][0]["status"] = "running"
+        state["batches"][0]["worker_ref"] = "thread-1"
+        self.write(state, 1)
+        state["revision"] = 3
+        state["batches"][0]["recovery_count"] = 1
+        self.write(state, 2)
+
+        state["revision"] = 4
+        state["batches"][0]["recovery_count"] = 2
+        with self.assertRaisesRegex(ValueError, "recovery_count"):
+            self.write(state, 3)
+
+        state["batches"][0]["recovery_count"] = 0
+        with self.assertRaisesRegex(ValueError, "recovery_count"):
+            self.write(state, 3)
+
+    def test_应该_当旧状态没有恢复计数时_按零次恢复兼容读取(self):
+        state = candidate(self.workspace)
+        for batch in state["batches"]:
+            batch.pop("recovery_count")
+
+        path = self.write(state, -1)
+
+        self.assertTrue(path.exists())
 
 
 if __name__ == "__main__":

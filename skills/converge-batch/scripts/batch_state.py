@@ -10,11 +10,27 @@ import subprocess
 import sys
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
+DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 7200
+LEGACY_CAPSULE_FIELDS = (
+    "batch_id",
+    "goal",
+    "scope",
+    "global_constraints",
+    "consumes",
+    "produces",
+    "baseline",
+    "acceptance",
+    "verification",
+)
 CAPSULE_FIELDS = (
+    "planned_task",
+    "plan_id",
+    "task_id",
     "batch_id",
     "goal",
     "scope",
@@ -77,6 +93,43 @@ def state_path(root, repo_id, plan_id, run_id):
     return base / digest(canonical_path(repo_id)) / digest(plan_id) / f"{digest(run_id)}.json"
 
 
+def scheduler_lease_path(root, repo_id, plan_id):
+    base = Path(root).expanduser().resolve() / "scheduler-leases"
+    return base / digest(canonical_path(repo_id)) / f"{digest(plan_id)}.json"
+
+
+def timestamp(value):
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_timestamp(value):
+    parsed = datetime.fromisoformat(
+        require_string(value, "lease_expires_at").replace("Z", "+00:00")
+    )
+    if parsed.tzinfo is None:
+        raise ValueError("lease_expires_at must include a timezone")
+    return parsed
+
+
+def scheduler_lease(candidate, ttl_seconds):
+    if ttl_seconds <= 0:
+        raise ValueError("scheduler lease ttl must be positive")
+    current = datetime.now(timezone.utc)
+    return {
+        "schema_version": 1,
+        "run_id": candidate["run_id"],
+        "writer_id": candidate["writer_id"],
+        "renewed_at": timestamp(current),
+        "lease_expires_at": timestamp(current + timedelta(seconds=ttl_seconds)),
+    }
+
+
+def scheduler_lease_expired(record):
+    if "lease_expires_at" not in record:
+        return True
+    return parse_timestamp(record["lease_expires_at"]) <= datetime.now(timezone.utc)
+
+
 @contextmanager
 def lock_path(path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,15 +176,26 @@ def validate_evidence(entries, name, *, require_pass=False):
                 raise ValueError(f"{name} must contain only fresh passing evidence")
 
 
-def validate_capsule(capsule, batch_id):
+def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
     capsule = require_mapping(capsule, f"capsule {batch_id}")
-    for field in CAPSULE_FIELDS:
+    fields = LEGACY_CAPSULE_FIELDS if schema_version == 1 else CAPSULE_FIELDS
+    for field in fields:
         if field not in capsule:
             raise ValueError(f"capsule {batch_id} is missing {field}")
     if capsule["batch_id"] != batch_id:
         raise ValueError("capsule batch_id does not match")
+    if schema_version == 2:
+        if capsule["planned_task"] is not True:
+            raise ValueError("capsule planned_task must be true")
+        if capsule["plan_id"] != plan_id:
+            raise ValueError("capsule plan_id does not match")
+        if capsule["task_id"] != task_id:
+            raise ValueError("capsule task_id does not match")
     for field in ("goal", "baseline"):
         require_string(capsule[field], f"capsule.{field}")
+    if schema_version == 2:
+        for field in ("plan_id", "task_id"):
+            require_string(capsule[field], f"capsule.{field}")
     for field in ("scope", "global_constraints", "consumes", "produces", "acceptance", "verification"):
         values = require_list(capsule[field], f"capsule.{field}", non_empty=True)
         for value in values:
@@ -177,8 +241,9 @@ def validate_receipt(receipt, batch, workspace):
 
 def validate_state(state):
     state = require_mapping(state, "state")
-    if state.get("schema_version") != 1:
-        raise ValueError("schema_version must be 1")
+    schema_version = state.get("schema_version")
+    if schema_version not in {1, 2}:
+        raise ValueError("schema_version must be 1 or 2")
     for field in ("run_id", "writer_id"):
         require_string(state.get(field), field)
     if not isinstance(state.get("revision"), int) or state["revision"] < 0:
@@ -204,20 +269,41 @@ def validate_state(state):
         raise ValueError("invalid plan status")
     batches = require_list(state.get("batches"), "batches", non_empty=True)
     seen_ids = set()
+    seen_tasks = set()
     seen_dispatches = set()
     for index, batch in enumerate(batches):
         batch = require_mapping(batch, f"batches[{index}]")
         batch_id = require_string(batch.get("batch_id"), f"batches[{index}].batch_id")
+        task_id = (
+            batch_id
+            if schema_version == 1
+            else require_string(batch.get("task_id"), f"batches[{index}].task_id")
+        )
         if batch_id in seen_ids:
             raise ValueError("batch_id must be unique")
         seen_ids.add(batch_id)
+        if task_id in seen_tasks:
+            raise ValueError("task_id must be unique")
+        seen_tasks.add(task_id)
         batch_status = batch.get("status")
         if batch_status not in BATCH_TRANSITIONS:
             raise ValueError("invalid batch status")
-        validate_capsule(batch.get("capsule"), batch_id)
+        validate_capsule(
+            batch.get("capsule"), batch_id, plan["plan_id"], task_id, schema_version
+        )
         dispatch_id = batch.get("dispatch_id")
         worker_ref = batch.get("worker_ref")
+        recovery_count = batch.get("recovery_count", 0)
         receipt = batch.get("receipt")
+        if (
+            not isinstance(recovery_count, int)
+            or isinstance(recovery_count, bool)
+            or recovery_count < 0
+            or recovery_count > 1
+        ):
+            raise ValueError("recovery_count must be 0 or 1")
+        if recovery_count and not worker_ref:
+            raise ValueError("recovery_count requires worker_ref")
         if batch_status in {"dispatching", "running", "validating-receipt", "completed"}:
             require_string(dispatch_id, "dispatch_id")
         if dispatch_id is not None:
@@ -262,13 +348,47 @@ def validate_state(state):
 
 
 def validate_transition(previous, candidate):
-    for field in ("schema_version", "run_id", "writer_id", "repo_id", "workspace", "plan"):
+    upgrading = previous["schema_version"] == 1 and candidate["schema_version"] == 2
+    if candidate["schema_version"] != previous["schema_version"] and not upgrading:
+        raise ValueError("invalid schema transition")
+    for field in ("run_id", "writer_id", "repo_id", "workspace", "plan"):
         if candidate[field] != previous[field]:
             if field == "plan":
                 raise ValueError("plan is immutable")
             raise ValueError(f"{field} is immutable")
     if candidate["revision"] != previous["revision"] + 1:
         raise ValueError("candidate revision must be the next revision")
+    if upgrading:
+        if set(candidate) != set(previous):
+            raise ValueError("schema upgrade must preserve state fields")
+        for field in previous:
+            if field not in {"schema_version", "revision", "batches"} \
+                and candidate.get(field) != previous[field]:
+                raise ValueError("schema upgrade must not change plan state")
+        if len(candidate["batches"]) != len(previous["batches"]):
+            raise ValueError("batch list is immutable")
+        for old, new in zip(previous["batches"], candidate["batches"]):
+            old_without_upgrade = dict(old)
+            new_without_upgrade = dict(new)
+            old_task_id = old_without_upgrade.pop("task_id", None)
+            new_task_id = new_without_upgrade.pop("task_id", None)
+            if old_task_id is not None and new_task_id != old_task_id:
+                raise ValueError("schema upgrade must preserve task_id")
+            if new_without_upgrade.pop("recovery_count", 0) != old.get("recovery_count", 0):
+                raise ValueError("schema upgrade must preserve recovery_count")
+            old_without_upgrade.pop("recovery_count", None)
+            old_capsule = dict(old_without_upgrade["capsule"])
+            new_capsule = dict(new_without_upgrade["capsule"])
+            for field in ("planned_task", "plan_id", "task_id"):
+                old_value = old_capsule.pop(field, None)
+                if old_value is not None and new_capsule.get(field) != old_value:
+                    raise ValueError("schema upgrade must preserve capsule identity")
+                new_capsule.pop(field, None)
+            old_without_upgrade["capsule"] = old_capsule
+            new_without_upgrade["capsule"] = new_capsule
+            if new_without_upgrade != old_without_upgrade or new_capsule != old_capsule:
+                raise ValueError("schema upgrade must only add capsule identity")
+        return
     if candidate["status"] not in PLAN_TRANSITIONS[previous["status"]]:
         raise ValueError("invalid plan transition")
     if len(candidate["batches"]) != len(previous["batches"]):
@@ -276,7 +396,13 @@ def validate_transition(previous, candidate):
 
     changed = 0
     for old, new in zip(previous["batches"], candidate["batches"]):
-        if old["batch_id"] != new["batch_id"] or old["capsule"] != new["capsule"]:
+        if old["status"] in {"completed", "blocked"} and new != old:
+            raise ValueError("terminal batch is immutable")
+        if (
+            old["batch_id"] != new["batch_id"]
+            or old["task_id"] != new["task_id"]
+            or old["capsule"] != new["capsule"]
+        ):
             raise ValueError("batch order and capsule are immutable")
         if new["status"] not in BATCH_TRANSITIONS[old["status"]]:
             raise ValueError("invalid batch transition")
@@ -284,6 +410,8 @@ def validate_transition(previous, candidate):
             raise ValueError("dispatch_id is immutable")
         if old["worker_ref"] is not None and new["worker_ref"] != old["worker_ref"]:
             raise ValueError("worker_ref is immutable")
+        if new.get("recovery_count", 0) < old.get("recovery_count", 0):
+            raise ValueError("recovery_count must not regress")
         if old["receipt"] is not None and new["receipt"] != old["receipt"]:
             raise ValueError("receipt is immutable")
         if new != old:
@@ -311,29 +439,62 @@ def validate_transition(previous, candidate):
         raise ValueError("only one batch may transition per revision")
 
 
-def write_state(root, candidate, expected_revision):
+def write_state(
+    root,
+    candidate,
+    expected_revision,
+    *,
+    takeover=False,
+    ttl_seconds=DEFAULT_SCHEDULER_LEASE_TTL_SECONDS,
+):
     validate_state(candidate)
+    if candidate["schema_version"] != 2:
+        raise ValueError("new writes require schema_version 2; migrate legacy v1 state first")
     path = state_path(
         root,
         candidate["repo_id"],
         candidate["plan"]["plan_id"],
         candidate["run_id"],
     )
-    with lock_path(path):
-        current_revision = -1
-        if path.exists():
-            previous = json.loads(path.read_text(encoding="utf-8"))
-            validate_state(previous)
-            current_revision = previous["revision"]
-            if current_revision != expected_revision:
-                raise ValueError("expected revision does not match current state")
-            validate_transition(previous, candidate)
-        elif expected_revision != -1:
-            raise ValueError("expected revision does not match missing state")
-        if candidate["revision"] != current_revision + 1:
-            raise ValueError("candidate revision must be the next revision")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_private(path, candidate)
+    lease_path = scheduler_lease_path(
+        root, candidate["repo_id"], candidate["plan"]["plan_id"]
+    )
+    with lock_path(lease_path):
+        owner = scheduler_lease(candidate, ttl_seconds)
+        previous_lease = None
+        if lease_path.exists():
+            previous_lease = json.loads(lease_path.read_text(encoding="utf-8"))
+            same_owner = all(
+                previous_lease.get(field) == owner[field] for field in ("run_id", "writer_id")
+            )
+            if not same_owner:
+                if not scheduler_lease_expired(previous_lease):
+                    raise ValueError("scheduler lease is owned by another active run")
+                if not takeover:
+                    raise ValueError("scheduler lease is expired; explicit takeover is required")
+        write_private(lease_path, owner)
+        try:
+            with lock_path(path):
+                current_revision = -1
+                if path.exists():
+                    previous = json.loads(path.read_text(encoding="utf-8"))
+                    validate_state(previous)
+                    current_revision = previous["revision"]
+                    if current_revision != expected_revision:
+                        raise ValueError("expected revision does not match current state")
+                    validate_transition(previous, candidate)
+                elif expected_revision != -1:
+                    raise ValueError("expected revision does not match missing state")
+                if candidate["revision"] != current_revision + 1:
+                    raise ValueError("candidate revision must be the next revision")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                write_private(path, candidate)
+        except Exception:
+            if previous_lease is None:
+                lease_path.unlink(missing_ok=True)
+            else:
+                write_private(lease_path, previous_lease)
+            raise
     return path
 
 
@@ -347,6 +508,8 @@ def main():
     parser.add_argument("--run-id")
     parser.add_argument("--writer-id")
     parser.add_argument("--expected-revision", type=int)
+    parser.add_argument("--takeover", action="store_true")
+    parser.add_argument("--ttl-seconds", type=int, default=DEFAULT_SCHEDULER_LEASE_TTL_SECONDS)
     arguments = parser.parse_args()
     try:
         if arguments.command == "path":
@@ -361,7 +524,13 @@ def main():
         candidate = json.load(sys.stdin)
         if candidate.get("run_id") != arguments.run_id or candidate.get("writer_id") != arguments.writer_id:
             raise ValueError("candidate owner does not match")
-        path = write_state(arguments.state_root, candidate, arguments.expected_revision)
+        path = write_state(
+            arguments.state_root,
+            candidate,
+            arguments.expected_revision,
+            takeover=arguments.takeover,
+            ttl_seconds=arguments.ttl_seconds,
+        )
         print(json.dumps({"status": "written", "path": str(path), "revision": candidate["revision"]}))
         return 0
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:

@@ -6,6 +6,9 @@
 
 ```json
 {
+  "planned_task": true,
+  "plan_id": "plan-example",
+  "task_id": "T1",
   "batch_id": "B1",
   "goal": "one verifiable outcome",
   "scope": ["allowed module/contract"],
@@ -19,10 +22,13 @@
 ```
 
 调度器只能复制和裁剪计划，不能通过读取业务代码自行填充缺失字段。
+Schema v2 capsule 的 `planned_task` 必须严格为 `true`，`plan_id` 必须匹配冻结计划，`task_id` 必须匹配 Batch 记录；任一缺失或错配都拒绝初始化，避免执行者递归规划。
 
 ## State
 
-Batch state 使用独立 Schema v1：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。计划 fingerprint、Batch 顺序和 capsule 在初始化后不可变。
+Batch Protocol 保持 v1，持久化 state Schema 升级为 v2：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 还持久化 `task_id`、`worker_ref` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取真实旧 Schema v1 capsule（没有 planned/task identity 和 recovery 字段），但下一次写入必须先做一次只添加身份字段的 `v1 → v2` 原子迁移；迁移不得同时改变计划或 Batch 行为状态。新状态不能再以 v1 初始化。
+
+helper 另以 `repo_id + plan_id` 建立默认两小时的 scheduler lease，并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管，活动 lease 即使带 takeover 也不能抢占。该 lease 只保护计划派发权，不授予代码写权，也不替代每个 `$converge` worker 的 worktree/task writer lease。
 
 Batch transitions：`pending → dispatching → running → validating-receipt → completed|blocked`。
 
@@ -32,7 +38,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 ## Dispatch
 
-`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须记录可恢复的 `worker_ref`。处于不确定 dispatch 状态时 blocked，不自动重派。
+`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须记录可恢复的 `worker_ref`；每次实际恢复前把 `recovery_count` 单调写回，超过一次即阻塞。处于不确定 dispatch 状态时 blocked，不自动重派。
 
 ## Receipt
 

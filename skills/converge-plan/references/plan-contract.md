@@ -48,6 +48,8 @@
 
 派发 capsule 必须包含 `planned_task=true`。该标记是递归保护：子执行者执行冻结 task 后交回 receipt，不创建新计划、不再派发同一 task。
 
+每个 capsule 还必须原样携带本计划的 `plan_id` 和当前任务的 `task_id`。Batch state helper 会把三者作为 Schema 字段校验，不能只依赖提示词约定。
+
 ## 4. 决策记录
 
 可逆技术选择和有明确默认的局部选择自动记录到 `decisions`。业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。
@@ -57,35 +59,53 @@
 执行结束后，将以下 envelope 传给：
 
 ```bash
-python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --input -
+python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD" --input -
 ```
 
 ```json
 {
   "plan": {},
-  "source_fingerprint": "<current source sha256>",
   "task_results": {
     "T1": {
       "status": "DONE",
       "fresh_pass": true,
-      "verified_source_fingerprint": "<same sha256>",
-      "evidence": ["real command and exit result"]
+      "evidence": [{
+        "command": "real verification command",
+        "exit_code": 0,
+        "source": {
+          "commit_id": "<Git HEAD>",
+          "tree_hash": "<HEAD tree>",
+          "diff_fingerprint": "<workspace diff sha256>",
+          "changed_paths": ["relative/path"],
+          "source_fingerprint": "<receipt sha256>"
+        }
+      }]
     }
   },
   "final_acceptance": [{
     "criterion": "integrated behavior",
     "result": "pass",
     "freshness": "fresh",
-    "evidence": "real integration check",
-    "verified_source_fingerprint": "<same sha256>"
-  }],
-  "changed_paths": ["relative/path"]
+    "evidence": {
+      "command": "real integration check",
+      "exit_code": 0,
+      "source": {
+        "commit_id": "<same Git HEAD>",
+        "tree_hash": "<same HEAD tree>",
+        "diff_fingerprint": "<same workspace diff sha256>",
+        "changed_paths": ["relative/path"],
+        "source_fingerprint": "<same receipt sha256>"
+      }
+    }
+  }]
 }
 ```
 
+`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff HEAD` 和未跟踪文件，计算结构化 source receipt 与 `changed_paths`。Git 返回的相对路径保持原生字节语义，文件名中的反斜杠不会按调用者路径规则改写成 `/`。调用者提供的同名顶层字段不会成为真源。helper 只运行固定的只读 Git 子命令；receipt 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。
+
 状态语义：
 
-- `DONE`：验收已满足，任务证据非空，且验证源码指纹与当前源码一致。
+- `DONE`：验收已满足，任务证据为退出码 0 的结构化 receipt，且 receipt source 与 audit 读取的当前工作区完全一致。
 - `PARTIAL`：只完成部分验收，或通过证据已经陈旧。
 - `NOT_DONE`：没有可信完成回执。
 - `CHANGED`：经授权改变了原计划目标，必须说明新目标和影响。

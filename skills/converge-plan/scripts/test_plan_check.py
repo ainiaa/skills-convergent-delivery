@@ -1,5 +1,6 @@
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,27 +42,65 @@ def plan(tasks, engine="native-v1", context="short", planner=None):
     }
 
 
-def final_evidence(source_fingerprint=SOURCE_SHA):
+def evidence_receipt(source, command="bash scripts/check.sh"):
+    return {"command": command, "exit_code": 0, "source": source}
+
+
+def final_evidence(source):
     return [
         {
             "criterion": "all checks pass",
             "result": "pass",
             "freshness": "fresh",
-            "evidence": "bash scripts/check.sh exited 0",
-            "verified_source_fingerprint": source_fingerprint,
+            "evidence": evidence_receipt(source),
         }
     ]
 
 
 class PlanCheckTest(unittest.TestCase):
-    def run_check(self, command, payload):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.temporary.name) / "workspace"
+        self.workspace.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "config", "user.name", "Test"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.workspace), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        (self.workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.workspace), "add", "seed.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def run_check(self, command, payload, workspace=None):
+        arguments = ["python3", str(SCRIPT), command, "--input", "-"]
+        if workspace is not None:
+            arguments.extend(["--workspace", str(workspace)])
         return subprocess.run(
-            ["python3", str(SCRIPT), command, "--input", "-"],
+            arguments,
             input=json.dumps(payload),
             text=True,
             capture_output=True,
             check=False,
         )
+
+    def current_source(self, value):
+        result = self.run_check(
+            "audit",
+            {"plan": value, "task_results": {}, "final_acceptance": []},
+            self.workspace,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        return json.loads(result.stdout)["source"]
+
+    def write_changes(self, *paths):
+        for path in paths:
+            target = self.workspace / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"changed {path}\n", encoding="utf-8")
 
     def test_independent_tasks_share_a_wave_and_dependencies_form_the_next_wave(self):
         value = plan(
@@ -137,29 +176,29 @@ class PlanCheckTest(unittest.TestCase):
         value = plan(
             [task("T1", ["src/a"]), task("T2", ["src/b"]), task("T3", ["src/c"])]
         )
+        self.write_changes("src/a/file.py", "src/b/file.py", "extra.txt")
+        source = self.current_source(value)
         envelope = {
             "plan": value,
-            "source_fingerprint": SOURCE_SHA,
             "task_results": {
                 "T1": {
                     "status": "DONE",
                     "fresh_pass": True,
-                    "verified_source_fingerprint": SOURCE_SHA,
-                    "evidence": ["check-T1 exited 0"],
+                    "evidence": [evidence_receipt(source, "check-T1")],
                 },
                 "T2": {
                     "status": "DONE",
                     "fresh_pass": True,
-                    "verified_source_fingerprint": SHA,
-                    "evidence": ["check-T2 exited 0 before the last change"],
+                    "evidence": [
+                        evidence_receipt({**source, "diff_fingerprint": "0" * 64}, "check-T2")
+                    ],
                 },
                 "T3": {"status": "CHANGED", "fresh_pass": True},
             },
-            "final_acceptance": final_evidence(),
-            "changed_paths": ["src/a/file.py", "src/b/file.py", "extra.txt"],
+            "final_acceptance": final_evidence(source),
         }
 
-        result = self.run_check("audit", envelope)
+        result = self.run_check("audit", envelope, self.workspace)
 
         self.assertEqual(0, result.returncode, result.stderr)
         output = json.loads(result.stdout)
@@ -171,42 +210,104 @@ class PlanCheckTest(unittest.TestCase):
 
     def test_done_without_bound_evidence_is_downgraded_to_partial(self):
         value = plan([task("T1", ["src/a"])])
+        self.write_changes("src/a/file.py")
+        source = self.current_source(value)
         envelope = {
             "plan": value,
-            "source_fingerprint": SOURCE_SHA,
             "task_results": {"T1": {"status": "DONE", "fresh_pass": True}},
-            "final_acceptance": final_evidence(),
-            "changed_paths": ["src/a/file.py"],
+            "final_acceptance": final_evidence(source),
         }
 
-        result = self.run_check("audit", envelope)
+        result = self.run_check("audit", envelope, self.workspace)
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("PARTIAL", json.loads(result.stdout)["tasks"]["T1"])
 
     def test_complete_requires_fresh_plan_level_acceptance_evidence(self):
         value = plan([task("T1", ["src/a"])])
+        self.write_changes("src/a/file.py")
+        source = self.current_source(value)
         envelope = {
             "plan": value,
-            "source_fingerprint": SOURCE_SHA,
             "task_results": {
                 "T1": {
                     "status": "DONE",
                     "fresh_pass": True,
-                    "verified_source_fingerprint": SOURCE_SHA,
-                    "evidence": ["check-T1 exited 0"],
+                    "evidence": [evidence_receipt(source, "check-T1")],
                 }
             },
             "final_acceptance": [],
-            "changed_paths": ["src/a/file.py"],
         }
 
-        result = self.run_check("audit", envelope)
+        result = self.run_check("audit", envelope, self.workspace)
 
         self.assertEqual(0, result.returncode, result.stderr)
         output = json.loads(result.stdout)
         self.assertFalse(output["final_acceptance"])
         self.assertFalse(output["complete"])
+
+    def test_应该_当调用者伪造源码身份时_以真实工作区为准(self):
+        value = plan([task("T1", ["src/a"])])
+        self.write_changes("src/a/file.py")
+        stale_source = self.current_source(value)
+        self.write_changes("src/a/file.py", "outside.txt")
+        envelope = {
+            "plan": value,
+            "source_fingerprint": stale_source["source_fingerprint"],
+            "changed_paths": ["src/a/file.py"],
+            "task_results": {
+                "T1": {
+                    "status": "DONE",
+                    "fresh_pass": True,
+                    "evidence": [evidence_receipt(stale_source, "check-T1")],
+                }
+            },
+            "final_acceptance": final_evidence(stale_source),
+        }
+
+        result = self.run_check("audit", envelope, self.workspace)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual("PARTIAL", output["tasks"]["T1"])
+        self.assertEqual(["outside.txt"], output["scope_drift"])
+        self.assertNotEqual(stale_source, output["source"])
+
+    def test_应该_当审计收到命令字符串时_只校验回执而不执行命令(self):
+        value = plan([task("T1", ["src/a"])])
+        self.write_changes("src/a/file.py")
+        source = self.current_source(value)
+        marker = self.workspace / "must-not-exist"
+        dangerous = f"touch {marker}"
+        envelope = {
+            "plan": value,
+            "task_results": {
+                "T1": {
+                    "status": "DONE",
+                    "fresh_pass": True,
+                    "evidence": [evidence_receipt(source, dangerous)],
+                }
+            },
+            "final_acceptance": final_evidence(source),
+        }
+
+        result = self.run_check("audit", envelope, self.workspace)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_应该_当Git文件名包含反斜杠时_不归一化为已授权斜杠路径(self):
+        value = plan([task("T1", ["src/evil"])])
+        self.write_changes("src\\evil")
+
+        result = self.run_check(
+            "audit",
+            {"plan": value, "task_results": {}, "final_acceptance": []},
+            self.workspace,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(["src\\evil"], json.loads(result.stdout)["scope_drift"])
 
 
 if __name__ == "__main__":

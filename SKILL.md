@@ -47,7 +47,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 读取 [计划执行与无响应保护](references/execution-control.md)。若 capsule 已包含 `planned_task=true`，跳过规划，只执行其中冻结的 `plan_id/task_id`、范围、验收和验证。
 
-其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。选择 `pdlc-v1` 时不调用普通 planner，只形成**一个 `pdlc-run`** task，保存可恢复的 `worker_ref` 后立即在全新上下文委托**完整 PDLC**；不得在当前上下文准备 PDLC 文档、native TDD 或实现补丁。
+其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。选择 `pdlc-v1` 时不调用普通 planner，只形成**一个 `pdlc-run`** task；宿主确实支持可恢复新上下文时保存 `worker_ref` 后委托**完整 PDLC**，否则输出同一 capsule 手工交接并暂停。不得在当前上下文准备 PDLC 文档、native TDD 或实现补丁，也不得把 Skill 规则描述成宿主已经执行的中断或恢复。
 
 计划校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文；`batch` 时交给 `converge-batch`。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 

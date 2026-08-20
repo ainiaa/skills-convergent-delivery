@@ -157,6 +157,23 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("complete\n", result.stdout)
         self.assertEqual(0, result.returncode)
 
+    def test_应该_当终态缺少阶段必需字段时_拒绝恢复(self):
+        for status in ("complete", "blocked"):
+            for missing in ("requires_stability_round", "current_stage"):
+                with self.subTest(status=status, missing=missing):
+                    payload = state(
+                        status=status,
+                        current_stage="verify-final",
+                        blocked_code="decision" if status == "blocked" else None,
+                        blocked_reason="decision required" if status == "blocked" else None,
+                    )
+                    payload.pop(missing)
+
+                    result = self.current(payload)
+
+                    self.assertEqual("blocked\n", result.stdout)
+                    self.assertNotEqual(0, result.returncode)
+
     def test_blocked_state_emits_blocked(self):
         result = self.current(
             state(

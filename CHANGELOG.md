@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 修复
+
+- 修复单任务状态可重写冻结契约、回退阶段或篡改 ledger 的问题（跨窗口回写 Schema v5 状态时）。
+- 修复 Batch capsule 仅靠文字携带递归保护的问题（缺少或错配 `planned_task/plan_id/task_id` 时）。
+- 修复计划完成审计信任调用者源码指纹和变更路径的问题（审计脏工作区或陈旧证据时）。
+- 修复同一计划可由两个 run/window 重复调度的问题（初始化 Batch state 时）。
+- 修复 watchdog/PDLC 文档把 Skill 规则写成宿主已具备能力的问题（宿主缺少计时、中断或恢复 API 时）。
+- 修复 acceptance 真实回归无法落盘的问题（fresh/pass 变为 stale/fail 时归档旧 revision，而非拒绝当前事实）。
+- 修复终态缺字段可绕过非对称比较的问题（complete/blocked 恢复与回写时）。
+- 修复强化后的 capsule 字段让真实旧 Batch Schema v1 无法恢复的问题（先原子迁移到 state Schema v2）。
+- 修复 scheduler 在 owner 已落盘而 state 未落盘时可能永久误锁的问题（两小时 TTL、续期和显式过期接管）。
+- 修复 Git 文件名反斜杠被归一化为授权斜杠路径的问题（计划 scope drift 审计时）。
+
 ### 新增
 
 - 新增 `converge-plan`：实现前生成 Plan Contract，将复杂需求拆成单结果、可验证的短任务，并根据依赖、文件范围和上下文选择当前、fresh 或顺序执行。
@@ -36,6 +49,8 @@
 - 将“闭环实现”“闭环处理”“闭环完成”加入 Skill 的可发现描述和执行模式，减少普通功能请求绕过 `converge` 的概率。
 
 ### 变更
+
+- 版本更新为 `0.9.1`；Batch state 持久化 `worker_ref/recovery_count`，Plan audit 使用真实 Git workspace 的结构化 source receipt。
 
 - Suite 扩展为四个职责互斥的 Skill；PDLC 仍以唯一 fresh `pdlc-run` 整体委托，`planned_task=true` 阻止子执行者递归规划。
 - 安装、卸载、doctor、README 和使用指南统一升级到 `0.9.0`，一次交付全部计划化执行能力。
