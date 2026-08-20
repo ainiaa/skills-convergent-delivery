@@ -25,7 +25,10 @@ def next_action(state):
     if batch_status == "running":
         return f"query:{batch['worker_ref']}"
     if batch_status == "validating-receipt":
-        return "validate-receipt"
+        worker_status = batch.get("worker_status")
+        if worker_status == "working":
+            return f"query:{batch['worker_ref']}"
+        return "validate-receipt" if worker_status == "completed" else "blocked"
     return "blocked"
 
 

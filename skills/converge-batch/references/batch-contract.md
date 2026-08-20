@@ -22,11 +22,11 @@
 ```
 
 调度器只能复制和裁剪计划，不能通过读取业务代码自行填充缺失字段。
-Schema v2 capsule 的 `planned_task` 必须严格为 `true`，`plan_id` 必须匹配冻结计划，`task_id` 必须匹配 Batch 记录；任一缺失或错配都拒绝初始化，避免执行者递归规划。
+Schema v2+ capsule 的 `planned_task` 必须严格为 `true`，`plan_id` 必须匹配冻结计划，`task_id` 必须匹配 Batch 记录；任一缺失或错配都拒绝初始化，避免执行者递归规划。
 
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 升级为 v2：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 还持久化 `task_id`、`worker_ref` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取真实旧 Schema v1 capsule（没有 planned/task identity 和 recovery 字段），但下一次写入必须先做一次只添加身份字段的 `v1 → v2` 原子迁移；迁移不得同时改变计划或 Batch 行为状态。新状态不能再以 v1 初始化。
+Batch Protocol 保持 v1，持久化 state Schema 升级为 v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 持久化 `task_id`、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。`worker_status` 活动态为 `working`，宿主终态只能是 `completed|interrupted|blocked`。reader 可读取旧 Schema v1/v2，但下一次写入必须先做一次只添加 capsule identity、recovery 和 worker lifecycle 的原子迁移；迁移不得同时改变计划或 Batch 行为状态。旧状态已有 active worker 时，迁移前必须用保存的 ref 查询真实宿主状态，不能猜测终态。新状态不能再以 v1/v2 初始化。
 
 helper 另以 `repo_id + plan_id` 建立默认两小时的 scheduler lease，并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管，活动 lease 即使带 takeover 也不能抢占。该 lease 只保护计划派发权，不授予代码写权，也不替代每个 `$converge` worker 的 worktree/task writer lease。
 
@@ -38,7 +38,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 ## Dispatch
 
-`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须记录可恢复的 `worker_ref`；每次实际恢复前把 `recovery_count` 单调写回，超过一次即阻塞。处于不确定 dispatch 状态时 blocked，不自动重派。
+`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须在同一 revision 记录可恢复的 `worker_ref`、固定 `worker_role=batch-executor`、匹配 state `run_id` 的 `worker_owner_run_id` 和 `worker_status=working`；每次实际恢复前把 `recovery_count` 单调写回，超过一次即阻塞。处于不确定 dispatch 状态时 blocked，不自动重派。
 
 ## Receipt
 
@@ -57,8 +57,12 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 }
 ```
 
-completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass，且没有 open issues。helper 还必须在计划 worktree 中解析 `commit_id`，确认它的真实 Git tree 同时等于 `tree_hash` 和 `verified_tree_hash`；首次接收 receipt 时该提交必须是当前 clean workspace 的 HEAD。
+completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass，且没有 open issues。helper 还必须在计划 worktree 中解析 `commit_id`，确认它的真实 Git tree 同时等于 `tree_hash` 和 `verified_tree_hash`；首次接收 receipt 时该提交必须是当前 clean workspace 的 HEAD。receipt 只证明任务产物，不证明宿主 worker 已退出；Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
 ## Final acceptance
 
-计划 complete 前，所有 Batch 必须 completed，`current_batch` 为空，并且 `final_acceptance` 的每一项都有新鲜通过证据。单批通过不能替代整体集成验收。
+计划 complete 前，所有 Batch 必须 completed，所有本 run worker 都已进入宿主终态，`current_batch` 为空，并且 `final_acceptance` 的每一项都有新鲜通过证据。单批通过不能替代整体集成验收；上一 worker 未终结或 receipt 未通过时不得派发下一批。
+
+## Cleanup barrier
+
+正常完成、异常、用户停止、`no_progress` 和验证失败都执行等价 `finally`：只查询 `worker_owner_run_id` 等于当前 `run_id` 的登记项。结果已返回但宿主仍 Working 时继续有界等待；确认无活动后才按 watchdog 中断并复查终态。无法 query/interrupt 时计划进入 blocked，`blocked_reason` 明确 manual cleanup 和精确 `worker_ref`，不得把 active worker 隐藏在完成结论中。

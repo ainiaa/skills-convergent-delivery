@@ -9,7 +9,7 @@ batch_next = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(batch_next)
 
 
-def state(batch_status, worker_ref=None):
+def state(batch_status, worker_ref=None, worker_status=None):
     return {
         "status": "active",
         "current_batch": "B1",
@@ -18,6 +18,7 @@ def state(batch_status, worker_ref=None):
                 "batch_id": "B1",
                 "status": batch_status,
                 "worker_ref": worker_ref,
+                "worker_status": worker_status,
             }
         ],
     }
@@ -34,7 +35,14 @@ class BatchNextTest(unittest.TestCase):
         self.assertEqual("query:thread-1", batch_next.next_action(state("running", "thread-1")))
 
     def test_receipt_and_plan_status_actions_are_explicit(self):
-        self.assertEqual("validate-receipt", batch_next.next_action(state("validating-receipt")))
+        self.assertEqual(
+            "query:thread-1",
+            batch_next.next_action(state("validating-receipt", "thread-1", "working")),
+        )
+        self.assertEqual(
+            "validate-receipt",
+            batch_next.next_action(state("validating-receipt", "thread-1", "completed")),
+        )
         for status in ("paused", "stopped"):
             value = state("running", "thread-1")
             value["status"] = status

@@ -142,6 +142,31 @@ class SkillContractTest(unittest.TestCase):
         for marker in ("不能创建、计时、中断或恢复", "实际提供对应 API", "recovery_count=1"):
             self.assertIn(marker, runtime)
 
+    def test_worker_lifecycle_is_registered_owned_and_cleaned_before_exit(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        batch = (ROOT / "skills/converge-batch/SKILL.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
+        text = skill + control + batch + runtime + scenarios
+
+        for marker in (
+            "run-scoped worker registry",
+            "worker_role",
+            "owner_run_id",
+            "worker_status",
+            "completed|interrupted|blocked",
+            "等价 `finally`",
+            "自然语言回执",
+            "本轮 active worker 数为 0",
+            "一个 evaluator",
+            "隔离临时工作区",
+            "历史孤儿",
+        ):
+            self.assertIn(marker, text)
+
 
 if __name__ == "__main__":
     unittest.main()

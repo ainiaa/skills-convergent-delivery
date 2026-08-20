@@ -51,6 +51,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 计划校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文；`batch` 时交给 `converge-batch`。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 
+所有 PDLC、reviewer、辅助分析和前向 evaluator 委托都必须登记到 [执行控制](references/execution-control.md) 定义的本轮 worker registry；禁止 detached/fire-and-forget。主执行者只管理自己的 `owner_run_id`，所有退出路径执行清场屏障，本轮 active worker 数不为 0 时不得交付完成。
+
 ## 5. 并发与恢复
 
 任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，终态释放，过期后不自动抢占。
@@ -85,4 +87,4 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 
-修改本 Suite 后使用 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。
+修改本 Suite 后使用 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。

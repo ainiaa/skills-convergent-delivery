@@ -93,7 +93,8 @@ PDLC 委托屏障要求：选择 `pdlc-v1` 后，Converge 只创建一个 `pdlc-
 - 软探测：约 90 秒内没有 commentary、工具调用、状态、diff 或 worker 回执，且没有运行进程时，输出进度并检查原任务。
 - 硬中断：约 180 秒仍满足全部无活动条件时才中断当前生成；保存任务/计划项引用，最多自动恢复一次。
 - 恢复必须查询同一 `worker_ref` 或继续同一 `plan_id/task_id`，不能重新派发。
-- Batch Protocol 保持 v1，state Schema v2 持久化 `worker_ref/recovery_count`，并允许旧 v1 先做身份字段迁移；恢复计数最多为 1。`repo_id + plan_id` scheduler lease 默认两小时、随写入续期，活动 owner 不可抢占，过期后仅显式 takeover；它不替代 worker writer lease。
+- Batch Protocol 保持 v1，state Schema v3 持久化 `worker_ref/worker_role/worker_owner_run_id/worker_status/recovery_count`，并允许旧 v1/v2 只添加身份和生命周期字段后迁移；恢复计数最多为 1。`repo_id + plan_id` scheduler lease 默认两小时、随写入续期，活动 owner 不可抢占，过期后仅显式 takeover；它不替代 worker writer lease。
+- PDLC、reviewer、Batch、辅助分析和前向 evaluator 共用 run-scoped worker registry 契约。所有退出路径执行等价 `finally`，只清场本轮 owner；自然语言结果不能替代宿主终态，本轮 active worker 数不为 0 时不能完成。
 - 有真实测试、构建、PDLC 或子任务进程运行时只等待并汇报，不中断。
 
 ## 8. 完成审计

@@ -56,6 +56,8 @@ PLAN_TRANSITIONS = {
     "stopped": {"stopped"},
     "complete": {"complete"},
 }
+WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
+TERMINAL_WORKER_STATUSES = {"completed", "interrupted", "blocked"}
 
 
 def require_mapping(value, name):
@@ -184,7 +186,7 @@ def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
             raise ValueError(f"capsule {batch_id} is missing {field}")
     if capsule["batch_id"] != batch_id:
         raise ValueError("capsule batch_id does not match")
-    if schema_version == 2:
+    if schema_version >= 2:
         if capsule["planned_task"] is not True:
             raise ValueError("capsule planned_task must be true")
         if capsule["plan_id"] != plan_id:
@@ -193,7 +195,7 @@ def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
             raise ValueError("capsule task_id does not match")
     for field in ("goal", "baseline"):
         require_string(capsule[field], f"capsule.{field}")
-    if schema_version == 2:
+    if schema_version >= 2:
         for field in ("plan_id", "task_id"):
             require_string(capsule[field], f"capsule.{field}")
     for field in ("scope", "global_constraints", "consumes", "produces", "acceptance", "verification"):
@@ -242,8 +244,8 @@ def validate_receipt(receipt, batch, workspace):
 def validate_state(state):
     state = require_mapping(state, "state")
     schema_version = state.get("schema_version")
-    if schema_version not in {1, 2}:
-        raise ValueError("schema_version must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise ValueError("schema_version must be 1, 2 or 3")
     for field in ("run_id", "writer_id"):
         require_string(state.get(field), field)
     if not isinstance(state.get("revision"), int) or state["revision"] < 0:
@@ -294,7 +296,15 @@ def validate_state(state):
         dispatch_id = batch.get("dispatch_id")
         worker_ref = batch.get("worker_ref")
         recovery_count = batch.get("recovery_count", 0)
+        worker_role = batch.get("worker_role")
+        worker_owner_run_id = batch.get("worker_owner_run_id")
+        worker_status = batch.get("worker_status")
         receipt = batch.get("receipt")
+        if schema_version == 3 and batch_status in {"pending", "dispatching"} and any(
+            value is not None
+            for value in (worker_ref, worker_role, worker_owner_run_id, worker_status)
+        ):
+            raise ValueError("worker lifecycle is only allowed from running")
         if (
             not isinstance(recovery_count, int)
             or isinstance(recovery_count, bool)
@@ -312,6 +322,20 @@ def validate_state(state):
             seen_dispatches.add(dispatch_id)
         if batch_status in {"running", "validating-receipt", "completed"}:
             require_string(worker_ref, "worker_ref")
+        if schema_version == 3:
+            if worker_ref is None:
+                if any(value is not None for value in (worker_role, worker_owner_run_id, worker_status)):
+                    raise ValueError("worker lifecycle fields require worker_ref")
+            else:
+                require_string(worker_role, "worker_role")
+                if worker_role != "batch-executor":
+                    raise ValueError("worker_role must be batch-executor")
+                if worker_owner_run_id != state["run_id"]:
+                    raise ValueError("worker_owner_run_id must match the current run")
+                if worker_status not in WORKER_STATUSES:
+                    raise ValueError("worker_status is invalid")
+            if batch_status == "completed" and worker_status != "completed":
+                raise ValueError("completed batch requires worker_status completed")
         if batch_status in {"validating-receipt", "completed"}:
             validate_receipt(receipt, batch, state["workspace"])
         elif receipt is not None:
@@ -348,7 +372,7 @@ def validate_state(state):
 
 
 def validate_transition(previous, candidate):
-    upgrading = previous["schema_version"] == 1 and candidate["schema_version"] == 2
+    upgrading = previous["schema_version"] in {1, 2} and candidate["schema_version"] == 3
     if candidate["schema_version"] != previous["schema_version"] and not upgrading:
         raise ValueError("invalid schema transition")
     for field in ("run_id", "writer_id", "repo_id", "workspace", "plan"):
@@ -370,20 +394,26 @@ def validate_transition(previous, candidate):
         for old, new in zip(previous["batches"], candidate["batches"]):
             old_without_upgrade = dict(old)
             new_without_upgrade = dict(new)
+            for field in ("worker_role", "worker_owner_run_id", "worker_status"):
+                old_value = old_without_upgrade.pop(field, None)
+                new_value = new_without_upgrade.pop(field, None)
+                if old_value is not None and new_value != old_value:
+                    raise ValueError("schema upgrade must preserve worker lifecycle")
             old_task_id = old_without_upgrade.pop("task_id", None)
             new_task_id = new_without_upgrade.pop("task_id", None)
-            if old_task_id is not None and new_task_id != old_task_id:
+            if previous["schema_version"] >= 2 and new_task_id != old_task_id:
                 raise ValueError("schema upgrade must preserve task_id")
             if new_without_upgrade.pop("recovery_count", 0) != old.get("recovery_count", 0):
                 raise ValueError("schema upgrade must preserve recovery_count")
             old_without_upgrade.pop("recovery_count", None)
             old_capsule = dict(old_without_upgrade["capsule"])
             new_capsule = dict(new_without_upgrade["capsule"])
-            for field in ("planned_task", "plan_id", "task_id"):
-                old_value = old_capsule.pop(field, None)
-                if old_value is not None and new_capsule.get(field) != old_value:
-                    raise ValueError("schema upgrade must preserve capsule identity")
-                new_capsule.pop(field, None)
+            if previous["schema_version"] == 1:
+                for field in ("planned_task", "plan_id", "task_id"):
+                    old_value = old_capsule.pop(field, None)
+                    if old_value is not None and new_capsule.get(field) != old_value:
+                        raise ValueError("schema upgrade must preserve capsule identity")
+                    new_capsule.pop(field, None)
             old_without_upgrade["capsule"] = old_capsule
             new_without_upgrade["capsule"] = new_capsule
             if new_without_upgrade != old_without_upgrade or new_capsule != old_capsule:
@@ -410,6 +440,15 @@ def validate_transition(previous, candidate):
             raise ValueError("dispatch_id is immutable")
         if old["worker_ref"] is not None and new["worker_ref"] != old["worker_ref"]:
             raise ValueError("worker_ref is immutable")
+        for field in ("worker_role", "worker_owner_run_id"):
+            if old.get(field) is not None and new.get(field) != old.get(field):
+                raise ValueError(f"{field} is immutable")
+        old_worker_status = old.get("worker_status")
+        new_worker_status = new.get("worker_status")
+        if old_worker_status in TERMINAL_WORKER_STATUSES and new_worker_status != old_worker_status:
+            raise ValueError("terminal worker_status is immutable")
+        if old_worker_status == "working" and new_worker_status not in WORKER_STATUSES:
+            raise ValueError("worker_status cannot regress")
         if new.get("recovery_count", 0) < old.get("recovery_count", 0):
             raise ValueError("recovery_count must not regress")
         if old["receipt"] is not None and new["receipt"] != old["receipt"]:
@@ -448,8 +487,8 @@ def write_state(
     ttl_seconds=DEFAULT_SCHEDULER_LEASE_TTL_SECONDS,
 ):
     validate_state(candidate)
-    if candidate["schema_version"] != 2:
-        raise ValueError("new writes require schema_version 2; migrate legacy v1 state first")
+    if candidate["schema_version"] != 3:
+        raise ValueError("new writes require schema_version 3; migrate legacy v1/v2 state first")
     path = state_path(
         root,
         candidate["repo_id"],

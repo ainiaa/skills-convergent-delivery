@@ -11,7 +11,13 @@
 
 需求取舍、计划、方案仲裁和最终 review 保留给主执行者；文件定位、独立代码扫描、测试或日志分析可以交给边界明确的辅助执行者。只有宿主支持且能节省上下文时才委托，不为了“并行”增加无收益的 Agent。
 
-## 2. 决策门禁
+## 2. Worker 登记与所有权
+
+任何 PDLC、reviewer、Batch worker、辅助分析或独立前向测试派发都必须由 owner 建立本轮 **run-scoped worker registry**。宿主返回引用后，在 wait/query、其他派发或退出前立即登记 `worker_ref`、`worker_role`、`owner_run_id` 和 `worker_status=working`；若 create API 必须携带初始任务，则创建与提交视为一次原子派发，返回后的第一动作仍是登记。无法取得稳定且可查询引用时不得 detached/fire-and-forget，只能手工交接并阻塞。`worker_ref` 是宿主身份，不能用自然语言名称或回执代替。
+
+owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
+
+## 3. 决策门禁
 
 1. 技术且可逆：遵循项目既有模式，自动决定并记一行原因。
 2. 局部且存在明显推荐：采用推荐默认并记录。
@@ -19,7 +25,7 @@
 
 回答后继续同一 `plan_id/task_id`，不要重新开始规划。
 
-## 3. 宿主 watchdog 能力边界
+## 4. 宿主 watchdog 能力边界
 
 以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。只有当前宿主同时暴露活动/进程查询、计时等待、生成中断和同一任务恢复能力时，执行者才能自动完成软探测、硬中断与恢复；缺少任一能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断或恢复。
 
@@ -32,6 +38,10 @@
 
 连接中断或派发结果不确定时，必须先查询同一 `worker_ref`。没有可靠引用时阻塞或输出手工交接 capsule，不能创建第二个执行者。
 
-## 4. 执行结束
+## 5. 执行结束与清场屏障
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
+
+正常完成、异常、用户中断、`no_progress`、验证失败和其他返回路径都执行等价 `finally`：逐项查询当前 run registry，只以宿主 query/wait 的结果更新状态。收到结果但宿主仍显示 Working 时继续有界等待；确认无活动后才可按 watchdog 中断，并再次查询到 `interrupted`。本轮存在 active worker 时不得宣称完成；无法查询或中断时返回 blocked，列出需 manual cleanup 的精确 `worker_ref`。
+
+Skill 只能调用宿主实际暴露的 list/query/wait/interrupt。没有 `worker_ref` 或当前 API 不可见的历史孤儿不属于本轮 registry，Skill 不能发现或清理；只能如实报告并建议用户通过宿主 UI/支持渠道处理。

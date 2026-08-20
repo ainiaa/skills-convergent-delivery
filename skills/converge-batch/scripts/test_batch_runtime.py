@@ -41,6 +41,7 @@ class SimulatedBatchRuntimeTest(unittest.TestCase):
         self.assertEqual("dispatch", batch_next.next_action(state))
         first = state["batches"][0]
         first["worker_ref"] = host.dispatch("B1")
+        first["worker_status"] = "working"
         first["status"] = "running"
 
         action = batch_next.next_action(state)
@@ -48,6 +49,10 @@ class SimulatedBatchRuntimeTest(unittest.TestCase):
         host.query(action.removeprefix("query:"))
         self.assertEqual(["B1"], host.dispatched)
 
+        first["status"] = "validating-receipt"
+        self.assertEqual("query:thread-B1", batch_next.next_action(state))
+        first["worker_status"] = "completed"
+        self.assertEqual("validate-receipt", batch_next.next_action(state))
         first["status"] = "completed"
         state["current_batch"] = "B2"
         self.assertEqual("dispatch", batch_next.next_action(state))

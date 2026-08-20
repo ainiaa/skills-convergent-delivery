@@ -27,7 +27,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 2. 冻结计划并初始化
 
-冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch state Schema v2；旧 v1 先做仅身份字段迁移。helper 同时以 `repo_id + plan_id` 获取默认两小时的 scheduler lease，第二个活动 run/window 必须阻塞；过期 owner 仅在确认已停止后用 `--takeover` 接管。后续所有更新必须校验 owner 和 revision。
+冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch state Schema v3；旧 v1/v2 先做只添加身份/worker 生命周期字段的迁移。helper 同时以 `repo_id + plan_id` 获取默认两小时的 scheduler lease，第二个活动 run/window 必须阻塞；过期 owner 仅在确认已停止后用 `--takeover` 接管。后续所有更新必须校验 owner 和 revision。
 
 计划内容变化时暂停并要求重新协调，不把新要求静默塞入当前 Batch。Batch state 与 `converge` 的单任务 state 分离。
 
@@ -35,7 +35,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
-按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，保存 `worker_ref` 后发送 capsule，显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，用 capsule 创建 worker；宿主返回后第一动作是把 `worker_ref/worker_role/worker_owner_run_id/worker_status` 保存到本 run，再 wait/query 或派发其他任务。capsule 显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
 上游 `converge-plan` 的 wave 用于确认依赖和路径冲突。**Batch Protocol v1 默认顺序**执行；当前 Schema 只有一个 `current_batch`，在多 worktree 集成和多 receipt 恢复协议落地前不得宣称并行写入。
 
@@ -46,18 +46,21 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 无法确认 dispatch 是否成功时进入 blocked，不重派相同 Batch。
 - 只允许对查询/连接错误恢复一次；先将同一 Batch 的 `worker_ref` 和 `recovery_count=1` 持久化。测试、实现、环境或业务失败不得自动重跑整个 Batch。
 - 只有当前 Batch completed 后才能派发下一批；顺序计划不并发执行代码。
+- 自然语言回执不能替代宿主终态。receipt 通过但 worker 仍 Working 时继续查询/有界等待；只有 `worker_status=completed` 才能完成当前 Batch。
 - 进度只在 Batch 开始、完成、阻塞、用户查询或整体结束时汇报。
 
 ## 5. Receipt 与最终验收
 
 receipt 必须匹配 `batch_id` 和 `dispatch_id`，绑定 `commit_id`、`tree_hash`、`verified_tree_hash`、新鲜验收证据和 open issues。验证源码树与最终提交不一致时拒绝完成。
 
-所有 Batch 完成后核对累计验收矩阵并运行计划规定的 `final_acceptance`。失败时阻塞并要求形成明确修复 Batch；调度器不直接修代码。只有所有最终验收新鲜通过时计划才能 complete。
+所有 Batch 完成后核对累计验收矩阵并运行计划规定的 `final_acceptance`。失败时阻塞并要求形成明确修复 Batch；调度器不直接修代码。只有所有 worker 宿主终态、所有 Batch receipt 通过且最终验收新鲜通过时计划才能 complete。
 
 ## 6. 暂停、恢复和停止
 
 - `pause`：当前执行者可结束，但不再派发新 Batch。
 - `resume`：先校验计划 fingerprint、worktree、当前状态、dispatch 和 receipt，再继续。
-- `stop`：停止后续派发，保留已有提交和状态；不 reset、删除或强杀执行者。
+- `stop`：停止后续派发，保留已有提交和状态；按等价 `finally` 查询本 run 登记的 worker，仅在 watchdog 条件满足时中断自己的 worker，不 reset、删除或操作其他任务。
+
+所有退出路径都检查本轮 registry；仍有 active worker 时不得宣称 Batch 或计划完成。宿主无法查询/中断时以 blocked/manual cleanup 结束并列出精确 `worker_ref`。
 
 发布、push、合并和其他外部动作不属于调度授权，始终需要用户明确确认。
