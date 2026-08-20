@@ -80,11 +80,15 @@ def render_text(report):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--state", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--state")
+    source.add_argument("--input", choices=("-",))
     parser.add_argument("--format", choices=("json", "text"), default="text")
     arguments = parser.parse_args()
     try:
-        state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+        state = json.load(sys.stdin) if arguments.input == "-" else json.loads(
+            Path(arguments.state).read_text(encoding="utf-8")
+        )
         report = build_report(state)
         if arguments.format == "json":
             print(json.dumps(report, ensure_ascii=False, sort_keys=True))

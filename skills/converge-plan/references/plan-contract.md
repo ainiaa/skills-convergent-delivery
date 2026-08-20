@@ -36,7 +36,9 @@
 
 ## 2. PDLC delegation barrier
 
-`engine=pdlc-v1` 时必须且只能有一个 `task_id=pdlc-run`。该 task 使用 fresh context 完整调用 `pdlc-feature` 或 `pdlc-fix`。不得增加 requirements/design/tdd/implementation/review 子任务，也不得在 Converge 中生成等价产物。
+`engine=pdlc-v1` 时必须且只能有一个 `task_id=pdlc-run`。该 task 使用 fresh context，按冻结的 adapter 入口完整调用 `pdlc-feature`、`pdlc-fix` 或 `pdlc-refactor`；refactor capsule 必须携带“外部行为不变”验收。不得增加 requirements/design/tdd/implementation/review 子任务，也不得在 Converge 中生成等价产物。
+
+PDLC capsule 除 `planned_task/plan_id/task_id` 外，还必须原样携带冻结范围、验收、公共契约和 Converge 决策门禁：业务规则、公共契约、权限、发布及不可逆事项必须停止；provider 的自行假设或自动发布不能提升权限。禁止 `pdlc-ship`、commit、tag、push、publish、install。
 
 ## 3. Waves 与执行
 

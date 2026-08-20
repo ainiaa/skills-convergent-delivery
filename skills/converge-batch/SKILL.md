@@ -35,7 +35,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
-按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，用 capsule 创建 worker；宿主返回后第一动作是把 `worker_ref/worker_role/worker_owner_run_id/worker_status` 保存到本 run，再 wait/query 或派发其他任务。capsule 显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+按 Runtime Adapters 选择宿主能力，并遵循 [执行控制](../../references/execution-control.md) 的公共 worker/watchdog 规则。capsule 显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
 上游 `converge-plan` 的 wave 用于确认依赖和路径冲突。**Batch Protocol v1 默认顺序**执行；当前 Schema 只有一个 `current_batch`，在多 worktree 集成和多 receipt 恢复协议落地前不得宣称并行写入。
 
@@ -59,8 +59,8 @@ receipt 必须匹配 `batch_id` 和 `dispatch_id`，绑定 `commit_id`、`tree_h
 
 - `pause`：当前执行者可结束，但不再派发新 Batch。
 - `resume`：先校验计划 fingerprint、worktree、当前状态、dispatch 和 receipt，再继续。
-- `stop`：停止后续派发，保留已有提交和状态；按等价 `finally` 查询本 run 登记的 worker，仅在 watchdog 条件满足时中断自己的 worker，不 reset、删除或操作其他任务。
+- `stop`：停止后续派发，保留已有提交和状态；worker 处理按执行控制，不 reset、删除或操作其他任务。
 
-所有退出路径都检查本轮 registry；仍有 active worker 时不得宣称 Batch 或计划完成。宿主无法查询/中断时以 blocked/manual cleanup 结束并列出精确 `worker_ref`。
+所有退出路径应用执行控制的清场屏障。
 
 发布、push、合并和其他外部动作不属于调度授权，始终需要用户明确确认。

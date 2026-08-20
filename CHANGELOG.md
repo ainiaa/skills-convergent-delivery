@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 修复旧单任务 v5 状态首次迁移时可同时推进阶段或修改 ledger 的问题；迁移现在只能增加 v6 字段并递增 revision。
+- 修复单任务 complete 可忽略仍处于 Working 的本轮 worker、恢复时无法发现 controller/provider 漂移，以及已安装但未适配 PDLC 被静默视为不存在的问题。
 - 修复 PDLC、reviewer、Batch、辅助分析和独立前向测试 worker 缺少统一登记与退出清场的问题（结果已返回但宿主仍 Working，或异常路径提前结束时）。
 - 修复 Batch 仅凭 receipt 即可完成和派发下一批的问题（宿主 worker 尚未进入终态时）。
 - 修复单任务状态可重写冻结契约、回退阶段或篡改 ledger 的问题（跨窗口回写 Schema v5 状态时）。
@@ -21,6 +23,10 @@
 
 ### 新增
 
+- 新增单任务 Schema v6：持久化 run-scoped worker registry，冻结 Converge controller，并从 v5 执行只添加的安全迁移。
+- 新增 PDLC 1.6.0 JSON adapter manifest：校验 provider id/version、feature/fix/refactor 入口、授权边界和显式传递依赖闭包；refactor 强制外部行为不变。
+- `delivery_report.py` 新增 `--input -`，简单任务无需持久 state/lease 即可生成确定性报告。
+- 正式检查运行四个 Skill 的官方 `quick_validate.py`；PyYAML 开发依赖锁定为 6.0.3，缺失 validator/依赖时明确失败。
 - 新增 `converge-plan`：实现前生成 Plan Contract，将复杂需求拆成单结果、可验证的短任务，并根据依赖、文件范围和上下文选择当前、fresh 或顺序执行。
 - 新增 `plan_check.py`：确定性校验任务 ID、依赖环、PDLC 单任务屏障和执行 wave，并对账 `DONE/PARTIAL/NOT_DONE/CHANGED`、新鲜证据及 `scope_drift`。
 - 新增无响应保护：90 秒无活动软探测、180 秒无活动且无运行进程时硬中断，只恢复同一 worker/task 一次。
@@ -52,6 +58,7 @@
 
 ### 变更
 
+- 版本更新为 `0.10.0`；公共 worker/watchdog 规则收敛到 `references/execution-control.md`，委托协议禁止 provider 越过业务、契约、权限、发布和不可逆决策门禁。
 - 版本更新为 `0.9.2`；Batch state 升级到 Schema v3，独立前向测试默认使用一个 evaluator 在隔离临时工作区顺序执行。
 - 版本更新为 `0.9.1`；Batch state 持久化 `worker_ref/recovery_count`，Plan audit 使用真实 Git workspace 的结构化 source receipt。
 

@@ -124,9 +124,8 @@ class SkillContractTest(unittest.TestCase):
         for marker in (
             "Codex",
             "Claude Code",
-            "worker_ref",
-            "先查询原任务",
-            "不重复派发",
+            "执行控制",
+            "结构化 receipt",
             "手工交接",
         ):
             self.assertIn(marker, runtime)
@@ -139,19 +138,10 @@ class SkillContractTest(unittest.TestCase):
         )
         for marker in ("不是 `SKILL.md` 自带", "宿主", "不能声称", "手工恢复"):
             self.assertIn(marker, control)
-        for marker in ("不能创建、计时、中断或恢复", "实际提供对应 API", "recovery_count=1"):
-            self.assertIn(marker, runtime)
+        self.assertIn("execution-control.md", runtime)
 
     def test_worker_lifecycle_is_registered_owned_and_cleaned_before_exit(self):
-        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
-        batch = (ROOT / "skills/converge-batch/SKILL.md").read_text(encoding="utf-8")
-        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
-            encoding="utf-8"
-        )
-        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
-        text = skill + control + batch + runtime + scenarios
-
         for marker in (
             "run-scoped worker registry",
             "worker_role",
@@ -160,12 +150,16 @@ class SkillContractTest(unittest.TestCase):
             "completed|interrupted|blocked",
             "等价 `finally`",
             "自然语言回执",
-            "本轮 active worker 数为 0",
-            "一个 evaluator",
-            "隔离临时工作区",
+            "本轮存在 active worker",
             "历史孤儿",
         ):
-            self.assertIn(marker, text)
+            self.assertIn(marker, control)
+        for path in (
+            ROOT / "SKILL.md",
+            ROOT / "skills/converge-batch/SKILL.md",
+            ROOT / "skills/converge-batch/references/runtime-adapters.md",
+        ):
+            self.assertIn("execution-control.md", path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ class CheckScriptTest(unittest.TestCase):
         )
 
         self.assertEqual(0, result.returncode, result.stderr)
+        for skill in ("converge", "converge-plan", "converge-review", "converge-batch"):
+            self.assertIn(f"Official validator passed: {skill}", result.stdout)
         self.assertIn("All checks passed.", result.stdout)
 
 

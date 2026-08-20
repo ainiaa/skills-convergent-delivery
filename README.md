@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.9.2](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.10.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -21,18 +21,16 @@ Converge Suite 将四个职责拆开：planner 只拆任务，执行者只交付
 
 核心能力：
 
-- 默认按 `pdlc-v1 → 已适配第三方 TDD → 通用 TDD → native-v1` 选择执行引擎。
+- 默认按 `pdlc-v1 → 已适配第三方 TDD → 通用 TDD → native-v1` 选择执行引擎；当前 PDLC 1.6.0 adapter manifest 冻结版本、入口、task kind、授权边界和源码闭包，支持 feature/fix/refactor。
 - 复杂任务先形成 Plan Contract；每个 task 只有一个结果、明确范围、依赖和真实验证。
 - PDLC 只形成一个 fresh `pdlc-run`，完整委托需求、设计、TDD、实现和阶段评审，避免双流程。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - 依赖 wave 会标识潜在并行候选；内置 Batch Protocol v1 保持顺序执行，避免多 worktree 和 receipt 无法可靠恢复。
-- 宿主提供计时、进程查询、中断和恢复 API 时，90 秒无活动先软探测、180 秒仍无活动才中断；Skill 本身不伪造这些宿主能力。
+- worker 生命周期、宿主能力与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
-- 所有委托使用本轮 worker registry：派发后立即保存稳定 ref、角色、owner run 和宿主状态；退出前只清场本轮 worker，active 数不为 0 时不宣称完成。
-- Batch 运行时明确适配 Codex 与 Claude Code；断线后查询原 `worker_ref`，不确定时阻塞而不重复派发，receipt 通过也必须等待宿主 worker 终结。
-- 单任务状态校验冻结契约和合法阶段，当前 acceptance 变化会归档旧 revision；Batch state Schema v3 用有期限的 `repo_id + plan_id` lease 防第二个活动调度窗口，并持久化 worker/recovery/宿主终态。
+- 单任务 Schema v6 冻结 controller/provider 并持久化当前 run worker；旧 v5 首次写入安全迁移。Batch state Schema v3 继续独立管理计划调度。
 - 默认报告由状态确定性生成，保留必要的轮数、问题数和待处理项，不倾倒内部状态机术语。
 
 ## Install
@@ -140,7 +138,7 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 复杂任务由 `converge-plan` 生成 Plan Contract。若 PDLC 可用，计划只有一个 `pdlc-run`；宿主支持可恢复新任务时整体委托，否则输出 capsule 手工交接，不提前生成整套文档和补丁。已派发任务携带严格校验的 `planned_task=true`、`plan_id` 和 `task_id`，子执行者不会再次规划。
 
-无响应保护区分“模型没有活动”和“测试/构建仍在运行”。约 90/180 秒的探测、中断和一次恢复是 Runtime Adapter 对具备相应 API 的宿主的行为协议；Skill 文本本身没有后台计时或强杀能力。详见 [执行控制](references/execution-control.md)。
+worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](references/execution-control.md) 维护。
 
 ### 长计划调度
 
@@ -153,24 +151,22 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 Codex 保存 task/thread id，Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；否则输出 capsule 手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
-Skill 只能管理当前宿主通过稳定 ref 暴露、且由本轮 owner 创建的 worker。结果消息不是宿主终态；正常、异常、中断或验证失败退出时都会查询本轮登记项。没有 ref 或当前 API 不可见的历史孤儿无法由 Skill 清理，只能报告并建议通过宿主 UI 或支持渠道处理。
-
-Suite 独立前向测试默认只创建一个 evaluator，在隔离临时工作区顺序执行本次相关的有限场景；汇总前等待 evaluator 宿主终态，并确认本轮 active worker 数为 0。
+Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。
 
 ### 引擎选择
 
 | 条件 | 引擎 | 边界 |
 |---|---|---|
-| 完整 PDLC 可用 | `pdlc-v1` | PDLC 独占具体开发阶段；Converge 负责控制和最终验收 |
+| manifest 已适配的 PDLC | `pdlc-v1` | 按 task kind 路由真实入口；Converge 保留控制和最终验收 |
 | 已适配 Superpowers / Matt Pocock TDD | 对应适配器 | 只委托一次红绿阶段 |
 | 其他 TDD Skill 通过预检 | `generic-tdd-v1` | 只采用测试方法，不接管循环和发布 |
 | 都不可用 | `native-v1` | 使用内置有限 TDD 协议 |
 
-用户明确要求 PDLC 而能力不完整时会阻塞，不会静默降级。任务开始后会冻结引擎来源和内容摘要，恢复时来源变化同样阻塞。
+发现 PDLC 但版本/manifest 未适配时会明确 incompatible/blocked，不会静默当作不存在。任务开始后冻结 controller/provider 和入口闭包，恢复时任一来源变化都阻塞。
 
 ## 状态、多窗口与恢复
 
-- 单任务状态：`~/.convergent-delivery/state/`，Schema v5。
+- 单任务状态：`~/.convergent-delivery/state/`，Schema v6（旧 v5 首次写入只添加迁移）。
 - Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1 / state Schema v3；旧 v1/v2 先迁移再写。
 - Batch scheduler lease：位于 Batch state 根下，按 `repo_id + plan_id` 唯一，默认两小时；过期后仅显式 takeover。
 - writer lease：`~/.convergent-delivery/leases/`，默认两小时。

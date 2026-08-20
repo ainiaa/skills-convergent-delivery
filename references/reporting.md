@@ -2,7 +2,7 @@
 
 此文件定义 `converge` 的最终回复。它只决定如何表达已记录的事实，**不会触发新的检查、Agent、状态写入或修复轮次**。完整证据仍保存在 ledger、PDLC 产物和命令输出中。
 
-终态先使用 `scripts/delivery_report.py` 验证 Schema v5 并计算结果、交付轮、修复数和待处理数。语言润色不得改变脚本产生的状态或数量。
+终态先使用 `scripts/delivery_report.py` 验证 Schema v6（旧 v5 可只添加迁移）并计算结果、交付轮、修复数和待处理数。持久任务使用 `--state`；无需恢复的简单任务使用 `--input -`，不创建 state/lease。语言润色不得改变脚本产生的状态或数量。
 
 ## 先选用户状态
 

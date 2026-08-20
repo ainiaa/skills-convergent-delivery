@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from delivery_engine import pdlc_fingerprint
+from delivery_engine import legacy_pdlc_fingerprint
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -198,6 +199,84 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
 
+    def test_v5_write_migrates_only_controller_and_empty_worker_registry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps(state()), encoding="utf-8")
+
+            result = self.write(root, state_home, state(revision=1), 0)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            written = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(6, written["schema_version"])
+            self.assertEqual([], written["workers"])
+            self.assertEqual({"version", "fingerprint"}, set(written["controller"]))
+
+    def test_v5_migration_rejects_stage_or_ledger_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            original = state()
+            original["current_stage"] = "scope"
+            state_path.write_text(json.dumps(original), encoding="utf-8")
+            candidate = state(revision=1)
+            candidate["current_stage"] = "round-1-build"
+            candidate["ledger"]["checks"].append(
+                {"stage": "scope", "command": "test", "result": "pass"}
+            )
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("migration", result.stderr.lower())
+            self.assertEqual(original, json.loads(state_path.read_text(encoding="utf-8")))
+
+    def test_complete_rejects_a_current_run_worker_without_host_terminal_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            candidate = json.loads(state_path.read_text(encoding="utf-8"))
+            candidate.update(revision=1, status="complete", current_stage="verify-final")
+            candidate["workers"] = [
+                {
+                    "ref": "worker-1",
+                    "role": "pdlc",
+                    "owner_run_id": "run-1",
+                    "status": "working",
+                }
+            ]
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("worker", result.stderr.lower())
+
+    def test_controller_drift_is_rejected_after_it_is_frozen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            state_path = self.state_path(state_home)
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            candidate = json.loads(state_path.read_text(encoding="utf-8"))
+            candidate["revision"] = 1
+            candidate["controller"]["fingerprint"] = "0" * 64
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("controller", result.stderr.lower())
+
     def test_write_rejects_stale_revision_or_wrong_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -231,6 +310,54 @@ class DeliveryStateTest(unittest.TestCase):
                 skill = pdlc_root / "skills" / name / "SKILL.md"
                 skill.parent.mkdir(parents=True, exist_ok=True)
                 skill.write_text(f"{name}\n", encoding="utf-8")
+            files = [
+                "pdlc-feature/SKILL.md",
+                "pdlc-tdd/SKILL.md",
+                "pdlc-implement/SKILL.md",
+                "pdlc-review/SKILL.md",
+            ]
+            digest = hashlib.sha256()
+            for relative in files:
+                digest.update(
+                    relative.encode("utf-8")
+                    + b"\0"
+                    + (pdlc_root / "skills" / relative).read_bytes()
+                )
+            (pdlc_root / "converge-provider.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "provider_id": "pdlc-skills",
+                        "provider_version": "test-v1",
+                        "task_contracts": {
+                            "feature": {
+                                "entrypoint": files[0],
+                                "closure": files[1:],
+                                "source_fingerprint": digest.hexdigest(),
+                                "preserve_external_behavior": False,
+                            }
+                        },
+                        "authorization": {
+                            "stop_for": [
+                                "business_rules",
+                                "public_contracts",
+                                "permissions",
+                                "release",
+                                "irreversible_actions",
+                            ],
+                            "forbidden_actions": [
+                                "pdlc-ship",
+                                "commit",
+                                "tag",
+                                "push",
+                                "publish",
+                                "install",
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             payload = state()
             payload["engine"] = {
                 "name": "pdlc-v1",
@@ -239,7 +366,8 @@ class DeliveryStateTest(unittest.TestCase):
                 "pdlc_root": str(pdlc_root.resolve()),
                 "feature_id": "F-123",
                 "task_kind": "feature",
-                "pdlc_fingerprint": pdlc_fingerprint(pdlc_root, "feature"),
+                "pdlc_fingerprint": legacy_pdlc_fingerprint(pdlc_root, "feature"),
+                "provider_manifest": str(pdlc_root / "converge-provider.json"),
             }
             payload["current_stage"] = "pdlc-run"
 

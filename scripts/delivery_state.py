@@ -11,7 +11,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from delivery_lease import is_expired, lease_paths, lock_record, read_record, same_owner
-from delivery_next import validate_state
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "state"
@@ -23,6 +23,7 @@ IMMUTABLE_FIELDS = (
     "writer_id",
     "baseline",
     "scope_fingerprint",
+    "controller",
     "engine",
 )
 NATIVE_STAGE_TRANSITIONS = {
@@ -125,6 +126,24 @@ def validate_transition(previous, candidate):
     if previous["requires_stability_round"] and not candidate["requires_stability_round"]:
         raise ValueError("requires_stability_round must not regress")
 
+    previous_workers = {worker["ref"]: worker for worker in previous["workers"]}
+    candidate_workers = {worker["ref"]: worker for worker in candidate["workers"]}
+    if not previous_workers.keys() <= candidate_workers.keys():
+        raise ValueError("workers are append-only")
+    for ref, old_worker in previous_workers.items():
+        new_worker = candidate_workers[ref]
+        if any(new_worker[field] != old_worker[field] for field in ("ref", "role", "owner_run_id")):
+            raise ValueError("worker identity is immutable")
+        if old_worker["status"] in WORKER_TERMINAL_STATUSES and new_worker != old_worker:
+            raise ValueError("worker host terminal status is immutable")
+        if old_worker["status"] == "working" and new_worker["status"] not in {
+            "working", *WORKER_TERMINAL_STATUSES
+        }:
+            raise ValueError("invalid worker status transition")
+    for ref in candidate_workers.keys() - previous_workers.keys():
+        if candidate_workers[ref]["status"] != "working":
+            raise ValueError("new workers must be registered as working")
+
     old_stage = previous["current_stage"]
     new_stage = candidate["current_stage"]
     if previous["engine"]["name"] == "pdlc-v1":
@@ -164,7 +183,7 @@ def validate_transition(previous, candidate):
 def write(arguments):
     if arguments.input != "-":
         raise ValueError("write only accepts --input - from stdin")
-    candidate = json.load(sys.stdin)
+    candidate = upgrade_state(json.load(sys.stdin))
     validate_candidate(candidate, arguments)
     managed_path = state_path(
         DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
@@ -174,7 +193,9 @@ def write(arguments):
         with lock_record(managed_path):
             current_revision = -1
             if managed_path.exists():
-                current = json.loads(managed_path.read_text(encoding="utf-8"))
+                stored = json.loads(managed_path.read_text(encoding="utf-8"))
+                migrating_v5 = stored.get("schema_version") == 5
+                current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
             if current_revision != arguments.expected_revision:
@@ -182,7 +203,13 @@ def write(arguments):
             if candidate["revision"] != current_revision + 1:
                 raise ValueError("candidate revision must be the next revision")
             if managed_path.exists():
-                validate_transition(current, candidate)
+                if migrating_v5:
+                    expected = dict(current)
+                    expected["revision"] = candidate["revision"]
+                    if candidate != expected:
+                        raise ValueError("v5 migration may only add schema v6 fields")
+                else:
+                    validate_transition(current, candidate)
             write_private(managed_path, candidate)
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 

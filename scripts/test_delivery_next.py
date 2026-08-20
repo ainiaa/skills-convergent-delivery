@@ -1,11 +1,12 @@
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from delivery_engine import file_fingerprint, pdlc_fingerprint
+from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -62,6 +63,42 @@ class DeliveryNextTest(unittest.TestCase):
             path = root / "skills" / name / "SKILL.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{name}\n", encoding="utf-8")
+        files = [
+            "pdlc-feature/SKILL.md",
+            "pdlc-tdd/SKILL.md",
+            "pdlc-implement/SKILL.md",
+            "pdlc-review/SKILL.md",
+        ]
+        digest = hashlib.sha256()
+        for relative in files:
+            digest.update(relative.encode() + b"\0" + (root / "skills" / relative).read_bytes())
+        (root / "converge-provider.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "provider_id": "pdlc-skills",
+                    "provider_version": "test-v1",
+                    "task_contracts": {
+                        "feature": {
+                            "entrypoint": files[0],
+                            "closure": files[1:],
+                            "source_fingerprint": digest.hexdigest(),
+                            "preserve_external_behavior": False,
+                        }
+                    },
+                    "authorization": {
+                        "stop_for": [
+                            "business_rules", "public_contracts", "permissions",
+                            "release", "irreversible_actions",
+                        ],
+                        "forbidden_actions": [
+                            "pdlc-ship", "commit", "tag", "push", "publish", "install",
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         return {
             "name": "pdlc-v1",
             "selection": "explicit",
@@ -69,7 +106,8 @@ class DeliveryNextTest(unittest.TestCase):
             "pdlc_root": str(root.resolve()),
             "feature_id": "F-123",
             "task_kind": "feature",
-            "pdlc_fingerprint": pdlc_fingerprint(root, "feature"),
+            "pdlc_fingerprint": legacy_pdlc_fingerprint(root, "feature"),
+            "provider_manifest": str(root / "converge-provider.json"),
         }
 
     def generic_tdd_engine(self, directory):

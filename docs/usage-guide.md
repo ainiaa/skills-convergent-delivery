@@ -60,7 +60,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 `scripts/delivery_state.py path` 推导；更新时将完整 Schema v5 JSON 经 `delivery_state.py write --input - --repo-id <repo> --task-key <task>` 的 stdin 提交，脚本不会接受 `/tmp` 候选文件或任意 `--state` 路径。它会校验活动 lease、writer、revision、冻结契约、合法阶段和追加型 repair/check/history。当前 acceptance 可真实变为 fail/stale，但必须将旧值和 revision 追加到 `acceptance_history`；criterion 不变且 complete 仍要求当前 fresh pass。同 owner 完成 lease move 后仍可迁移 workspace。恢复任务前必须运行 `scripts/delivery_next.py` 并传入 `run_id`、`writer_id` 和 `revision`；若 PDLC 或第三方 TDD Skill 更新、缺失或换了位置，helper 会阻塞而不会静默换源。
+单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。正式路径只能由 helper 推导；Schema v6 冻结 controller/provider，持久化当前 run worker，并继续校验 lease、CAS、冻结契约、阶段与追加证据。旧 v5 第一次写入只添加迁移。PDLC manifest、真实入口或依赖闭包变化会明确阻塞，细节见 [状态 Schema](../references/state-schema.md)。无需恢复的简单任务不创建 state/lease，直接用 `delivery_report.py --input -` 生成报告；持久任务继续使用 `--state`。
 
 Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v3。reader 可读取旧 v1/v2，下一次写入先做只添加 capsule/task identity、recovery 和 worker lifecycle 的原子迁移；新状态必须是 v3。路径由 repo、`plan_id` 和 `run_id` 推导，另以 `repo_id + plan_id` 建立默认两小时且每次写入续期的 scheduler lease；活动 owner 阻止第二个 run/window，过期后仅允许显式 `--takeover`。`plan_revision` 与 fingerprint 在状态内冻结，任何漂移都会阻塞。写入同样使用 stdin、文件锁、revision CAS、私有临时文件、`fsync` 和同目录原子替换。
 
@@ -77,17 +77,11 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
 
-PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。默认可用时选择 `pdlc-v1`，由 PDLC 独占 TDD、实现与阶段评审；`converge` 只保存协调信息并聚合交付证据。PDLC 不可用时，依次尝试适配的 Superpowers、Matt Pocock TDD Skill、通过预检的通用 TDD Skill，最后才使用内置 TDD；第三方路径和内容摘要会冻结进状态，恢复时不可静默换用另一提供者。强制 PDLC 的任务如果在恢复时失去所需能力或内容不一致，会明确阻塞而不会静默降级。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
+PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口互斥。Converge 的 JSON adapter manifest 校验 provider id/version、feature/fix/refactor 入口、授权边界和显式源码闭包；已安装但未适配或冻结后变化会明确阻塞。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
 复杂任务先由 `converge-plan` 生成并校验 Plan Contract。PDLC 路径只有一个 `pdlc-run`，宿主支持时完整流程在 fresh context 中执行，否则手工交接；非 PDLC 路径按依赖和 `owned_paths` 生成 wave。每个派发 capsule 都携带并由 Schema 校验 `planned_task=true`、正确 `plan_id/task_id`，避免子执行者再次规划。计划结束后必须把真实 workspace 交给 audit，由 helper 自行读取 Git commit/tree/diff/changed paths 并核对结构化证据。
 
-`converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease，也不允许读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器持久化 `worker_ref/worker_role/worker_owner_run_id/worker_status/recovery_count`，只校验 dispatch、宿主终态、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。连接异常时最多恢复已保存的原 worker 一次；宿主无法提供可恢复任务时，输出最小 capsule 并暂停，等待手工交接。
-
-约 90 秒软探测、180 秒硬中断和一次恢复只在宿主实际提供活动/进程查询、计时、中断与同任务恢复 API 时自动执行。Skill 内规则不是后台 watchdog；能力不足时只保存状态并手工交接，不能宣称已中断。测试、构建或 PDLC 仍运行时不会误中断。
-
-所有 PDLC、reviewer、Batch worker、辅助分析和独立 evaluator 派发后都立即登记到当前 run 的 worker registry。正常、异常、用户中断、`no_progress` 和验证失败都执行同一清场屏障，只查询或中断 owner 为本 run 的精确 ref；本轮仍有 active worker 时不能宣称完成。没有 ref 或当前 API 不可见的历史孤儿只能报告并交由用户/UI 处理。
-
-修改 Suite 后的独立前向测试默认使用一个 evaluator，在隔离临时工作区顺序执行相关有限场景；不要为每个场景创建代理。评估汇总前必须等待 evaluator 宿主终态，并确认本轮 active worker 数为 0。
+`converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 
 ## 维护版本
 
@@ -95,7 +89,7 @@ PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和必要 Skill 元数据检查。
+3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和四个 Skill 的官方 quick_validate。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
 不要为 Codex 和 Claude Code 复制两份 Skill 源码；如需调整流程，修改仓库中的对应 Skill。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

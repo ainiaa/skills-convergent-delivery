@@ -25,6 +25,7 @@ REQUIRED_SOURCE_FILES=(
   references/reporting.md
   references/state-schema.md
   references/tdd-providers.md
+  providers/pdlc-v1.json
   scripts/delivery_engine.py
   scripts/delivery_lease.py
   scripts/delivery_next.py

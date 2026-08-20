@@ -104,6 +104,20 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("report blocked", result.stderr)
 
+    def test_stdin_input_matches_state_file_without_a_lease(self):
+        payload = state()
+        from_state = self.run_report(payload)
+        from_stdin = subprocess.run(
+            ["python3", str(SCRIPT), "--input", "-", "--format", "json"],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, from_stdin.returncode, from_stdin.stderr)
+        self.assertEqual(from_state.stdout, from_stdin.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

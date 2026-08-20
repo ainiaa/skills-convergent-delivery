@@ -2,11 +2,20 @@
 """Validate a converge state and emit exactly one next-stage token."""
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
 
-from delivery_engine import TASK_KINDS, compatible_root, compatible_tdd_provider, pdlc_fingerprint
+from delivery_engine import (
+    TASK_KINDS,
+    compatible_root,
+    compatible_tdd_provider,
+    controller_identity,
+    legacy_pdlc_fingerprint,
+    pdlc_fingerprint,
+    pdlc_metadata,
+)
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
 
 
@@ -38,6 +47,8 @@ BLOCKED_CODES = {
     "budget_exhausted",
 }
 DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
+WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
+WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
 
 
 def require_string(value, name):
@@ -50,6 +61,25 @@ def require_mapping(value, name):
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be an object")
     return value
+
+
+def upgrade_state(value):
+    if not isinstance(value, dict):
+        raise ValueError("state must be an object")
+    if value.get("schema_version") == 6:
+        return value
+    if value.get("schema_version") != 5:
+        raise ValueError("unsupported schema_version")
+    state = copy.deepcopy(value)
+    engine = state.get("engine")
+    if isinstance(engine, dict) and engine.get("name") == "pdlc-v1":
+        root = engine.get("pdlc_root")
+        task_kind = engine.get("task_kind")
+        if engine.get("pdlc_fingerprint") != legacy_pdlc_fingerprint(root, task_kind):
+            raise ValueError("legacy frozen PDLC capability is unavailable or changed")
+        engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
+    state.update(schema_version=6, controller=controller_identity(), workers=[])
+    return state
 
 
 def validate_engine(value):
@@ -67,11 +97,20 @@ def validate_engine(value):
         require_string(engine.get("feature_id"), "engine.feature_id")
         task_kind = engine.get("task_kind")
         if task_kind not in TASK_KINDS:
-            raise ValueError("engine.task_kind must be feature or fix")
+            raise ValueError("engine.task_kind must be feature, fix, or refactor")
         fingerprint = require_string(engine.get("pdlc_fingerprint"), "engine.pdlc_fingerprint")
-        compatible, problem = compatible_root(root, task_kind)
-        if not compatible or pdlc_fingerprint(compatible, task_kind) != fingerprint:
+        compatible, problem = compatible_root(root, task_kind, engine.get("provider_manifest"))
+        if not compatible:
             raise ValueError(f"frozen PDLC capability is unavailable or changed: {problem or root}")
+        metadata = pdlc_metadata(compatible, task_kind, engine.get("provider_manifest"))
+        for field, expected in metadata.items():
+            if engine.get(field) != expected:
+                raise ValueError(f"frozen PDLC provider {field} is unavailable or changed")
+        if fingerprint not in {
+            pdlc_fingerprint(compatible, task_kind, engine.get("provider_manifest")),
+            legacy_pdlc_fingerprint(compatible, task_kind),
+        }:
+            raise ValueError("frozen PDLC capability is unavailable or changed")
     else:
         if any(
             field in engine
@@ -94,10 +133,13 @@ def validate_engine(value):
 
 
 def validate_state(state, arguments):
-    if not isinstance(state, dict):
-        raise ValueError("state must be an object")
-    if state.get("schema_version") != 5:
-        raise ValueError("unsupported schema_version")
+    state = upgrade_state(state)
+
+    controller = require_mapping(state.get("controller"), "controller")
+    if set(controller) != {"version", "fingerprint"}:
+        raise ValueError("controller must contain version and fingerprint")
+    if controller != controller_identity():
+        raise ValueError("frozen Converge controller version or fingerprint changed")
 
     run_id = require_string(state.get("run_id"), "run_id")
     repo_id = require_string(state.get("repo_id"), "repo_id")
@@ -116,6 +158,24 @@ def validate_state(state, arguments):
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
     engine_name = validate_engine(state.get("engine"))
+    workers = state.get("workers")
+    if not isinstance(workers, list):
+        raise ValueError("workers must be a list")
+    worker_refs = set()
+    for worker in workers:
+        if not isinstance(worker, dict) or set(worker) != {
+            "ref", "role", "owner_run_id", "status"
+        }:
+            raise ValueError("workers[] must contain ref, role, owner_run_id, and status")
+        ref = require_string(worker.get("ref"), "workers[].ref")
+        require_string(worker.get("role"), "workers[].role")
+        if ref in worker_refs:
+            raise ValueError("workers[].ref must be unique")
+        worker_refs.add(ref)
+        if worker.get("owner_run_id") != run_id:
+            raise ValueError("workers[] may only belong to the current run")
+        if worker.get("status") not in WORKER_STATUSES:
+            raise ValueError("workers[].status is invalid")
     ledger = require_mapping(state.get("ledger"), "ledger")
     completed_rounds = ledger.get("completed_rounds")
     if (
@@ -200,6 +260,8 @@ def validate_state(state, arguments):
 
     status = state.get("status")
     if status == "complete":
+        if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
+            raise ValueError("complete state requires every current-run worker to reach host terminal status")
         if not acceptance or not all(
             item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
         ):
@@ -258,7 +320,7 @@ def main():
     try:
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
-        state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+        state = upgrade_state(json.loads(Path(arguments.state).read_text(encoding="utf-8")))
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
         print(next_stage)

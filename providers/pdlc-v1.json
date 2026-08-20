@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "provider_id": "kanfu-panda/pdlc-skills",
+  "provider_version": "1.6.0",
+  "task_contracts": {
+    "feature": {
+      "entrypoint": "pdlc-feature/SKILL.md",
+      "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
+      "source_fingerprint": "f24888e1f27b8b539de45ef658e503105d692fcd26cc438c3052cd324b857268",
+      "preserve_external_behavior": false
+    },
+    "fix": {
+      "entrypoint": "pdlc-fix/SKILL.md",
+      "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
+      "source_fingerprint": "c90807f8e02ba4331b87cfaa77e70908ffdb2949ef3e4452df3258bdc04cdb75",
+      "preserve_external_behavior": false
+    },
+    "refactor": {
+      "entrypoint": "pdlc-refactor/SKILL.md",
+      "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
+      "source_fingerprint": "f38edaedbd50ff4c1fdb918c6ab421ed35c4ce745c6725dca3787dcaef293ca4",
+      "preserve_external_behavior": true
+    }
+  },
+  "authorization": {
+    "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
+    "forbidden_actions": ["pdlc-ship", "commit", "tag", "push", "publish", "install"]
+  }
+}

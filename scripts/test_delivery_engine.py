@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -17,11 +18,27 @@ REQUIRED = (
     "pdlc-review",
     "pdlc-feature",
     "pdlc-fix",
+    "pdlc-refactor",
 )
 
 
 class DeliveryEngineTest(unittest.TestCase):
+    def test_bundled_adapter_identifies_the_supported_pdlc_release(self):
+        manifest = json.loads(engine_module.PROVIDER_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual("1.6.0", manifest["provider_version"])
+
     def run_engine(self, *arguments, environment=None):
+        arguments = list(arguments)
+        configured_root = None
+        if "--pdlc-root" in arguments:
+            configured_root = Path(arguments[arguments.index("--pdlc-root") + 1])
+        elif environment and environment.get("CONVERGE_PDLC_ROOT"):
+            configured_root = Path(environment["CONVERGE_PDLC_ROOT"])
+        if configured_root and (configured_root / "converge-provider.json").is_file():
+            arguments.extend(
+                ["--pdlc-manifest", str(configured_root / "converge-provider.json")]
+            )
         with tempfile.TemporaryDirectory() as home:
             return subprocess.run(
                 [sys.executable, str(SCRIPT), "select", *arguments],
@@ -37,6 +54,49 @@ class DeliveryEngineTest(unittest.TestCase):
             file = root / (skill if installed else f"skills/{skill}") / "SKILL.md"
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text("ok\n", encoding="utf-8")
+        common = ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"]
+        task_contracts = {}
+        for kind in ("feature", "fix", "refactor"):
+            files = [f"pdlc-{kind}/SKILL.md", *common]
+            digest = hashlib.sha256()
+            for relative in files:
+                path = root / (relative if installed else f"skills/{relative}")
+                digest.update(relative.encode("utf-8") + b"\0" + path.read_bytes())
+            task_contracts[kind] = {
+                "entrypoint": files[0],
+                "closure": files[1:],
+                "source_fingerprint": digest.hexdigest(),
+                "preserve_external_behavior": kind == "refactor",
+            }
+        (root / "converge-provider.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "provider_id": "pdlc-skills",
+                    "provider_version": "test-v1",
+                    "task_contracts": task_contracts,
+                    "authorization": {
+                        "stop_for": [
+                            "business_rules",
+                            "public_contracts",
+                            "permissions",
+                            "release",
+                            "irreversible_actions",
+                        ],
+                        "forbidden_actions": [
+                            "pdlc-ship",
+                            "commit",
+                            "tag",
+                            "push",
+                            "publish",
+                            "install",
+                        ],
+                    },
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         return root
 
     def tdd_root(self, directory, name, content):
@@ -282,6 +342,47 @@ class DeliveryEngineTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("pdlc-v1", json.loads(result.stdout)["engine"])
+
+    def test_refactor_routes_to_pdlc_refactor_with_external_behavior_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_engine(
+                "--pdlc-root", str(self.pdlc_root(directory)), "--kind", "refactor"
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("pdlc-refactor/SKILL.md", payload["pdlc_entrypoint"])
+        self.assertTrue(payload["preserve_external_behavior"])
+
+    def test_transitive_dependency_change_blocks_a_frozen_pdlc_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.pdlc_root(directory)
+            initial = self.run_engine("--pdlc-root", str(root), "--kind", "feature")
+            payload = json.loads(initial.stdout)
+            (root / "skills/pdlc-tdd/SKILL.md").write_text("changed\n", encoding="utf-8")
+            result = self.run_engine(
+                "--kind", "feature",
+                "--previous-engine", "pdlc-v1",
+                "--previous-pdlc-root", str(root),
+                "--previous-pdlc-fingerprint", payload["pdlc_fingerprint"],
+            )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("changed", json.loads(result.stdout)["reason"])
+
+    def test_installed_but_unadapted_pdlc_is_explicitly_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "unadapted"
+            for skill in REQUIRED:
+                path = root / "skills" / skill / "SKILL.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unknown version\n", encoding="utf-8")
+            result = self.run_engine("--pdlc-root", str(root), "--kind", "feature")
+
+        self.assertEqual(2, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertEqual("incompatible", payload["code"])
+        self.assertIn("adapter manifest", payload["reason"])
 
 
 if __name__ == "__main__":

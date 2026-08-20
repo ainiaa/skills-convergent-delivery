@@ -65,4 +65,4 @@ completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass�
 
 ## Cleanup barrier
 
-正常完成、异常、用户停止、`no_progress` 和验证失败都执行等价 `finally`：只查询 `worker_owner_run_id` 等于当前 `run_id` 的登记项。结果已返回但宿主仍 Working 时继续有界等待；确认无活动后才按 watchdog 中断并复查终态。无法 query/interrupt 时计划进入 blocked，`blocked_reason` 明确 manual cleanup 和精确 `worker_ref`，不得把 active worker 隐藏在完成结论中。
+公共 worker/watchdog/清场行为以 [执行控制](../../../references/execution-control.md) 为唯一真源。Batch 额外要求把无法完成的清场结果写为 blocked，并在 `blocked_reason` 保留需 manual cleanup 的精确 ref。
