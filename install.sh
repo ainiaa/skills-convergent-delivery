@@ -14,12 +14,13 @@ CODEX_SKILLS_ROOT="${HOME}/.codex/skills"
 CLAUDE_SKILLS_ROOT="${HOME}/.claude/skills"
 LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
-SKILL_NAMES=(converge converge-review converge-batch)
+SKILL_NAMES=(converge converge-plan converge-review converge-batch)
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
   references/activation.md
   references/evaluation-scenarios.md
+  references/execution-control.md
   references/execution-protocol.md
   references/reporting.md
   references/state-schema.md
@@ -30,6 +31,9 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_report.py
   scripts/delivery_state.py
   scripts/delivery_task_key.py
+  skills/converge-plan/SKILL.md
+  skills/converge-plan/references/plan-contract.md
+  skills/converge-plan/scripts/plan_check.py
   skills/converge-review/SKILL.md
   skills/converge-review/references/review-contract.md
   skills/converge-batch/SKILL.md
@@ -58,8 +62,8 @@ Usage:
   bash install.sh --doctor [--target codex|claude|all] [--offline]
 
 The default target is all (Codex and Claude Code). Installation creates the
-converge, converge-review, and converge-batch symlinks as one Suite. It never
-replaces an existing directory.
+converge, converge-plan, converge-review, and converge-batch symlinks as one
+Suite. It never replaces an existing directory.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
@@ -97,7 +101,7 @@ target_path() {
 skill_source() {
   case "$1" in
     converge) printf '%s\n' "$SOURCE_DIR" ;;
-    converge-review|converge-batch) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
+    converge-plan|converge-review|converge-batch) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
   esac
 }
 
@@ -127,7 +131,7 @@ suite_status() {
   }
   [[ -L "$root" ]] || missing+=(converge)
   local skill
-  for skill in converge-review converge-batch; do
+  for skill in converge-plan converge-review converge-batch; do
     if ! same_source "$(target_path "$runtime" "$skill")" "$source/skills/$skill"; then
       missing+=("$skill")
     fi

@@ -11,6 +11,7 @@ INSTALLER = ROOT / "install.sh"
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 SKILL_SOURCES = {
     "converge": ROOT,
+    "converge-plan": ROOT / "skills/converge-plan",
     "converge-review": ROOT / "skills/converge-review",
     "converge-batch": ROOT / "skills/converge-batch",
 }
@@ -77,6 +78,7 @@ class InstallTest(unittest.TestCase):
             self.assertIn(f"Claude Code: {VERSION} (incomplete", version.stdout)
             self.assertIn("converge-review", version.stdout)
             self.assertIn("converge-batch", version.stdout)
+            self.assertIn("converge-plan", version.stdout)
             self.assertNotEqual(0, doctor.returncode)
             self.assertIn("Suite: incomplete", doctor.stdout)
 
@@ -103,7 +105,8 @@ class InstallTest(unittest.TestCase):
             (source / "skills/converge-batch").mkdir(parents=True)
             (source / "SKILL.md").write_text("---\nname: converge\n---\n", encoding="utf-8")
             (source / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
-            for name in ("converge-review", "converge-batch"):
+            (source / "skills/converge-plan").mkdir(parents=True)
+            for name in ("converge-plan", "converge-review", "converge-batch"):
                 (source / f"skills/{name}/SKILL.md").write_text(
                     f"---\nname: {name}\n---\n", encoding="utf-8"
                 )
@@ -137,6 +140,7 @@ class InstallTest(unittest.TestCase):
             )
             for name, relative in (
                 ("converge", "."),
+                ("converge-plan", "skills/converge-plan"),
                 ("converge-review", "skills/converge-review"),
                 ("converge-batch", "skills/converge-batch"),
             ):
@@ -200,6 +204,7 @@ class InstallTest(unittest.TestCase):
             for path in (
                 source / "SKILL.md",
                 source / "VERSION",
+                source / "skills/converge-plan/SKILL.md",
                 source / "skills/converge-review/SKILL.md",
                 source / "skills/converge-batch/SKILL.md",
             ):
@@ -270,6 +275,8 @@ class InstallTest(unittest.TestCase):
         self.assertIn("[使用与维护指南](docs/usage-guide.md)", readme)
         self.assertIn("[变更日志](CHANGELOG.md)", readme)
         self.assertIn("## [Unreleased]", changelog)
+        self.assertNotIn("三个 Skill", changelog)
+        self.assertNotIn("三个入口", changelog)
 
     def test_public_project_documents_are_linked_from_readme(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

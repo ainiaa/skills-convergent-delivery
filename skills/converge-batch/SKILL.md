@@ -35,7 +35,9 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只从已冻结计划复制当前 Batch 必需信息：全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
-按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，保存 `worker_ref` 后发送 capsule，显式要求使用 `$converge`；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+按 Runtime Adapters 选择宿主能力。宿主支持可恢复的全新任务/子代理时，保存 `worker_ref` 后发送 capsule，显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+
+上游 `converge-plan` 的 wave 用于确认依赖和路径冲突。**Batch Protocol v1 默认顺序**执行；当前 Schema 只有一个 `current_batch`，在多 worktree 集成和多 receipt 恢复协议落地前不得宣称并行写入。
 
 ## 4. 幂等派发和监控
 

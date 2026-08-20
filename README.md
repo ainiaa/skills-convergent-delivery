@@ -1,28 +1,33 @@
 # Converge Suite
 
-一套面向 Codex 与 Claude Code 的软件交付 Skill：让单个任务有限收敛，让独立审查保持只读，让长计划按 Batch 稳定接力。
+一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.8.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.9.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
 普通的“实现 → 检查 → 修复 → 再检查”很容易变成长对话：实现者既写代码又替自己解释，重复扫描消耗 token，用户还要不断追问“还有问题吗”。直接让一个 Agent 长时间执行大计划，又容易让上下文膨胀、范围漂移和验证变松。
 
-Converge Suite 将三个职责拆开：执行者只交付一个任务，reviewer 只找问题，scheduler 只接力 Batch。每个角色都有明确输入、终态和重试上限；PDLC 可用时复用它的完整开发流程，不可用时仍能独立完成 TDD 与验证。
+Converge Suite 将四个职责拆开：planner 只拆任务，执行者只交付一个任务，reviewer 只找问题，scheduler 只接力。每个角色都有明确输入、终态和重试上限；PDLC 可用时整体委托它的完整开发流程，不可用时仍能独立完成 TDD 与验证。
 
-## 三个 Skill
+## 四个 Skill
 
 | Skill | 负责 | 不负责 |
 |---|---|---|
 | `converge` | 一个功能、Bug 或重构的范围、引擎选择、有限修复、验收和报告 | 只读评审、长计划调度 |
+| `converge-plan` | 将复杂需求拆成有限、可验证任务，校验依赖并选择当前/全新/顺序执行 | 改业务代码、review、控制 PDLC 内部阶段 |
 | `converge-review` | 基于证据的只读检查；支持意图审查和新上下文盲审 | 修改代码、决定发布 |
-| `converge-batch` | 预检已有计划，按顺序派发独立 Batch，校验交接回执和最终验收 | 读业务代码、设计方案、实现或 review |
+| `converge-batch` | 预检已有计划，按依赖派发独立任务，校验交接回执和最终验收 | 读业务代码、设计方案、实现或 review |
 
 核心能力：
 
 - 默认按 `pdlc-v1 → 已适配第三方 TDD → 通用 TDD → native-v1` 选择执行引擎。
-- PDLC 负责需求、设计、TDD、实现和阶段评审；`converge` 只做控制、验收和交接，避免双流程。
+- 复杂任务先形成 Plan Contract；每个 task 只有一个结果、明确范围、依赖和真实验证。
+- PDLC 只形成一个 fresh `pdlc-run`，完整委托需求、设计、TDD、实现和阶段评审，避免双流程。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
+- 依赖 wave 会标识潜在并行候选；内置 Batch Protocol v1 保持顺序执行，避免多 worktree 和 receipt 无法可靠恢复。
+- 90 秒无活动先软探测，180 秒仍无活动且没有运行进程才中断；只恢复原任务一次。
+- 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
 - Batch 调度具备计划预检、最小上下文胶囊、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - Batch 运行时明确适配 Codex 与 Claude Code；断线后查询原 `worker_ref`，不确定时阻塞而不重复派发。
@@ -51,7 +56,7 @@ bash install.sh --target claude
 bash install.sh --upgrade --target all
 ```
 
-安装器会先预检全部三个入口，再对每个软链接做原子替换；任一已知入口冲突时不会开始安装。普通文件或目录永远不会被 `--force` 删除。
+安装器会先预检全部四个入口，再对每个软链接做原子替换；任一已知入口冲突时不会开始安装。普通文件或目录永远不会被 `--force` 删除。
 
 ### Uninstall
 
@@ -59,7 +64,7 @@ bash install.sh --upgrade --target all
 bash install.sh --uninstall --target all
 ```
 
-卸载只移除三个运行时软链接，保留受管理源码。
+卸载只移除四个运行时软链接，保留受管理源码。
 
 ### Check your version
 
@@ -77,7 +82,7 @@ bash install.sh --doctor --target codex --offline
 ## 3 步快速开始
 
 1. 安装：`bash install.sh --target all`。
-2. 对单个任务显式说“使用 `$converge` 修复分页错误”；长计划说“使用 `$converge-batch` 执行这个 Batch 计划”。
+2. 单个任务说“使用 `$converge` 修复分页错误”；只要计划说“使用 `$converge-plan` 拆解这个需求”；已有长计划使用 `$converge-batch`。
 3. 根据最终回执确认结果、验证范围和待处理项。
 
 ## 调用当前 Skill
@@ -88,6 +93,7 @@ Codex：
 
 ```text
 使用 $converge 实现这个功能并验证。
+使用 $converge-plan 先拆成可验证短任务，不修改代码。
 使用 $converge-review 检查当前 diff，不修改代码。
 使用 $converge-batch 按已有计划逐批执行，每批调用 $converge。
 ```
@@ -96,6 +102,7 @@ Claude Code：
 
 ```text
 /converge 修复这个 Bug 并验证
+/converge-plan 为这个复杂需求制定执行计划
 /converge-review 检查当前改动
 /converge-batch 执行 docs/plan.md
 ```
@@ -113,6 +120,8 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 `converge-review`： “检查当前改动”“独立审查”“用新视角找问题”。
 
+`converge-plan`： “先拆步骤再实现”“给出可执行计划”“按依赖决定执行顺序”。
+
 `converge-batch`： “按 Batch 计划执行”“逐批接力”“调度多个独立任务完成计划”。
 
 只要方案时明确说“只给方案”；只检查时明确说“不修改代码”。Skill frontmatter 只是发现线索，无法保证任意自然语言都自动触发；显式点名最可靠。如需团队默认启用，可手工复制 [激活与触发](references/activation.md) 中的 `AGENTS.md` 片段；安装器不会自动改配置。
@@ -122,20 +131,24 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 ### 单任务执行
 
 ```text
-冻结范围 → 建立验收 → 选择 PDLC / TDD 引擎 → 实现
+冻结范围 → 建立验收 → 选择 PDLC / TDD 引擎 → 有限计划 → 实现
 → 必要审查 → 有限修复 → 新鲜验证 → 交付回执
 ```
 
 同一问题在同一阶段最多自动修一次；问题复现或没有客观进展时阻塞，不无限循环。高风险改动使用全新上下文的 `converge-review` 盲审；极高风险或用户明确要求时再增加意图审查。
 
+复杂任务由 `converge-plan` 生成 Plan Contract。若 PDLC 可用，计划只有一个 `pdlc-run`，主上下文立即把完整 PDLC 交给可恢复的新任务，不提前生成整套文档和补丁。已派发任务携带 `planned_task=true`，子执行者不会再次规划。
+
+无响应保护区分“模型没有活动”和“测试/构建仍在运行”：约 90 秒无任何活动时先探测，约 180 秒仍无活动且没有进程时才中断，并且只恢复同一任务一次。详见 [执行控制](references/execution-control.md)。
+
 ### 长计划调度
 
 ```text
-全量预检 → 冻结计划 → Batch 1 新任务（$converge）→ 校验 receipt
-→ Batch 2 新任务（$converge）→ … → 计划级最终验收
+全量预检 → 冻结计划/wave → 独立任务（$converge）→ 校验 receipt
+→ 下一 wave → … → 计划/diff/证据最终对账
 ```
 
-调度器不读业务代码、不 review、不替 Batch 决定技术方案。每批使用最小 context capsule，只有上一批的真实 Git commit/tree、验收证据和约定产出验证通过后才继续；只有 active 计划的当前 Batch 能派发，派发结果不确定时阻塞，不重复创建任务。
+调度器不读业务代码、不 review、不替任务决定技术方案。每批使用最小 context capsule；wave 用于检查依赖和路径冲突，Batch Protocol v1 仍逐项执行。派发结果不确定时查询原任务，不重复创建任务。
 
 Codex 保存 task/thread id，Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；否则输出 capsule 手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
@@ -188,6 +201,8 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
 - [交付回执规范](references/reporting.md)
 - [激活与触发](references/activation.md)
 - [单任务状态 Schema](references/state-schema.md)
+- [Plan Contract](skills/converge-plan/references/plan-contract.md)
+- [执行控制与无响应保护](references/execution-control.md)
 - [Batch Protocol](skills/converge-batch/references/batch-contract.md)
 - [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)
 - [Review Protocol](skills/converge-review/references/review-contract.md)
@@ -204,8 +219,11 @@ Converge Suite 没有复制上游完整流程；它吸收公开实践后，用�
 
 - [kanfu-panda/pdlc-skills](https://github.com/kanfu-panda/pdlc-skills)：完整 PDLC 阶段、质量闸门、状态推进和循环控制。
 - [obra/superpowers](https://github.com/obra/superpowers)：系统化调试、TDD、完成前验证、fresh-context review 和 Skill 压力测试。
+- [GitHub Spec Kit](https://github.com/github/spec-kit)：Spec → Plan → Tasks → Implement 的追溯结构。
+- [gstack](https://github.com/garrytan/gstack)：计划就绪检查、决策记录和 plan-vs-diff 完成审计。
 - [mattpocock/skills](https://github.com/mattpocock/skills)：公共行为 seam、垂直切片和避免测试实现细节。
-- Grill Me：用对抗式追问暴露假设和设计盲点；本 Suite 只吸收“独立找问题”，不把无限追问放进执行循环。
+- Grill Me：一次一个问题并给出推荐，用于暴露真正需要用户决定的假设；不把无限追问放进执行循环。
+- Builder.io 的 planning/review Skills 与公开的 delegate/taskflow 实践：启发了高风险计划仲裁、fresh worker、依赖 wave 和结构化交接。
 - [skills.sh](https://skills.sh/) 上公开的 Skill 结构与触发实践。
 - 石头关于“审查—修复—再审查”和独立 Batch 调度器的实践文章：启发了 reviewer/scheduler 职责拆分、最小上下文和分批交接。
 - Codex `skill-creator`：渐进式加载、可执行校验和界面元数据规范。

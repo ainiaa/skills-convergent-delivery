@@ -6,8 +6,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 | 运行时 | 安装位置 | 调用方式 |
 |---|---|---|
-| Codex | `~/.codex/skills/{converge,converge-review,converge-batch}` | 自然语言或对应 `$skill-name` |
-| Claude Code | `~/.claude/skills/{converge,converge-review,converge-batch}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
+| Codex | `~/.codex/skills/{converge,converge-plan,converge-review,converge-batch}` | 自然语言或对应 `$skill-name` |
+| Claude Code | `~/.claude/skills/{converge,converge-plan,converge-review,converge-batch}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
 
 ## 前置条件
 
@@ -36,9 +36,9 @@ bash install.sh --upgrade --target all
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 三个入口是否来自同一版本、必需文件、Git、Python 和执行引擎，不修改安装。
+`--doctor` 检查 Suite 四个入口是否来自同一版本、必需文件、Git、Python 和执行引擎，不修改安装。
 
-安装器先预检两个运行时的全部三个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
+安装器先预检两个运行时的全部四个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
 
@@ -79,7 +79,11 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 PDLC 的 `docs/.pdlc-state/` 继续保存流程状态，但不提供跨窗口写入互斥；执行 PDLC 时同样遵从本 Skill 的 lease 规则。默认可用时选择 `pdlc-v1`，由 PDLC 独占 TDD、实现与阶段评审；`converge` 只保存协调信息并聚合交付证据。PDLC 不可用时，依次尝试适配的 Superpowers、Matt Pocock TDD Skill、通过预检的通用 TDD Skill，最后才使用内置 TDD；第三方路径和内容摘要会冻结进状态，恢复时不可静默换用另一提供者。强制 PDLC 的任务如果在恢复时失去所需能力或内容不一致，会明确阻塞而不会静默降级。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
+复杂任务先由 `converge-plan` 生成并校验 Plan Contract。PDLC 路径只有一个 `pdlc-run`，完整流程在 fresh context 中执行；非 PDLC 路径按依赖和 `owned_paths` 生成 wave。每个派发 capsule 都携带 `planned_task=true`，避免子执行者再次规划。计划结束后必须对账任务状态、当前 diff 和新鲜证据。
+
 `converge-batch` 不持有代码 writer lease，也不读取业务代码。它为每个 Batch 创建/交接一个全新执行上下文并显式调用 `$converge`；每个执行者使用自己的单任务 lease。调度器只校验 dispatch、commit/tree、验收证据和 open issues，不能凭自然语言“已完成”继续下一批。连接异常时必须查询已保存的 `worker_ref`；宿主无法提供可恢复任务时，输出最小 capsule 并暂停，等待手工交接。
+
+宿主无响应保护只在 commentary、工具、状态、diff、日志、回执和运行进程全部无活动时启动：约 90 秒软探测，约 180 秒硬中断；随后只恢复同一任务一次。测试、构建或 PDLC 仍运行时不会误中断。
 
 ## 维护版本
 

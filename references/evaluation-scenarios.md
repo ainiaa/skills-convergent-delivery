@@ -4,7 +4,14 @@
 
 | 场景 | 输入特征 | 预期行为 |
 |---|---|---|
-| 触发隔离 | 分别请求实现、只读检查、执行多 Batch 计划 | 依次只选择 `converge`、`converge-review`、`converge-batch`；角色不互相吞并。 |
+| 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`；角色不互相吞并。 |
+| 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
+| PDLC 委托屏障 | PDLC 可用且任务复杂 | Plan Contract 只有一个 fresh `pdlc-run`；主上下文不生成 PDLC 内部产物。 |
+| 递归规划 | Batch capsule 已有 `planned_task=true` | 子执行者只完成冻结 task，不再次调用 planner 或派发自身。 |
+| 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
+| 模型无响应 | 既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
+| 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
+| 计划完成审计 | receipt 声称完成，但证据陈旧或存在计划外 diff | 标记 `PARTIAL`/`scope_drift`，不得宣称完成。 |
 | PDLC 优先 | 可用、完整的 PDLC v1；用户只要求闭环交付 | 选择 `pdlc-v1`；先建立/恢复 PDLC feature 状态；不得自行写 native TDD 或重复 review；最终报告引用 PDLC 命令证据。 |
 | 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一 v1 能力 | `blocked_environment`；不得降级为 native。 |
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |

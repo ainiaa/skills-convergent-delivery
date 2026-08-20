@@ -1,0 +1,6 @@
+interface:
+  display_name: "Converge Plan · 有限执行计划"
+  short_description: "实现前拆成可验证短任务，并选择当前、全新或顺序执行"
+  default_prompt: "使用 $converge-plan 为当前需求生成并校验有限执行计划；不要修改业务代码。"
+policy:
+  allow_implicit_invocation: true

@@ -6,6 +6,10 @@
 
 ### 新增
 
+- 新增 `converge-plan`：实现前生成 Plan Contract，将复杂需求拆成单结果、可验证的短任务，并根据依赖、文件范围和上下文选择当前、fresh 或顺序执行。
+- 新增 `plan_check.py`：确定性校验任务 ID、依赖环、PDLC 单任务屏障和执行 wave，并对账 `DONE/PARTIAL/NOT_DONE/CHANGED`、新鲜证据及 `scope_drift`。
+- 新增无响应保护：90 秒无活动软探测、180 秒无活动且无运行进程时硬中断，只恢复同一 worker/task 一次。
+- 新增决策门禁与计划仲裁边界：可逆技术选择自动记录，业务/公共契约/不可逆问题一次只询问一项；普通任务不增加多 planner 开销。
 - 新增 `install.sh --doctor`：只读检查 Suite 完整性、必需资源、Python/Git 和引擎选择；版本查询会明确区分完整与残缺安装。
 - 新增 Codex/Claude Code Runtime Adapter 契约和 `batch_next.py`：连接中断时恢复查询原任务，派发结果不确定时阻塞而不重复派发。
 - 新增 `delivery_report.py`，从已验证 Schema v5 状态确定性生成结果、交付轮、修复数和待处理数。
@@ -33,9 +37,11 @@
 
 ### 变更
 
+- Suite 扩展为四个职责互斥的 Skill；PDLC 仍以唯一 fresh `pdlc-run` 整体委托，`planned_task=true` 阻止子执行者递归规划。
+- 安装、卸载、doctor、README 和使用指南统一升级到 `0.9.0`，一次交付全部计划化执行能力。
 - `converge` 收敛为单任务控制面，不再承担普通只读 review 或多 Batch 调度；高风险任务显式委托 `converge-review`。
-- 安装器一次预检并安装/卸载三个 Skill；发生任一入口冲突时保留原安装和旧版入口，不产生半迁移状态。
-- 安装前校验三个 Skill 的必需协议与 helper；Batch 仅允许 active 计划的当前批次派发，receipt 必须解析到当前 clean worktree 中的真实 Git commit/tree。
+- 安装器一次预检并安装/卸载四个 Skill；发生任一入口冲突时保留原安装和旧版入口，不产生半迁移状态。
+- 安装前校验四个 Skill 的必需协议与 helper；Batch 仅允许 active 计划的当前批次派发，receipt 必须解析到当前 clean worktree 中的真实 Git commit/tree。
 - 默认交付回执在简洁结果之外保留交付轮数、修复问题数和待处理项数，减少术语同时避免信息过少。
 - Skill 正式名称从 `convergent-delivery` 调整为更易记的 `converge`；安装器会安全迁移指向同一源码的旧软链接。
 - 状态 Schema 先升级为 v3：共享跨运行时 ledger，并用 lease、writer 与 revision 保护写入和恢复。

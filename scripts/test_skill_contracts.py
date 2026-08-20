@@ -15,9 +15,10 @@ def frontmatter(path):
 
 
 class SkillContractTest(unittest.TestCase):
-    def test_three_skills_have_distinct_names_and_triggers(self):
+    def test_four_skills_have_distinct_names_and_triggers(self):
         paths = {
             "converge": ROOT / "SKILL.md",
+            "converge-plan": ROOT / "skills/converge-plan/SKILL.md",
             "converge-review": ROOT / "skills/converge-review/SKILL.md",
             "converge-batch": ROOT / "skills/converge-batch/SKILL.md",
         }
@@ -30,8 +31,37 @@ class SkillContractTest(unittest.TestCase):
             self.assertGreater(len(text), len(header))
 
         self.assertIn("implement", descriptions["converge"].lower())
+        self.assertIn("plan", descriptions["converge-plan"].lower())
         self.assertIn("read-only", descriptions["converge-review"].lower())
         self.assertIn("batch", descriptions["converge-batch"].lower())
+
+    def test_plan_skill_is_planning_only_and_defines_bounded_execution(self):
+        skill = (ROOT / "skills/converge-plan/SKILL.md").read_text(encoding="utf-8")
+        contract = (ROOT / "skills/converge-plan/references/plan-contract.md").read_text(
+            encoding="utf-8"
+        )
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        for marker in ("不修改业务代码", "provider", "Plan Contract", "plan_check.py"):
+            self.assertIn(marker, skill + contract)
+        for marker in (
+            "planned_task=true",
+            "pdlc-run",
+            "90",
+            "180",
+            "最多自动恢复一次",
+            "同一 `worker_ref`",
+        ):
+            self.assertIn(marker, skill + contract + control)
+        for marker in ("DONE", "PARTIAL", "NOT_DONE", "CHANGED", "scope_drift"):
+            self.assertIn(marker, contract)
+
+    def test_root_skill_plans_before_non_planned_execution_without_splitting_pdlc(self):
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("converge-plan", text)
+        self.assertIn("planned_task=true", text)
+        self.assertIn("一个 `pdlc-run`", text)
+        self.assertIn("完整 PDLC", text)
+        self.assertIn("execution-control.md", text)
 
     def test_root_skill_no_longer_owns_plan_or_review_modes(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -93,6 +123,7 @@ class SkillContractTest(unittest.TestCase):
             "手工交接",
         ):
             self.assertIn(marker, runtime)
+        self.assertIn("Batch Protocol v1 默认顺序", skill)
 
 
 if __name__ == "__main__":

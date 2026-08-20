@@ -7,7 +7,7 @@ description: Implement, fix, or refactor one authorized software task through fi
 
 负责一个边界明确的软件任务：冻结范围、选择实现引擎、限制修复、收集新鲜证据并交付明确结果。它是控制面，不是第二套 PDLC，也不调度长计划。
 
-如果用户只要求检查代码，使用 `converge-review`；如果用户要求按已有多个 Batch 持续接力，使用 `converge-batch`。不要在本 Skill 内模拟这两个角色。
+如果用户只要求制定计划，使用 `converge-plan`；只要求检查代码时使用 `converge-review`；按已有多个 Batch 持续接力时使用 `converge-batch`。不要在本 Skill 内模拟这些角色。
 
 当团队希望普通开发请求也稳定命中本 Skill 时，读取 [激活与触发](references/activation.md)。只提供可选配置片段，不自动修改用户的 `AGENTS.md` 或全局配置。
 
@@ -43,13 +43,21 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 开始时只向用户报告一次执行引擎和原因。活动任务冻结引擎、来源路径和内容摘要；来源变化时阻塞，不自动换源。
 
-## 4. 并发与恢复
+## 4. 建立有限执行计划
+
+读取 [计划执行与无响应保护](references/execution-control.md)。若 capsule 已包含 `planned_task=true`，跳过规划，只执行其中冻结的 `plan_id/task_id`、范围、验收和验证。
+
+其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。选择 `pdlc-v1` 时不调用普通 planner，只形成**一个 `pdlc-run`** task，保存可恢复的 `worker_ref` 后立即在全新上下文委托**完整 PDLC**；不得在当前上下文准备 PDLC 文档、native TDD 或实现补丁。
+
+计划校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文；`batch` 时交给 `converge-batch`。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
+
+## 5. 并发与恢复
 
 任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，终态释放，过期后不自动抢占。
 
 跨服务、公共契约、预计跨会话或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，使用 `$CONVERGE_SKILL_DIR/scripts/` 下的 `delivery_task_key.py`、`delivery_lease.py`、`delivery_state.py` 和 `delivery_next.py`。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
 
-## 5. 审查策略
+## 6. 审查策略
 
 - 低风险：执行者完成需求符合性、契约、映射、边界和错误路径的语义审查。
 - 高风险或影响面扩大：委托一个全新上下文显式加载 `converge-review`，使用 `blind` 模式，只传验收项、公共契约、diff/源码指纹和验证结果，不传实现者的理由。
@@ -60,14 +68,16 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff、在授权范围、无业务取舍且可验证”的问题。修复后关闭原 finding，不重新开放式扫描；只有修复扩大风险面时允许一次新的风险审查。
 
-## 6. 有限收敛
+## 7. 有限收敛
 
 - 同一问题指纹在同一阶段最多自动修复一次；复现或没有客观进展时停止。
 - 每批修复必须带来回归测试红转绿、客观检查消除问题，或严重度降低且未扩大范围。
 - 不得通过删测试、降低阈值、跳过检查或扩大范围制造绿灯。
 - 最后一次生产代码修改后必须重新产生新鲜验证证据；审查结论也绑定源码指纹，无关生产代码变化后变为陈旧。
 
-## 7. 终态和回执
+## 8. 计划审计、终态和回执
+
+有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit` 对账计划任务、当前 diff 和新鲜证据；存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED` 或 `scope_drift` 时不能宣称完成。
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
