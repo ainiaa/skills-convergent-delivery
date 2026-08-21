@@ -7,7 +7,7 @@ description: Create and validate a finite software execution plan before impleme
 
 只负责把已授权需求变成可执行、可验证的有限计划。**不修改业务代码**、不做代码评审、不运行实现，也不拆解 PDLC 内部阶段。
 
-先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v4](references/plan-contract.md)。
+先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v5](references/plan-contract.md)。
 
 ## 1. 冻结输入
 

@@ -20,6 +20,44 @@ PHASES = {
 TEXT_LIMITS = {"milestone": 200, "activity": 300, "evidence": 300, "next_action": 200}
 CLEAN_DIFF_FINGERPRINTS = {"clean", hashlib.sha256(b"").hexdigest()}
 DIRTY_BASELINE_NOTE = "统计包含任务开始前已有改动，不能归因于本任务"
+PLAN_STEPS = (
+    "冻结范围与执行契约",
+    "测试并实现需求",
+    "复核并修复发现",
+    "运行最终验证",
+    "清场并交付报告",
+)
+STAGE_PLAN_INDEX = {
+    "scope": 0,
+    "round-1-build": 1,
+    "pdlc-run": 1,
+    "round-1-semantic-review": 2,
+    "verify-round-1": 2,
+    "round-2-risk-review": 2,
+    "verify-final": 3,
+}
+
+
+def plan_projection(state):
+    index = STAGE_PLAN_INDEX.get(state.get("current_stage"), 0)
+    terminal = state.get("status") == "complete"
+    items = []
+    for position, step in enumerate(PLAN_STEPS):
+        if terminal or position < index:
+            status = "completed"
+        elif position == index:
+            status = "in_progress"
+        else:
+            status = "pending"
+        items.append({"step": step, "status": status})
+    return {"schema_version": 1, "task_id": state.get("task_key"), "items": items}
+
+
+def plan_projection_fingerprint(state):
+    return hashlib.sha256(
+        json.dumps(plan_projection(state), ensure_ascii=False, sort_keys=True,
+                   separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _git_bytes(workspace, *arguments):
@@ -263,6 +301,7 @@ def main():
     observe.add_argument("--host-status", choices=("working",), required=True)
     observe.add_argument("--evidence", required=True)
     subparsers.add_parser("status")
+    subparsers.add_parser("projection")
     arguments = parser.parse_args()
     try:
         state = read_stdin()
@@ -276,8 +315,13 @@ def main():
             print(json.dumps(parent_observation(
                 state, arguments.worker_ref, arguments.host_status, arguments.evidence,
             ), ensure_ascii=False, sort_keys=True))
-        else:
+        elif arguments.command == "status":
             print(render_status(state))
+        else:
+            print(json.dumps({
+                "projection": plan_projection(state),
+                "projection_fingerprint": plan_projection_fingerprint(state),
+            }, ensure_ascii=False, sort_keys=True))
         return 0
     except ValueError as error:
         print(f"progress failed: {error}", file=sys.stderr)

@@ -11,6 +11,7 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from runtime_adapter import validate_cleanup_barrier
 
 
 DEFAULT_TTL_SECONDS = 7200
@@ -262,12 +263,11 @@ def validate_cleanup_for_release(state, arguments):
     workers = state.get("workers", [])
     if any(worker.get("status") == "working" for worker in workers):
         raise ValueError("worker cleanup is incomplete")
-    if workers:
-        receipt = state.get("worker_tree_receipt")
-        if not isinstance(receipt, dict) or receipt.get("observed_revision") != state.get("revision"):
-            raise ValueError("worker cleanup receipt is not fresh")
-        if receipt.get("active_refs") or receipt.get("unexpected_refs"):
-            raise ValueError("worker cleanup receipt is not empty")
+    receipt = state.get("worker_tree_receipt")
+    if workers or receipt is not None:
+        validate_cleanup_barrier(
+            receipt, state.get("revision"), [worker.get("ref") for worker in workers]
+        )
 
 
 def move(arguments, paths, repo, workspace):

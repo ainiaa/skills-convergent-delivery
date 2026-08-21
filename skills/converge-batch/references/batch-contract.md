@@ -2,7 +2,7 @@
 
 ## Plan preflight
 
-Batch 仅用于 Plan Contract v4 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
+Batch 仅用于 Plan Contract v5 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
 
 计划必须包含有限有序 Batch、全局约束和 `final_acceptance`。每个 Batch 必须能形成下列 context capsule：
 
@@ -31,7 +31,7 @@ Schema v4 capsule 必须携带完整 Provider Binding，包括 manifest、task c
 
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 升级为 v4，完成回执使用 Receipt v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个新 Batch 持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取旧 Schema v1-v3；无 worker 状态可在显式补齐缺失事实后迁移，已有 worker 时必须人工恢复，helper 不补写 delegate 或猜测宿主终态。
+Batch Protocol 保持 v1，持久化 state Schema 保持 v4，完成回执使用 Receipt v4：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个新 Batch 持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取旧 Schema v1-v3；无 worker 状态可在显式补齐缺失事实后迁移，已有 worker 时必须人工恢复，helper 不补写 delegate 或猜测宿主终态。
 
 状态文件和 scheduler lease 都以 `repo_id + plan_id` 唯一定位；run takeover 只在同一状态文件转移 owner，不创建第二份状态。lease 默认两小时并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管。
 
@@ -49,7 +49,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 ```json
 {
-  "protocol_version": 3,
+  "protocol_version": 4,
   "batch_id": "B1",
   "dispatch_id": "dispatch-B1",
   "commit_id": "commit",
@@ -59,6 +59,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
   "delegate_run_id": "delegate-B1",
   "delegate_state_revision": 4,
   "delegate_source_fingerprint": "<sha256>",
+  "delegate_source_receipt": {"schema_version": 2, "source_fingerprint": "<same sha256>", "changed_entries": []},
   "acceptance": [
     {"criterion": "criterion", "evidence": "command/output", "result": "pass", "freshness": "fresh"}
   ],
@@ -66,7 +67,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 }
 ```
 
-Receipt v3 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源。completed receipt 必须覆盖 capsule 全部 acceptance，全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
+Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源，并要求回执中的 Source Receipt v2 与正式状态完全一致。completed receipt 必须覆盖 capsule 全部 acceptance，全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
 ## Final acceptance
 

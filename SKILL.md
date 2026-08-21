@@ -59,7 +59,9 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 
-Plan Contract v4 校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文。计划冻结完整 Git baseline；`checkpoint=same_session` 的多任务在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才以 `batch` 交给 `converge-batch`，并在 checkpoint 前请求一次本地 commit 授权。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
+Plan Contract v5 校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文。计划冻结 Source Receipt v2 基线；`checkpoint=same_session` 的多任务在同一会话、同一工作区顺序执行，每个 task 保存 `source_before/source_after` 并只认领 `owned_paths` 内增量，不要求 commit；只有 `checkpoint=cross_session` 才以 `batch` 交给 `converge-batch`，并在 checkpoint 前请求一次本地 commit 授权。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
+
+宿主提供原生计划 UI 时，主执行者必须使用同一组稳定任务调用原生计划更新：简单任务直接显示五阶段计划；Plan v5 多任务只显示顶层 task，不重复展开 PDLC 内部阶段。持久任务先运行 `delivery_progress.py projection`；`delivery_next.py` 返回 `sync-plan` 时，先把 projection 原样同步到宿主，再将其 `projection_fingerprint` 写入 `host_sync.acknowledged_fingerprint`。宿主没有原生计划 API 时记录 `mode=text|legacy_unavailable` 并继续文本进度，不能循环等待。
 
 所有 PDLC、reviewer、辅助分析和前向 evaluator 委托都必须登记到 [执行控制](references/execution-control.md) 定义的本轮 worker registry；禁止 detached/fire-and-forget。主执行者只管理自己的 `owner_run_id`，所有退出路径执行清场屏障，本轮 active worker 数不为 0 时不得交付完成。
 
@@ -89,7 +91,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 ## 8. 计划审计、终态和回执
 
-有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit` 对账计划任务、当前 diff 和新鲜证据；存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED` 或 `scope_drift` 时不能宣称完成。
+有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit` 对账计划任务、逐任务源码增量和新鲜证据；存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、`task_scope_drift` 或 `scope_drift` 时不能宣称完成。
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 

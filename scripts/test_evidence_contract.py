@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 import evidence_contract
@@ -46,9 +47,24 @@ class EvidenceContractTest(unittest.TestCase):
 
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
 
-        self.assertEqual(1, source["schema_version"])
+        self.assertEqual(2, source["schema_version"])
         self.assertEqual(self.baseline, source["baseline_commit"])
         self.assertEqual(["committed.txt", "working.txt"], source["changed_paths"])
+        self.assertEqual(
+            ["committed.txt", "working.txt"],
+            [entry["path"] for entry in source["changed_entries"]],
+        )
+
+    def test_source_identity_includes_file_type_and_mode(self):
+        path = self.workspace / "tool.sh"
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        before = evidence_contract.workspace_source(self.workspace, self.baseline)
+
+        os.chmod(path, 0o755)
+        after = evidence_contract.workspace_source(self.workspace, self.baseline)
+
+        self.assertNotEqual(before["source_fingerprint"], after["source_fingerprint"])
+        self.assertEqual("100755", after["changed_entries"][0]["mode"])
 
     def test_pass_receipt_must_match_the_exact_source_receipt(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
@@ -65,6 +81,13 @@ class EvidenceContractTest(unittest.TestCase):
                 [{**receipt, "schema_version": 2}], source
             )
         )
+
+    def test_source_receipt_validator_rejects_tampered_metadata(self):
+        source = evidence_contract.workspace_source(self.workspace, self.baseline)
+        source["changed_paths"] = ["invented.txt"]
+
+        with self.assertRaisesRegex(ValueError, "paths|fingerprint"):
+            evidence_contract.validate_source_receipt(source)
 
 
 if __name__ == "__main__":

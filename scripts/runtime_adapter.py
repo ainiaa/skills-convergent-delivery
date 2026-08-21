@@ -129,6 +129,29 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
     }
 
 
+def validate_cleanup_barrier(receipt, observed_revision, registered_refs):
+    if not isinstance(receipt, dict) or receipt.get("observed_revision") != observed_revision:
+        raise ValueError("worker cleanup receipt is not fresh")
+    values = [receipt.get(field) for field in (
+        "registered_refs", "active_refs", "unexpected_refs"
+    )]
+    if any(
+        not isinstance(refs, list)
+        or any(not isinstance(ref, str) or not ref for ref in refs)
+        or len(refs) != len(set(refs))
+        for refs in values
+    ):
+        raise ValueError("worker cleanup receipt refs are invalid")
+    expected = set(registered_refs)
+    if set(values[0]) != expected:
+        raise ValueError("worker cleanup receipt does not match the registry")
+    if values[1]:
+        raise ValueError("worker cleanup receipt has active workers")
+    if values[2]:
+        raise ValueError("worker cleanup receipt has unexpected descendants")
+    return receipt
+
+
 def normalize_status(status):
     normalized = STATUS_MAP.get(str(status).strip().lower())
     if normalized is None:

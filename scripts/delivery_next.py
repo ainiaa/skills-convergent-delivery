@@ -25,7 +25,12 @@ from controller_snapshot import validate_snapshot
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
-from runtime_adapter import validate_binding as validate_runtime_binding
+from runtime_adapter import (
+    validate_binding as validate_runtime_binding,
+    validate_cleanup_barrier,
+)
+from delivery_progress import plan_projection_fingerprint
+from evidence_contract import validate_source_receipt, workspace_source
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -100,21 +105,58 @@ def legacy_execution_control():
             "profile_fingerprint": None,
         },
         "review": {
-            "protocol_version": 2,
-            "source_fingerprint": None,
+            "protocol_version": 3,
             "repair_budget_remaining": 1,
             "re_review_budget_remaining": 1,
             "integration_budget_remaining": 0,
-            "requests": [],
+            "rounds": [],
         },
     }
+
+
+def upgrade_review(review):
+    if not isinstance(review, dict) or review.get("protocol_version") != 2:
+        return review
+    source = review.get("source_fingerprint")
+    requests = []
+    for request in review.get("requests", []):
+        requests.append({
+            **request,
+            "reviewer_ref": "legacy-reviewer",
+            "mode": "shared",
+            "independent": False,
+            "finding_fingerprints": [],
+        })
+    return {
+        "protocol_version": 3,
+        "repair_budget_remaining": review.get("repair_budget_remaining"),
+        "re_review_budget_remaining": review.get("re_review_budget_remaining"),
+        "integration_budget_remaining": review.get("integration_budget_remaining"),
+        "rounds": ([{"source_fingerprint": source, "requests": requests}] if source else []),
+    }
+
+
+def upgrade_execution_control(state):
+    control = state.get("execution_control")
+    if isinstance(control, dict) and "review" in control:
+        control["review"] = upgrade_review(control["review"])
 
 
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") == 9:
+    if value.get("schema_version") == 10:
         state = copy.deepcopy(value)
+        handoff = state.get("handoff")
+        if isinstance(handoff, dict) and "open_issues" in handoff:
+            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
+        return state
+    if value.get("schema_version") == 9:
+        if value.get("workers"):
+            raise ValueError("legacy worker state requires manual recovery")
+        state = copy.deepcopy(value)
+        state["schema_version"] = 10
+        upgrade_execution_control(state)
         for worker in state.get("workers", []):
             worker.setdefault("parent_ref", None)
             worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
@@ -122,6 +164,10 @@ def upgrade_state(value):
             worker.setdefault("may_dispatch", False)
         state.setdefault("worker_tree_receipt", None)
         state.setdefault("runtime_binding", None)
+        state.setdefault("host_sync", {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
+        })
+        state.setdefault("source_receipt", None)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -130,12 +176,17 @@ def upgrade_state(value):
         if value.get("workers"):
             raise ValueError("legacy worker state requires manual recovery")
         state = copy.deepcopy(value)
-        state["schema_version"] = 9
+        state["schema_version"] = 10
         state.setdefault("workers", [])
         state.setdefault("worker_tree_receipt", None)
         state.setdefault("runtime_binding", None)
+        state.setdefault("host_sync", {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
+        })
+        state.setdefault("source_receipt", None)
         state.setdefault("source_fingerprint", None)
         state.setdefault("execution_control", legacy_execution_control())
+        upgrade_execution_control(state)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -162,15 +213,20 @@ def upgrade_state(value):
         if source_schema == 5:
             engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
     state.update(
-        schema_version=9,
+        schema_version=10,
         controller=controller_identity(),
         provider_binding=legacy_provider_binding(engine),
         workers=state.get("workers", []),
         worker_tree_receipt=None,
         runtime_binding=state.get("runtime_binding"),
+        host_sync=state.get("host_sync", {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
+        }),
         source_fingerprint=state.get("source_fingerprint"),
+        source_receipt=state.get("source_receipt"),
         execution_control=state.get("execution_control", legacy_execution_control()),
     )
+    upgrade_execution_control(state)
     for worker in state["workers"]:
         worker.setdefault("progress", None)
         worker.setdefault("parent_ref", None)
@@ -392,35 +448,73 @@ def validate_execution_control(value, source_fingerprint):
 
     review = require_mapping(value["review"], "execution_control.review")
     if set(review) != {
-        "protocol_version", "source_fingerprint", "repair_budget_remaining",
-        "re_review_budget_remaining", "integration_budget_remaining", "requests",
-    } or review["protocol_version"] != 2:
+        "protocol_version", "repair_budget_remaining", "re_review_budget_remaining",
+        "integration_budget_remaining", "rounds",
+    } or review["protocol_version"] != 3:
         raise ValueError("execution_control.review fields are invalid")
-    review_source = require_sha256(
-        review["source_fingerprint"], "review.source_fingerprint", optional=True
-    )
-    if review_source is not None and review_source != source_fingerprint:
-        raise ValueError("review source_fingerprint must match the current source")
     for field in (
         "repair_budget_remaining", "re_review_budget_remaining", "integration_budget_remaining"
     ):
         if review[field] not in {0, 1}:
             raise ValueError(f"review {field} must be 0 or 1")
-    if not isinstance(review["requests"], list):
-        raise ValueError("review requests must be a list")
-    for request in review["requests"]:
-        if not isinstance(request, dict) or set(request) != {
-            "axis", "phase", "source_fingerprint", "status"
+    rounds = review["rounds"]
+    if not isinstance(rounds, list):
+        raise ValueError("review rounds must be a list")
+    for round_value in rounds:
+        if not isinstance(round_value, dict) or set(round_value) != {
+            "source_fingerprint", "requests"
         }:
-            raise ValueError("review request fields are invalid")
-        if request["axis"] not in {"spec", "quality", "integration"} \
-                or request["phase"] not in {"initial", "re_review", "closure"} \
-                or request["status"] not in {"pass", "findings", "blocked"}:
-            raise ValueError("review request value is invalid")
-        if require_sha256(request["source_fingerprint"], "review request source") \
-                != source_fingerprint:
-            raise ValueError("review request source must match the current source")
+            raise ValueError("review round fields are invalid")
+        round_source = require_sha256(round_value["source_fingerprint"], "review round source")
+        if not isinstance(round_value["requests"], list):
+            raise ValueError("review requests must be a list")
+        for request in round_value["requests"]:
+            if not isinstance(request, dict) or set(request) != {
+                "axis", "phase", "source_fingerprint", "status", "reviewer_ref",
+                "mode", "independent", "finding_fingerprints",
+            }:
+                raise ValueError("review request fields are invalid")
+            if request["axis"] not in {"spec", "quality", "integration"} \
+                    or request["phase"] not in {"initial", "re_review", "closure"} \
+                    or request["status"] not in {"pass", "findings", "blocked"} \
+                    or request["mode"] not in {"shared", "blind"} \
+                    or not isinstance(request["independent"], bool):
+                raise ValueError("review request value is invalid")
+            require_string(request["reviewer_ref"], "review request reviewer_ref")
+            findings = request["finding_fingerprints"]
+            if not isinstance(findings, list) or len(findings) != len(set(findings)) or any(
+                require_sha256(item, "review finding") is None for item in findings
+            ):
+                raise ValueError("review finding_fingerprints are invalid")
+            if request["status"] == "findings" and not findings:
+                raise ValueError("review findings require finding fingerprints")
+            if require_sha256(request["source_fingerprint"], "review request source") != round_source:
+                raise ValueError("review request source must match its round")
+    if rounds and rounds[-1]["source_fingerprint"] != source_fingerprint:
+        raise ValueError("current review round must match the current source")
     return routing, review
+
+
+def validate_review_gate(routing, review):
+    tier = routing["review_tier"]
+    if tier == "low":
+        return
+    requests = review["rounds"][-1]["requests"] if review["rounds"] else []
+    latest = {}
+    positions = {}
+    for position, request in enumerate(requests):
+        latest[request["axis"]] = request
+        positions[request["axis"]] = position
+    if not {"spec", "quality"} <= set(latest) \
+            or any(latest[axis]["status"] != "pass" for axis in ("spec", "quality")):
+        raise ValueError(f"{tier} review requires current spec and quality passes")
+    if positions["spec"] >= positions["quality"]:
+        raise ValueError("review must pass spec before quality")
+    if tier == "high" and not all(
+        latest[axis]["independent"] and latest[axis]["mode"] == "blind"
+        for axis in ("spec", "quality")
+    ):
+        raise ValueError("high review requires independent blind spec and quality passes")
 
 
 def validate_state(state, arguments):
@@ -467,6 +561,14 @@ def validate_state(state, arguments):
     source_fingerprint = require_sha256(
         state.get("source_fingerprint"), "source_fingerprint", optional=True
     )
+    source_receipt = state.get("source_receipt")
+    if source_receipt is not None:
+        validate_source_receipt(source_receipt)
+        if source_receipt["source_fingerprint"] != source_fingerprint \
+                or source_receipt["baseline_commit"] != baseline["commit"]:
+            raise ValueError("source_receipt does not match state source and baseline")
+        if workspace_source(workspace, baseline["commit"]) != source_receipt:
+            raise ValueError("source_receipt does not match the current workspace")
     routing, review_control = validate_execution_control(
         state.get("execution_control"), source_fingerprint
     )
@@ -474,6 +576,15 @@ def validate_state(state, arguments):
     runtime_binding = state.get("runtime_binding")
     if runtime_binding is not None:
         validate_runtime_binding(runtime_binding)
+    host_sync = require_mapping(state.get("host_sync"), "host_sync")
+    if set(host_sync) != {"mode", "acknowledged_fingerprint"} \
+            or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
+        raise ValueError("host_sync fields are invalid")
+    acknowledged = host_sync["acknowledged_fingerprint"]
+    if acknowledged is not None:
+        require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
+    if host_sync["mode"] != "native" and acknowledged is not None:
+        raise ValueError("non-native host_sync cannot acknowledge a native projection")
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")
@@ -679,13 +790,11 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a source_fingerprint")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
-        if workers:
-            if tree_receipt is None or tree_receipt["observed_revision"] != revision:
-                raise ValueError("complete state requires a fresh worker tree receipt")
-            if tree_receipt["active_refs"]:
-                raise ValueError("complete state requires no active workers")
-            if tree_receipt["unexpected_refs"]:
-                raise ValueError("complete state requires no unexpected descendants")
+        validate_review_gate(routing, review_control)
+        if workers and tree_receipt is None:
+            raise ValueError("complete state requires a fresh worker tree receipt")
+        if tree_receipt is not None:
+            validate_cleanup_barrier(tree_receipt, revision, worker_refs)
         if not acceptance or not all(
             item["result"] == "pass"
             and item["freshness"] == "fresh"
@@ -759,7 +868,15 @@ def main():
         state = upgrade_state(state)
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
-        result = delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
+        projection_fingerprint = plan_projection_fingerprint(state)
+        if state["host_sync"]["mode"] == "native" \
+                and state["host_sync"]["acknowledged_fingerprint"] != projection_fingerprint:
+            result = action(
+                "sync-plan", task_id=state["task_key"],
+                projection_fingerprint=projection_fingerprint,
+            )
+        else:
+            result = delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

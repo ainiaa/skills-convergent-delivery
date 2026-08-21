@@ -36,21 +36,23 @@ def blocked_worker_state():
                   "tree_query": True, "restrict_dispatch": False}
     )
     value = {
-        "schema_version": 9,
+        "schema_version": 10,
         "run_id": "run-runtime", "repo_id": "/repo/common.git", "task_key": "T1",
         "writer_id": "writer-runtime", "revision": 0, "workspace": "/repo/worktree",
         "baseline": {"commit": "abc123", "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-runtime", "controller": controller_identity(),
         "source_fingerprint": "a" * 64,
+        "source_receipt": None,
+        "host_sync": {"mode": "legacy_unavailable", "acknowledged_fingerprint": None},
         "execution_control": {
             "routing": {
                 "schema_version": 1, "status": "frozen", "assessment_count": 1,
                 "route": "planned", "review_tier": "normal", "profile_fingerprint": "b" * 64,
             },
             "review": {
-                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
-                "integration_budget_remaining": 0, "requests": [],
+                "integration_budget_remaining": 0, "rounds": [],
             },
         },
         "provider_binding": {

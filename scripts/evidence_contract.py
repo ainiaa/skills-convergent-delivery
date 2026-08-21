@@ -3,11 +3,12 @@
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
 
-SOURCE_SCHEMA_VERSION = 1
+SOURCE_SCHEMA_VERSION = 2
 EVIDENCE_SCHEMA_VERSION = 1
 
 
@@ -39,9 +40,11 @@ def workspace_source(workspace, baseline_commit="HEAD"):
         for path in _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
         if path and b"__pycache__" not in path.split(b"/") and not path.endswith(b".pyc")
     ]
-    changed_paths = sorted(
-        path.decode("utf-8") for path in {*tracked_paths, *untracked_paths} if path
-    )
+    raw_paths = sorted(path for path in {*tracked_paths, *untracked_paths} if path)
+    try:
+        changed_paths = [path.decode("utf-8") for path in raw_paths]
+    except UnicodeDecodeError as error:
+        raise ValueError("changed paths must be UTF-8") from error
     diff_digest = hashlib.sha256(tracked_diff)
     for relative in sorted(path for path in untracked_paths if path):
         path = root / relative.decode("utf-8")
@@ -51,6 +54,25 @@ def workspace_source(workspace, baseline_commit="HEAD"):
         elif path.is_file():
             diff_digest.update(path.read_bytes())
         diff_digest.update(b"\0")
+    changed_entries = []
+    for raw, relative in zip(raw_paths, changed_paths):
+        path = root / os.fsdecode(raw)
+        if path.is_symlink():
+            kind, mode, content = "symlink", "120000", os.fsencode(os.readlink(path))
+        elif path.is_file():
+            kind = "file"
+            mode = "100755" if path.stat().st_mode & 0o111 else "100644"
+            content = path.read_bytes()
+        elif path.exists():
+            raise ValueError(f"unsupported changed path type: {relative}")
+        else:
+            kind, mode, content = "deleted", "000000", b""
+        changed_entries.append({
+            "path": relative,
+            "kind": kind,
+            "mode": mode,
+            "content_fingerprint": hashlib.sha256(content).hexdigest(),
+        })
     source = {
         "schema_version": SOURCE_SCHEMA_VERSION,
         "baseline_commit": baseline,
@@ -58,6 +80,7 @@ def workspace_source(workspace, baseline_commit="HEAD"):
         "tree_hash": tree_hash,
         "diff_fingerprint": diff_digest.hexdigest(),
         "changed_paths": changed_paths,
+        "changed_entries": changed_entries,
     }
     source["source_fingerprint"] = hashlib.sha256(
         json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -81,3 +104,52 @@ def valid_evidence_receipts(value, source):
             for item in value
         )
     )
+
+
+def validate_source_receipt(source):
+    fields = {
+        "schema_version", "baseline_commit", "commit_id", "tree_hash",
+        "diff_fingerprint", "changed_paths", "changed_entries", "source_fingerprint",
+    }
+    if not isinstance(source, dict) or set(source) != fields \
+            or source.get("schema_version") != SOURCE_SCHEMA_VERSION:
+        raise ValueError("source receipt must use schema v2")
+    for field in ("baseline_commit", "commit_id", "tree_hash", "diff_fingerprint"):
+        value = source[field]
+        if not isinstance(value, str) \
+                or len(value) not in ({64} if "fingerprint" in field else {40, 64}) \
+                or any(char not in "0123456789abcdef" for char in value):
+            raise ValueError(f"source receipt {field} is invalid")
+    paths = source["changed_paths"]
+    entries = source["changed_entries"]
+    if not isinstance(paths, list) or not isinstance(entries, list) \
+            or any(not isinstance(path, str) or not path for path in paths) \
+            or paths != sorted(paths) or len(paths) != len(set(paths)) \
+            or len(entries) != len(paths):
+        raise ValueError("source receipt changed paths are invalid")
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "path", "kind", "mode", "content_fingerprint"
+        } or entry["kind"] not in {"file", "symlink", "deleted"} \
+                or entry["mode"] not in {"100644", "100755", "120000", "000000"} \
+                or not isinstance(entry["content_fingerprint"], str) \
+                or len(entry["content_fingerprint"]) != 64 \
+                or any(char not in "0123456789abcdef" for char in entry["content_fingerprint"]):
+            raise ValueError("source receipt changed entry is invalid")
+        expected_modes = {
+            "file": {"100644", "100755"}, "symlink": {"120000"}, "deleted": {"000000"}
+        }
+        if entry["mode"] not in expected_modes[entry["kind"]]:
+            raise ValueError("source receipt kind and mode do not match")
+    if [entry["path"] for entry in entries] != paths:
+        raise ValueError("source receipt paths and entries do not match")
+    fingerprint = source.get("source_fingerprint")
+    if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+        raise ValueError("source receipt fingerprint is invalid")
+    identity = {key: value for key, value in source.items() if key != "source_fingerprint"}
+    expected = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if fingerprint != expected:
+        raise ValueError("source receipt fingerprint is invalid")
+    return source

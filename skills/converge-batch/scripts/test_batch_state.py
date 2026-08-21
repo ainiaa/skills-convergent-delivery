@@ -15,6 +15,7 @@ from delivery_next import upgrade_state
 from delivery_state import state_path as delegate_state_path
 from provider_contract import canonical_fingerprint
 from test_delivery_next import state as single_state
+from evidence_contract import workspace_source
 
 
 MODULE_PATH = Path(__file__).with_name("batch_state.py")
@@ -58,7 +59,7 @@ def capsule(batch_id, plan_id="plan-1", task_id=None, baseline="abc123"):
 
 def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
     value = {
-        "protocol_version": 3,
+        "protocol_version": 4,
         "batch_id": batch_id,
         "dispatch_id": dispatch_id,
         "commit_id": commit_id,
@@ -88,6 +89,13 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
             current_stage="verify-final",
             baseline={"commit": commit_id, "diff_fingerprint": "clean"},
         ))
+        try:
+            child["source_receipt"] = workspace_source(workspace, commit_id)
+        except ValueError:
+            child["source_receipt"] = workspace_source(workspace, "HEAD")
+        child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
+        child["execution_control"]["review"]["rounds"] = []
+        child["ledger"]["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
         state_root = Path(workspace).parent / "delegate-state"
         path = delegate_state_path(
             state_root, child["repo_id"], child["task_key"], child["run_id"]
@@ -99,6 +107,7 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
             delegate_run_id=run_id,
             delegate_state_revision=child["revision"],
             delegate_source_fingerprint=child["source_fingerprint"],
+            delegate_source_receipt=child["source_receipt"],
         )
     return value
 

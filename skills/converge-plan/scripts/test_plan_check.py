@@ -334,7 +334,7 @@ class PlanCheckTest(unittest.TestCase):
         result = self.run_check("validate", plan([task("wide", ["src"])], context="long"))
 
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("schema v4", result.stderr)
+        self.assertIn("schema v5", result.stderr)
         self.assertIn("split", result.stderr)
 
     def test_same_session_tasks_are_sequential_without_commit_authorization(self):
@@ -520,6 +520,35 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["outside.txt"], json.loads(result.stdout)["scope_drift"])
+
+    def test_v5_ignores_preexisting_dirty_baseline_and_attributes_each_task_delta(self):
+        self.write_changes("preexisting.txt")
+        base_plan = granular_plan([task("T1", ["src/a"]), task("T2", ["src/b"])])
+        baseline_source = self.current_source(base_plan)
+        base_plan["schema_version"] = 5
+        base_plan["baseline"] = {"commit": self.baseline, "source": baseline_source}
+
+        self.write_changes("src/a/owned.py", "src/b/wrong-owner.py")
+        after_t1 = self.current_source(base_plan)
+        envelope = {
+            "plan": base_plan,
+            "task_results": {
+                "T1": {
+                    "status": "DONE", "fresh_pass": True,
+                    "source_before": baseline_source, "source_after": after_t1,
+                    "evidence": [evidence_receipt(after_t1, "check-T1")],
+                }
+            },
+            "final_acceptance": [],
+        }
+
+        result = self.run_check("audit", envelope, self.workspace)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual("PARTIAL", output["tasks"]["T1"])
+        self.assertNotIn("preexisting.txt", output["scope_drift"])
+        self.assertIn("src/b/wrong-owner.py", output["task_scope_drift"]["T1"])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,10 @@ ACTIONS = {
     "verify": ({"task_id"}, {"task_id", "phase", "target"}),
     "block": ({"reason", "task_id"}, {"reason", "task_id"}),
     "complete": ({"task_id"}, {"task_id"}),
+    "sync-plan": (
+        {"task_id", "projection_fingerprint"},
+        {"task_id", "projection_fingerprint"},
+    ),
 }
 
 

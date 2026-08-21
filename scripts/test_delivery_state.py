@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import copy
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from pathlib import Path
 from delivery_engine import legacy_pdlc_fingerprint
 from delivery_progress import apply_event
 from delivery_next import upgrade_state
+from delivery_state import validate_transition
 from runtime_adapter import cleanup_receipt, negotiate
 
 
@@ -103,6 +105,28 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(first.stdout, second.stdout)
             self.assertIn("/.convergent-delivery/state/", first.stdout)
             self.assertTrue(first.stdout.endswith(".json\n"))
+
+    def test_review_round_history_is_append_only_across_source_changes(self):
+        previous = upgrade_state(state())
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] = 1
+        candidate["source_fingerprint"] = "c" * 64
+        candidate["execution_control"]["review"]["rounds"].append({
+            "source_fingerprint": "c" * 64,
+            "requests": [],
+        })
+
+        validate_transition(previous, candidate)
+
+        rewritten = copy.deepcopy(candidate)
+        rewritten["revision"] = 2
+        rewritten["execution_control"]["review"]["rounds"][0]["requests"].append({
+            "axis": "quality", "phase": "initial", "source_fingerprint": "a" * 64,
+            "status": "pass", "reviewer_ref": "reviewer-a", "mode": "shared",
+            "independent": False, "finding_fingerprints": [],
+        })
+        with self.assertRaisesRegex(ValueError, "review rounds"):
+            validate_transition(candidate, rewritten)
 
     def test_state_path_hashes_run_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -234,7 +258,7 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(9, written["schema_version"])
+            self.assertEqual(10, written["schema_version"])
             self.assertEqual([], written["workers"])
             self.assertIsNone(written["worker_tree_receipt"])
             self.assertEqual(
@@ -260,6 +284,26 @@ class DeliveryStateTest(unittest.TestCase):
             for record_path in root.rglob("*.json"):
                 record = json.loads(record_path.read_text(encoding="utf-8"))
                 self.assertNotEqual("2000-01-01T00:00:00Z", record["renewed_at"])
+
+    def test_failed_state_write_does_not_renew_the_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            before = {}
+            for record_path in root.rglob("*.json"):
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                record["renewed_at"] = "2000-01-01T00:00:00Z"
+                record["lease_expires_at"] = "2099-01-01T00:00:00Z"
+                record_path.write_text(json.dumps(record), encoding="utf-8")
+                before[str(record_path)] = record_path.read_text(encoding="utf-8")
+            invalid = state(revision=1)
+
+            result = self.write(root, state_home, invalid, 0)
+
+            self.assertNotEqual(0, result.returncode)
+            for record_path in root.rglob("*.json"):
+                self.assertEqual(before[str(record_path)], record_path.read_text(encoding="utf-8"))
 
     def test_v5_migration_rejects_stage_or_ledger_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -394,7 +438,8 @@ class DeliveryStateTest(unittest.TestCase):
             registered["revision"] = 1
             registered["runtime_binding"] = self.runtime_binding()
             registered["workers"] = [{
-                "ref": "worker-1",
+                "ref": "worker-1", "parent_ref": None, "task_id": "task-payment",
+                "depth": 1, "may_dispatch": False,
                 "role": "implementation",
                 "owner_run_id": "run-1",
                 "status": "working",

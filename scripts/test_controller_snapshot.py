@@ -214,6 +214,22 @@ class ControllerSnapshotTest(unittest.TestCase):
                     descriptor_path, "scripts/delivery_next.py", []
                 )
 
+    def test_current_snapshot_release_executes_the_frozen_lease_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            command = controller_snapshot.trusted_command(
+                descriptor_path, "scripts/delivery_lease.py", ["release"]
+            )
+
+            self.assertEqual(
+                str(Path(descriptor["root"]) / "scripts/delivery_lease.py"), command[1]
+            )
+
     def test_legacy_release_never_executes_the_snapshot_lease_script(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = controller_snapshot.create_snapshot(

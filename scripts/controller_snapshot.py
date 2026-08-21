@@ -40,7 +40,7 @@ CONTROL_RESOURCE_FILES = (
     "references/reporting.md",
     "references/tdd-providers.md",
 )
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 
 
 def provider_files(root):
@@ -187,17 +187,16 @@ def trusted_command(descriptor_path, script, arguments):
     snapshot = payload.get("controller", {}).get("snapshot") if isinstance(
         payload, dict
     ) else None
-    legacy_release = script == "scripts/delivery_lease.py" and arguments[:1] == ["release"]
-    if legacy_release:
-        value = snapshot or payload
-        if not isinstance(value, dict) or not isinstance(value.get("root"), str):
-            raise ValueError("legacy controller snapshot descriptor is invalid")
+    value = snapshot or payload
+    release = script == "scripts/delivery_lease.py" and arguments[:1] == ["release"]
+    if release and isinstance(value, dict) and value.get("protocol_version") != PROTOCOL_VERSION:
+        validate_snapshot(value, allow_legacy_release=True)
         return [
             sys.executable,
             str(Path(__file__).resolve().with_name("delivery_lease.py")),
             *arguments,
         ]
-    frozen = validate_snapshot(snapshot or payload)
+    frozen = validate_snapshot(value)
     if script not in CONTROLLER_FILES or not script.startswith("scripts/"):
         raise ValueError("controller snapshot script is not authorized")
     return [sys.executable, str(Path(frozen["root"]) / script), *arguments]

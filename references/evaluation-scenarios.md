@@ -8,8 +8,8 @@
 | 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
 | PDLC 委托屏障 | PDLC 可用且任务复杂 | 按独立业务切片形成有限 Provider Run；每个 run 完整委托 PDLC，主上下文不生成 PDLC 内部产物。 |
 | 递归规划 | Batch capsule 已有 `planned_task=true` | 子执行者只完成冻结 task，不再次调用 planner 或派发自身。 |
-| 同会话顺序执行 | Plan v4 为 `checkpoint=same_session` 且有多个 task | 在同一会话顺序完成，不要求 commit；任务数量不产生 commit 权限。 |
-| 跨会话 checkpoint | Plan v4 为 `checkpoint=cross_session` | 进入 Batch 前单独请求本地 commit 授权；授权不包含 push、tag、merge 或发布。 |
+| 同会话顺序执行 | Plan v5 为 `checkpoint=same_session` 且有多个 task | 在同一会话顺序完成，不要求 commit；任务数量不产生 commit 权限。 |
+| 跨会话 checkpoint | Plan v5 为 `checkpoint=cross_session` | 进入 Batch 前单独请求本地 commit 授权；授权不包含 push、tag、merge 或发布。 |
 | 实现循环终止 | 已有有效红灯，目标修复可验证 | 红灯转绿和最后生产变更后的新鲜验证通过即停；同一问题复现或无改善时阻塞。 |
 | 风险复核终止 | 普通或高风险 task 需要独立复核 | 一次请求分别返回 spec 与 quality；最多一次修复和一次定向复核，重复 finding 停止。 |
 | 全局集成审查终止 | 所有 task 已通过 | 只运行一次只覆盖跨任务风险的 integration 审查；finding 最多一次修复和 closure。 |

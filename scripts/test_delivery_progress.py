@@ -25,6 +25,21 @@ def state():
 
 
 class DeliveryProgressTest(unittest.TestCase):
+    def test_plan_projection_is_stable_across_revision_and_acknowledgement(self):
+        current = {
+            "task_key": "task-1", "current_stage": "round-1-build", "status": "active",
+            "revision": 1,
+            "host_sync": {"mode": "native", "acknowledged_fingerprint": None},
+        }
+        projection = delivery_progress.plan_projection(current)
+        fingerprint = delivery_progress.plan_projection_fingerprint(current)
+        current["revision"] = 99
+        current["host_sync"]["acknowledged_fingerprint"] = fingerprint
+
+        self.assertEqual(projection, delivery_progress.plan_projection(current))
+        self.assertEqual(fingerprint, delivery_progress.plan_projection_fingerprint(current))
+        self.assertEqual("in_progress", projection["items"][1]["status"])
+
     def test_workspace_change_summary_aggregates_tracked_and_untracked_files(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

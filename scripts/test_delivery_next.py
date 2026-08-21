@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_reference
-from delivery_next import upgrade_state, validate_provider_reference
+from delivery_next import upgrade_state, validate_execution_control, validate_provider_reference
 from runtime_adapter import cleanup_receipt, negotiate
 
 
@@ -97,11 +97,23 @@ class DeliveryNextTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(9, upgrade_state(payload)["schema_version"])
+        self.assertEqual(10, upgrade_state(payload)["schema_version"])
 
     def test_v8_state_with_workers_requires_manual_recovery(self):
         payload = upgrade_state(state())
         payload["schema_version"] = 8
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "manual recovery"):
+            upgrade_state(payload)
+
+    def test_v9_state_with_workers_requires_manual_recovery(self):
+        payload = upgrade_state(state())
+        payload["schema_version"] = 9
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
             "depth": 1, "may_dispatch": False, "role": "reviewer",
@@ -117,7 +129,7 @@ class DeliveryNextTest(unittest.TestCase):
 
         migrated = upgrade_state(payload)
 
-        self.assertEqual(9, migrated["schema_version"])
+        self.assertEqual(10, migrated["schema_version"])
         self.assertEqual([], migrated["workers"])
 
     def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
@@ -291,6 +303,20 @@ class DeliveryNextTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode)
 
+    def test_native_host_plan_must_be_acknowledged_before_business_action(self):
+        payload = upgrade_state(state())
+        payload["host_sync"] = {"mode": "native", "acknowledged_fingerprint": None}
+
+        result = self.run_helper(
+            payload, run_id=payload["run_id"], writer_id=payload["writer_id"],
+            revision=payload["revision"], output_format="json",
+        )
+
+        output = json.loads(result.stdout)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("sync-plan", output["action"])
+        self.assertEqual(64, len(output["projection_fingerprint"]))
+
     def test_high_risk_semantic_review_moves_to_round_one_verification(self):
         result = self.current(state(requires_stability_round=True))
 
@@ -403,7 +429,8 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_complete_with_workers_requires_fresh_clean_tree_receipt(self):
         worker = {
-            "ref": "worker-1",
+            "ref": "worker-1", "parent_ref": None, "task_id": "task-123",
+            "depth": 1, "may_dispatch": False,
             "role": "reviewer",
             "owner_run_id": "run-20260818-120000",
             "status": "completed",
@@ -433,9 +460,94 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual(0, clean.returncode, clean.stderr)
         self.assertEqual("complete\n", clean.stdout)
 
+    def test_complete_rejects_unexpected_descendants_even_with_empty_registry(self):
+        payload = upgrade_state(state(
+            status="complete", current_stage="verify-final", revision=3,
+            runtime_binding=runtime_binding(),
+        ))
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, [], [], ["unregistered-worker"],
+            "2026-08-21T00:00:00Z",
+        )
+
+        result = self.current(payload, revision=3)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unexpected", result.stderr)
+
+    def test_high_risk_complete_requires_current_spec_and_quality_reviews(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["execution_control"]["routing"]["review_tier"] = "high"
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("review", result.stderr)
+
+    def test_later_review_finding_invalidates_an_earlier_pass(self):
+        payload = upgrade_state(state(status="complete", current_stage="verify-final"))
+        payload["execution_control"]["routing"]["review_tier"] = "high"
+        source = payload["source_fingerprint"]
+        base = {
+            "phase": "initial", "source_fingerprint": source,
+            "reviewer_ref": "reviewer-a", "mode": "blind", "independent": True,
+            "finding_fingerprints": [],
+        }
+        payload["execution_control"]["review"]["rounds"] = [{
+            "source_fingerprint": source,
+            "requests": [
+                {**base, "axis": "spec", "status": "pass"},
+                {**base, "axis": "quality", "status": "pass"},
+                {**base, "axis": "quality", "status": "findings",
+                 "finding_fingerprints": ["d" * 64]},
+            ],
+        }]
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("review", result.stderr)
+
+    def test_review_history_keeps_old_rounds_after_source_changes(self):
+        old_source = "1" * 64
+        current_source = "2" * 64
+        control = state()["execution_control"]
+        control["review"] = {
+            "protocol_version": 3,
+            "repair_budget_remaining": 0,
+            "re_review_budget_remaining": 0,
+            "integration_budget_remaining": 0,
+            "rounds": [
+                {
+                    "source_fingerprint": old_source,
+                    "requests": [{
+                        "axis": "quality", "phase": "initial",
+                        "source_fingerprint": old_source, "status": "findings",
+                        "reviewer_ref": "reviewer-a", "mode": "shared",
+                        "independent": False, "finding_fingerprints": ["3" * 64],
+                    }],
+                },
+                {
+                    "source_fingerprint": current_source,
+                    "requests": [{
+                        "axis": "spec", "phase": "re_review",
+                        "source_fingerprint": current_source, "status": "pass",
+                        "reviewer_ref": "reviewer-a", "mode": "shared",
+                        "independent": False, "finding_fingerprints": [],
+                    }],
+                },
+            ],
+        }
+
+        routing, review = validate_execution_control(control, current_source)
+
+        self.assertEqual("high" if routing["review_tier"] == "high" else "low", routing["review_tier"])
+        self.assertEqual(2, len(review["rounds"]))
+
     def test_blocked_with_active_worker_requires_fresh_cleanup_receipt(self):
         worker = {
-            "ref": "worker-1",
+            "ref": "worker-1", "parent_ref": None, "task_id": "task-123",
+            "depth": 1, "may_dispatch": False,
             "role": "reviewer",
             "owner_run_id": "run-20260818-120000",
             "status": "working",

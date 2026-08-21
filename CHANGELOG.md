@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 0.17.0
+
+- Source Receipt 升级为 v2，源码身份纳入路径类型、执行权限和内容摘要；Plan Contract v5 冻结脏基线 Source Receipt，并按 task 的 before/after receipt 归属实际增量。
+- Single State 升级为 v10、Review Protocol 升级为 v3：复核按不可变源码轮次追加，高风险完成态必须具备当前源码的独立 blind spec/quality 通过结论。
+- 新增稳定的 Codex Plan Projection 与 `sync-plan` 动作；简单任务直接复用宿主计划，持久任务以排除确认字段的投影指纹防止同步自循环。
+- 修复空 worker registry 可掩盖意外后代、当前 Snapshot release 错用 live helper、失败状态写入提前续租和终态清场旁路。
+- Batch Receipt 升级为 v4，除正式 delegate state 与 Git 前序链外，继续绑定 Source Receipt v2；Controller Protocol 升级为 v7。
+
 ### 0.16.0
 
 - 修复 20 项控制面缺陷：旧 Snapshot 不再执行冻结的历史 lease 代码；Controller Protocol 升为 v6，并共享 Source/Evidence Receipt Schema v1。

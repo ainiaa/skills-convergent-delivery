@@ -12,7 +12,7 @@ SUITE_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
-from evidence_contract import valid_evidence_receipts, workspace_source
+from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source
 
 
 TASK_STATUSES = {"pending"}
@@ -105,12 +105,19 @@ def task_conflicts(left, right):
 
 
 def validate_baseline(value):
-    if not isinstance(value, dict) or set(value) != {"commit", "diff_fingerprint"}:
-        raise ValueError("baseline must contain commit and diff_fingerprint")
+    if not isinstance(value, dict) or set(value) not in (
+        {"commit", "diff_fingerprint"}, {"commit", "source"}
+    ):
+        raise ValueError("baseline must contain commit plus diff_fingerprint or source")
     commit = require_string(value["commit"], "baseline.commit")
     if len(commit) not in {40, 64} or any(char not in "0123456789abcdef" for char in commit):
         raise ValueError("baseline.commit must be a full lowercase Git object id")
-    require_sha256(value["diff_fingerprint"], "baseline.diff_fingerprint")
+    if "diff_fingerprint" in value:
+        require_sha256(value["diff_fingerprint"], "baseline.diff_fingerprint")
+    else:
+        source = validate_source_receipt(value["source"])
+        if source.get("baseline_commit") != commit or source.get("commit_id") != commit:
+            raise ValueError("baseline.source must be a Source Receipt v2 for baseline.commit")
     return value
 
 
@@ -170,7 +177,7 @@ def upgrade_plan(plan):
         tasks = upgraded.get("tasks")
         if upgraded.get("context") == "long" and isinstance(tasks, list) and len(tasks) == 1:
             raise ValueError(
-                "granularity_block reason=legacy_long_single_task; action=upgrade to schema v4 "
+                "granularity_block reason=legacy_long_single_task; action=upgrade to schema v5 "
                 "with one outcome and explicit baseline or split into vertical_slice tasks"
             )
         upgraded["checkpoint"] = (
@@ -217,8 +224,8 @@ def validate_plan(plan):
     plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if plan.get("schema_version") != 4:
-        raise ValueError("schema_version must be 4")
+    if plan.get("schema_version") not in {4, 5}:
+        raise ValueError("schema_version must be 4 or 5")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
     validate_planner(plan.get("planner"))
@@ -226,6 +233,8 @@ def validate_plan(plan):
     if context not in {"short", "long"}:
         raise ValueError("context must be short or long")
     validate_baseline(plan.get("baseline"))
+    if plan["schema_version"] == 5 and "source" not in plan["baseline"]:
+        raise ValueError("Plan v5 requires a Source Receipt v2 baseline")
     checkpoint = plan.get("checkpoint")
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
@@ -335,11 +344,21 @@ def validate_plan(plan):
         execution_mode = "fresh" if context == "long" else "current"
     return {
         "status": "valid",
-        "normalized_schema_version": 4,
+        "normalized_schema_version": plan["schema_version"],
         "execution_mode": execution_mode,
         "commit_authorization_required": checkpoint == "cross_session",
         "waves": waves,
     }
+
+
+def source_entries(source):
+    return {entry["path"]: entry for entry in source.get("changed_entries", [])}
+
+
+def source_delta(before, after):
+    old = source_entries(before)
+    new = source_entries(after)
+    return sorted(path for path in old.keys() | new.keys() if old.get(path) != new.get(path))
 
 
 def audit(envelope, workspace):
@@ -351,9 +370,18 @@ def audit(envelope, workspace):
     results = envelope.get("task_results")
     if not isinstance(results, dict):
         raise ValueError("task_results must be an object")
-    changed_paths = [clean_git_path(path, "changed_paths") for path in source["changed_paths"]]
+    if plan["schema_version"] == 5:
+        baseline_source = plan["baseline"]["source"]
+        changed_paths = [
+            clean_git_path(path, "changed_paths") for path in source_delta(baseline_source, source)
+        ]
+        cursor = baseline_source
+    else:
+        changed_paths = [clean_git_path(path, "changed_paths") for path in source["changed_paths"]]
+        cursor = None
 
     statuses = {}
+    task_scope_drift = {}
     for task in plan["tasks"]:
         task_id = task["task_id"]
         result = results.get(task_id)
@@ -364,10 +392,27 @@ def audit(envelope, workspace):
             raise ValueError(f"task_results.{task_id} is invalid")
         status = result["status"]
         if status == "DONE":
-            if (
-                result.get("fresh_pass") is not True
-                or not valid_evidence_receipts(result.get("evidence"), source)
-            ):
+            evidence_source = source
+            if plan["schema_version"] == 5:
+                before = result.get("source_before")
+                after = result.get("source_after")
+                if isinstance(before, dict):
+                    validate_source_receipt(before)
+                if isinstance(after, dict):
+                    validate_source_receipt(after)
+                delta = source_delta(before or {}, after or {})
+                drift = [
+                    path for path in delta
+                    if not any(path_contains(owner, path) for owner in task["owned_paths"])
+                ]
+                task_scope_drift[task_id] = drift
+                if before != cursor or not isinstance(after, dict) or drift:
+                    status = "PARTIAL"
+                else:
+                    cursor = after
+                    evidence_source = after
+            if result.get("fresh_pass") is not True \
+                    or not valid_evidence_receipts(result.get("evidence"), evidence_source):
                 status = "PARTIAL"
         statuses[task_id] = status
 
@@ -394,15 +439,19 @@ def audit(envelope, workspace):
     scope_drift = [
         path for path in changed_paths if not any(path_contains(owner, path) for owner in owned_paths)
     ]
+    source_chain_complete = plan["schema_version"] != 5 or cursor == source
     return {
         "complete": (
             all(status == "DONE" for status in statuses.values())
             and not scope_drift
             and final_acceptance_pass
+            and source_chain_complete
         ),
         "final_acceptance": final_acceptance_pass,
         "scope_drift": scope_drift,
+        "task_scope_drift": task_scope_drift,
         "source": source,
+        "source_chain_complete": source_chain_complete,
         "tasks": statuses,
     }
 

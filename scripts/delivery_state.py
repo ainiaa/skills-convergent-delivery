@@ -22,7 +22,8 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_review, upgrade_state, validate_state
+from delivery_progress import plan_projection_fingerprint
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "state"
@@ -78,19 +79,26 @@ def active_lease(state, lease_root, run_id, writer_id):
     with ExitStack() as stack:
         for path in sorted(paths.values(), key=str):
             stack.enter_context(lock_record(path))
+        records = {}
         for path in paths.values():
             record = read_record(path)
             if not same_owner(record, run_id, writer_id) or is_expired(record):
                 raise ValueError("active lease is not owned by this writer")
             if any(record.get(field) != state[field] for field in ("repo_id", "workspace", "task_key")):
                 raise ValueError("active lease does not match candidate workspace")
-            timestamp = now()
-            record["renewed_at"] = as_timestamp(timestamp)
-            record["lease_expires_at"] = as_timestamp(
-                timestamp + timedelta(seconds=DEFAULT_TTL_SECONDS)
-            )
-            replace_record(path, record)
-        yield
+            records[path] = record
+        yield paths, records
+
+
+def renew_locked_leases(paths):
+    timestamp = now()
+    for path in paths.values():
+        record = read_record(path)
+        record["renewed_at"] = as_timestamp(timestamp)
+        record["lease_expires_at"] = as_timestamp(
+            timestamp + timedelta(seconds=DEFAULT_TTL_SECONDS)
+        )
+        replace_record(path, record)
 
 
 def validate_candidate(candidate, arguments):
@@ -133,11 +141,20 @@ def validate_transition(previous, candidate):
     if previous.get("runtime_binding") is not None \
             and candidate.get("runtime_binding") != previous.get("runtime_binding"):
         raise ValueError("runtime_binding is immutable once workers are enabled")
+    legacy_sync = {"mode": "legacy_unavailable", "acknowledged_fingerprint": None}
+    old_sync = previous.get("host_sync", legacy_sync)
+    new_sync = candidate.get("host_sync", legacy_sync)
+    if new_sync["mode"] != old_sync["mode"]:
+        raise ValueError("host_sync.mode is immutable")
+    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"] \
+            and new_sync["acknowledged_fingerprint"] != plan_projection_fingerprint(candidate):
+        raise ValueError("host_sync acknowledgement must match the current projection")
     if previous["status"] in TERMINAL_STATUSES:
         if candidate["status"] != previous["status"]:
             raise ValueError("terminal status is immutable")
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
+        expected["host_sync"] = candidate["host_sync"]
         if candidate != expected:
             raise ValueError("terminal state is immutable")
         return
@@ -155,8 +172,8 @@ def validate_transition(previous, candidate):
         raise ValueError("requires_stability_round must not regress")
     if candidate["execution_control"]["routing"] != previous["execution_control"]["routing"]:
         raise ValueError("frozen routing is immutable")
-    old_review = previous["execution_control"]["review"]
-    new_review = candidate["execution_control"]["review"]
+    old_review = upgrade_review(previous["execution_control"]["review"])
+    new_review = upgrade_review(candidate["execution_control"]["review"])
     if old_review["protocol_version"] != new_review["protocol_version"]:
         raise ValueError("review protocol is immutable")
     for field in (
@@ -164,7 +181,20 @@ def validate_transition(previous, candidate):
     ):
         if new_review[field] > old_review[field] or old_review[field] - new_review[field] > 1:
             raise ValueError("review budget cannot increase or skip")
-    require_prefix(old_review["requests"], new_review["requests"], "review requests")
+    old_rounds = old_review["rounds"]
+    new_rounds = new_review["rounds"]
+    if len(new_rounds) < len(old_rounds) or len(new_rounds) > len(old_rounds) + 1:
+        raise ValueError("review rounds must advance by at most one")
+    if len(new_rounds) > len(old_rounds):
+        require_prefix(old_rounds, new_rounds, "review rounds")
+    elif old_rounds:
+        require_prefix(old_rounds[:-1], new_rounds, "review rounds")
+        old_current, new_current = old_rounds[-1], new_rounds[-1]
+        if old_current["source_fingerprint"] != new_current["source_fingerprint"]:
+            raise ValueError("current review round source is immutable")
+        require_prefix(
+            old_current["requests"], new_current["requests"], "current review requests"
+        )
 
     previous_workers = {worker["ref"]: worker for worker in previous["workers"]}
     candidate_workers = {worker["ref"]: worker for worker in candidate["workers"]}
@@ -259,13 +289,16 @@ def write(arguments):
     managed_path = state_path(
         DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
     )
-    with active_lease(candidate, arguments.lease_root, arguments.run_id, arguments.writer_id):
+    with active_lease(
+        candidate, arguments.lease_root, arguments.run_id, arguments.writer_id
+    ) as (paths, lease_records):
         managed_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_record(managed_path):
             current_revision = -1
+            stored = None
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
-                migrating_legacy = stored.get("schema_version") in {5, 6, 7, 8}
+                migrating_legacy = stored.get("schema_version") in {5, 6, 7, 8, 9}
                 current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
@@ -278,10 +311,20 @@ def write(arguments):
                     expected = dict(current)
                     expected["revision"] = candidate["revision"]
                     if candidate != expected:
-                        raise ValueError("legacy migration may only add schema v9 fields")
+                        raise ValueError("legacy migration may only add schema v10 fields")
                 else:
                     validate_transition(current, candidate)
             write_private(managed_path, candidate)
+            try:
+                renew_locked_leases(paths)
+            except Exception:
+                if stored is None:
+                    managed_path.unlink(missing_ok=True)
+                else:
+                    write_private(managed_path, stored)
+                for path, record in lease_records.items():
+                    replace_record(path, record)
+                raise
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
 

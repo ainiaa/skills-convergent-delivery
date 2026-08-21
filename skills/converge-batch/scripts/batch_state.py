@@ -22,6 +22,7 @@ from delivery_next import (
     validate_provider_binding as validate_complete_provider_binding,
     validate_state as validate_delegate_state,
 )
+from evidence_contract import validate_source_receipt
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -274,8 +275,8 @@ def delegate_state_path(root, repo_id, task_id, run_id):
 
 def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, previous_commit=None):
     receipt = require_mapping(receipt, f"receipt {batch['batch_id']}")
-    if receipt.get("protocol_version") != 3:
-        raise ValueError("receipt protocol_version must be 3")
+    if receipt.get("protocol_version") != 4:
+        raise ValueError("receipt protocol_version must be 4")
     if receipt.get("batch_id") != batch["batch_id"]:
         raise ValueError("receipt batch_id does not match")
     if receipt.get("dispatch_id") != batch["dispatch_id"]:
@@ -295,6 +296,10 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt delegate state revision does not match")
     if receipt.get("delegate_source_fingerprint") != delegate_state.get("source_fingerprint"):
         raise ValueError("receipt delegate source fingerprint does not match")
+    source_receipt = validate_source_receipt(receipt.get("delegate_source_receipt"))
+    if source_receipt != delegate_state.get("source_receipt") \
+            or source_receipt["source_fingerprint"] != receipt["delegate_source_fingerprint"]:
+        raise ValueError("receipt delegate source receipt does not match managed state")
     if delegate_state.get("run_id") != batch.get("delegate_run_id"):
         raise ValueError("receipt delegate state run_id does not match")
     if delegate_state.get("task_key") != batch.get("task_id"):

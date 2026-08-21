@@ -60,9 +60,9 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v9 冻结 controller、Provider、路由与审查预算，并绑定当前源码指纹、worker 进度和清场回执；每次状态写入续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。
+单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。
 
-Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v4 / Receipt v3。路径仅由 repo 与 `plan_id` 推导；run takeover 在同一文件转移 owner。Receipt 从派生的正式 delegate state 读取真源并校验完整 Provider Binding、源码指纹与 Git 前序链，不接受内嵌自证状态。
+Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v4 / Receipt v4。路径仅由 repo 与 `plan_id` 推导；run takeover 在同一文件转移 owner。Receipt 从派生的正式 delegate state 读取真源并校验完整 Provider Binding、Source Receipt v2 与 Git 前序链，不接受内嵌自证状态。
 
 ## 多窗口并行
 
@@ -79,7 +79,7 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Converge 的跨窗口互斥和外层完成判定。Provider Schema v2 统一校验 PDLC、第三方 TDD 和 Native 的身份、能力、授权、输出及源码闭包。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
-复杂任务先由 `converge-plan` 生成并校验 Plan Contract v4。任务按独立业务切片和 `owned_paths` 生成 wave，每个 task 冻结 Provider Binding 与 Git baseline；计划结束后 audit 读取 baseline 以来的已提交、未提交和未跟踪变化并核对 Source/Evidence Receipt v1。
+复杂任务先由 `converge-plan` 生成并校验 Plan Contract v5。任务按独立业务切片和 `owned_paths` 生成 wave，每个 task 冻结 Provider Binding 与 Source Receipt v2 baseline；计划结束后 audit 逐 task 核对 `source_before/source_after`、自身范围增量和 Evidence Receipt v1。
 
 子代理在阶段变化、客观产物产生和长命令前后发送 Progress Receipt；父代理只保存最新快照并负责用户可见更新。heartbeat 不计为新客观进展，进度展示不使用百分比或 ETA，也不替代验证证据。
 

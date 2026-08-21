@@ -1,4 +1,4 @@
-# 轻量状态 Schema v9
+# 轻量状态 Schema v10
 
 仅用于跨服务、跨会话、使用子代理或用户要求恢复的单个 `converge` 任务。无委托且可在当前上下文一次完成的简单任务可以不持久化。状态不得保存密钥、Cookie、请求正文或敏感业务数据；多 Batch 计划继续使用独立 Batch state。
 
@@ -6,7 +6,7 @@
 
 ```json
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "run_id": "run-<id>",
   "repo_id": "/absolute/git/common-dir",
   "task_key": "task-<scope-hash>",
@@ -16,11 +16,12 @@
   "baseline": {"commit": "<commit>", "diff_fingerprint": "<hash>"},
   "scope_fingerprint": "<hash>",
   "source_fingerprint": "<current Source Receipt fingerprint>",
+  "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
-    "package_version": "0.16.0",
-    "protocol_version": 6,
+    "package_version": "0.17.0",
+    "protocol_version": 7,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.16.0", "protocol_version": 6, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.17.0", "protocol_version": 7, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -34,9 +35,10 @@
     "binding_fingerprint": "<sha256>"
   },
   "runtime_binding": null,
+  "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null},
   "execution_control": {
     "routing": {"schema_version": 1, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile_fingerprint": "<sha256>"},
-    "review": {"protocol_version": 2, "source_fingerprint": "<same current source>", "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "requests": []}
+    "review": {"protocol_version": 3, "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "rounds": [{"source_fingerprint": "<source>", "requests": []}]}
   },
   "current_stage": "scope",
   "requires_stability_round": false,
@@ -52,7 +54,11 @@
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
-无 worker 的旧 v5-v8 状态可保守迁移为 v9：旧 `engine` 转成等价 Provider Binding，缺失的宿主事实明确记为 `legacy_unavailable`，不能据此完成任务。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+
+`source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass；高风险还要求 `mode=blind` 且 `independent=true`。
+
+`host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，再写回同一指纹；`text|legacy_unavailable` 不进入等待循环。
 
 ## 2. Provider Binding
 
