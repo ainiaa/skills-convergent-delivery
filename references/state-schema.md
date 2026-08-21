@@ -16,9 +16,10 @@
   "baseline": {"commit": "<commit>", "diff_fingerprint": "<hash>"},
   "scope_fingerprint": "<hash>",
   "controller": {
-    "package_version": "0.11.0",
-    "protocol_version": 2,
-    "protocol_fingerprint": "<sha256>"
+    "package_version": "0.12.1",
+    "protocol_version": 3,
+    "protocol_fingerprint": "<sha256>",
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.12.1", "protocol_version": 3, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -26,7 +27,7 @@
     "task_kind": "feature | fix | refactor",
     "binding": {
       "controller": "converge",
-      "workflow_provider": {"id": "native-v1", "version": "1", "role": "workflow", "manifest": "/absolute/manifest", "manifest_fingerprint": "<sha256>"},
+      "workflow_provider": {"id": "native-v1", "version": "1", "role": "workflow", "manifest": "/absolute/manifest", "manifest_fingerprint": "<sha256>", "task_kind": "feature", "contract": {}, "contract_fingerprint": "<sha256>", "sources": []},
       "stage_providers": {}
     },
     "binding_fingerprint": "<sha256>"
@@ -36,11 +37,13 @@
   "status": "active | complete | blocked",
   "workers": [],
   "ledger": {},
-  "handoff": {}
+  "handoff": {"goal": "<goal>", "last_verification": "<evidence>", "open_issues": [], "next_action": "<action>"}
 }
 ```
 
-`package_version` 只说明安装包版本，不参与恢复兼容判断。恢复只比较 `protocol_version + protocol_fingerprint`；README、VERSION 或安装文档变化不会误阻塞任务，控制协议代码变化仍会阻塞。Provider manifest、实际入口、依赖闭包和来源路径由 `provider_binding` 独立冻结。
+`package_version` 只说明安装包版本。Snapshot closure 包含 `SKILL.md`、激活/状态/报告/TDD/压力场景 references、运行 helper 与创建时 registry 扫描发现的全部 Provider manifest。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。无 snapshot 的旧 v7 状态继续使用活动协议校验，不能伪造迁移。
+
+`handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
 旧 v5/v6 状态第一次读取时只允许迁移为 v7：旧 `engine` 转成等价 Provider Binding，旧 worker 增加 `progress=null`，controller 转为分离版本。已有 controller 的 v6 只接受已发布且明确兼容的 0.10.0 协议身份，不能用当前身份覆盖未知或被篡改的来源。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
@@ -48,8 +51,8 @@
 
 - workflow provider 只能是 `pdlc-v1` 或 `native-v1`。
 - native workflow 可绑定一个 `tdd` stage provider；PDLC workflow 不得再混入其他 TDD provider。
-- 每个引用冻结 manifest 绝对路径、manifest fingerprint、版本和角色。
-- 外部 Skill 另外冻结真实 `source_path/source_fingerprint`；PDLC 冻结 root 和显式 closure fingerprint。
+- 每个引用冻结 manifest 绝对路径/fingerprint、版本、角色、task kind、canonical task contract/fingerprint，以及有序 `sources`。
+- `sources` 中每项记录 `entrypoint|closure`、manifest 声明的 relative path、真实绝对路径与内容 fingerprint；声明入口必须从 source root 精确解析。stage provider 必须保留唯一真实入口；`entrypoint_candidates/source_fingerprint` 同时匹配。manifest、task contract、实际入口或 closure 任一变化都阻塞。
 - `binding_fingerprint` 是完整 binding 的 canonical JSON sha256，恢复时任一来源变化都会阻塞。
 - 兼容旧输出的 `engine` 可以由 binding 派生展示，但不能再写入正式状态。
 
@@ -76,8 +79,8 @@
 ```
 
 - 宿主返回稳定 ref 后立即登记 worker，初始 `progress=null`。
-- 子代理只回传事件；持有 writer lease 的父代理使用 `delivery_progress.py event` 生成带可信时间的完整候选，再交给 `delivery_state.py write`。
-- 每次事件 `sequence + 1`；首次 heartbeat 允许 `objective_revision=0`，只有 `milestone` 才能让它 `+1`，重复 heartbeat 不能伪装真实进展。
+- 子代理只回传 objective milestone；持有 writer lease 的父代理使用 `delivery_progress.py event --event milestone` 生成带可信时间的候选。
+- heartbeat 只能由父代理根据 Runtime Adapter 对精确 worker ref 的宿主 query 结果，用 `delivery_progress.py observe` 生成。每次事件 `sequence + 1`；首次 heartbeat 允许 `objective_revision=0`，只有 milestone 才能让它 `+1`。
 - 正式状态只保留每个 worker 最新快照，不保存无界事件日志。
 - 文本去换行并限制长度；不得记录敏感输入。进度只用于用户可见性，不能替代宿主终态、测试、源码指纹或验收证据。
 - complete 前当前 run 的全部 worker 必须到达宿主终态。
@@ -89,10 +92,13 @@ python3 scripts/delivery_progress.py event --worker-ref <ref> --event milestone 
   --phase implementing --milestone "目标测试通过" --activity "完成最小实现" \
   --evidence "26 tests passed" --next-action "运行状态迁移测试" < state.json
 
+python3 scripts/delivery_progress.py observe --worker-ref <ref> \
+  --host-status working --evidence "host query: process active" < state.json
+
 python3 scripts/delivery_progress.py status < state.json
 ```
 
-父代理负责按不超过约 60 秒的可见节奏向用户转述最新快照；长测试或工具仍在运行时说明“正在运行”和最近阶段，不编造百分比或 ETA。
+父代理负责按不超过约 60 秒的可见节奏向用户转述最新快照；去重指纹同时包含 worker 宿主 lifecycle，working→completed/blocked/interrupted 不得被相同进度文本隐藏。长测试或工具仍在运行时不编造百分比或 ETA。
 
 ## 4. Ledger 与阶段
 

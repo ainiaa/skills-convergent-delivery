@@ -1,0 +1,78 @@
+{
+  "schema_version": 2,
+  "plan_id": "plan-converge-known-findings-closure-20260821",
+  "requirement_fingerprint": "a8faa956d27aa6c3335dd3c48d999b295113298d0ccb273d2184f4024a15d03e",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "goal": "关闭所有已确认的Converge控制内核缺陷并保留可验证兼容行为",
+      "owned_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "SKILL.md",
+        "VERSION",
+        "install.sh",
+        "providers",
+        "references",
+        "scripts",
+        "skills/converge-batch/references/runtime-adapters.md",
+        "docs"
+      ],
+      "depends_on": [],
+      "steps": [
+        "为全部确认问题添加行为回归测试并确认有效红灯",
+        "修复Snapshot与Provider信任边界",
+        "修复报告与Provider错误交互",
+        "收紧Runtime能力表述并删除无生产用途代码",
+        "同步用户文档、版本与变更记录",
+        "运行定向、全量和独立前向验证"
+      ],
+      "acceptance": [
+        "Snapshot目录不可被普通替换，且任何执行前使用可信入口校验",
+        "Snapshot与动态Provider注册表使用同一冻结清单",
+        "通用TDD Binding恢复时重新校验声明能力与危险边界",
+        "非法Provider manifest结构化阻塞且不输出Python堆栈",
+        "报告对无待处理和多个待处理项给出准确状态与数量",
+        "Runtime能力不再宣称不存在的自动宿主操作，子代理进度边界清晰",
+        "无生产调用的兼容代码被删除且现有公开行为保持"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_controller_snapshot.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_provider_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_engine.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_report.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_runtime_adapter.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "bash install.sh --doctor --target codex --offline",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "全部7项已知问题有新鲜行为证据且无范围漂移",
+    "全量检查、安装诊断和独立压力场景通过"
+  ],
+  "decisions": [
+    "复用现有stdlib和当前Schema，不引入依赖",
+    "保留必要旧状态迁移，但删除无生产调用的派生常量和函数",
+    "不执行commit、tag、push、publish、install或pdlc-ship"
+  ]
+}

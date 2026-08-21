@@ -19,7 +19,7 @@ owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run �
 
 单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。
 
-worker 在阶段切换、客观产物产生及长命令前后发送 Progress Receipt；父代理登记可信时间并只保存最新快照。父代理负责约 60 秒内给用户一次可见状态；worker 的 heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
+worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成 heartbeat，并约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 
 ## 3. 决策门禁
 
@@ -33,7 +33,7 @@ worker 在阶段切换、客观产物产生及长命令前后发送 Progress Rec
 
 ## 4. 宿主 watchdog 能力边界
 
-以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。只有当前宿主同时暴露活动/进程查询、计时等待、生成中断和同一任务恢复能力时，执行者才能自动完成软探测、硬中断与恢复；缺少任一能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断或恢复。
+以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；只有同时暴露活动/进程 query、计时 wait、interrupt 和同一任务恢复时，执行者才能自动完成软探测、硬中断与恢复；缺少任一能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断或恢复。
 
 活动信号包括 commentary、工具调用、状态 revision、diff、日志增长、子任务回执或仍在运行的测试/构建/PDLC 进程。
 

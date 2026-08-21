@@ -1,5 +1,9 @@
 import copy
+import json
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 import delivery_progress
 
@@ -20,6 +24,89 @@ def state():
 
 
 class DeliveryProgressTest(unittest.TestCase):
+    def test_cli_separates_worker_milestone_from_parent_observation(self):
+        script = Path(__file__).with_name("delivery_progress.py")
+        heartbeat = subprocess.run(
+            [
+                sys.executable, str(script), "event", "--worker-ref", "worker-1",
+                "--event", "heartbeat", "--phase", "testing", "--milestone", "x",
+                "--activity", "x", "--evidence", "x", "--next-action", "x",
+            ],
+            input=json.dumps(state()), text=True, capture_output=True, check=False,
+        )
+        observed = subprocess.run(
+            [
+                sys.executable, str(script), "observe", "--worker-ref", "worker-1",
+                "--host-status", "working", "--evidence", "host query: running",
+            ],
+            input=json.dumps(state()), text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(0, heartbeat.returncode)
+        self.assertEqual(0, observed.returncode, observed.stderr)
+        self.assertEqual("heartbeat", json.loads(observed.stdout)["workers"][0]["progress"]["event"])
+
+    def test_parent_observation_generates_heartbeat_without_objective_progress(self):
+        current = state()
+        current["workers"][0]["progress"] = {
+            "sequence": 1,
+            "objective_revision": 1,
+            "event": "milestone",
+            "phase": "testing",
+            "milestone": "Tests started",
+            "activity": "Running suite",
+            "evidence": "process 42",
+            "next_action": "Wait for result",
+            "observed_at": "2026-08-20T00:00:00Z",
+        }
+
+        updated = delivery_progress.parent_observation(
+            current, "worker-1", "working", "process active", now="2026-08-20T00:01:00Z"
+        )
+
+        receipt = updated["workers"][0]["progress"]
+        self.assertEqual("heartbeat", receipt["event"])
+        self.assertEqual(1, receipt["objective_revision"])
+        self.assertEqual("Tests started", receipt["milestone"])
+        self.assertEqual("process active", receipt["evidence"])
+
+    def test_worker_cannot_submit_heartbeat_as_an_objective_event(self):
+        with self.assertRaisesRegex(ValueError, "milestone"):
+            delivery_progress.worker_milestone(
+                state(), "worker-1", "heartbeat", "testing", "Still running",
+                "running", "none", "wait",
+            )
+
+    def test_status_view_deduplicates_and_never_shows_percentage_or_eta(self):
+        current = state()
+        current = delivery_progress.apply_event(
+            current, "worker-1", "milestone", "testing", "Tests started", "Running suite",
+            "process active", "Wait for result", now="2026-08-20T00:00:00Z",
+        )
+        first, fingerprint = delivery_progress.render_status_update(current, None)
+        duplicate, same_fingerprint = delivery_progress.render_status_update(current, fingerprint)
+
+        self.assertIn("正在测试", first)
+        self.assertNotIn("%", first)
+        self.assertNotIn("ETA", first)
+        self.assertEqual("", duplicate)
+        self.assertEqual(fingerprint, same_fingerprint)
+
+    def test_host_lifecycle_change_is_not_hidden_by_progress_deduplication(self):
+        current = delivery_progress.apply_event(
+            state(), "worker-1", "milestone", "testing", "Tests started", "Running suite",
+            "process active", "Wait for result", now="2026-08-20T00:00:00Z",
+        )
+        _, fingerprint = delivery_progress.render_status_update(current, None)
+        current["workers"][0]["status"] = "blocked"
+
+        rendered, changed_fingerprint = delivery_progress.render_status_update(
+            current, fingerprint
+        )
+
+        self.assertIn("blocked", rendered)
+        self.assertNotEqual(fingerprint, changed_fingerprint)
+
     def test_milestone_records_parent_time_and_objective_progress(self):
         updated = delivery_progress.apply_event(
             state(),

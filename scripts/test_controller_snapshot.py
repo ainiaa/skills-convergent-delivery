@@ -1,0 +1,198 @@
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+import stat
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).with_name("controller_snapshot.py")
+ROOT = MODULE_PATH.parent.parent
+SPEC = importlib.util.spec_from_file_location("controller_snapshot", MODULE_PATH)
+controller_snapshot = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(controller_snapshot)
+REQUIRED_CONTROL_REFERENCES = (
+    "references/activation.md",
+    "references/evaluation-scenarios.md",
+)
+
+
+class ControllerSnapshotTest(unittest.TestCase):
+    def test_writable_workspace_cannot_masquerade_as_a_controller_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            fake = controller_snapshot.descriptor(
+                source, controller_snapshot.aggregate_fingerprint(source), "1.0.0"
+            )
+
+            with self.assertRaisesRegex(ValueError, "snapshot|provenance|writable"):
+                controller_snapshot.validate_snapshot(fake)
+
+    def test_frozen_resolver_can_select_native_without_the_live_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "run",
+                    "--descriptor",
+                    str(descriptor_path),
+                    "--script",
+                    "scripts/delivery_engine.py",
+                    "--",
+                    "select",
+                    "--mode",
+                    "auto",
+                    "--kind",
+                    "feature",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "HOME": str(Path(directory) / "empty-home")},
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("native-v1", json.loads(result.stdout)["engine"])
+
+    def source(self, directory):
+        source = Path(directory) / "suite"
+        for relative in controller_snapshot.CONTROLLER_FILES:
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{relative}\n", encoding="utf-8")
+        for relative in controller_snapshot.PROVIDER_FILES:
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n", encoding="utf-8")
+        for relative in controller_snapshot.CONTROL_RESOURCE_FILES:
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{relative}\n", encoding="utf-8")
+        for relative in REQUIRED_CONTROL_REFERENCES:
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{relative}\n", encoding="utf-8")
+        (source / "VERSION").write_text("1.0.0\n", encoding="utf-8")
+        return source
+
+    def test_self_modification_keeps_the_frozen_snapshot_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            descriptor = controller_snapshot.create_snapshot(source, Path(directory) / "control")
+            (source / controller_snapshot.CONTROLLER_FILES[0]).write_text("self modified\n", encoding="utf-8")
+
+            identity = controller_snapshot.validate_snapshot(descriptor)
+            self.assertTrue((Path(descriptor["root"]) / "scripts/delivery_next.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "providers/native-v1.json").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "SKILL.md").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "references/state-schema.md").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "references/reporting.md").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "references/tdd-providers.md").is_file())
+            for relative in REQUIRED_CONTROL_REFERENCES:
+                self.assertIn(relative, descriptor["files"])
+                self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())
+
+        self.assertEqual("1.0.0", identity["package_version"])
+        self.assertNotEqual(str(source), descriptor["root"])
+
+    def test_version_only_change_creates_a_distinct_content_addressed_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            control = Path(directory) / "control"
+            first = controller_snapshot.create_snapshot(source, control)
+            (source / "VERSION").write_text("1.0.1\n", encoding="utf-8")
+
+            second = controller_snapshot.create_snapshot(source, control)
+
+            self.assertNotEqual(first["root"], second["root"])
+            self.assertEqual("1.0.1", second["package_version"])
+
+    def test_snapshot_tampering_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                self.source(directory), Path(directory) / "control"
+            )
+            snapshot = Path(descriptor["root"])
+            (snapshot / controller_snapshot.CONTROLLER_FILES[0]).chmod(0o600)
+            (snapshot / controller_snapshot.CONTROLLER_FILES[0]).write_text("tampered\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "snapshot.*changed"):
+                controller_snapshot.validate_snapshot(descriptor)
+
+    def test_snapshot_makes_every_nested_directory_read_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                self.source(directory), Path(directory) / "control"
+            )
+            snapshot = Path(descriptor["root"])
+            writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+
+            for path in (snapshot, *sorted(path for path in snapshot.rglob("*") if path.is_dir())):
+                with self.subTest(path=path.relative_to(snapshot)):
+                    self.assertEqual(0, path.stat().st_mode & writable)
+
+    def test_snapshot_freezes_every_manifest_seen_by_the_provider_registry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            extra = source / "providers/extra-v1.json"
+            manifest = json.loads((ROOT / "providers/native-v1.json").read_text())
+            manifest["provider"].update(id="extra-v1", source_id="test/extra")
+            extra.write_text(json.dumps(manifest), encoding="utf-8")
+
+            descriptor = controller_snapshot.create_snapshot(
+                source, Path(directory) / "control"
+            )
+
+            self.assertIn("providers/extra-v1.json", descriptor["files"])
+            self.assertTrue((Path(descriptor["root"]) / "providers/extra-v1.json").is_file())
+
+    def test_trusted_runner_rejects_tampering_before_the_helper_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+            snapshot = Path(descriptor["root"])
+            scripts = snapshot / "scripts"
+            scripts.chmod(0o700)
+            target = scripts / "provider_contract.py"
+            target.chmod(0o600)
+            target.write_text("raise RuntimeError('must not import')\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "run",
+                    "--descriptor",
+                    str(descriptor_path),
+                    "--script",
+                    "scripts/delivery_engine.py",
+                    "--",
+                    "select",
+                    "--mode",
+                    "native",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("controller snapshot blocked", result.stderr)
+            self.assertNotIn("invalid choice", result.stderr)
+            self.assertNotIn("must not import", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

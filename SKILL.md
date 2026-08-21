@@ -11,7 +11,7 @@ description: Implement, fix, or refactor one authorized software task through fi
 
 当团队希望普通开发请求也稳定命中本 Skill 时，读取 [激活与触发](references/activation.md)。只提供可选配置片段，不自动修改用户的 `AGENTS.md` 或全局配置。
 
-先将当前已选中 `converge/SKILL.md` 所在目录的绝对路径记为 `CONVERGE_SKILL_DIR`。所有 helper 和 reference 都从该目录解析，不能假设当前工作区包含本 Suite 的 `scripts/`。
+先将当前已选中 `converge/SKILL.md` 所在目录的绝对路径记为 `CONVERGE_SKILL_DIR`。所有 helper 和 reference 都从该目录解析，不能假设当前工作区包含本 Suite 的 `scripts/`。需要持久状态、worker、跨会话恢复或修改 Suite 自身时，在任何业务写入前创建 Controller Snapshot；它冻结 `SKILL.md`、控制 references、运行 helper 和内置 Provider registry，并验证内容寻址 provenance、只读权限及与目标 workspace 隔离。将返回的 `root` 记为 `CONVERGE_CONTROLLER_DIR`，本次任务后续所有控制 helper/reference/manifest 均从该 root 使用。
 
 ## 1. 冻结任务
 
@@ -34,6 +34,8 @@ description: Implement, fix, or refactor one authorized software task through fi
 CONVERGE_SKILL_DIR="<absolute directory containing this SKILL.md>"
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
+
+需要精确 Provider 时改用 `--provider <provider-id>`；显式 ID 未注册或来源不完整必须阻塞。resolver 使用共享 Provider Contract 冻结 manifest、当前 task contract、真实入口与 closure，不能只冻结名称或 manifest。
 
 Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → 通过预检的通用 TDD → `native-v1`。
 
@@ -61,7 +63,7 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，终态释放，过期后不自动抢占。
 
-跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，使用 `$CONVERGE_SKILL_DIR/scripts/` 下的 `delivery_task_key.py`、`delivery_lease.py`、`delivery_state.py`、`delivery_progress.py` 和 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 Progress Receipt。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
+跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
 
 ## 6. 审查策略
 
@@ -87,7 +89,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
-持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的结果。默认包含：做了什么、关键改动、是否可使用、已验证范围，以及一行“交付轮数 / 修复问题数 / 待处理项”；命令、内部状态、lease 和严重度只在用户要求详细报告时展示。
+持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 

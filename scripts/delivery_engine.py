@@ -8,14 +8,16 @@ import os
 import sys
 from pathlib import Path
 
+from controller_snapshot import CONTROLLER_FILES, validate_snapshot
+from provider_contract import (
+    build_reference,
+    canonical_fingerprint,
+    file_fingerprint,
+    provider_manifest_paths,
+    validate_stage_source,
+)
 
-ENGINES = {
-    "native-v1",
-    "pdlc-v1",
-    "superpowers-tdd-v1",
-    "mattpocock-tdd-v1",
-    "generic-tdd-v1",
-}
+
 MODES = {"auto", "native", "pdlc"}
 TASK_KINDS = {"feature", "fix", "refactor"}
 REQUIRED_PDLC_SKILLS = (
@@ -34,22 +36,6 @@ DEFAULT_TDD_ROOTS = (
     Path.home() / ".claude" / "skills",
     Path.home() / ".agents" / "skills",
 )
-UNSAFE_GENERIC_TDD_TERMS = (
-    "publish",
-    "deploy",
-    "release",
-    "delete",
-    "remove files",
-    "worktree",
-    "retry loop",
-    "recursive",
-    "发布",
-    "部署",
-    "删除",
-    "工作树",
-    "循环重试",
-    "递归",
-)
 PROVIDER_DIR = Path(__file__).resolve().parent.parent / "providers"
 PROVIDER_MANIFEST = PROVIDER_DIR / "pdlc-v1.json"
 REQUIRED_STOP_POINTS = {
@@ -66,28 +52,13 @@ REQUIRED_FORBIDDEN_ACTIONS = {
     "publish",
     "install",
 }
-CONTROLLER_FILES = (
-    "references/execution-control.md",
-    "references/execution-protocol.md",
-    "scripts/delivery_engine.py",
-    "scripts/delivery_next.py",
-    "scripts/delivery_progress.py",
-    "scripts/delivery_state.py",
-)
-CONTROLLER_PROTOCOL_VERSION = 2
+CONTROLLER_PROTOCOL_VERSION = 3
 
 
 def skill_path(root, name):
     root_path = Path(root).expanduser().resolve()
     source_path = root_path / "skills" / name / "SKILL.md"
     return source_path if source_path.is_file() else root_path / name / "SKILL.md"
-
-
-def file_fingerprint(path):
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return None
 
 
 def aggregate_fingerprint(root, relative_paths):
@@ -143,6 +114,7 @@ def validate_provider_manifest(manifest, path="provider manifest"):
         "source_fingerprint",
         "preserve_external_behavior",
         "required_terms",
+        "forbidden_terms",
     }
     for task_kind in task_kinds:
         contract = contracts[task_kind]
@@ -174,6 +146,12 @@ def validate_provider_manifest(manifest, path="provider manifest"):
             or any(character not in "0123456789abcdef" for character in fingerprint)
         ):
             raise ValueError(f"Provider source fingerprint is invalid: {path}")
+        for field in ("required_terms", "forbidden_terms"):
+            terms = contract.get(field, [])
+            if not isinstance(terms, list) or not all(
+                isinstance(term, str) and term.strip() for term in terms
+            ):
+                raise ValueError(f"Provider {field} are invalid: {path}")
     authorization = manifest.get("authorization")
     if not isinstance(authorization, dict):
         raise ValueError(f"Provider authorization is missing: {path}")
@@ -201,7 +179,7 @@ def validate_provider_manifest(manifest, path="provider manifest"):
 def load_provider_registry(provider_dir=None):
     directory = Path(provider_dir or PROVIDER_DIR).expanduser().resolve()
     registry = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in provider_manifest_paths(directory):
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
@@ -236,27 +214,28 @@ def adapted_provider_contracts(task_kind="feature"):
                 contract["source_fingerprint"],
             )
         )
-    return tuple(sorted(providers, key=lambda item: (item[1][0], item[0])))
+    order = {"superpowers-tdd-v1": 0, "mattpocock-tdd-v1": 1}
+    return tuple(sorted(providers, key=lambda item: (order.get(item[0], 99), item[0])))
 
 
-ADAPTED_TDD_PROVIDERS = adapted_provider_contracts()
-THIRD_PARTY_ENGINES = {
-    provider_id
-    for provider_id, manifest in load_provider_registry().items()
-    if manifest["provider"]["role"] == "stage"
-}
-
-
-def provider_reference(provider_id, **source):
-    manifest = load_provider_registry()[provider_id]
-    reference = {
-        "id": provider_id,
-        "version": manifest["provider"]["version"],
-        "role": manifest["provider"]["role"],
-        "manifest": str((PROVIDER_DIR / f"{provider_id}.json").resolve()),
-        "manifest_fingerprint": file_fingerprint(PROVIDER_DIR / f"{provider_id}.json"),
-    }
-    reference.update({key: value for key, value in source.items() if value is not None})
+def provider_reference(provider_id, task_kind="feature", **source):
+    registry_manifest = load_provider_registry()[provider_id]
+    manifest_path = Path(
+        source.get("manifest") or PROVIDER_DIR / f"{provider_id}.json"
+    ).expanduser().resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source_root = source.get("root")
+    if source_root is None and manifest["provider"]["role"] == "workflow":
+        source_root = Path(__file__).resolve().parent.parent
+    reference = build_reference(
+        manifest, manifest_path, task_kind, source_root, source.get("source_path")
+    )
+    reference.update({
+        key: value for key, value in source.items()
+        if value is not None and key not in {"version", "manifest_fingerprint"}
+    })
+    if registry_manifest["provider"]["id"] != reference["id"]:
+        raise ValueError("Provider registry identity changed")
     return reference
 
 
@@ -267,23 +246,29 @@ def attach_binding(result, workflow_provider, stage_providers=None):
         "stage_providers": stage_providers or {},
     }
     result["binding"] = binding
-    result["binding_fingerprint"] = hashlib.sha256(
-        json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    result["binding_fingerprint"] = canonical_fingerprint(binding)
     return result
 
 
-def native_result(reason, stage_provider=None):
+def native_result(reason, stage_provider=None, task_kind="feature"):
     stages = {"tdd": stage_provider} if stage_provider else {}
     engine = stage_provider["id"] if stage_provider else "native-v1"
     return attach_binding(
         {"status": "selected", "engine": engine, "reason": reason},
-        provider_reference("native-v1"),
+        provider_reference("native-v1", task_kind),
         stages,
     )
 
 
-def controller_identity(root=None):
+def controller_identity(root=None, snapshot=None):
+    if snapshot is not None:
+        frozen = validate_snapshot(snapshot)
+        return {
+            "package_version": frozen["package_version"],
+            "protocol_version": frozen["protocol_version"],
+            "protocol_fingerprint": frozen["protocol_fingerprint"],
+            "snapshot": frozen,
+        }
     controller_root = Path(root or Path(__file__).resolve().parent.parent).resolve()
     version_path = controller_root / "VERSION"
     fingerprint = aggregate_fingerprint(controller_root, CONTROLLER_FILES)
@@ -302,20 +287,12 @@ def controller_identity(root=None):
     }
 
 
-def has_terms(path, terms):
+def compatible_stage_source(contract, path):
     try:
-        text = Path(path).read_text(encoding="utf-8").lower()
-    except OSError:
-        return False
-    return all(term in text for term in terms)
-
-
-def has_unsafe_generic_tdd_terms(path):
-    try:
-        text = Path(path).read_text(encoding="utf-8").lower()
-    except OSError:
+        validate_stage_source(contract, path)
         return True
-    return any(term in text for term in UNSAFE_GENERIC_TDD_TERMS)
+    except ValueError:
+        return False
 
 
 def tdd_roots(roots):
@@ -339,6 +316,20 @@ def adapted_tdd_provider(roots, task_kind):
     return None, None, None
 
 
+def exact_tdd_provider(provider_id, roots, task_kind):
+    if provider_id == "generic-tdd-v1":
+        discovered = generic_tdd_provider(roots, task_kind)
+        return discovered if discovered[0] == provider_id else (None, None, None)
+    for engine, relative_paths, expected_fingerprint in adapted_provider_contracts(task_kind):
+        if engine != provider_id:
+            continue
+        for root in tdd_roots(roots):
+            path = provider_path(root, relative_paths)
+            if path and file_fingerprint(path) == expected_fingerprint:
+                return engine, path.resolve(), expected_fingerprint
+    return None, None, None
+
+
 def generic_tdd_provider(roots, task_kind):
     candidates = []
     detectors = []
@@ -349,7 +340,7 @@ def generic_tdd_provider(roots, task_kind):
             and "tdd" in manifest["capabilities"]["stages"]
             and isinstance(contract.get("required_terms"), list)
         ):
-            detectors.append((provider_id, tuple(contract["required_terms"])))
+            detectors.append((provider_id, contract))
     for root in tdd_roots(roots):
         for base in (root, root / "skills"):
             if not base.is_dir():
@@ -360,8 +351,8 @@ def generic_tdd_provider(roots, task_kind):
                     continue
                 if "orchestrat" in name or not ("tdd" in name or "test" in name):
                     continue
-                for provider_id, required_terms in detectors:
-                    if not has_unsafe_generic_tdd_terms(path) and has_terms(path, required_terms):
+                for provider_id, contract in detectors:
+                    if compatible_stage_source(contract, path):
                         candidates.append((provider_id, path.resolve()))
     provider_id, path = min(candidates, key=lambda item: (str(item[1]), item[0])) \
         if candidates else (None, None)
@@ -382,12 +373,7 @@ def compatible_tdd_provider(engine, path, expected_fingerprint):
     for expected_engine, _paths, registered_fingerprint in adapted_provider_contracts():
         if engine == expected_engine:
             return expected_fingerprint == registered_fingerprint
-    return any(
-        isinstance(contract.get("required_terms"), list)
-        and not has_unsafe_generic_tdd_terms(path)
-        and has_terms(path, contract["required_terms"])
-        for contract in manifest["task_contracts"].values()
-    )
+    return any(compatible_stage_source(contract, path) for contract in manifest["task_contracts"].values())
 
 
 def provider_file(root, relative_path):
@@ -511,32 +497,6 @@ def legacy_pdlc_fingerprint(root, task_kind):
     return digest.hexdigest()
 
 
-def has_pdlc_entry(root, task_kind):
-    if not root:
-        return False
-    root_path = Path(root).expanduser().resolve()
-    return root_path.is_dir() and provider_file(root_path, f"pdlc-{task_kind}/SKILL.md") is not None
-
-
-def detect_pdlc_root(root, task_kind, manifest=None):
-    candidates = (root,) if root else DEFAULT_PDLC_ROOTS
-    problems = []
-    for candidate in candidates:
-        if not candidate:
-            continue
-        compatible, problem = compatible_root(candidate, task_kind, manifest)
-        if compatible:
-            return compatible, None, False
-        if (root and Path(candidate).expanduser().is_dir()) or has_pdlc_entry(candidate, task_kind):
-            problems.append(problem)
-    if root:
-        problem = problems[0] if problems else f"PDLC root does not exist: {Path(root).expanduser().resolve()}"
-        return None, problem, bool(problems)
-    if problems:
-        return None, problems[0], True
-    return None, "no compatible PDLC capability was found", False
-
-
 def workflow_manifests(task_kind, explicit_manifest=None):
     if explicit_manifest:
         path = Path(explicit_manifest).expanduser().resolve()
@@ -560,16 +520,18 @@ def workflow_manifests(task_kind, explicit_manifest=None):
     ]
 
 
-def detect_workflow_provider(root, task_kind, explicit_manifest=None):
+def detect_workflow_provider(root, task_kind, explicit_manifest=None, provider_id=None):
     roots = (root,) if root else DEFAULT_PDLC_ROOTS
     problems = []
-    for provider_id, _manifest, manifest in workflow_manifests(task_kind, explicit_manifest):
+    for candidate_id, _manifest, manifest in workflow_manifests(task_kind, explicit_manifest):
+        if provider_id is not None and candidate_id != provider_id:
+            continue
         for candidate in roots:
             if not candidate:
                 continue
             compatible, problem = compatible_root(candidate, task_kind, manifest)
             if compatible:
-                return provider_id, compatible, pdlc_metadata(
+                return candidate_id, compatible, pdlc_metadata(
                     compatible, task_kind, manifest
                 ), None, False
             if root or Path(candidate).expanduser().is_dir():
@@ -597,6 +559,7 @@ def workflow_result(provider_id, root, metadata, task_kind, reason):
         result,
         provider_reference(
             provider_id,
+            task_kind,
             version=metadata["provider_version"],
             manifest=metadata["provider_manifest"],
             manifest_fingerprint=metadata["provider_fingerprint"],
@@ -617,21 +580,31 @@ def selection(
     previous_pdlc_root=None,
     previous_pdlc_fingerprint=None,
     pdlc_manifest=None,
+    provider_id=None,
 ):
     if mode not in MODES:
         raise ValueError("invalid mode")
     if task_kind not in TASK_KINDS:
         raise ValueError("invalid task kind")
     registry = load_provider_registry()
+    if provider_id is not None and provider_id not in registry:
+        return {
+            "status": "blocked",
+            "code": "environment",
+            "reason": f"explicit Provider is unknown: {provider_id}",
+        }
     if previous_engine is not None and previous_engine not in registry:
         raise ValueError("invalid previous engine")
 
-    requested = previous_engine or ({"native": "native-v1", "pdlc": "workflow"}.get(mode))
+    requested = previous_engine or provider_id or ({"native": "native-v1", "pdlc": "workflow"}.get(mode))
 
     if requested == "native-v1":
-        return native_result("native engine was selected")
+        return native_result("native engine was selected", task_kind=task_kind)
+    workflow_filter = requested if (
+        requested in registry and registry[requested]["provider"]["role"] == "workflow"
+    ) else None
     workflow_id, workflow_root, metadata, problem, incompatible = detect_workflow_provider(
-        previous_pdlc_root or pdlc_root, task_kind, pdlc_manifest
+        previous_pdlc_root or pdlc_root, task_kind, pdlc_manifest, workflow_filter
     )
     workflow_available = problem is None
     requested_manifest = registry.get(requested)
@@ -645,7 +618,8 @@ def selection(
                 "code": "environment",
                 "reason": "the frozen workflow root was not supplied for resume",
             }
-        if not workflow_available or (previous_engine and workflow_id != previous_engine):
+        expected_workflow = previous_engine or (requested if requested != "workflow" else None)
+        if not workflow_available or (expected_workflow and workflow_id != expected_workflow):
             return {
                 "status": "blocked",
                 "code": "incompatible" if incompatible else "environment",
@@ -663,7 +637,13 @@ def selection(
             f"workflow Provider is available for {task_kind}: {workflow_id}",
         )
     if requested_manifest and requested_manifest["provider"]["role"] == "stage":
-        if not compatible_tdd_provider(requested, previous_tdd_skill, previous_tdd_fingerprint):
+        selected_path = previous_tdd_skill
+        selected_fingerprint = previous_tdd_fingerprint
+        if not previous_engine:
+            discovered, selected_path, selected_fingerprint = exact_tdd_provider(
+                requested, tdd_roots_argument, task_kind
+            )
+        if not compatible_tdd_provider(requested, selected_path, selected_fingerprint):
             return {
                 "status": "blocked",
                 "code": "environment",
@@ -671,17 +651,19 @@ def selection(
             }
         stage_provider = provider_reference(
             requested,
-            source_path=str(Path(previous_tdd_skill).expanduser().resolve()),
-            source_fingerprint=previous_tdd_fingerprint,
+            task_kind,
+            source_path=str(Path(selected_path).expanduser().resolve()),
+            source_fingerprint=selected_fingerprint,
         )
         result = native_result(
-            "active third-party TDD engine remains compatible", stage_provider
+            "explicit or frozen third-party TDD Provider remains compatible", stage_provider,
+            task_kind,
         )
         result.update({
             "status": "selected",
             "engine": requested,
-            "tdd_skill_path": str(Path(previous_tdd_skill).expanduser().resolve()),
-            "tdd_skill_fingerprint": previous_tdd_fingerprint,
+            "tdd_skill_path": str(Path(selected_path).expanduser().resolve()),
+            "tdd_skill_fingerprint": selected_fingerprint,
         })
         return result
     if workflow_available:
@@ -700,9 +682,11 @@ def selection(
             reason,
             provider_reference(
                 adapted_engine,
+                task_kind,
                 source_path=str(adapted_path),
                 source_fingerprint=adapted_fingerprint,
             ),
+            task_kind,
         )
         result.update({
             "status": "selected",
@@ -722,9 +706,11 @@ def selection(
             reason,
             provider_reference(
                 generic_engine,
+                task_kind,
                 source_path=str(generic_path),
                 source_fingerprint=generic_fingerprint,
             ),
+            task_kind,
         )
         result.update({
             "status": "selected",
@@ -736,7 +722,7 @@ def selection(
     reason = f"auto mode fell back to native TDD: {problem}; no compatible third-party TDD skill was found"
     if incompatible:
         reason = f"auto mode fell back after incompatible workflow Provider ({problem}); no compatible third-party TDD skill was found"
-    return native_result(reason)
+    return native_result(reason, task_kind=task_kind)
 
 
 def main():
@@ -745,26 +731,35 @@ def main():
     parser.add_argument("--mode", choices=sorted(MODES), default="auto")
     parser.add_argument("--pdlc-root")
     parser.add_argument("--pdlc-manifest")
+    parser.add_argument("--provider")
     parser.add_argument("--tdd-root", action="append", dest="tdd_roots")
     parser.add_argument("--kind", choices=sorted(TASK_KINDS), default="feature")
-    parser.add_argument("--previous-engine", choices=sorted(ENGINES))
+    parser.add_argument("--previous-engine")
     parser.add_argument("--previous-tdd-skill")
     parser.add_argument("--previous-tdd-fingerprint")
     parser.add_argument("--previous-pdlc-root")
     parser.add_argument("--previous-pdlc-fingerprint")
     arguments = parser.parse_args()
-    result = selection(
-        arguments.mode,
-        arguments.pdlc_root,
-        arguments.tdd_roots,
-        arguments.kind,
-        arguments.previous_engine,
-        arguments.previous_tdd_skill,
-        arguments.previous_tdd_fingerprint,
-        arguments.previous_pdlc_root,
-        arguments.previous_pdlc_fingerprint,
-        arguments.pdlc_manifest,
-    )
+    try:
+        result = selection(
+            arguments.mode,
+            arguments.pdlc_root,
+            arguments.tdd_roots,
+            arguments.kind,
+            arguments.previous_engine,
+            arguments.previous_tdd_skill,
+            arguments.previous_tdd_fingerprint,
+            arguments.previous_pdlc_root,
+            arguments.previous_pdlc_fingerprint,
+            arguments.pdlc_manifest,
+            arguments.provider,
+        )
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        result = {
+            "status": "blocked",
+            "code": "environment",
+            "reason": str(error),
+        }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["status"] == "selected" else 2
 

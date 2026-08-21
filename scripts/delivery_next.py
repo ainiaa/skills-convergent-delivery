@@ -3,7 +3,6 @@
 
 import argparse
 import copy
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -22,6 +21,9 @@ from delivery_engine import (
     validate_provider_manifest,
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
+from controller_snapshot import validate_snapshot
+from provider_contract import validate_reference as validate_complete_provider_reference
+from provider_contract import canonical_fingerprint
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -33,17 +35,13 @@ NATIVE_ACTIVE_STAGES = {
     "verify-final",
 }
 PDLC_ACTIVE_STAGES = {"pdlc-run"}
-ENGINE_NAMES = {
-    "native-v1",
-    "pdlc-v1",
-    "superpowers-tdd-v1",
-    "mattpocock-tdd-v1",
-    "generic-tdd-v1",
-}
-TDD_ENGINES = ENGINE_NAMES - {"pdlc-v1"}
 ENGINE_SELECTIONS = {"auto", "explicit"}
 CHECK_RESULTS = {"pass", "fail", "unknown"}
 FRESHNESS = {"fresh", "stale", "unavailable"}
+NO_OPEN_ISSUES = {
+    "", "0", "none", "no", "n/a", "无", "没有", "无需处理",
+    "no remaining scoped findings",
+}
 
 BLOCKED_CODES = {
     "decision",
@@ -76,11 +74,26 @@ def require_mapping(value, name):
     return value
 
 
+def normalize_open_issues(value):
+    if isinstance(value, str):
+        issue = value.strip()
+        return [] if issue.lower() in NO_OPEN_ISSUES else [issue]
+    if isinstance(value, list) and all(
+        isinstance(issue, str) and issue.strip() for issue in value
+    ):
+        return [issue.strip() for issue in value]
+    raise ValueError("handoff.open_issues must be a string or a list of strings")
+
+
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
     if value.get("schema_version") == 7:
-        return value
+        state = copy.deepcopy(value)
+        handoff = state.get("handoff")
+        if isinstance(handoff, dict) and "open_issues" in handoff:
+            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
+        return state
     if value.get("schema_version") not in {5, 6}:
         raise ValueError("unsupported schema_version")
     state = copy.deepcopy(value)
@@ -110,23 +123,22 @@ def upgrade_state(value):
     )
     for worker in state["workers"]:
         worker.setdefault("progress", None)
+    handoff = state.get("handoff")
+    if isinstance(handoff, dict) and "open_issues" in handoff:
+        handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
     return state
-
-
-def binding_fingerprint(binding):
-    return hashlib.sha256(
-        json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def legacy_provider_binding(engine):
     name = validate_engine(engine)
+    task_kind = engine.get("task_kind", "feature")
     if name == "pdlc-v1":
         root = require_string(engine.get("pdlc_root"), "engine.pdlc_root")
         task_kind = engine.get("task_kind")
         metadata = pdlc_metadata(root, task_kind, engine.get("provider_manifest"))
         workflow = provider_reference(
             "pdlc-v1",
+            task_kind,
             version=metadata["provider_version"],
             manifest=metadata["provider_manifest"],
             manifest_fingerprint=metadata["provider_fingerprint"],
@@ -135,16 +147,16 @@ def legacy_provider_binding(engine):
         )
         stages = {}
     else:
-        workflow = provider_reference("native-v1")
+        workflow = provider_reference("native-v1", task_kind)
         stages = {}
         if name != "native-v1":
             path = require_string(engine.get("tdd_skill_path"), "engine.tdd_skill_path")
             stages["tdd"] = provider_reference(
                 name,
+                task_kind,
                 source_path=str(Path(path).expanduser().resolve()),
                 source_fingerprint=engine.get("tdd_skill_fingerprint"),
             )
-        task_kind = engine.get("task_kind", "feature")
     binding = {
         "controller": "converge",
         "workflow_provider": workflow,
@@ -155,14 +167,14 @@ def legacy_provider_binding(engine):
         "reason": engine.get("reason"),
         "task_kind": task_kind,
         "binding": binding,
-        "binding_fingerprint": binding_fingerprint(binding),
+        "binding_fingerprint": canonical_fingerprint(binding),
     }
 
 
 def validate_engine(value):
     engine = require_mapping(value, "engine")
     name = engine.get("name")
-    if name not in ENGINE_NAMES:
+    if name not in load_provider_registry():
         raise ValueError("engine.name is invalid")
     if engine.get("selection") not in ENGINE_SELECTIONS:
         raise ValueError("engine.selection must be auto or explicit")
@@ -211,6 +223,14 @@ def validate_engine(value):
 
 def validate_provider_reference(reference, expected_role, task_kind):
     reference = require_mapping(reference, "provider reference")
+    if "contract_fingerprint" in reference:
+        provider_id = validate_complete_provider_reference(reference, task_kind, expected_role)
+        manifest_path = Path(reference["manifest"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        validate_provider_manifest(manifest, manifest_path)
+        if task_kind not in manifest["capabilities"]["task_kinds"]:
+            raise ValueError("provider does not support the frozen task kind")
+        return provider_id
     allowed = {
         "id", "version", "role", "manifest", "manifest_fingerprint",
         "source_path", "source_fingerprint", "root",
@@ -279,7 +299,7 @@ def validate_provider_binding(value):
             raise ValueError("provider stage capability is invalid")
     if workflow != "native-v1" and stages:
         raise ValueError("external workflow cannot mix stage providers")
-    if value.get("binding_fingerprint") != binding_fingerprint(binding):
+    if value.get("binding_fingerprint") != canonical_fingerprint(binding):
         raise ValueError("provider binding fingerprint changed")
     return workflow
 
@@ -288,15 +308,26 @@ def validate_state(state, arguments):
     state = upgrade_state(state)
 
     controller = require_mapping(state.get("controller"), "controller")
-    if set(controller) != {"package_version", "protocol_version", "protocol_fingerprint"}:
+    allowed_controller = {"package_version", "protocol_version", "protocol_fingerprint"}
+    if frozenset(controller) not in {
+        frozenset(allowed_controller), frozenset((*allowed_controller, "snapshot"))
+    }:
         raise ValueError("controller fields are invalid")
     require_string(controller.get("package_version"), "controller.package_version")
-    current_controller = controller_identity()
-    if any(
-        controller.get(field) != current_controller[field]
-        for field in ("protocol_version", "protocol_fingerprint")
-    ):
-        raise ValueError("frozen Converge controller protocol changed")
+    if "snapshot" in controller:
+        frozen = validate_snapshot(controller["snapshot"])
+        if any(
+            controller.get(field) != frozen[field]
+            for field in ("package_version", "protocol_version", "protocol_fingerprint")
+        ):
+            raise ValueError("frozen Converge controller snapshot changed")
+    else:
+        current_controller = controller_identity()
+        if any(
+            controller.get(field) != current_controller[field]
+            for field in ("protocol_version", "protocol_fingerprint")
+        ):
+            raise ValueError("frozen Converge controller protocol changed")
 
     run_id = require_string(state.get("run_id"), "run_id")
     repo_id = require_string(state.get("repo_id"), "repo_id")
@@ -418,8 +449,13 @@ def validate_state(state, arguments):
         if snapshot.get("freshness") not in FRESHNESS:
             raise ValueError("ledger.acceptance_history[].freshness is invalid")
     handoff = require_mapping(state.get("handoff"), "handoff")
-    for field in ("goal", "last_verification", "open_issues", "next_action"):
+    for field in ("goal", "last_verification", "next_action"):
         require_string(handoff.get(field), f"handoff.{field}")
+    open_issues = handoff.get("open_issues")
+    if not isinstance(open_issues, list) or not all(
+        isinstance(issue, str) and issue.strip() for issue in open_issues
+    ):
+        raise ValueError("handoff.open_issues must be a list of strings")
 
     if not isinstance(state.get("requires_stability_round"), bool):
         raise ValueError("requires_stability_round must be boolean")

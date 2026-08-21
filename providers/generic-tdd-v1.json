@@ -11,9 +11,9 @@
     "stages": ["tdd"]
   },
   "task_contracts": {
-    "feature": {"required_terms": ["test first", "red", "green"]},
-    "fix": {"required_terms": ["test first", "red", "green"]},
-    "refactor": {"required_terms": ["test first", "red", "green"]}
+    "feature": {"required_terms": ["test first", "red", "green"], "forbidden_terms": ["publish", "deploy", "release", "delete", "remove files", "worktree", "retry loop", "recursive", "发布", "部署", "删除", "工作树", "循环重试", "递归"]},
+    "fix": {"required_terms": ["test first", "red", "green"], "forbidden_terms": ["publish", "deploy", "release", "delete", "remove files", "worktree", "retry loop", "recursive", "发布", "部署", "删除", "工作树", "循环重试", "递归"]},
+    "refactor": {"required_terms": ["test first", "red", "green"], "forbidden_terms": ["publish", "deploy", "release", "delete", "remove files", "worktree", "retry loop", "recursive", "发布", "部署", "删除", "工作树", "循环重试", "递归"]}
   },
   "authorization": {
     "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],

@@ -59,12 +59,50 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
-    def run_report(self, payload, output_format="json"):
+    def test_default_report_hides_diagnostics_but_detail_includes_them(self):
+        summary = self.run_report(state(), "text")
+        detailed = self.run_report(state(), "text", detail=True)
+
+        self.assertNotIn("技术诊断", summary.stdout)
+        self.assertNotIn("provider_binding", summary.stdout)
+        self.assertIn("技术诊断", detailed.stdout)
+        self.assertIn("Provider", detailed.stdout)
+
+        summary_json = json.loads(self.run_report(state(), "json").stdout)
+        detail_json = json.loads(self.run_report(state(), "json", detail=True).stdout)
+        self.assertNotIn("diagnostic", summary_json)
+        self.assertEqual("native-v1", detail_json["diagnostic"]["workflow_provider"])
+
+    def test_blocked_json_includes_diagnostics_without_detail_flag(self):
+        payload = json.loads(self.run_report(state("blocked"), "json").stdout)
+
+        self.assertIn("diagnostic", payload)
+        self.assertEqual("blocked", payload["diagnostic"]["status"])
+
+    def test_text_diagnostic_includes_bounded_worker_and_check_summaries(self):
+        payload = state()
+        payload["workers"] = [{
+            "ref": "worker-1",
+            "role": "review",
+            "owner_run_id": "run-1",
+            "status": "completed",
+        }]
+
+        result = self.run_report(payload, "text", detail=True)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("worker-1=completed", result.stdout)
+        self.assertIn("check=pass", result.stdout)
+
+    def run_report(self, payload, output_format="json", detail=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
+            command = ["python3", str(SCRIPT), "--state", str(path), "--format", output_format]
+            if detail:
+                command.append("--detail")
             return subprocess.run(
-                ["python3", str(SCRIPT), "--state", str(path), "--format", output_format],
+                command,
                 text=True,
                 capture_output=True,
                 check=False,
@@ -81,6 +119,28 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(0, report["pending_items"])
         self.assertEqual("pass", report["acceptance"][0]["result"])
         self.assertEqual(["统一 Provider 契约", "增加可见进度"], report["key_changes"])
+
+    def test_legacy_no_issue_text_is_not_reported_as_pending(self):
+        for value in ("No remaining scoped findings", "0"):
+            with self.subTest(value=value):
+                payload = state()
+                payload["handoff"]["open_issues"] = value
+
+                report = json.loads(self.run_report(payload).stdout)
+
+                self.assertEqual("ready", report["outcome"])
+                self.assertEqual(0, report["pending_items"])
+
+    def test_structured_open_issues_preserve_the_exact_item_count(self):
+        payload = state()
+        payload["handoff"]["open_issues"] = ["first issue", "second issue"]
+
+        result = self.run_report(payload)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual("attention", report["outcome"])
+        self.assertEqual(2, report["pending_items"])
 
     def test_ready_text_leads_with_useful_changes_without_internal_terms(self):
         result = self.run_report(state(), "text")

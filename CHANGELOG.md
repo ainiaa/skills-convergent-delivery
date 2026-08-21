@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### 0.12.1
+
+- 修复 Controller Snapshot 中间目录仍可写、VERSION 未进入内容地址且 helper 会在校验前导入模块的问题；完整快照现递归只读，所有冻结 helper 通过 live trusted runner 验证后执行。
+- 修复 Provider registry 与 Snapshot 固定清单漂移的问题；两者现在共享同一动态 manifest 清单。
+- 修复通用 TDD Binding 恢复只核对指纹、不重新检查 TDD 必需词和禁止控制行为的问题。
+- 修复非法 Provider manifest 输出 Python traceback 和退出码 1 的问题；现在返回结构化 `blocked/environment`、退出码 2。
+- 修复最终报告从自由文本猜测待处理数量的问题；`open_issues` 规范为列表，旧无问题文本安全迁移，多项保持准确计数。
+- 收紧 Runtime Adapter 为能力协商与状态规范化；父控制器直接调用宿主工具，不再生成无法执行的伪操作。
+- 删除无生产调用的 Provider/PDLC 派生常量、探测函数和重复指纹实现。
+
+### 0.12.0
+
+- 新增共享 `provider_contract.py`：Provider Binding 完整冻结 manifest、task contract、真实入口和显式 closure；任一来源变化都会阻塞恢复。
+- Provider resolver 新增 `--provider <id>` 精确选择，并固定 workflow、Superpowers、Matt Pocock、generic、Native 的 auto 顺序；PDLC 缺失时 Native 仍携带完整入口契约独立交付。
+- 新增 `runtime_adapter.py`：Codex、Claude Code 和单上下文先协商实际 dispatch/query/wait/interrupt 能力，能力不足时明确手工降级。
+- worker CLI 只接受 objective milestone；父控制器使用 `observe` 根据宿主 query 生成 heartbeat。新增去重中文状态视图，不显示百分比或 ETA。
+- 新增不可变 Controller Snapshot：控制文件与固定 Provider registry 一并复制到目标工作区之外的内容寻址目录；快照内 resolver 可独立选择 Native/auto Provider，自修改任务继续由启动快照控制。
+- 最终报告分为默认用户 summary 与条件 diagnostic；`blocked/decision` 或 `--detail` 才展示 Provider、阶段、worker 和检查诊断。
+- Closure 强化：Provider source 严格绑定 kind/relative path/候选入口，Snapshot 校验内容寻址 provenance、只读与 workspace 隔离，进度去重包含宿主终态，terminal worker 禁止 wait/interrupt，文本 diagnostic 有界展示 worker/check 摘要。
+- 安装清单、doctor、Skill/README/reference 契约和版本同步到 `0.12.0`。
+
 ### 0.11.0
 
 - Provider Schema v2 统一描述 PDLC、适配 TDD、通用 TDD 和 Native；Converge 固定为 controller，执行结果冻结 workflow/stage Provider Binding。

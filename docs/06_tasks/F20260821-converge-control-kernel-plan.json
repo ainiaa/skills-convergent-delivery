@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "plan_id": "plan-converge-control-kernel-v1",
+  "requirement_fingerprint": "e29a9dda7962d4b0047f54740c9c0ab0bb7543c89048f984303ffe1f9c921544",
+  "planner": {
+    "name": "pdlc-delegation-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "goal": "Converge 通过可信 Provider、可适配运行时、可观察 worker、自修改快照和确定性报告完成一次可恢复的交付闭环",
+      "owned_paths": [
+        "providers",
+        "scripts",
+        "skills",
+        "references",
+        "docs",
+        "SKILL.md",
+        "README.md",
+        "CHANGELOG.md",
+        "VERSION",
+        "agents/openai.yaml",
+        "install.sh",
+        "requirements-dev.txt"
+      ],
+      "depends_on": [],
+      "steps": [
+        "为 Provider 引用可信来源、完整 Binding 和稳定选择策略增加失败测试",
+        "实现共享 Provider Contract 和精确 Provider 选择",
+        "为 Runtime Adapter 能力协商、worker 查询和进度快照增加失败测试",
+        "实现 Codex、Claude Code 与单上下文降级的运行时协议",
+        "为 Controller Snapshot 自修改场景增加失败测试",
+        "实现运行控制快照与目标工作区身份分离",
+        "实现去重的用户进度视图和分层最终报告",
+        "同步 Skill 契约、README、CHANGELOG 和版本",
+        "运行完整验证并修复范围内发现"
+      ],
+      "acceptance": [
+        "Provider manifest、真实入口、源码和任务契约任一变化都会使冻结 Binding 明确阻塞",
+        "auto 选择稳定且支持显式 Provider ID，PDLC 缺失时 Native 仍能完整交付",
+        "活动 worker 可由 Runtime Adapter 查询并在约 60 秒内生成去重、易读、无虚假百分比的进度",
+        "宿主能力不足时明确降级，不伪造中断、恢复或后台监控能力",
+        "Converge 修改自身时仍由启动时冻结的 Controller Snapshot 控制当前任务",
+        "最终报告默认面向用户，技术诊断仅在异常或显式请求时展示"
+      ],
+      "verification": [
+        "bash scripts/check.sh",
+        "bash install.sh --doctor --target codex --offline",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "Provider Binding 全链路可信且选择稳定",
+    "Codex 和 Claude Code 运行时子任务进度形成自动闭环",
+    "Converge 自修改时控制快照稳定",
+    "最终报告面向用户且完整验证通过"
+  ],
+  "decisions": [
+    "采用控制内核、Provider Adapter、Runtime Adapter、Reporter 四层职责，但不增加守护进程、任意命令插件或无限事件日志",
+    "PDLC 是优先 workflow Provider 而非强依赖；Native 保留完整交付能力",
+    "worker 只上报客观里程碑，父控制器根据宿主查询生成存活状态"
+  ]
+}

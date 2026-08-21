@@ -73,11 +73,15 @@ class DeliveryEngineTest(unittest.TestCase):
 
             with patch.object(engine_module, "PROVIDER_DIR", provider_dir):
                 result = engine_module.selection("auto", str(root), [], "feature")
+                explicit = engine_module.selection(
+                    "auto", str(root), [], "feature", provider_id="custom-workflow-v1"
+                )
 
         self.assertEqual("custom-workflow-v1", result["engine"])
         self.assertEqual(
             "custom-workflow-v1", result["binding"]["workflow_provider"]["id"]
         )
+        self.assertEqual("custom-workflow-v1", explicit["engine"])
 
     def test_auto_selects_a_new_adapted_tdd_provider_from_schema_v2_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -243,7 +247,7 @@ class DeliveryEngineTest(unittest.TestCase):
 
     def select_with_trusted_adapter(self, root, provider):
         fingerprint = next(
-            item[2] for item in engine_module.ADAPTED_TDD_PROVIDERS if item[0] == provider
+            item[2] for item in engine_module.adapted_provider_contracts() if item[0] == provider
         )
         with patch.object(engine_module, "file_fingerprint", return_value=fingerprint):
             return engine_module.selection(
@@ -285,6 +289,19 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual("native-v1", payload["engine"])
         self.assertEqual("native-v1", payload["binding"]["workflow_provider"]["id"])
         self.assertIn("fell back", payload["reason"])
+        reference = payload["binding"]["workflow_provider"]
+        self.assertEqual(64, len(reference["contract_fingerprint"]))
+        self.assertEqual("entrypoint", reference["sources"][0]["kind"])
+        self.assertTrue(reference["sources"][0]["path"].endswith("references/execution-protocol.md"))
+
+    def test_explicit_provider_id_is_exact_and_unknown_id_blocks(self):
+        native = self.run_engine("--provider", "native-v1")
+        missing = self.run_engine("--provider", "missing-v1")
+
+        self.assertEqual(0, native.returncode, native.stderr)
+        self.assertEqual("native-v1", json.loads(native.stdout)["engine"])
+        self.assertEqual(2, missing.returncode)
+        self.assertIn("unknown", json.loads(missing.stdout)["reason"])
 
     def test_auto_prefers_adapted_superpowers_tdd_after_pdlc(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -544,6 +561,19 @@ class DeliveryEngineTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual("incompatible", payload["code"])
         self.assertIn("adapter manifest", payload["reason"])
+
+    def test_invalid_manifest_returns_structured_block_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "broken.json"
+            manifest.write_text("{", encoding="utf-8")
+
+            result = self.run_engine("--pdlc-manifest", str(manifest))
+
+        self.assertEqual(2, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertEqual("blocked", payload["status"])
+        self.assertEqual("environment", payload["code"])
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

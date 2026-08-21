@@ -37,6 +37,9 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_report.py
   scripts/delivery_state.py
   scripts/delivery_task_key.py
+  scripts/provider_contract.py
+  scripts/runtime_adapter.py
+  scripts/controller_snapshot.py
   skills/converge-plan/SKILL.md
   skills/converge-plan/references/plan-contract.md
   skills/converge-plan/scripts/plan_check.py

@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.11.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.12.1](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -21,17 +21,17 @@ Converge Suite 将四个职责拆开：planner 只拆任务，执行者只交付
 
 核心能力：
 
-- 默认按 `workflow Provider → 已适配第三方 TDD → 通用 TDD → native-v1` 解析 Provider Binding；Provider Schema v2 统一冻结身份、能力、入口、授权、证据要求和源码闭包，新增兼容 manifest 无需再增加 Provider ID 分支。
+- 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → 通用 TDD → native-v1` 稳定解析；也可用 `--provider <id>` 精确选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
 - 复杂任务先形成 Plan Contract；每个 task 只有一个结果、明确范围、依赖和真实验证。
 - PDLC 只形成一个 fresh `pdlc-run`，完整委托需求、设计、TDD、实现和阶段评审，避免双流程。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - 依赖 wave 会标识潜在并行候选；内置 Batch Protocol v1 保持顺序执行，避免多 worktree 和 receipt 无法可靠恢复。
-- worker 生命周期、宿主能力与无响应处理统一遵循 [执行控制](references/execution-control.md)。
+- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/wait/interrupt 能力；父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
-- 单任务 Schema v7 分离包版本、控制协议与 Provider Binding，并持久化 worker 最新进度；旧 v5/v6 首次写入安全迁移。Batch state Schema v3 继续独立管理计划调度。
-- 默认报告由状态确定性生成，保留必要的轮数、问题数和待处理项，不倾倒内部状态机术语。
+- 单任务 Schema v7 分离包版本、Controller Snapshot 与 Provider Binding，并持久化 worker 最新进度；快照位于目标 workspace 外，自修改不接管当前任务。Batch state Schema v3 继续独立管理计划调度。
+- 默认报告只输出面向用户的 summary；异常或显式 `--detail` 才附 Provider、阶段、worker 与检查诊断。
 
 ## Install
 
@@ -149,7 +149,7 @@ worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](re
 
 调度器不读业务代码、不 review、不替任务决定技术方案。每批使用最小 context capsule；wave 用于检查依赖和路径冲突，Batch Protocol v1 仍逐项执行。派发结果不确定时查询原任务，不重复创建任务。
 
-Codex 保存 task/thread id，Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；否则输出 capsule 手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+Codex 保存 task/thread id；Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；单上下文始终手工交接。三者都先以 `runtime_adapter.py` 协商本会话实际能力，详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
 Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。
 
@@ -162,15 +162,15 @@ Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规
 | 其他 TDD Skill 通过预检 | `generic-tdd-v1` | 只采用测试方法，不接管循环和发布 |
 | 都不可用 | `native-v1` | 使用内置有限 TDD 协议 |
 
-Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只要声明当前 task kind、完整入口闭包和兼容授权，即参与同一套发现与冻结，不需要修改 controller 的 Provider ID 分支。显式或已冻结 Provider 不可用时阻塞；auto 首次解析可以在业务写入前说明原因并降级。任务开始后冻结 manifest、入口闭包和来源摘要，恢复时不允许热切换。
+Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只要声明当前 task kind、完整入口闭包和兼容授权，即参与同一套发现与冻结。显式 `--provider <id>` 或已冻结 Provider 不可用时阻塞；auto 首次解析可以在业务写入前说明原因并降级。任务开始后冻结 manifest、task contract、实际入口、closure 和来源摘要，恢复时不允许热切换。
 
 ### 子代理进度
 
-使用子代理时，Converge 记录其当前阶段、最近里程碑、客观证据和下一步，由父代理统一向用户展示。长测试或工具仍在运行时，父代理约 60 秒内给出一次可见状态；heartbeat 只表示仍在运行，不会冒充新进展，也不会显示虚假百分比或 ETA。正式完成仍以宿主终态、源码和新鲜验证为准。
+使用子代理时，worker 只发送客观 milestone；持有 writer lease 的父控制器根据精确宿主 query 使用 `delivery_progress.py observe` 生成 heartbeat。状态视图按内容去重，约 60 秒内保持可见，但不显示虚假百分比或 ETA。正式完成仍以宿主终态、源码和新鲜验证为准。
 
 ## 状态、多窗口与恢复
 
-- 单任务状态：`~/.convergent-delivery/state/`，Schema v7（旧 v5/v6 首次写入只添加迁移）。
+- 单任务状态：`~/.convergent-delivery/state/`，Schema v7（新任务可绑定 `controller.snapshot`；旧 v5/v6 首次写入只添加迁移）。
 - Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1 / state Schema v3；旧 v1/v2 先迁移再写。
 - Batch scheduler lease：位于 Batch state 根下，按 `repo_id + plan_id` 唯一，默认两小时；过期后仅显式 takeover。
 - writer lease：`~/.convergent-delivery/leases/`，默认两小时。
@@ -184,13 +184,30 @@ python3 scripts/delivery_next.py --state <state-file> --run-id <run-id> \
   --writer-id <writer-id> --revision <revision>
 ```
 
+持久任务启动时先创建内容寻址的 Controller Snapshot，并把返回 descriptor 写入 controller identity；目标 workspace 随后修改 Converge 源码也不会改变本次运行的控制程序：
+
+```bash
+python3 scripts/controller_snapshot.py create --source "$CONVERGE_SKILL_DIR" \
+  --root "$HOME/.convergent-delivery/controller-snapshots"
+```
+
+把返回的 `root` 固定为本次任务的 `CONVERGE_CONTROLLER_DIR`。Snapshot 同时包含 `SKILL.md`、控制 references、创建时动态发现的完整 Provider registry 和运行 helper；descriptor 绑定 source/control root，快照所有目录/文件按内容寻址且只读，并必须位于目标 workspace 外。
+
+冻结 helper 不直接执行。将 descriptor 本身或含 `controller.snapshot` 的正式 state 路径交给 live trusted runner；runner 先重算完整快照，再 `exec` 目标 helper：
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
+  --descriptor <snapshot-or-state-json> --script scripts/delivery_next.py -- \
+  --state <state-file> --run-id <run-id> --writer-id <writer-id> --revision <revision>
+```
+
 每个执行任务应使用独立 worktree；同一 worktree 只允许一个 writer。Batch scheduler 只持有防重复派发的计划级 lease，不持有代码 writer lease；每个 Batch 执行者仍由 `$converge` 独立管理。
 
 计划完成审计必须传入真实 Git workspace。helper 自己绑定 `HEAD` commit/tree、当前 diff、未跟踪文件与 Git 原生 changed paths，只接受绑定同一 source receipt 的结构化验证证据；它不会执行 receipt 中的任意命令文本，也不会把文件名中的反斜杠改写成目录分隔符。
 
 ## 最终报告
 
-默认只回答四件事：结果、关键改动、验证覆盖、尚待处理；再补一行过程统计，例如“1 个交付轮 / 修复 2 个问题 / 0 个待处理项”。有风险或需要用户选择时才展开影响和推荐方案，命令、lease、源码指纹等技术证据按需提供。
+默认只回答四件事：结果、关键改动、验证覆盖、尚待处理；`handoff.open_issues` 使用结构化列表，因此多项不会被压成一项。再补一行过程统计，例如“1 个交付轮 / 修复 2 个问题 / 0 个待处理项”。有风险或需要用户选择时才展开影响和推荐方案，命令、lease、源码指纹等技术证据按需提供。
 
 ## 质量与边界
 
