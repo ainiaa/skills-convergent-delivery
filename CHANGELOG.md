@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### 0.19.0
+
+- 修复旧 Single State Schema 可绕过 v10 完成证据门禁的问题；旧状态只允许读取或原子迁移，任何新 complete 写入都要求 Source/Evidence Receipt。
+- Eval Contract 升级为 v2：拒绝调用方直接声明 `samples=["pass"]`，改用绑定 scenario/control/candidate/judge/worker/source 的不可变 Sample Receipt；关键决策按每个 required scenario 校验三个 distinct worker，且确定性推导 exploration/uncovered。
+- Runtime Binding/cleanup receipt 升级为 v2，宿主计划、worker 进度和清场显式区分 `host_observed` 与 `controller_attested`；交付报告只把结构化验收与检查作为已验证范围，自由文本仅作声明。
+- Controller Snapshot Protocol v8 补齐实际可路由的 `converge-batch` 闭包，并只精确授权两个冻结 Batch helper；Review Contract 新增可执行 stdin CLI，doctor 明确提示显式与 AGENTS.md 隐式激活边界，同步修正 Batch Receipt v4 文档。
+
+### 0.18.0
+
+- 统一 Review Protocol v3 与 Single State 的内部复核记录，新增 v2 结果确定性适配器，稳定生成 SHA-256 finding 身份并校验 blocked/findings 互斥。
+- 当前完成态必须绑定真实 Source Receipt v2 与每项验收的 Evidence Receipt v1；Controller Snapshot Protocol v8 冻结实际调用的 plan/review/eval 控制面。
+- Codex Plan 确认改为 acknowledgement-only 写入，禁止与阶段推进混写；终态报告历史同样只能独立追加，重复报告可明确显示“无新增变化”。
+- 新增可执行的差分评估 helper，按 touched control surfaces 全选历史逃逸、计算样本分布并执行最多三轮、首次无改善即停止的有限规则。
+- 修复 Claude/Codex 安装清单遗漏 `converge-eval`、崩溃遗留安装锁永久阻塞、doctor 输出整段 Provider JSON 和仓库误跟踪运行时锁文件。
+- 最终报告限制用户文本长度，区分验收未通过与其他待处理项，并在 Git 工作区不可读时禁止宣称“已完成，可使用”。
+
 ### 0.17.0
 
 - Source Receipt 升级为 v2，源码身份纳入路径类型、执行权限和内容摘要；Plan Contract v5 冻结脏基线 Source Receipt，并按 task 的 before/after receipt 归属实际增量。

@@ -17,7 +17,8 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
 
         self.assertEqual("automatic", result["mode"])
-        self.assertEqual(1, result["schema_version"])
+        self.assertEqual(2, result["schema_version"])
+        self.assertEqual("controller_attested", result["evidence_level"])
         self.assertEqual(["dispatch", "query", "wait", "tree_query"], result["capabilities"])
         self.assertNotIn("interrupt", result["capabilities"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
@@ -33,7 +34,8 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
 
         self.assertEqual("tree_query", receipt["mode"])
-        self.assertEqual(1, receipt["schema_version"])
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual("host_observed", receipt["evidence_level"])
         self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
         self.assertEqual(3, receipt["observed_revision"])
 
@@ -82,6 +84,21 @@ class RuntimeAdapterTest(unittest.TestCase):
 
         self.assertEqual("manual", result["mode"])
         self.assertIn("subtree", result["reason"])
+
+    def test_restrict_dispatch_cleanup_is_controller_attested_not_verified(self):
+        binding = runtime_adapter.negotiate(
+            "claude-code", {
+                "dispatch": True, "query": True, "wait": True, "interrupt": True,
+                "tree_query": False, "restrict_dispatch": True,
+            }
+        )
+
+        receipt = runtime_adapter.cleanup_receipt(
+            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
+        )
+
+        self.assertEqual("restrict_dispatch", receipt["mode"])
+        self.assertEqual("controller_attested", receipt["evidence_level"])
 
     def test_wait_timeout_and_host_status_are_normalized_without_false_terminal_state(self):
         self.assertEqual("working", runtime_adapter.normalize_status("timeout"))

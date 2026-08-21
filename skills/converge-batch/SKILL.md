@@ -54,7 +54,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 5. Receipt 与最终验收
 
-receipt v2 必须匹配 `batch_id`、`dispatch_id` 和冻结的 `delegate_run_id`，绑定 `commit_id`、`tree_hash`、`verified_tree_hash`、完整子 Converge 终态及其 canonical fingerprint、新鲜验收证据和 open issues。验证源码树与最终提交不一致、子 run 身份不一致或子树未清场时拒绝完成。
+receipt v4 必须匹配 `batch_id`、`dispatch_id` 和冻结的 `delegate_run_id`，绑定 `commit_id`、`tree_hash`、`verified_tree_hash`、完整子 Converge 终态及其 canonical fingerprint、Source Receipt v2、新鲜验收证据和 open issues。验证源码树与最终提交不一致、子 run 身份不一致或子树未清场时拒绝完成。
 
 所有 Batch 完成后核对累计验收矩阵并运行计划规定的 `final_acceptance`。失败时阻塞并要求形成明确修复 Batch；调度器不直接修代码。只有所有 worker 宿主终态、所有 Batch receipt 通过且最终验收新鲜通过时计划才能 complete。
 

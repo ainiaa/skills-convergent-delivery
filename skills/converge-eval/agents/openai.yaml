@@ -1,0 +1,4 @@
+interface:
+  display_name: "Converge Eval"
+  short_description: "Evaluate Converge behavior against frozen controls"
+  default_prompt: "Evaluate the supplied Converge control and candidate using the bounded evaluation contract."

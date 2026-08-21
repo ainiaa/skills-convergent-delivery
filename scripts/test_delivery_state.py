@@ -10,6 +10,7 @@ from pathlib import Path
 
 from delivery_engine import legacy_pdlc_fingerprint
 from delivery_progress import apply_event
+from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
 from delivery_state import validate_transition
 from runtime_adapter import cleanup_receipt, negotiate
@@ -127,6 +128,53 @@ class DeliveryStateTest(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "review rounds"):
             validate_transition(candidate, rewritten)
+
+    def test_native_plan_acknowledgement_must_be_a_separate_transition(self):
+        previous = upgrade_state(state())
+        previous["host_sync"] = {
+            "mode": "native", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        }
+        acknowledgement = copy.deepcopy(previous)
+        acknowledgement["revision"] = 1
+        acknowledgement["host_sync"]["acknowledged_fingerprint"] = \
+            plan_projection_fingerprint(acknowledgement)
+        acknowledgement["host_sync"]["evidence_level"] = "host_observed"
+        validate_transition(previous, acknowledgement)
+
+        unobserved = copy.deepcopy(previous)
+        unobserved["revision"] = 1
+        unobserved["host_sync"]["acknowledged_fingerprint"] = \
+            plan_projection_fingerprint(unobserved)
+        with self.assertRaisesRegex(ValueError, "host-observed"):
+            validate_transition(previous, unobserved)
+
+        combined = copy.deepcopy(previous)
+        combined["revision"] = 1
+        combined["current_stage"] = "verify-final"
+        combined["host_sync"]["acknowledged_fingerprint"] = \
+            plan_projection_fingerprint(combined)
+        combined["host_sync"]["evidence_level"] = "host_observed"
+        with self.assertRaisesRegex(ValueError, "acknowledgement-only"):
+            validate_transition(previous, combined)
+
+    def test_terminal_report_history_can_only_advance_by_itself(self):
+        previous = upgrade_state(state())
+        previous.update(status="complete", current_stage="verify-final")
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] = 1
+        candidate["ledger"]["report_history"] = {
+            "last_outcome": "ready", "reported_fingerprints": [],
+            "summary_fingerprint": "c" * 64,
+        }
+        validate_transition(previous, candidate)
+
+        mixed = copy.deepcopy(candidate)
+        mixed["revision"] = 2
+        mixed["handoff"]["goal"] = "changed"
+        mixed["ledger"]["report_history"]["summary_fingerprint"] = "d" * 64
+        with self.assertRaisesRegex(ValueError, "report-only"):
+            validate_transition(candidate, mixed)
 
     def test_state_path_hashes_run_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -267,6 +315,20 @@ class DeliveryStateTest(unittest.TestCase):
             )
             self.assertEqual("native-v1", written["provider_binding"]["binding"]["workflow_provider"]["id"])
             self.assertNotIn("engine", written)
+
+    def test_应该_当旧_schema_直接声明完成时_拒绝绕过_v10_完成证据(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            candidate = state(revision=1)
+            candidate.update(status="complete", current_stage="verify-final")
+
+            result = self.write(root, state_home, candidate, 0)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("source_receipt", result.stderr)
 
     def test_state_write_renews_the_owned_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -710,13 +772,6 @@ class DeliveryStateTest(unittest.TestCase):
             removed_check["ledger"]["checks"] = []
             changed_acceptance = state(revision=1)
             changed_acceptance["ledger"]["acceptance"][0]["evidence"] = "invented evidence"
-            terminal = state()
-            terminal["status"] = "complete"
-            terminal["current_stage"] = "verify-final"
-            changed_terminal = state(revision=1)
-            changed_terminal["status"] = "complete"
-            changed_terminal["current_stage"] = "verify-final"
-            changed_terminal["handoff"]["goal"] = "rewritten after completion"
             return {
                 "repo": (state(), changed_repo),
                 "task": (state(), changed_task),
@@ -758,7 +813,6 @@ class DeliveryStateTest(unittest.TestCase):
                     removed_check,
                 ),
                 "acceptance": (state(), changed_acceptance),
-                "terminal": (terminal, changed_terminal),
             }
 
         for name, (initial, candidate) in cases().items():
@@ -781,8 +835,6 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
 
             candidate = state(revision=1)
-            candidate["current_stage"] = "verify-final"
-            candidate["status"] = "complete"
             candidate["ledger"]["completed_rounds"] = 1
             candidate["ledger"]["repair_fingerprints"] = ["fixed-once"]
             candidate["ledger"]["checks"] = [
@@ -866,22 +918,14 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, failed.returncode, failed.stderr)
 
     def test_应该_当终态候选删除字段时_对称比较并拒绝(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "leases"
-            state_home = Path(directory) / "home"
-            self.acquire(root)
-            terminal = state()
-            terminal["status"] = "complete"
-            terminal["current_stage"] = "verify-final"
-            self.assertEqual(0, self.write(root, state_home, terminal, -1).returncode)
-            candidate = state(revision=1)
-            candidate["status"] = "complete"
-            candidate["current_stage"] = "verify-final"
-            candidate.pop("requires_stability_round")
+        terminal = upgrade_state(state())
+        terminal.update(status="complete", current_stage="verify-final")
+        candidate = copy.deepcopy(terminal)
+        candidate["revision"] = 1
+        candidate.pop("requires_stability_round")
 
-            result = self.write(root, state_home, candidate, 0)
-
-            self.assertNotEqual(0, result.returncode)
+        with self.assertRaisesRegex(ValueError, "terminal state"):
+            validate_transition(terminal, candidate)
 
     def test_应该_当未执行租约迁移时_拒绝直接改写工作区(self):
         with tempfile.TemporaryDirectory() as directory:

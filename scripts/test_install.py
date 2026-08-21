@@ -14,6 +14,7 @@ SKILL_SOURCES = {
     "converge-plan": ROOT / "skills/converge-plan",
     "converge-review": ROOT / "skills/converge-review",
     "converge-batch": ROOT / "skills/converge-batch",
+    "converge-eval": ROOT / "skills/converge-eval",
 }
 
 
@@ -81,6 +82,7 @@ class InstallTest(unittest.TestCase):
             self.assertIn("converge-plan", version.stdout)
             self.assertNotEqual(0, doctor.returncode)
             self.assertIn("Suite: incomplete", doctor.stdout)
+            self.assertIn("Repair:", doctor.stdout)
 
     def test_doctor_accepts_a_complete_suite(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -95,6 +97,10 @@ class InstallTest(unittest.TestCase):
             self.assertIn("Suite: complete", doctor.stdout)
             self.assertIn("Python:", doctor.stdout)
             self.assertIn("Provider:", doctor.stdout)
+            self.assertIn("Activation:", doctor.stdout)
+            self.assertIn("$converge", doctor.stdout)
+            self.assertIn("AGENTS.md", doctor.stdout)
+            self.assertNotIn('"binding"', doctor.stdout)
 
     def test_version_and_doctor_reject_a_linked_suite_with_missing_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -247,6 +253,18 @@ class InstallTest(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
             self.assertIn("another installation is in progress", result.stderr)
+
+    def test_install_recovers_a_stale_install_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            lock = home / ".convergent-delivery/.install.lock"
+            lock.mkdir(parents=True)
+            (lock / "pid").write_text("999999999\n", encoding="utf-8")
+
+            result = self.run_installer(home, "--target", "codex")
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((home / ".codex/skills/converge-eval").is_symlink())
 
     def test_install_migrates_known_legacy_skill_links(self):
         with tempfile.TemporaryDirectory() as directory:

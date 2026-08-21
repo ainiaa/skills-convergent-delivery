@@ -1,7 +1,11 @@
 ## Keep the repository-provided Claude Code skill entry point versioned.
 !.claude/
 !.claude/skills/
-!.claude/skills/convergent-delivery
+!.claude/skills/converge
+
+# Runtime state belongs under ~/.convergent-delivery, never in the repository.
+/*/tasks/*.json.lock
+/*/workspaces/*.json.lock
 
 __pycache__/
 *.py[cod]

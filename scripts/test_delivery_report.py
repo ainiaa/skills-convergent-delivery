@@ -5,32 +5,39 @@ import unittest
 from pathlib import Path
 
 from delivery_next import upgrade_state
+from evidence_contract import workspace_source
 from runtime_adapter import cleanup_receipt, negotiate
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts/delivery_report.py"
+HEAD = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    capture_output=True, text=True,
+).stdout.strip()
+SOURCE = workspace_source(ROOT, HEAD)
 
 
 def state(status="complete"):
     result = {
         "schema_version": 5,
         "run_id": "run-1",
-        "repo_id": "/repo/.git",
+        "repo_id": str(ROOT / ".git"),
         "task_key": "task-1",
         "writer_id": "writer-1",
         "revision": 3,
-        "workspace": "/repo/worktree",
-        "baseline": {"commit": "abc123", "diff_fingerprint": "clean"},
+        "workspace": str(ROOT),
+        "baseline": {"commit": HEAD, "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-1",
-        "source_fingerprint": "a" * 64,
+        "source_fingerprint": SOURCE["source_fingerprint"],
+        "source_receipt": SOURCE,
         "execution_control": {
             "routing": {
                 "schema_version": 1, "status": "frozen", "assessment_count": 1,
                 "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
             },
             "review": {
-                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
                 "integration_budget_remaining": 0, "requests": [],
             },
@@ -50,7 +57,11 @@ def state(status="complete"):
                     "evidence": "test_install",
                     "result": "pass",
                     "freshness": "fresh",
-                    "source_fingerprint": "a" * 64,
+                    "source_fingerprint": SOURCE["source_fingerprint"],
+                    "evidence_receipts": [{
+                        "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
+                        "source": SOURCE,
+                    }],
                 }
             ],
             "report_history": {
@@ -104,6 +115,8 @@ class DeliveryReportTest(unittest.TestCase):
                 text=True,
             ).stdout.strip()
             payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
+            payload.pop("source_receipt")
+            payload["ledger"]["acceptance"][0].pop("evidence_receipts")
             payload["workspace_changes"] = {
                 "file_count": 999,
                 "lines_added": 999,
@@ -133,6 +146,8 @@ class DeliveryReportTest(unittest.TestCase):
     def test_final_report_degrades_structurally_when_git_is_unavailable(self):
         payload = state()
         payload["workspace"] = "/missing/worktree"
+        payload.pop("source_receipt")
+        payload["ledger"]["acceptance"][0].pop("evidence_receipts")
 
         result = self.run_report(payload, "json")
 
@@ -140,6 +155,7 @@ class DeliveryReportTest(unittest.TestCase):
         summary = json.loads(result.stdout)["workspace_changes"]
         self.assertEqual("unavailable", summary["status"])
         self.assertEqual("git_read_failed", summary["error"])
+        self.assertEqual("attention", json.loads(result.stdout)["outcome"])
 
     def test_default_report_hides_diagnostics_but_detail_includes_them(self):
         summary = self.run_report(state(), "text")
@@ -265,13 +281,29 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertNotIn("lease", result.stdout)
         self.assertNotIn("fingerprint", result.stdout)
 
+    def test_handoff_verification_text_is_labeled_as_attested_not_verified(self):
+        payload = state()
+        payload["handoff"]["last_verification"] = "production is fully verified"
+
+        report = json.loads(self.run_report(payload, "json").stdout)
+        rendered = self.run_report(payload, "text").stdout
+
+        self.assertEqual(
+            "验收：doctor detects incomplete Suite；检查：check",
+            report["verification"],
+        )
+        self.assertEqual("controller_attested", report["verification_note_level"])
+        self.assertIn("已验证范围：验收：doctor detects incomplete Suite；检查：check", rendered)
+        self.assertIn("说明（controller_attested）：production is fully verified", rendered)
+        self.assertNotIn("已验证：production is fully verified", rendered)
+
     def test_blocked_report_is_not_ready(self):
         result = self.run_report(state("blocked"), "text")
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("暂时无法继续", result.stdout)
         self.assertIn("runtime unavailable", result.stdout)
-        self.assertIn("待处理 1 项", result.stdout)
+        self.assertIn("验收未通过 1 项；其他待处理 1 项", result.stdout)
         self.assertNotIn("已完成，可使用", result.stdout)
 
     def test_ready_text_omits_a_noop_next_step(self):
@@ -288,6 +320,26 @@ class DeliveryReportTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("report blocked", result.stderr)
+
+    def test_handoff_text_is_bounded(self):
+        payload = state()
+        payload["handoff"]["goal"] = "x" * 501
+
+        result = self.run_report(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("handoff.goal", result.stderr)
+
+    def test_repeated_report_is_marked_unchanged(self):
+        first = json.loads(self.run_report(state()).stdout)
+        payload = state()
+        payload["ledger"]["report_history"] = first["next_report_history"]
+
+        repeated = json.loads(self.run_report(payload).stdout)
+        rendered = self.run_report(payload, "text").stdout
+
+        self.assertTrue(repeated["unchanged"])
+        self.assertIn("无新增变化", rendered)
 
     def test_stdin_input_matches_state_file_without_a_lease(self):
         payload = state()

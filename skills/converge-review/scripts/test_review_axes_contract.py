@@ -30,7 +30,7 @@ class ReviewAxesContractTest(unittest.TestCase):
             self.assertIn(marker, self.root_skill)
 
     def test_task_review_keeps_spec_before_quality_and_results_separate(self):
-        self.assertIn("Review Protocol v2", self.contract)
+        self.assertIn("Review Protocol v3", self.contract)
         self.assertIn('"axis": "spec | quality | integration"', self.contract)
         self.assertIn("需求符合性与实现质量仍分别保存结论", self.orchestration)
         self.assertIn("两个有序单轴请求", self.orchestration)
@@ -54,6 +54,7 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.assertIn("源码变化后旧结果立即 stale", self.contract)
 
     def test_legacy_intent_blind_and_closure_requests_remain_readable(self):
+        self.assertIn("protocol_version=2", self.contract)
         self.assertIn("protocol_version=1", self.contract)
         self.assertIn("intent", self.contract)
         self.assertIn("blind", self.contract)

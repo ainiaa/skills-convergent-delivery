@@ -30,7 +30,9 @@ from runtime_adapter import (
     validate_cleanup_barrier,
 )
 from delivery_progress import plan_projection_fingerprint
-from evidence_contract import validate_source_receipt, workspace_source
+from evidence_contract import (
+    valid_evidence_receipts, validate_source_receipt, workspace_source,
+)
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -142,11 +144,33 @@ def upgrade_execution_control(state):
         control["review"] = upgrade_review(control["review"])
 
 
+def upgrade_evidence_levels(state):
+    host_sync = state.get("host_sync")
+    if isinstance(host_sync, dict):
+        host_sync.setdefault("evidence_level", "controller_attested")
+    for worker in state.get("workers", []):
+        progress = worker.get("progress") if isinstance(worker, dict) else None
+        if isinstance(progress, dict):
+            progress.setdefault(
+                "evidence_level",
+                "host_observed" if progress.get("event") == "heartbeat"
+                else "controller_attested",
+            )
+    receipt = state.get("worker_tree_receipt")
+    if isinstance(receipt, dict) and receipt.get("schema_version") == 1:
+        receipt["schema_version"] = 2
+        receipt["evidence_level"] = (
+            "host_observed" if receipt.get("mode") == "tree_query"
+            else "controller_attested"
+        )
+
+
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
     if value.get("schema_version") == 10:
         state = copy.deepcopy(value)
+        upgrade_evidence_levels(state)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -168,6 +192,7 @@ def upgrade_state(value):
             "mode": "legacy_unavailable", "acknowledged_fingerprint": None
         })
         state.setdefault("source_receipt", None)
+        upgrade_evidence_levels(state)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -187,6 +212,7 @@ def upgrade_state(value):
         state.setdefault("source_fingerprint", None)
         state.setdefault("execution_control", legacy_execution_control())
         upgrade_execution_control(state)
+        upgrade_evidence_levels(state)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -235,6 +261,7 @@ def upgrade_state(value):
         worker.setdefault("may_dispatch", False)
     if state["workers"]:
         raise ValueError("legacy worker state requires manual recovery")
+    upgrade_evidence_levels(state)
     handoff = state.get("handoff")
     if isinstance(handoff, dict) and "open_issues" in handoff:
         handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -518,6 +545,8 @@ def validate_review_gate(routing, review):
 
 
 def validate_state(state, arguments):
+    source_schema = state.get("schema_version") if isinstance(state, dict) else None
+    strict_evidence = getattr(arguments, "strict_evidence", source_schema == 10)
     state = upgrade_state(state)
 
     controller = require_mapping(state.get("controller"), "controller")
@@ -577,14 +606,18 @@ def validate_state(state, arguments):
     if runtime_binding is not None:
         validate_runtime_binding(runtime_binding)
     host_sync = require_mapping(state.get("host_sync"), "host_sync")
-    if set(host_sync) != {"mode", "acknowledged_fingerprint"} \
+    if set(host_sync) != {"mode", "acknowledged_fingerprint", "evidence_level"} \
             or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
         raise ValueError("host_sync fields are invalid")
+    if host_sync["evidence_level"] not in {"host_observed", "controller_attested"}:
+        raise ValueError("host_sync evidence_level is invalid")
     acknowledged = host_sync["acknowledged_fingerprint"]
     if acknowledged is not None:
         require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
     if host_sync["mode"] != "native" and acknowledged is not None:
         raise ValueError("non-native host_sync cannot acknowledge a native projection")
+    if acknowledged is not None and host_sync["evidence_level"] != "host_observed":
+        raise ValueError("native plan acknowledgement must be host-observed")
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")
@@ -615,7 +648,7 @@ def validate_state(state, arguments):
         if progress is not None:
             if not isinstance(progress, dict) or set(progress) != {
                 "sequence", "objective_revision", "event", "phase", "milestone",
-                "activity", "evidence", "next_action", "observed_at",
+                "activity", "evidence", "evidence_level", "next_action", "observed_at",
             }:
                 raise ValueError("workers[].progress fields are invalid")
             if (
@@ -634,6 +667,12 @@ def validate_state(state, arguments):
                 raise ValueError("workers[].progress objective revision is invalid")
             if progress["event"] not in PROGRESS_EVENTS or progress["phase"] not in PROGRESS_PHASES:
                 raise ValueError("workers[].progress event or phase is invalid")
+            expected_level = (
+                "host_observed" if progress["event"] == "heartbeat"
+                else "controller_attested"
+            )
+            if progress["evidence_level"] != expected_level:
+                raise ValueError("workers[].progress evidence_level is invalid")
             for field in ("milestone", "activity", "evidence", "next_action", "observed_at"):
                 require_string(progress.get(field), f"workers[].progress.{field}")
     tree_receipt = state.get("worker_tree_receipt")
@@ -642,11 +681,11 @@ def validate_state(state, arguments):
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
-            "registered_refs", "active_refs", "unexpected_refs",
+            "evidence_level", "registered_refs", "active_refs", "unexpected_refs",
         }:
             raise ValueError("worker tree receipt fields are invalid")
-        if tree_receipt["schema_version"] != 1:
-            raise ValueError("worker tree receipt schema_version must be 1")
+        if tree_receipt["schema_version"] != 2:
+            raise ValueError("worker tree receipt schema_version must be 2")
         observed_revision = tree_receipt["observed_revision"]
         if (
             not isinstance(observed_revision, int)
@@ -666,6 +705,11 @@ def validate_state(state, arguments):
         )
         if tree_receipt["mode"] != expected_mode:
             raise ValueError("worker tree receipt mode does not match the frozen runtime")
+        expected_level = (
+            "host_observed" if expected_mode == "tree_query" else "controller_attested"
+        )
+        if tree_receipt["evidence_level"] != expected_level:
+            raise ValueError("worker tree receipt evidence_level is invalid")
         for field in ("registered_refs", "active_refs", "unexpected_refs"):
             refs = tree_receipt[field]
             if not isinstance(refs, list) or any(
@@ -745,13 +789,34 @@ def validate_state(state, arguments):
             "ledger.acceptance_history[].source_fingerprint",
             optional=True,
         )
+    report_history = ledger.get("report_history")
+    if report_history is not None:
+        if not isinstance(report_history, dict) or set(report_history) != {
+            "last_outcome", "reported_fingerprints", "summary_fingerprint"
+        }:
+            raise ValueError("ledger.report_history fields are invalid")
+        if report_history["last_outcome"] not in {
+            "ready", "attention", "decision", "blocked"
+        }:
+            raise ValueError("ledger.report_history.last_outcome is invalid")
+        fingerprints = report_history["reported_fingerprints"]
+        if not isinstance(fingerprints, list) or any(
+            not isinstance(item, str) or not item.strip() for item in fingerprints
+        ) or len(fingerprints) != len(set(fingerprints)):
+            raise ValueError("ledger.report_history.reported_fingerprints is invalid")
+        summary = report_history["summary_fingerprint"]
+        if summary != "none":
+            require_sha256(summary, "ledger.report_history.summary_fingerprint")
     handoff = require_mapping(state.get("handoff"), "handoff")
     for field in ("goal", "last_verification", "next_action"):
-        require_string(handoff.get(field), f"handoff.{field}")
+        value = require_string(handoff.get(field), f"handoff.{field}")
+        if len(value) > 500:
+            raise ValueError(f"handoff.{field} must be at most 500 characters")
     open_issues = handoff.get("open_issues")
     if not isinstance(open_issues, list) or not all(
-        isinstance(issue, str) and issue.strip() for issue in open_issues
-    ):
+        isinstance(issue, str) and issue.strip() and len(issue) <= 500
+        for issue in open_issues
+    ) or len(open_issues) > 20:
         raise ValueError("handoff.open_issues must be a list of strings")
 
     if not isinstance(state.get("requires_stability_round"), bool):
@@ -788,6 +853,8 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a frozen route")
         if source_fingerprint is None:
             raise ValueError("complete state requires a source_fingerprint")
+        if strict_evidence and source_receipt is None:
+            raise ValueError("complete state requires a source_receipt")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
         validate_review_gate(routing, review_control)
@@ -802,6 +869,11 @@ def validate_state(state, arguments):
             for item in acceptance
         ):
             raise ValueError("complete state requires fresh source-bound passing acceptance evidence")
+        if strict_evidence and not all(
+            valid_evidence_receipts(item.get("evidence_receipts"), source_receipt)
+            for item in acceptance
+        ):
+            raise ValueError("complete state requires a passing Evidence Receipt for every acceptance")
         expected_final = "verify-final" if workflow_provider == "native-v1" else "pdlc-run"
         if stage != expected_final:
             raise ValueError("complete state must follow final verification")
@@ -864,8 +936,10 @@ def main():
     try:
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
-        state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
-        state = upgrade_state(state)
+        raw_state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+        arguments.strict_evidence = raw_state.get("schema_version") == 10
+        state = raw_state
+        state = upgrade_state(raw_state)
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
         projection_fingerprint = plan_projection_fingerprint(state)

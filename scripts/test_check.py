@@ -7,6 +7,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):
+    def test_runtime_lock_files_are_not_tracked(self):
+        result = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, text=True, capture_output=True, check=True
+        )
+
+        self.assertFalse([
+            path for path in result.stdout.splitlines()
+            if path.endswith(".json.lock") and (ROOT / path).exists()
+        ])
+
     def test_project_check_passes(self):
         result = subprocess.run(
             ["bash", "scripts/check.sh"],

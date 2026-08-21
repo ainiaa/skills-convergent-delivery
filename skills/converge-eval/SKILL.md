@@ -9,7 +9,7 @@ description: Evaluate Converge Suite behavior with frozen control/candidate comp
 
 ## 输入与冻结
 
-开始前读取 [机器契约](references/evaluation-contract.json) 和根级 [历史逃逸 catalog](../../references/evaluation-catalog.json)。输入至少包含冻结验收项、`touched_control_surfaces`、control 来源、candidate 来源、允许读取范围和关键决策；缺少任一项时把对应范围记为 `uncovered`，不猜测。
+开始前读取 [机器契约](references/evaluation-contract.json) 和根级 [历史逃逸 catalog](../../references/evaluation-catalog.json)。使用 [确定性 helper](scripts/eval_contract.py) 全选匹配历史项、校验 Sample Receipt、计算样本分布并执行有限修订停止规则。输入至少包含冻结验收项、`touched_control_surfaces`、control 来源、candidate 来源、允许读取范围、关键决策和指纹化 `sample_receipts`。旧 `samples=["pass"]` 不是证据，必须拒绝。冻结验收或已选历史场景没有对应 receipt 时，helper 确定性列入 `uncovered`，不猜测。
 
 修改 Converge 自身时，在接触 candidate 前把旧版 control 固定为不可变 commit、tree 或隔离快照。control 与 candidate 必须运行相同场景、输入、判定器和样本预算；分别保存原始结果，再计算差分。不能冻结旧版时不得用当前候选冒充对照。
 
@@ -24,7 +24,7 @@ description: Evaluate Converge Suite behavior with frozen control/candidate comp
 
 ## 多样本与判定
 
-确定性场景默认一个 fresh-context sample；只有修改路由、循环、worker 清场等关键模型决策，或首次结果不稳定时，才使用契约规定的三个 samples。每个 sample 不继承其他 sample 的结论或实现理由，并记录独立结果。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。
+确定性场景默认一个 fresh-context sample；只有修改路由、循环、worker 清场等关键模型决策，或首次结果不稳定时，才使用契约规定的三个 fresh workers。关键决策必须对每个 required known acceptance 和已选 history scenario 分别获得三个不同 `worker_ref`；无关 exploration 不能用来凑数。每个 Sample Receipt 必须绑定 scenario/class、control/candidate 来源、同一 judge 指纹、worker ref、原始 evidence source 与双侧结果，并由 canonical receipt 指纹防止篡改。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。
 
 candidate 只有在已知验收不回归、历史逃逸不复现，且差分证据未显示稳定性下降时才可通过。探索 finding 单列；未覆盖范围始终保留。
 

@@ -51,6 +51,7 @@ REQUIRED_SOURCE_FILES=(
   skills/converge-plan/scripts/plan_check.py
   skills/converge-review/SKILL.md
   skills/converge-review/references/review-contract.md
+  skills/converge-review/scripts/review_contract.py
   skills/converge-review/scripts/test_review_axes_contract.py
   skills/converge-batch/SKILL.md
   skills/converge-batch/references/batch-contract.md
@@ -59,7 +60,10 @@ REQUIRED_SOURCE_FILES=(
   skills/converge-batch/scripts/batch_state.py
   skills/converge-eval/SKILL.md
   skills/converge-eval/references/evaluation-contract.json
+  skills/converge-eval/scripts/eval_contract.py
   skills/converge-eval/scripts/test_eval_contract.py
+  skills/converge-eval/scripts/test_eval_kernel.py
+  skills/converge-eval/agents/openai.yaml
 )
 
 ACTION="install"
@@ -228,6 +232,7 @@ do_doctor() {
       echo "  ${runtime} Suite: complete (${status% (complete)})"
     else
       echo "  ${runtime} Suite: incomplete (${status})"
+      echo "  Repair: bash install.sh --target ${runtime}"
       failed=1
     fi
   done
@@ -261,14 +266,24 @@ do_doctor() {
     fi
   done
   [[ "$source_complete" -eq 0 ]] || echo "  Source:  complete"
+  echo '  Activation: explicit $converge ready; implicit use may require the optional AGENTS.md rule'
 
   if [[ -f "$source/scripts/delivery_engine.py" ]] && command -v python3 >/dev/null 2>&1; then
     local engine
     local engine_status=0
     engine="$(python3 "$source/scripts/delivery_engine.py" select --mode auto --kind feature 2>&1)" \
       || engine_status=$?
-    echo "  Provider: ${engine:-unavailable}"
-    [[ "$engine_status" -eq 0 && -n "$engine" ]] || failed=1
+    if [[ "$engine_status" -eq 0 && -n "$engine" ]]; then
+      local provider_summary
+      provider_summary="$(printf '%s' "$engine" | python3 -c \
+        'import json,sys; d=json.load(sys.stdin); print("{} ({})".format(d.get("engine", "unknown"), d.get("reason", "selected")))' \
+        2>/dev/null)" || provider_summary=""
+      echo "  Provider: ${provider_summary:-invalid engine output}"
+      [[ -n "$provider_summary" ]] || failed=1
+    else
+      echo "  Provider: ${engine:-unavailable}"
+      failed=1
+    fi
   else
     echo "  Provider: unavailable"
     failed=1
@@ -286,8 +301,19 @@ release_install_lock() {
 acquire_install_lock() {
   mkdir -p "$(dirname "$INSTALL_LOCK_DIR")"
   if ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
-    echo "Error: another installation is in progress: $INSTALL_LOCK_DIR" >&2
-    exit 1
+    local recorded_pid=""
+    [[ -f "$INSTALL_LOCK_DIR/pid" ]] && read -r recorded_pid < "$INSTALL_LOCK_DIR/pid" || true
+    if [[ "$recorded_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$recorded_pid" 2>/dev/null; then
+      local stale_lock="${INSTALL_LOCK_DIR}.stale.$$"
+      if mv "$INSTALL_LOCK_DIR" "$stale_lock" 2>/dev/null; then
+        rm -f "$stale_lock/pid"
+        rmdir "$stale_lock" 2>/dev/null || true
+      fi
+    fi
+    if ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+      echo "Error: another installation is in progress: $INSTALL_LOCK_DIR" >&2
+      exit 1
+    fi
   fi
   printf '%s\n' "$$" > "$INSTALL_LOCK_DIR/pid"
   INSTALL_LOCK_HELD=1
@@ -450,7 +476,7 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
       install_skill "$runtime" "$skill"
     done
   done
-  echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Restart the runtime if it is already open."
+  echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Claude Code reloads Skills live; start a new Codex task only if discovery is stale."
 elif [[ "$ACTION" == "uninstall" ]]; then
   RUNTIMES=("$TARGET")
   [[ "$TARGET" == "all" ]] && RUNTIMES=(codex claude)

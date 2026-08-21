@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.17.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.19.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -27,9 +27,10 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - PDLC 每个 task 只形成一个有限 Provider Run，完整委托需求、设计、TDD、实现和阶段评审；根 Converge 只控制范围与证据，不复制内部阶段。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - `checkpoint=same_session` 的多任务在同一会话顺序执行且不要求 commit；只有 `checkpoint=cross_session` 才进入 Batch 并请求一次本地 commit 授权。
-- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
+- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；宿主计划、runtime 和进度显式区分 `host_observed` 与 `controller_attested`，不冒充 helper 直接校验的 `verified` 证据。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
-- reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
+- reviewer 的结果绑定源码指纹，并由可执行 `review_contract.py normalize` 边界转成内部 Review v3 记录；代码变化后旧结论自动失效。
+- `converge-eval` 只接受指纹化 Sample Receipt，绑定 scenario/control/candidate/judge/worker/source；缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
 - 父控制器从 Git 展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前动作，不表示任务累计规模。
@@ -113,7 +114,7 @@ Claude Code：
 /converge-eval 验收 Converge 规则变更
 ```
 
-Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自然语言点名 Skill 始终是兼容写法。
+完整安装后 Claude Code 可直接使用上述 `/` 命令；若当前会话未刷新发现结果，自然语言点名 Skill 仍可立即使用。
 
 ### 关键词触发
 

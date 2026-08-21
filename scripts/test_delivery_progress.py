@@ -223,6 +223,7 @@ class DeliveryProgressTest(unittest.TestCase):
 
         receipt = updated["workers"][0]["progress"]
         self.assertEqual("heartbeat", receipt["event"])
+        self.assertEqual("host_observed", receipt["evidence_level"])
         self.assertEqual(1, receipt["objective_revision"])
         self.assertEqual("Tests started", receipt["milestone"])
         self.assertEqual("process active", receipt["evidence"])
@@ -282,6 +283,7 @@ class DeliveryProgressTest(unittest.TestCase):
         self.assertEqual(1, progress["sequence"])
         self.assertEqual(1, progress["objective_revision"])
         self.assertEqual("2026-08-20T10:00:00Z", progress["observed_at"])
+        self.assertEqual("controller_attested", progress["evidence_level"])
 
     def test_heartbeat_does_not_claim_new_objective_progress(self):
         initial = delivery_progress.apply_event(

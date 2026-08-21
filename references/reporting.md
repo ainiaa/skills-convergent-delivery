@@ -2,7 +2,7 @@
 
 此文件定义 `converge` 的最终回复。它只决定如何表达已记录的事实，**不会触发新的检查、Agent、状态写入或修复轮次**。完整证据仍保存在 ledger、PDLC 产物和命令输出中。
 
-终态先使用 `scripts/delivery_report.py` 验证 Schema v10（无 worker 的旧状态可保守迁移；旧 worker 状态必须人工恢复）并计算结果、关键改动、交付轮、修复数和待处理数。新状态以 `handoff.open_issues: []` 保存逐项问题；报告取“未通过验收数”和“结构化问题数”的较大值，不解析自然语言猜数量。默认只有用户 summary；`blocked/decision` 自动附 diagnostic，其他状态仅在明确要求时传 `--detail`。文本 diagnostic 有界展示最多 5 个 worker lifecycle、活动/意外清场引用与 5 项 check command/result，并给出剩余计数；不得静默丢弃 JSON diagnostic 已保留的事实。
+终态先使用 `scripts/delivery_report.py` 验证 Schema v10（无 worker 的旧状态可保守迁移；旧 worker 状态必须人工恢复）并计算结果、关键改动、交付轮、修复数和待处理数。新状态以 `handoff.open_issues: []` 保存逐项问题；报告分别展示“未通过验收数”和“其他待处理数”，不解析自然语言猜数量，也不以取较大值隐藏不同问题。Git 工作区不可读时最多输出 `attention`。默认只有用户 summary；`blocked/decision` 自动附 diagnostic，其他状态仅在明确要求时传 `--detail`。文本 diagnostic 有界展示最多 5 个 worker lifecycle、活动/意外清场引用与 5 项 check command/result，并给出剩余计数；不得静默丢弃 JSON diagnostic 已保留的事实。
 
 ## 先选用户状态
 
@@ -34,15 +34,17 @@
 结果：<状态标题>：<一句结论>
 关键改动：<最多五项面向用户的变化；没有则省略>
 当前情况：<用户现在实际可使用的行为，或已完成到的边界>
-已验证：<业务场景，而非仅写“测试通过”>
+已验证范围：<仅从 fresh/pass acceptance 与 pass checks 派生的业务场景>
+说明（controller_attested）：<handoff.last_verification；仅作控制器说明，不是 verified 证据>
 过程：<交付轮数；修复的确认问题数；待处理项数>
 未验证/影响：<未覆盖范围及其实际影响（如有）>
 下一步：<无需行动 | 一个明确的推荐选择>
 ```
 
 - `converge`：使用“完成”说明行为变化；只在存在待决项时显示“下一步”。
+- “已验证范围”只能由结构化 `ledger.acceptance`（`fresh/pass`）与 `ledger.checks`（`pass`）确定性派生；不得把 `handoff.last_verification` 自由文本渲染为“已验证”。该文本保留时必须明确标为 `controller_attested` 说明。
 - 独立只读检查由 `converge-review` 按自己的结果格式输出，不复用交付完成文案。
-- 同一任务再次检查时只报告相对上一份回执的变化：新增发现、已解决项、状态变化；没有变化时一句说明即可。ledger 中记录已报告的问题指纹和待决项，避免重复叙述。
+- 同一任务再次检查时只报告相对上一份回执的变化：新增发现、已解决项、状态变化；没有变化时使用短回执明确“无新增变化”。`delivery_report.py` 返回 `next_report_history`，控制器必须用独立 revision 写入 ledger；不得与阶段推进、验收变更或计划确认混写。
 
 ## 需要用户决定时
 

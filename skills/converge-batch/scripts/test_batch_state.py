@@ -96,6 +96,12 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
         child["execution_control"]["review"]["rounds"] = []
         child["ledger"]["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
+        child["ledger"]["acceptance"][0]["evidence_receipts"] = [{
+            "schema_version": 1,
+            "command": f"python3 test_{batch_id}.py",
+            "exit_code": 0,
+            "source": child["source_receipt"],
+        }]
         state_root = Path(workspace).parent / "delegate-state"
         path = delegate_state_path(
             state_root, child["repo_id"], child["task_key"], child["run_id"]

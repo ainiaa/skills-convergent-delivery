@@ -35,12 +35,33 @@ CONTROL_RESOURCE_FILES = (
     "SKILL.md",
     "references/activation.md",
     "references/evaluation-scenarios.md",
+    "references/evaluation-catalog.json",
+    "references/review-orchestration.md",
     "references/state-schema.md",
     "references/task-routing.md",
     "references/reporting.md",
     "references/tdd-providers.md",
+    "skills/converge-plan/SKILL.md",
+    "skills/converge-plan/references/plan-contract.md",
+    "skills/converge-plan/scripts/plan_check.py",
+    "skills/converge-review/SKILL.md",
+    "skills/converge-review/references/review-contract.md",
+    "skills/converge-review/scripts/review_contract.py",
+    "skills/converge-batch/SKILL.md",
+    "skills/converge-batch/references/batch-contract.md",
+    "skills/converge-batch/references/runtime-adapters.md",
+    "skills/converge-batch/scripts/batch_next.py",
+    "skills/converge-batch/scripts/batch_state.py",
+    "skills/converge-eval/SKILL.md",
+    "skills/converge-eval/references/evaluation-contract.json",
+    "skills/converge-eval/scripts/eval_contract.py",
 )
-PROTOCOL_VERSION = 7
+TRUSTED_RUN_SCRIPTS = frozenset((
+    *(path for path in CONTROLLER_FILES if path.startswith("scripts/")),
+    "skills/converge-batch/scripts/batch_next.py",
+    "skills/converge-batch/scripts/batch_state.py",
+))
+PROTOCOL_VERSION = 8
 
 
 def provider_files(root):
@@ -197,7 +218,7 @@ def trusted_command(descriptor_path, script, arguments):
             *arguments,
         ]
     frozen = validate_snapshot(value)
-    if script not in CONTROLLER_FILES or not script.startswith("scripts/"):
+    if script not in TRUSTED_RUN_SCRIPTS:
         raise ValueError("controller snapshot script is not authorized")
     return [sys.executable, str(Path(frozen["root"]) / script), *arguments]
 

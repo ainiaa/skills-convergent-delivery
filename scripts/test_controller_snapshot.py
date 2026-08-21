@@ -17,6 +17,22 @@ SPEC.loader.exec_module(controller_snapshot)
 REQUIRED_CONTROL_REFERENCES = (
     "references/activation.md",
     "references/evaluation-scenarios.md",
+    "references/evaluation-catalog.json",
+    "references/review-orchestration.md",
+    "skills/converge-plan/SKILL.md",
+    "skills/converge-plan/references/plan-contract.md",
+    "skills/converge-plan/scripts/plan_check.py",
+    "skills/converge-review/SKILL.md",
+    "skills/converge-review/references/review-contract.md",
+    "skills/converge-review/scripts/review_contract.py",
+    "skills/converge-batch/SKILL.md",
+    "skills/converge-batch/references/batch-contract.md",
+    "skills/converge-batch/references/runtime-adapters.md",
+    "skills/converge-batch/scripts/batch_next.py",
+    "skills/converge-batch/scripts/batch_state.py",
+    "skills/converge-eval/SKILL.md",
+    "skills/converge-eval/references/evaluation-contract.json",
+    "skills/converge-eval/scripts/eval_contract.py",
 )
 
 
@@ -192,6 +208,44 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("controller snapshot blocked", result.stderr)
             self.assertNotIn("invalid choice", result.stderr)
             self.assertNotIn("must not import", result.stderr)
+
+    def test_trusted_runner_executes_only_the_frozen_batch_helpers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "run",
+                    "--descriptor",
+                    str(descriptor_path),
+                    "--script",
+                    "skills/converge-batch/scripts/batch_next.py",
+                    "--",
+                    "--help",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("--input", result.stdout)
+            with self.assertRaisesRegex(ValueError, "not authorized"):
+                controller_snapshot.trusted_command(
+                    descriptor_path,
+                    "skills/converge-review/scripts/review_contract.py",
+                    ["--help"],
+                )
+            with self.assertRaisesRegex(ValueError, "not authorized"):
+                controller_snapshot.trusted_command(
+                    descriptor_path, "skills/converge-batch/SKILL.md", []
+                )
 
     def test_legacy_snapshot_can_only_release_its_lease(self):
         with tempfile.TemporaryDirectory() as directory:

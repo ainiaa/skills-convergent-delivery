@@ -1,12 +1,14 @@
 {
-  "protocol": "converge-evaluation-v1",
+  "protocol": "converge-evaluation-v2",
   "required_inputs": [
     "acceptance",
     "touched_control_surfaces",
     "control_source",
     "candidate_source",
     "allowed_scope",
-    "critical_decisions"
+    "critical_decisions",
+    "sample_receipts",
+    "revisions"
   ],
   "differential": {
     "variants": [
@@ -24,6 +26,24 @@
     "critical_min_fresh_samples": 3,
     "fresh_context_per_sample": true,
     "single_pass_establishes_stability": false,
+    "receipt_schema": {
+      "schema_version": 1,
+      "required_fields": [
+        "scenario_id",
+        "scenario_class",
+        "control_source",
+        "candidate_source",
+        "judge_fingerprint",
+        "worker_ref",
+        "evidence_source",
+        "control_result",
+        "candidate_result",
+        "receipt_fingerprint"
+      ],
+      "immutable": "receipt_fingerprint is sha256 of the canonical receipt without itself",
+      "freshness": "critical decisions require at least three distinct worker_ref values for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
+      "coverage": "known acceptance and selected history scenarios absent from receipts become uncovered"
+    },
     "report_fields": [
       "sample_count",
       "pass_count",
@@ -46,6 +66,12 @@
   "revision": {
     "max_rule_revisions": 3,
     "stop_after_consecutive_no_improvement": 1,
+    "record_fields": [
+      "before_failing_samples",
+      "after_failing_samples",
+      "before_variance",
+      "after_variance"
+    ],
     "improvement_metrics": [
       "fewer_failing_samples",
       "lower_variance_without_acceptance_regression"

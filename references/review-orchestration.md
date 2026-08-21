@@ -15,4 +15,4 @@
 
 仅当计划包含多个任务或跨服务契约，并且全部任务结论均为新鲜 pass 后，发起一次 integration 初审。integration 只审查跨任务风险：接口组合、数据映射、共享状态、迁移/执行顺序和端到端路径；task-local finding 不计入 integration 结论。integration 有跨任务 defect 时使用同一固定 repair/re-review 预算，但不得重新开启 initial review。
 
-旧 Protocol v1 的 intent、blind 与 closure 请求保持可读，但不自动映射到新轴，也不能据此跳过 v2 门禁。
+旧 Protocol v2 结果必须先经确定性适配器转换；Protocol v1 的 intent、blind 与 closure 请求保持可读，但不自动映射到新轴，也不能据此跳过 v3 门禁。

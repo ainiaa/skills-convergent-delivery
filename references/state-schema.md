@@ -18,10 +18,10 @@
   "source_fingerprint": "<current Source Receipt fingerprint>",
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
-    "package_version": "0.17.0",
-    "protocol_version": 7,
+    "package_version": "0.19.0",
+    "protocol_version": 8,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.17.0", "protocol_version": 7, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.19.0", "protocol_version": 8, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -35,7 +35,7 @@
     "binding_fingerprint": "<sha256>"
   },
   "runtime_binding": null,
-  "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null},
+  "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null, "evidence_level": "controller_attested | host_observed"},
   "execution_control": {
     "routing": {"schema_version": 1, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile_fingerprint": "<sha256>"},
     "review": {"protocol_version": 3, "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "rounds": [{"source_fingerprint": "<source>", "requests": []}]}
@@ -50,7 +50,7 @@
 }
 ```
 
-`package_version` 只说明安装包版本。Snapshot closure 包含 `SKILL.md`、激活/状态/报告/TDD/压力场景 references、运行 helper 与创建时 registry 扫描发现的全部 Provider manifest。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。无 snapshot 的旧 v7 状态继续使用活动协议校验，不能伪造迁移。
+`package_version` 只说明安装包版本。Snapshot closure 包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper，以及创建时 registry 扫描发现的全部 Provider manifest。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径。旧快照只允许协议明示的精确清场兼容，不能伪造迁移。
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
@@ -58,7 +58,7 @@
 
 `source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass；高风险还要求 `mode=blind` 且 `independent=true`。
 
-`host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，再写回同一指纹；`text|legacy_unavailable` 不进入等待循环。
+`host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
 
 ## 2. Provider Binding
 
@@ -69,7 +69,7 @@
 - `binding_fingerprint` 是完整 binding 的 canonical JSON sha256，恢复时任一来源变化都会阻塞。
 - 兼容旧输出的 `engine` 可以由 binding 派生展示，但不能再写入正式状态。
 
-## 3. Worker、Runtime Binding Schema v1 与 Progress Receipt v1
+## 3. Worker、Runtime Binding Schema v2 与 Progress Receipt v1
 
 ```json
 {
@@ -89,6 +89,7 @@
     "milestone": "<current result>",
     "activity": "<latest objective activity>",
     "evidence": "<bounded evidence summary>",
+    "evidence_level": "controller_attested | host_observed",
     "next_action": "<one next action>",
     "observed_at": "<parent-stamped UTC time>"
   }
@@ -107,18 +108,19 @@
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "observed_revision": 4,
   "observed_at": "2026-08-21T00:00:00Z",
   "runtime_fingerprint": "<sha256>",
   "mode": "tree_query | restrict_dispatch",
+  "evidence_level": "host_observed | controller_attested",
   "registered_refs": ["<worker-ref>"],
   "active_refs": [],
   "unexpected_refs": []
 }
 ```
 
-第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成，`mode` 必须来自已冻结的 `tree_query` 或 `restrict_dispatch` 能力，且 `runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active；因此中断成功可以被准确落盘。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
+第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；该 Binding 是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`。之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；`tree_query` 结果标记 `host_observed`，只有强制叶子契约时的 `restrict_dispatch` 标记 `controller_attested`。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active；因此中断成功可以被准确落盘。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
 
 生成和展示：
 
@@ -137,12 +139,16 @@ python3 scripts/delivery_progress.py status < state.json
 
 ## 4. Ledger 与阶段
 
-`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。`execution_control` 是路由和审查的唯一真源，保存 frozen route、1–2 次画像评估、Review Protocol v2 单轴请求以及剩余 repair/re-review/integration 预算：
+`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。当前 Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v1，且其完整 Source Receipt v2 等于顶层 `source_receipt`。旧 Schema 只读兼容不能作为新完成态写入。`execution_control` 是路由和审查的唯一真源，保存 frozen route、1–2 次画像评估、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
 
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；
 - 当前 `acceptance` 及被替换事实的 `acceptance_history`；
 - 增量回执所需的 `report_history`。
+
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。
+
+交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 
 Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-review → verify-round-1（高风险）→ round-2-risk-review → verify-final`。PDLC workflow 只使用 `pdlc-run`，其细粒度阶段仍由 PDLC 自己保存。终态 complete 必须位于最终阶段并具有全部 fresh/pass 验收证据；blocked 必须提供 `blocked_code/reason`。
 

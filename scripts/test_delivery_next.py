@@ -4,32 +4,44 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_reference
-from delivery_next import upgrade_state, validate_execution_control, validate_provider_reference
+from delivery_next import (
+    upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
+)
+from evidence_contract import workspace_source
 from runtime_adapter import cleanup_receipt, negotiate
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
+ROOT = Path(__file__).resolve().parent.parent
+HEAD = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    capture_output=True, text=True,
+).stdout.strip()
+SOURCE = workspace_source(ROOT, HEAD)
 
 
 def state(**overrides):
     value = {
         "schema_version": 5,
         "run_id": "run-20260818-120000",
-        "workspace": "/workspace/service",
-        "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
+        "workspace": str(ROOT),
+        "baseline": {"commit": HEAD, "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
-        "source_fingerprint": "a" * 64,
+        "source_fingerprint": SOURCE["source_fingerprint"],
+        "source_receipt": SOURCE,
         "execution_control": {
             "routing": {
                 "schema_version": 1, "status": "frozen", "assessment_count": 1,
                 "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
             },
             "review": {
-                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
                 "integration_budget_remaining": 0, "requests": [],
             },
@@ -56,7 +68,11 @@ def state(**overrides):
                     "evidence": "targeted test",
                     "result": "pass",
                     "freshness": "fresh",
-                    "source_fingerprint": "a" * 64,
+                    "source_fingerprint": SOURCE["source_fingerprint"],
+                    "evidence_receipts": [{
+                        "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
+                        "source": SOURCE,
+                    }],
                 }
             ],
         },
@@ -79,6 +95,45 @@ def runtime_binding():
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_current_complete_state_requires_real_source_and_command_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+            (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True)
+            baseline = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            payload = upgrade_state(state())
+            payload.update(
+                schema_version=10, status="complete", current_stage="verify-final",
+                workspace=str(workspace), repo_id=str(workspace / ".git"),
+                baseline={"commit": baseline, "diff_fingerprint": "clean"},
+            )
+            receipt = workspace_source(workspace, baseline)
+            payload["source_fingerprint"] = receipt["source_fingerprint"]
+            payload["execution_control"]["review"]["rounds"] = []
+            payload["ledger"]["acceptance"][0]["source_fingerprint"] = receipt["source_fingerprint"]
+            payload.pop("source_receipt")
+            payload["ledger"]["acceptance"][0].pop("evidence_receipts")
+
+            with self.assertRaisesRegex(ValueError, "source_receipt"):
+                validate_state(payload, SimpleNamespace())
+
+            payload["source_receipt"] = receipt
+            with self.assertRaisesRegex(ValueError, "Evidence Receipt"):
+                validate_state(payload, SimpleNamespace())
+
+            payload["ledger"]["acceptance"][0]["evidence_receipts"] = [{
+                "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
+                "source": receipt,
+            }]
+            self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
     def test_v6_migration_rejects_an_unknown_frozen_controller(self):
         payload = state(
             schema_version=6,

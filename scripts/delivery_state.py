@@ -141,20 +141,48 @@ def validate_transition(previous, candidate):
     if previous.get("runtime_binding") is not None \
             and candidate.get("runtime_binding") != previous.get("runtime_binding"):
         raise ValueError("runtime_binding is immutable once workers are enabled")
-    legacy_sync = {"mode": "legacy_unavailable", "acknowledged_fingerprint": None}
-    old_sync = previous.get("host_sync", legacy_sync)
-    new_sync = candidate.get("host_sync", legacy_sync)
+    legacy_sync = {
+        "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
+        "evidence_level": "controller_attested",
+    }
+    old_sync = {**legacy_sync, **previous.get("host_sync", {})}
+    new_sync = {**legacy_sync, **candidate.get("host_sync", {})}
+    old_report = previous["ledger"].get("report_history")
+    new_report = candidate["ledger"].get("report_history")
+    report_changed = new_report != old_report
     if new_sync["mode"] != old_sync["mode"]:
         raise ValueError("host_sync.mode is immutable")
+    acknowledgement_changed = (
+        new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]
+    )
+    if acknowledgement_changed and new_sync["evidence_level"] != "host_observed":
+        raise ValueError("native plan acknowledgement must be host-observed")
+    if not acknowledgement_changed and new_sync["evidence_level"] != old_sync["evidence_level"]:
+        raise ValueError("host_sync evidence may only change with acknowledgement")
     if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"] \
             and new_sync["acknowledged_fingerprint"] != plan_projection_fingerprint(candidate):
         raise ValueError("host_sync acknowledgement must match the current projection")
+    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]:
+        for field in set(previous) | set(candidate):
+            if field not in {"revision", "host_sync"} \
+                    and candidate.get(field) != previous.get(field):
+                raise ValueError("host_sync acknowledgement must be an acknowledgement-only transition")
+    if report_changed:
+        for field in set(previous) | set(candidate):
+            if field not in {"revision", "ledger"} and candidate.get(field) != previous.get(field):
+                raise ValueError("report history must be a report-only transition")
+        expected_ledger = dict(previous["ledger"])
+        expected_ledger["report_history"] = new_report
+        if candidate["ledger"] != expected_ledger:
+            raise ValueError("report history must be a report-only transition")
     if previous["status"] in TERMINAL_STATUSES:
         if candidate["status"] != previous["status"]:
             raise ValueError("terminal status is immutable")
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
         expected["host_sync"] = candidate["host_sync"]
+        if report_changed:
+            expected["ledger"] = candidate["ledger"]
         if candidate != expected:
             raise ValueError("terminal state is immutable")
         return
@@ -284,7 +312,11 @@ def validate_transition(previous, candidate):
 def write(arguments):
     if arguments.input != "-":
         raise ValueError("write only accepts --input - from stdin")
-    candidate = upgrade_state(json.load(sys.stdin))
+    raw_candidate = json.load(sys.stdin)
+    # Every persisted completion is a new write, even when the caller submits a
+    # legacy payload. Read compatibility must not weaken the v10 completion gate.
+    arguments.strict_evidence = True
+    candidate = upgrade_state(raw_candidate)
     validate_candidate(candidate, arguments)
     managed_path = state_path(
         DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id

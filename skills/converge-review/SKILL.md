@@ -9,9 +9,9 @@ description: Perform an evidence-based read-only review of a software diff or im
 
 ## 输入
 
-开始前读取 [Review Protocol v2](references/review-contract.md)。至少需要：模式、审查轴、阶段、验收项、允许范围、基线和当前 `source_fingerprint`。没有足够材料时只报告缺口，不自行补设计。
+开始前读取 [Review Protocol v3](references/review-contract.md)。至少需要：模式、审查轴、阶段、验收项、允许范围、基线和当前 `source_fingerprint`。没有足够材料时只报告缺口，不自行补设计。
 
-- `intent`：可读取被冻结的需求和设计决策，检查实现是否符合意图。
+- `shared`：可读取被冻结的需求和设计决策，检查实现是否符合意图。
 - `blind`：只读取验收项、公共契约、当前 diff/源码和验证结果；不要接收实现者的思考过程或完整对话。
 - `spec`：只审需求符合性；`quality`：仅在 spec 通过后审代码质量；`{"axis": "integration"}`：全部任务通过后只审跨任务风险。
 
@@ -33,4 +33,4 @@ description: Perform an evidence-based read-only review of a software diff or im
 
 ## 输出
 
-用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v2 结果，不修复、不重复运行实现流程。旧 v1 `intent`、`blind`、`closure` 请求继续兼容读取且不推断新轴。
+用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。任何 v2/v3 公开结果先通过 `python3 scripts/review_contract.py normalize --input - --reviewer-ref <ref>` 生成内部记录，不得由模型手工改写后直接写入状态；v1 只保留读取兼容。

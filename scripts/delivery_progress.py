@@ -196,6 +196,9 @@ def apply_event(state, worker_ref, event, phase, milestone, activity, evidence, 
         "milestone": bounded_text(milestone, "milestone"),
         "activity": bounded_text(activity, "activity"),
         "evidence": bounded_text(evidence, "evidence"),
+        "evidence_level": (
+            "host_observed" if event == "heartbeat" else "controller_attested"
+        ),
         "next_action": bounded_text(next_action, "next_action"),
         "observed_at": now or utc_now(),
     }

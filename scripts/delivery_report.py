@@ -2,6 +2,7 @@
 """Render a deterministic user receipt from a validated Converge state."""
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -21,31 +22,61 @@ TITLES = {
 
 
 def build_report(state):
-    state = upgrade_state(state)
     validate_state(state, SimpleNamespace())
+    state = upgrade_state(state)
     acceptance = state["ledger"]["acceptance"]
     pending_acceptance = sum(
         item["result"] != "pass" or item["freshness"] != "fresh" for item in acceptance
     )
     open_issues = normalize_open_issues(state["handoff"]["open_issues"])
-    pending_items = max(pending_acceptance, len(open_issues))
+    open_issue_count = len(open_issues)
+    workspace_changes = workspace_change_summary(state)
+    pending_items = pending_acceptance + open_issue_count
+    verification_scope = {
+        "acceptance": [
+            {"criterion": item["criterion"], "evidence": item["evidence"]}
+            for item in acceptance
+            if item["result"] == "pass" and item["freshness"] == "fresh"
+        ],
+        "checks": [
+            {"stage": item["stage"], "command": item["command"]}
+            for item in state["ledger"]["checks"]
+            if item["result"] == "pass"
+        ],
+    }
+    verification_parts = []
+    if verification_scope["acceptance"]:
+        verification_parts.append(
+            "验收：" + "、".join(
+                item["criterion"] for item in verification_scope["acceptance"]
+            )
+        )
+    if verification_scope["checks"]:
+        verification_parts.append(
+            "检查：" + "、".join(item["command"] for item in verification_scope["checks"])
+        )
 
     if state["status"] == "blocked":
         outcome = "decision" if state.get("blocked_code") == "decision" else "blocked"
     elif state["status"] == "complete":
-        outcome = "attention" if pending_items else "ready"
+        outcome = "attention" if pending_items or workspace_changes["status"] != "available" else "ready"
     else:
         outcome = "attention"
 
-    return {
+    report = {
         "outcome": outcome,
         "title": TITLES[outcome],
         "goal": state["handoff"]["goal"],
-        "verification": state["handoff"]["last_verification"],
+        "verification": "；".join(verification_parts) or "无结构化验证证据",
+        "verification_scope": verification_scope,
+        "verification_note": state["handoff"]["last_verification"],
+        "verification_note_level": "controller_attested",
         "completed_rounds": state["ledger"]["completed_rounds"],
         "repaired_issues": len(state["ledger"]["repair_fingerprints"]),
         "key_changes": state["ledger"].get("key_changes", []),
         "pending_items": pending_items,
+        "pending_acceptance": pending_acceptance,
+        "open_issue_count": open_issue_count,
         "acceptance": [
             {
                 "criterion": item["criterion"],
@@ -57,8 +88,29 @@ def build_report(state):
         "reason": state.get("blocked_reason") or "；".join(open_issues),
         "open_issues": open_issues,
         "next_action": state["handoff"]["next_action"],
-        "workspace_changes": workspace_change_summary(state),
+        "workspace_changes": workspace_changes,
     }
+    identity = {
+        key: report[key]
+        for key in (
+            "outcome", "goal", "verification", "verification_scope", "verification_note",
+            "verification_note_level", "completed_rounds", "repaired_issues",
+            "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
+        )
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    previous = state["ledger"].get("report_history") or {}
+    report["unchanged"] = previous.get("summary_fingerprint") == fingerprint
+    report["next_report_history"] = {
+        "last_outcome": outcome,
+        "reported_fingerprints": sorted(set(
+            state["ledger"]["repair_fingerprints"] + open_issues
+        )),
+        "summary_fingerprint": fingerprint,
+    }
+    return report
 
 
 def build_diagnostic(state):
@@ -86,6 +138,15 @@ def build_diagnostic(state):
 
 
 def render_text(report, detail=False):
+    if report["unchanged"] and not detail:
+        return "\n".join([
+            f"结果：无新增变化：{report['title']}",
+            f"已验证范围：{report['verification']}",
+            f"说明（{report['verification_note_level']}）：{report['verification_note']}",
+            "待处理："
+            f"验收未通过 {report['pending_acceptance']} 项；"
+            f"其他待处理 {report['open_issue_count']} 项",
+        ])
     lines = [
         f"结果：{report['title']}：{report['goal']}",
     ]
@@ -93,11 +154,14 @@ def render_text(report, detail=False):
         lines.append(f"关键改动：{'；'.join(report['key_changes'])}")
     lines.append(render_workspace_change_summary(report["workspace_changes"]))
     lines.extend([
-        f"已验证：{report['verification']}",
+        f"已验证范围：{report['verification']}",
+        f"说明（{report['verification_note_level']}）：{report['verification_note']}",
         "过程："
         f"{report['completed_rounds']} 个交付轮；"
-        f"修复 {report['repaired_issues']} 个问题；"
-        f"待处理 {report['pending_items']} 项",
+        f"修复 {report['repaired_issues']} 个问题",
+        "待处理："
+        f"验收未通过 {report['pending_acceptance']} 项；"
+        f"其他待处理 {report['open_issue_count']} 项",
     ])
     if report["outcome"] != "ready" and report["reason"]:
         lines.append(f"未验证/影响：{report['reason']}")

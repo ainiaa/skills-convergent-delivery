@@ -32,25 +32,32 @@ def fingerprint(value):
 
 def bind(profile, mode, capabilities, reason):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "profile": profile,
         "mode": mode,
         "capabilities": capabilities,
         "reason": reason,
+        "evidence_level": "controller_attested",
     }
     return {**value, "binding_fingerprint": fingerprint(value)}
 
 
 def validate_binding(value):
-    if not isinstance(value, dict) or set(value) != {
+    fields_v1 = {
         "schema_version", "profile", "mode", "capabilities", "reason", "binding_fingerprint"
-    }:
+    }
+    fields_v2 = {*fields_v1, "evidence_level"}
+    if not isinstance(value, dict) or set(value) not in {frozenset(fields_v1), frozenset(fields_v2)}:
         raise ValueError("runtime binding fields are invalid")
-    if value["schema_version"] != 1:
-        raise ValueError("runtime binding schema_version must be 1")
+    if value["schema_version"] not in {1, 2} \
+            or (value["schema_version"] == 1) != (set(value) == fields_v1):
+        raise ValueError("runtime binding schema_version is invalid")
+    if value.get("evidence_level", "controller_attested") != "controller_attested":
+        raise ValueError("runtime binding must be controller-attested")
     expected = {
         key: value[key]
-        for key in ("schema_version", "profile", "mode", "capabilities", "reason")
+        for key in value
+        if key != "binding_fingerprint"
     }
     if value["binding_fingerprint"] != fingerprint(expected):
         raise ValueError("runtime binding fingerprint is invalid")
@@ -118,11 +125,14 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
             raise ValueError(f"{name} is invalid")
     mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "observed_revision": observed_revision,
         "observed_at": observed_at,
         "runtime_fingerprint": binding["binding_fingerprint"],
         "mode": mode,
+        "evidence_level": (
+            "host_observed" if mode == "tree_query" else "controller_attested"
+        ),
         "registered_refs": registered_refs,
         "active_refs": active_refs,
         "unexpected_refs": unexpected_refs,
