@@ -49,12 +49,12 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 无法确认 dispatch 是否成功时进入 blocked，不重派相同 Batch。
 - 只允许对查询/连接错误恢复一次；先将同一 Batch 的 `worker_ref` 和 `recovery_count=1` 持久化。测试、实现、环境或业务失败不得自动重跑整个 Batch。
 - 只有当前 Batch completed 后才能派发下一批；顺序计划不并发执行代码。
-- 自然语言回执不能替代宿主终态。receipt 通过但 worker 仍 Working 时继续查询/有界等待；只有 `worker_status=completed` 才能完成当前 Batch。
+- 自然语言回执不能替代宿主终态。receipt 通过但 worker 仍 Working 时继续查询/有界等待；只有 `worker_status=completed`，且绑定的 `delegate_state` 已通过 `$converge` complete/清场校验，才能完成当前 Batch。
 - 子任务进度由 `$converge` 的 Progress Receipt 提供；调度器只转述最新里程碑，长运行期间保证约 60 秒内有一次可见状态，不编造百分比或 ETA。
 
 ## 5. Receipt 与最终验收
 
-receipt 必须匹配 `batch_id` 和 `dispatch_id`，绑定 `commit_id`、`tree_hash`、`verified_tree_hash`、新鲜验收证据和 open issues。验证源码树与最终提交不一致时拒绝完成。
+receipt v2 必须匹配 `batch_id`、`dispatch_id` 和冻结的 `delegate_run_id`，绑定 `commit_id`、`tree_hash`、`verified_tree_hash`、完整子 Converge 终态及其 canonical fingerprint、新鲜验收证据和 open issues。验证源码树与最终提交不一致、子 run 身份不一致或子树未清场时拒绝完成。
 
 所有 Batch 完成后核对累计验收矩阵并运行计划规定的 `final_acceptance`。失败时阻塞并要求形成明确修复 Batch；调度器不直接修代码。只有所有 worker 宿主终态、所有 Batch receipt 通过且最终验收新鲜通过时计划才能 complete。
 

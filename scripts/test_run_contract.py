@@ -14,6 +14,7 @@ class RunContractTest(unittest.TestCase):
             ("query", {"worker_ref": "worker-1"}),
             ("verify", {"task_id": "T1"}),
             ("block", {}),
+            ("complete", {}),
         )
         for kind, details in invalid:
             with self.subTest(kind=kind), self.assertRaises(ValueError):
@@ -30,6 +31,10 @@ class RunContractTest(unittest.TestCase):
         self.assertEqual(
             {"action": "verify", "task_id": "T1", "phase": "verify-final"},
             delivery_action("verify-final", "T1"),
+        )
+        self.assertEqual(
+            {"action": "block", "task_id": "T1", "reason": "dependency unavailable"},
+            delivery_action("blocked", "T1", "dependency unavailable"),
         )
 
 

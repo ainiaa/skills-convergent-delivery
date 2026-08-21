@@ -32,7 +32,7 @@ NATIVE_STAGE_TRANSITIONS = {
     "verify-round-1": "round-2-risk-review",
     "round-2-risk-review": "verify-final",
 }
-TERMINAL_STATUSES = {"complete", "blocked"}
+TERMINAL_STATUSES = {"complete"}
 
 
 def state_path(root, repo, task_key, run_id):
@@ -113,6 +113,9 @@ def validate_transition(previous, candidate):
     for field in IMMUTABLE_FIELDS:
         if candidate[field] != previous[field]:
             raise ValueError(f"{field} is immutable")
+    if previous.get("runtime_binding") is not None \
+            and candidate.get("runtime_binding") != previous.get("runtime_binding"):
+        raise ValueError("runtime_binding is immutable once workers are enabled")
     if previous["status"] in TERMINAL_STATUSES:
         if candidate["status"] != previous["status"]:
             raise ValueError("terminal status is immutable")
@@ -121,6 +124,14 @@ def validate_transition(previous, candidate):
         if candidate != expected:
             raise ValueError("terminal state is immutable")
         return
+    blocked_cleanup = previous["status"] == "blocked"
+    if blocked_cleanup:
+        if candidate["status"] != "blocked":
+            raise ValueError("blocked status is immutable")
+        for field in set(previous) | set(candidate):
+            if field not in {"revision", "workers", "worker_tree_receipt"} \
+                    and candidate.get(field) != previous.get(field):
+                raise ValueError("blocked cleanup may only update worker lifecycle evidence")
     if candidate["status"] not in {"active", "complete", "blocked"}:
         raise ValueError("invalid status transition")
     if previous["requires_stability_round"] and not candidate["requires_stability_round"]:
@@ -130,6 +141,8 @@ def validate_transition(previous, candidate):
     candidate_workers = {worker["ref"]: worker for worker in candidate["workers"]}
     if not previous_workers.keys() <= candidate_workers.keys():
         raise ValueError("workers are append-only")
+    if blocked_cleanup and candidate_workers.keys() != previous_workers.keys():
+        raise ValueError("blocked cleanup cannot register workers")
     for ref, old_worker in previous_workers.items():
         new_worker = candidate_workers[ref]
         if any(new_worker[field] != old_worker[field] for field in (
@@ -142,6 +155,8 @@ def validate_transition(previous, candidate):
             "working", *WORKER_TERMINAL_STATUSES
         }:
             raise ValueError("invalid worker status transition")
+        if blocked_cleanup and new_worker["progress"] != old_worker["progress"]:
+            raise ValueError("blocked cleanup cannot rewrite worker progress")
         old_progress = old_worker["progress"]
         new_progress = new_worker["progress"]
         if old_progress is not None and new_progress is None:

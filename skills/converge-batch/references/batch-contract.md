@@ -48,18 +48,21 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 ## Dispatch
 
-`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须在同一 revision 记录可恢复的 `worker_ref`、固定 `worker_role=batch-executor`、匹配 state `run_id` 的 `worker_owner_run_id` 和 `worker_status=working`；每次实际恢复前把 `recovery_count` 单调写回，超过一次即阻塞。处于不确定 dispatch 状态时 blocked，不自动重派。
+`dispatch_id` 在进入 dispatching 前生成，一旦设置不可改变，也不能出现在另一个 Batch。只有 active 计划的 `current_batch` 可以从 pending 进入 dispatching；后续 Batch 必须保持 pending。进入 running 必须在同一 revision 记录可恢复的 `worker_ref`、固定 `worker_role=controller-delegate`、独立且不可变的 `delegate_run_id`、匹配 scheduler state `run_id` 的 `worker_owner_run_id` 和 `worker_status=working`；每次实际恢复前把 `recovery_count` 单调写回，超过一次即阻塞。处于不确定 dispatch 状态时 blocked，不自动重派。
 
 ## Receipt
 
 ```json
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "batch_id": "B1",
   "dispatch_id": "dispatch-B1",
   "commit_id": "commit",
   "tree_hash": "verified source tree",
   "verified_tree_hash": "same source tree",
+  "delegate_run_id": "delegate-B1",
+  "delegate_state": {"status": "complete", "...": "完整 Converge state"},
+  "delegate_state_fingerprint": "<canonical sha256>",
   "acceptance": [
     {"criterion": "criterion", "evidence": "command/output", "result": "pass", "freshness": "fresh"}
   ],
@@ -67,7 +70,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 }
 ```
 
-completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass，且没有 open issues。helper 还必须在计划 worktree 中解析 `commit_id`，确认它的真实 Git tree 同时等于 `tree_hash` 和 `verified_tree_hash`；首次接收 receipt 时该提交必须是当前 clean workspace 的 HEAD。receipt 只证明任务产物，不证明宿主 worker 已退出；Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
+completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass，且没有 open issues。helper 还必须在计划 worktree 中解析 `commit_id`，确认它的真实 Git tree 同时等于 `tree_hash` 和 `verified_tree_hash`；首次接收 receipt 时该提交必须是当前 clean workspace 的 HEAD。回执必须绑定完整、摘要匹配的子 Converge state；其 `run_id/task_key/workspace` 必须分别匹配冻结的 delegate run、Batch task 和计划 worktree，并通过单任务状态机的 complete/清场校验。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
 ## Final acceptance
 

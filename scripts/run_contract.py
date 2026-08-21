@@ -7,7 +7,7 @@ ACTIONS = {
     "query": ({"task_id", "worker_ref"}, {"task_id", "worker_ref"}),
     "verify": ({"task_id"}, {"task_id", "phase", "target"}),
     "block": ({"reason"}, {"reason", "task_id"}),
-    "complete": (set(), {"task_id"}),
+    "complete": ({"task_id"}, {"task_id"}),
 }
 
 
@@ -25,11 +25,11 @@ def action(kind, **details):
     return {"action": kind, **details}
 
 
-def delivery_action(stage, task_id):
+def delivery_action(stage, task_id, blocked_reason=None):
     if stage == "complete":
         return action("complete", task_id=task_id)
     if stage == "blocked":
-        return action("block", task_id=task_id, reason="state is blocked")
+        return action("block", task_id=task_id, reason=blocked_reason)
     if stage.startswith("verify"):
         return action("verify", task_id=task_id, phase=stage)
     return action("execute-inline", task_id=task_id, phase=stage)

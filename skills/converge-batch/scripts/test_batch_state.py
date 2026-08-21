@@ -2,9 +2,16 @@ import importlib.util
 import hashlib
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+ROOT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(ROOT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(ROOT_SCRIPTS))
+from delivery_next import upgrade_state
+from test_delivery_next import state as single_state
 
 
 MODULE_PATH = Path(__file__).with_name("batch_state.py")
@@ -45,9 +52,9 @@ def capsule(batch_id, plan_id="plan-1", task_id=None):
     }
 
 
-def receipt(batch_id, dispatch_id, commit_id, tree_hash):
-    return {
-        "protocol_version": 1,
+def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
+    value = {
+        "protocol_version": 2,
         "batch_id": batch_id,
         "dispatch_id": dispatch_id,
         "commit_id": commit_id,
@@ -63,6 +70,25 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash):
         ],
         "open_issues": [],
     }
+    if workspace is not None:
+        run_id = f"delegate-{batch_id}"
+        child = upgrade_state(single_state(
+            run_id=run_id,
+            writer_id=f"writer-{batch_id}",
+            repo_id=str(Path(workspace) / ".git"),
+            workspace=str(workspace),
+            task_key=batch_id.replace("B", "T"),
+            status="complete",
+            current_stage="verify-final",
+        ))
+        value.update(
+            delegate_run_id=run_id,
+            delegate_state=child,
+            delegate_state_fingerprint=hashlib.sha256(
+                json.dumps(child, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        )
+    return value
 
 
 def candidate(workspace, revision=0):
@@ -97,6 +123,7 @@ def candidate(workspace, revision=0):
                 "worker_role": None,
                 "worker_owner_run_id": None,
                 "worker_status": None,
+                "delegate_run_id": None,
                 "recovery_count": 0,
                 "receipt": None,
             },
@@ -110,6 +137,7 @@ def candidate(workspace, revision=0):
                 "worker_role": None,
                 "worker_owner_run_id": None,
                 "worker_status": None,
+                "delegate_run_id": None,
                 "recovery_count": 0,
                 "receipt": None,
             },
@@ -128,9 +156,10 @@ def lifecycle_candidate(workspace, revision=0):
 def register_worker(state, index, worker_ref):
     state["batches"][index].update(
         worker_ref=worker_ref,
-        worker_role="batch-executor",
+        worker_role="controller-delegate",
         worker_owner_run_id=state["run_id"],
         worker_status="working",
+        delegate_run_id=f"delegate-{state['batches'][index]['batch_id']}",
     )
 
 
@@ -183,6 +212,37 @@ class BatchStateTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "provider binding"):
                     batch_state.validate_state(value)
 
+    def test_completed_receipt_requires_a_terminal_converge_delegate_state(self):
+        value = candidate(self.workspace)
+        value["batches"][0].update(
+            status="validating-receipt", dispatch_id="dispatch-B1",
+            worker_ref="thread-1", worker_role="controller-delegate",
+            worker_owner_run_id=value["run_id"], worker_status="completed",
+            delegate_run_id="delegate-B1",
+        )
+        value["batches"][0]["receipt"] = receipt(
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash
+        )
+
+        with self.assertRaisesRegex(ValueError, "delegate"):
+            batch_state.validate_state(value)
+
+    def test_delegate_run_identity_is_unique_across_batches(self):
+        value = candidate(self.workspace)
+        value["batches"][0].update(
+            status="running", dispatch_id="dispatch-B1", worker_ref="thread-1",
+            worker_role="controller-delegate", worker_owner_run_id=value["run_id"],
+            worker_status="working", delegate_run_id="shared-run",
+        )
+        value["batches"][1].update(
+            status="running", dispatch_id="dispatch-B2", worker_ref="thread-2",
+            worker_role="controller-delegate", worker_owner_run_id=value["run_id"],
+            worker_status="working", delegate_run_id="shared-run",
+        )
+
+        with self.assertRaisesRegex(ValueError, "unique child run"):
+            batch_state.validate_state(value)
+
     def test_init_and_legal_batch_lifecycle(self):
         state = candidate(self.workspace)
         path = self.write(state, -1)
@@ -200,7 +260,7 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 3
         state["batches"][0]["status"] = "validating-receipt"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "dispatch-B1", self.commit_id, self.tree_hash
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
         )
         self.write(state, 2)
 
@@ -221,7 +281,7 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 7
         state["batches"][1]["status"] = "validating-receipt"
         state["batches"][1]["receipt"] = receipt(
-            "B2", "dispatch-B2", self.commit_id, self.tree_hash
+            "B2", "dispatch-B2", self.commit_id, self.tree_hash, self.workspace
         )
         self.write(state, 6)
         state["revision"] = 8
@@ -252,9 +312,10 @@ class BatchStateTest(unittest.TestCase):
             self.write(state, 1)
 
         state["batches"][0].update(
-            worker_role="batch-executor",
+            worker_role="controller-delegate",
             worker_owner_run_id="another-run",
             worker_status="working",
+            delegate_run_id="delegate-B1",
         )
 
         with self.assertRaisesRegex(ValueError, "current run"):
@@ -274,15 +335,16 @@ class BatchStateTest(unittest.TestCase):
         state["batches"][0].update(
             status="running",
             worker_ref="thread-1",
-            worker_role="batch-executor",
+            worker_role="controller-delegate",
             worker_owner_run_id=state["run_id"],
             worker_status="working",
+            delegate_run_id="delegate-B1",
         )
         self.write(state, 1)
         state["revision"] = 3
         state["batches"][0]["status"] = "validating-receipt"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "dispatch-B1", self.commit_id, self.tree_hash
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
         )
         self.write(state, 2)
         state["revision"] = 4
@@ -325,7 +387,7 @@ class BatchStateTest(unittest.TestCase):
                     status="running", dispatch_id="dispatch-B1", worker_ref="thread-1"
                 )
                 for batch in legacy["batches"]:
-                    for field in ("worker_role", "worker_owner_run_id", "worker_status"):
+                    for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
                         batch.pop(field)
                     if schema_version == 1:
                         batch.pop("task_id")
@@ -351,7 +413,7 @@ class BatchStateTest(unittest.TestCase):
                     if status == "dispatching":
                         legacy["batches"][0]["dispatch_id"] = "dispatch-B1"
                     for batch in legacy["batches"]:
-                        for field in ("worker_role", "worker_owner_run_id", "worker_status"):
+                        for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
                             batch.pop(field)
                         if schema_version == 1:
                             batch.pop("task_id")
@@ -387,7 +449,7 @@ class BatchStateTest(unittest.TestCase):
         register_worker(state, 0, "thread-1")
         state["batches"][0]["worker_status"] = "completed"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "dispatch-B1", self.commit_id, self.tree_hash
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
         )
         state["current_batch"] = "B2"
         with self.assertRaisesRegex(ValueError, "invalid batch transition"):
@@ -413,7 +475,7 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 3
         state["batches"][0]["status"] = "validating-receipt"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "wrong-dispatch", self.commit_id, self.tree_hash
+            "B1", "wrong-dispatch", self.commit_id, self.tree_hash, self.workspace
         )
         with self.assertRaisesRegex(ValueError, "receipt dispatch_id does not match"):
             self.write(state, 2)
@@ -484,7 +546,8 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 3
         state["batches"][0]["status"] = "validating-receipt"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "dispatch-B1", "definitely-not-a-git-commit", "self-asserted-tree"
+            "B1", "dispatch-B1", "definitely-not-a-git-commit", "self-asserted-tree",
+            self.workspace,
         )
         with self.assertRaisesRegex(ValueError, "Git commit"):
             self.write(state, 2)
@@ -549,6 +612,7 @@ class BatchStateTest(unittest.TestCase):
             batch.pop("worker_role")
             batch.pop("worker_owner_run_id")
             batch.pop("worker_status")
+            batch.pop("delegate_run_id")
             for field in ("planned_task", "plan_id", "task_id"):
                 batch["capsule"].pop(field)
         batch_state.validate_state(legacy)
@@ -606,6 +670,7 @@ class BatchStateTest(unittest.TestCase):
             batch.pop("worker_role")
             batch.pop("worker_owner_run_id")
             batch.pop("worker_status")
+            batch.pop("delegate_run_id")
         batch_state.validate_state(legacy)
         path = batch_state.state_path(
             self.root, legacy["repo_id"], legacy["plan"]["plan_id"], legacy["run_id"]

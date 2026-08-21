@@ -39,7 +39,7 @@ CONTROL_RESOURCE_FILES = (
     "references/reporting.md",
     "references/tdd-providers.md",
 )
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 
 def provider_files(root):
@@ -134,7 +134,7 @@ def remove_tree(path):
     shutil.rmtree(path)
 
 
-def validate_snapshot(value):
+def validate_snapshot(value, *, allow_legacy_release=False):
     if not isinstance(value, dict) or set(value) != {
         "root", "control_root", "source_root", "package_version", "protocol_version",
         "protocol_fingerprint", "files"
@@ -144,9 +144,16 @@ def validate_snapshot(value):
     control_root = Path(value["control_root"])
     source_root = Path(value["source_root"])
     files = value["files"]
-    if not all(path.is_absolute() for path in (root, control_root, source_root)) or not isinstance(
-        files, list
-    ) or files != list(snapshot_files(root)):
+    expected_files = list(snapshot_files(root))
+    valid_files = files == expected_files or (
+        allow_legacy_release
+        and isinstance(files, list)
+        and len(files) == len(set(files))
+        and all(isinstance(relative, str) and relative for relative in files)
+        and {"scripts/controller_snapshot.py", "scripts/delivery_lease.py"} <= set(files)
+    )
+    if not all(path.is_absolute() for path in (root, control_root, source_root)) \
+            or not valid_files:
         raise ValueError("controller snapshot descriptor is invalid")
     if root.parent != control_root or root.name != value["protocol_fingerprint"]:
         raise ValueError("controller snapshot provenance is invalid")
@@ -159,7 +166,7 @@ def validate_snapshot(value):
     writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
     if root.stat().st_mode & writable:
         raise ValueError("controller snapshot root is writable")
-    if value["protocol_version"] != PROTOCOL_VERSION:
+    if value["protocol_version"] != PROTOCOL_VERSION and not allow_legacy_release:
         raise ValueError("controller snapshot protocol changed")
     if aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
         raise ValueError("controller snapshot changed")
@@ -179,7 +186,8 @@ def trusted_command(descriptor_path, script, arguments):
     snapshot = payload.get("controller", {}).get("snapshot") if isinstance(
         payload, dict
     ) else None
-    frozen = validate_snapshot(snapshot or payload)
+    legacy_release = script == "scripts/delivery_lease.py" and arguments[:1] == ["release"]
+    frozen = validate_snapshot(snapshot or payload, allow_legacy_release=legacy_release)
     if script not in CONTROLLER_FILES or not script.startswith("scripts/"):
         raise ValueError("controller snapshot script is not authorized")
     return [sys.executable, str(Path(frozen["root"]) / script), *arguments]

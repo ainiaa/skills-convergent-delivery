@@ -8,6 +8,7 @@ from pathlib import Path
 
 from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_reference
 from delivery_next import upgrade_state, validate_provider_reference
+from runtime_adapter import cleanup_receipt, negotiate
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -55,6 +56,13 @@ def state(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def runtime_binding():
+    return negotiate(
+        "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                  "tree_query": True, "restrict_dispatch": False}
+    )
 
 
 class DeliveryNextTest(unittest.TestCase):
@@ -324,19 +332,17 @@ class DeliveryNextTest(unittest.TestCase):
         }
         payload = upgrade_state(state(
             status="complete", current_stage="verify-final", workers=[worker], revision=3,
+            runtime_binding=runtime_binding(),
         ))
 
         missing = self.current(payload, revision=3)
         self.assertNotEqual(0, missing.returncode)
         self.assertIn("tree receipt", missing.stderr)
 
-        payload["worker_tree_receipt"] = {
-            "observed_revision": 3,
-            "mode": "tree_query",
-            "registered_refs": ["worker-1"],
-            "active_refs": [],
-            "unexpected_refs": ["nested-worker"],
-        }
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, ["worker-1"], [], ["nested-worker"],
+            "2026-08-21T00:00:00Z",
+        )
         unexpected = self.current(payload, revision=3)
         self.assertNotEqual(0, unexpected.returncode)
         self.assertIn("unexpected", unexpected.stderr)
@@ -360,19 +366,17 @@ class DeliveryNextTest(unittest.TestCase):
             blocked_reason="manual cleanup required",
             workers=[worker],
             revision=4,
+            runtime_binding=runtime_binding(),
         ))
 
         missing = self.current(payload, revision=4)
         self.assertNotEqual(0, missing.returncode)
         self.assertIn("cleanup receipt", missing.stderr)
 
-        payload["worker_tree_receipt"] = {
-            "observed_revision": 4,
-            "mode": "tree_query",
-            "registered_refs": ["worker-1"],
-            "active_refs": ["worker-1"],
-            "unexpected_refs": [],
-        }
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 4, ["worker-1"], ["worker-1"], [],
+            "2026-08-21T00:00:00Z",
+        )
         recorded = self.current(payload, revision=4)
         self.assertEqual(0, recorded.returncode, recorded.stderr)
         self.assertEqual("blocked\n", recorded.stdout)

@@ -25,6 +25,7 @@ from controller_snapshot import validate_snapshot
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
+from runtime_adapter import validate_binding as validate_runtime_binding
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -99,6 +100,7 @@ def upgrade_state(value):
         if state["schema_version"] == 7:
             state["schema_version"] = 8
         state.setdefault("worker_tree_receipt", None)
+        state.setdefault("runtime_binding", None)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -130,6 +132,7 @@ def upgrade_state(value):
         provider_binding=legacy_provider_binding(engine),
         workers=state.get("workers", []),
         worker_tree_receipt=None,
+        runtime_binding=state.get("runtime_binding"),
     )
     for worker in state["workers"]:
         worker.setdefault("progress", None)
@@ -360,6 +363,9 @@ def validate_state(state, arguments):
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
     workflow_provider = validate_provider_binding(state.get("provider_binding"))
+    runtime_binding = state.get("runtime_binding")
+    if runtime_binding is not None:
+        validate_runtime_binding(runtime_binding)
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")
@@ -410,9 +416,12 @@ def validate_state(state, arguments):
             for field in ("milestone", "activity", "evidence", "next_action", "observed_at"):
                 require_string(progress.get(field), f"workers[].progress.{field}")
     tree_receipt = state.get("worker_tree_receipt")
+    if workers and runtime_binding is None:
+        raise ValueError("workers require a frozen runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
-            "observed_revision", "mode", "registered_refs", "active_refs", "unexpected_refs",
+            "observed_revision", "observed_at", "runtime_fingerprint", "mode",
+            "registered_refs", "active_refs", "unexpected_refs",
         }:
             raise ValueError("worker tree receipt fields are invalid")
         observed_revision = tree_receipt["observed_revision"]
@@ -425,6 +434,15 @@ def validate_state(state, arguments):
             raise ValueError("worker tree receipt observed_revision is invalid")
         if tree_receipt["mode"] not in {"tree_query", "restrict_dispatch"}:
             raise ValueError("worker tree receipt mode is invalid")
+        require_string(tree_receipt.get("observed_at"), "worker tree receipt observed_at")
+        if runtime_binding is None or tree_receipt["runtime_fingerprint"] != runtime_binding["binding_fingerprint"]:
+            raise ValueError("worker tree receipt runtime fingerprint is invalid")
+        expected_mode = (
+            "tree_query" if "tree_query" in runtime_binding["capabilities"]
+            else "restrict_dispatch"
+        )
+        if tree_receipt["mode"] != expected_mode:
+            raise ValueError("worker tree receipt mode does not match the frozen runtime")
         for field in ("registered_refs", "active_refs", "unexpected_refs"):
             refs = tree_receipt[field]
             if not isinstance(refs, list) or any(
@@ -606,7 +624,7 @@ def main():
         state = upgrade_state(json.loads(Path(arguments.state).read_text(encoding="utf-8")))
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
-        result = delivery_action(next_stage, state["task_key"])
+        result = delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

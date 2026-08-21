@@ -12,6 +12,8 @@ SPEC.loader.exec_module(batch_next)
 def state(batch_status, worker_ref=None, worker_status=None):
     return {
         "status": "active",
+        "blocked_reason": None,
+        "plan": {"plan_id": "plan-1"},
         "current_batch": "B1",
         "batches": [
             {
@@ -50,8 +52,12 @@ class BatchNextTest(unittest.TestCase):
         for status in ("blocked", "complete"):
             value = state("pending")
             value["status"] = status
-            expected = "block" if status == "blocked" else "complete"
-            self.assertEqual(expected, batch_next.next_action(value)["action"])
+            value["blocked_reason"] = "worker thread-1 still active" if status == "blocked" else None
+            result = batch_next.next_action(value)
+            self.assertEqual("block" if status == "blocked" else "complete", result["action"])
+            self.assertEqual("plan-1", result["task_id"])
+            if status == "blocked":
+                self.assertEqual("worker thread-1 still active", result["reason"])
 
 
 if __name__ == "__main__":

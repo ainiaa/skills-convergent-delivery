@@ -9,6 +9,8 @@ from pathlib import Path
 
 from delivery_engine import legacy_pdlc_fingerprint
 from delivery_progress import apply_event
+from delivery_next import upgrade_state
+from runtime_adapter import cleanup_receipt, negotiate
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -57,6 +59,12 @@ def state(revision=0, writer_id="writer-1"):
 
 
 class DeliveryStateTest(unittest.TestCase):
+    def runtime_binding(self):
+        return negotiate(
+            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                      "tree_query": True, "restrict_dispatch": False}
+        )
+
     def test_shared_state_path_is_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
             state_home = Path(directory) / "home"
@@ -269,6 +277,49 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("worker", result.stderr.lower())
 
+    def test_blocked_state_allows_only_host_cleanup_to_finish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = upgrade_state(state())
+            initial.update(
+                status="blocked", blocked_code="environment",
+                blocked_reason="worker cleanup required", runtime_binding=self.runtime_binding(),
+                workers=[{
+                    "ref": "worker-1", "parent_ref": None, "task_id": "task-payment",
+                    "depth": 1, "may_dispatch": False, "role": "reviewer",
+                    "owner_run_id": "run-1", "status": "working", "progress": None,
+                }],
+            )
+            initial["worker_tree_receipt"] = cleanup_receipt(
+                initial["runtime_binding"], 0, ["worker-1"], ["worker-1"], [],
+                "2026-08-21T00:00:00Z",
+            )
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+
+            cleaned = json.loads(json.dumps(initial))
+            cleaned["revision"] = 1
+            cleaned["workers"][0]["status"] = "interrupted"
+            cleaned["worker_tree_receipt"] = cleanup_receipt(
+                cleaned["runtime_binding"], 1, ["worker-1"], [], [],
+                "2026-08-21T00:01:00Z",
+            )
+            result = self.write(root, state_home, cleaned, 0)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+
+            rewritten = json.loads(json.dumps(cleaned))
+            rewritten["revision"] = 2
+            rewritten["handoff"]["goal"] = "silently changed"
+            rewritten["worker_tree_receipt"] = cleanup_receipt(
+                rewritten["runtime_binding"], 2, ["worker-1"], [], [],
+                "2026-08-21T00:02:00Z",
+            )
+            rejected = self.write(root, state_home, rewritten, 1)
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("blocked cleanup", rejected.stderr)
+
     def test_controller_drift_is_rejected_after_it_is_frozen(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -311,6 +362,7 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
             registered = json.loads(state_path.read_text(encoding="utf-8"))
             registered["revision"] = 1
+            registered["runtime_binding"] = self.runtime_binding()
             registered["workers"] = [{
                 "ref": "worker-1",
                 "role": "implementation",

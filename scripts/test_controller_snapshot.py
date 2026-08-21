@@ -193,6 +193,24 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertNotIn("invalid choice", result.stderr)
             self.assertNotIn("must not import", result.stderr)
 
+    def test_legacy_snapshot_can_only_release_its_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            descriptor["protocol_version"] -= 1
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            command = controller_snapshot.trusted_command(
+                descriptor_path, "scripts/delivery_lease.py", ["release"]
+            )
+            self.assertTrue(command[1].endswith("scripts/delivery_lease.py"))
+            with self.assertRaisesRegex(ValueError, "protocol changed"):
+                controller_snapshot.trusted_command(
+                    descriptor_path, "scripts/delivery_next.py", []
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

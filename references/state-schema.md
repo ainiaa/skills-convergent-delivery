@@ -17,9 +17,9 @@
   "scope_fingerprint": "<hash>",
   "controller": {
     "package_version": "0.12.1",
-    "protocol_version": 4,
+    "protocol_version": 5,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.14.0", "protocol_version": 4, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.15.0", "protocol_version": 5, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -32,6 +32,7 @@
     },
     "binding_fingerprint": "<sha256>"
   },
+  "runtime_binding": null,
   "current_stage": "scope",
   "requires_stability_round": false,
   "status": "active | complete | blocked",
@@ -46,7 +47,7 @@
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
-旧 v5/v6 状态第一次读取时只允许迁移为 v8：旧 `engine` 转成等价 Provider Binding，旧 worker 增加叶子身份和 `progress=null`，并增加空的树回执。v7 只添加 `worker_tree_receipt` 并升为 v8；旧 controller 协议不兼容时明确阻塞并重新开始，不能伪造升级。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+旧 v5/v6 状态第一次读取时只允许迁移为 v8：旧 `engine` 转成等价 Provider Binding，旧 worker 增加叶子身份和 `progress=null`，并增加空的 Runtime Binding 与树回执。v7 只添加运行时字段并升为 v8；旧 controller 协议不兼容时明确阻塞并重新开始，不能伪造升级。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
 ## 2. Provider Binding
 
@@ -96,6 +97,8 @@
 ```json
 {
   "observed_revision": 4,
+  "observed_at": "2026-08-21T00:00:00Z",
+  "runtime_fingerprint": "<sha256>",
   "mode": "tree_query | restrict_dispatch",
   "registered_refs": ["<worker-ref>"],
   "active_refs": [],
@@ -103,7 +106,7 @@
 }
 ```
 
-`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
+第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成，`mode` 必须来自已冻结的 `tree_query` 或 `restrict_dispatch` 能力，且 `runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active；因此中断成功可以被准确落盘。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
 
 生成和展示：
 

@@ -17,25 +17,30 @@ from run_contract import action, legacy_action
 def next_action(state):
     status = state["status"]
     if status in {"blocked", "complete"}:
-        return action("block", reason="batch plan is blocked") if status == "blocked" else action("complete")
+        task_id = state["plan"]["plan_id"]
+        return (
+            action("block", task_id=task_id, reason=state["blocked_reason"])
+            if status == "blocked" else action("complete", task_id=task_id)
+        )
 
     current = state["current_batch"]
     if current is None:
-        return action("complete") if status == "complete" else action("block", reason="active plan has no current batch")
+        return action("block", task_id=state["plan"]["plan_id"], reason="active plan has no current batch")
     batch = next(item for item in state["batches"] if item["batch_id"] == current)
+    task_id = batch.get("task_id", batch["batch_id"])
     batch_status = batch["status"]
     if batch_status == "pending":
-        return action("dispatch", task_id=batch.get("task_id", batch["batch_id"])) if status == "active" else action("block", reason="plan is not active")
+        return action("dispatch", task_id=task_id) if status == "active" else action("block", task_id=task_id, reason="plan is not active")
     if batch_status == "dispatching":
-        return action("block", reason="dispatch outcome is uncertain")
+        return action("block", task_id=task_id, reason="dispatch outcome is uncertain")
     if batch_status == "running":
-        return action("query", task_id=batch.get("task_id", batch["batch_id"]), worker_ref=batch["worker_ref"])
+        return action("query", task_id=task_id, worker_ref=batch["worker_ref"])
     if batch_status == "validating-receipt":
         worker_status = batch.get("worker_status")
         if worker_status == "working":
-            return action("query", task_id=batch.get("task_id", batch["batch_id"]), worker_ref=batch["worker_ref"])
-        return action("verify", task_id=batch.get("task_id", batch["batch_id"]), target="receipt") if worker_status == "completed" else action("block", reason="worker did not complete")
-    return action("block", reason="batch state has no safe next action")
+            return action("query", task_id=task_id, worker_ref=batch["worker_ref"])
+        return action("verify", task_id=task_id, target="receipt") if worker_status == "completed" else action("block", task_id=task_id, reason="worker did not complete")
+    return action("block", task_id=task_id, reason="batch state has no safe next action")
 
 
 def main():

@@ -20,7 +20,7 @@ Batch scheduler 派发的是新的 `controller-delegate` run，而不是单任�
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。完成前把完整树查询或强制叶子结果写入同 revision 的 `worker_tree_receipt`；发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。宿主支持 worker 工具白名单时直接移除派发能力。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。第一次登记 worker 时同时冻结 Runtime Binding；清场回执必须由适配器按该 Binding 生成，不能由控制器自由选择能力模式。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。完成前把完整树查询或强制叶子结果写入同 revision 的 `worker_tree_receipt`；发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。宿主支持 worker 工具白名单时直接移除派发能力。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成 heartbeat，并约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 
@@ -68,5 +68,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 
 正常完成、异常、用户中断、`no_progress`、验证失败和其他返回路径都执行等价 `finally`：逐项查询当前 run registry，只以宿主 query/wait 的结果更新状态。收到结果但宿主仍显示 Working 时继续有界等待；确认无活动后才可按 watchdog 中断，并再次查询到 `interrupted`。本轮存在 active worker 时不得宣称完成；无法查询或中断时返回 blocked，列出需 manual cleanup 的精确 `worker_ref`。
+
+若先进入 blocked 才完成宿主中断，状态保持 blocked，但允许后续 revision 仅把既有 worker 更新为宿主终态并刷新清场回执；其他任务事实全部冻结。这样清场结果可恢复、可审计，也不会把失败运行重新伪装为完成。
 
 Skill 只能调用宿主实际暴露的 list/query/wait/interrupt。没有 `worker_ref` 或当前 API 不可见的历史孤儿不属于本轮 registry，Skill 不能发现或清理；只能如实报告并建议用户通过宿主 UI/支持渠道处理。

@@ -19,6 +19,39 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertEqual("automatic", result["mode"])
         self.assertEqual(["dispatch", "query", "wait", "tree_query"], result["capabilities"])
         self.assertNotIn("interrupt", result["capabilities"])
+        self.assertEqual(64, len(result["binding_fingerprint"]))
+
+    def test_cleanup_receipt_is_derived_from_the_frozen_runtime_binding(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                      "tree_query": True, "restrict_dispatch": False}
+        )
+
+        receipt = runtime_adapter.cleanup_receipt(
+            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
+        )
+
+        self.assertEqual("tree_query", receipt["mode"])
+        self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
+        self.assertEqual(3, receipt["observed_revision"])
+
+    def test_cleanup_receipt_rejects_a_forged_runtime_binding(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+        binding["capabilities"] = ["dispatch", "query", "restrict_dispatch"]
+
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            runtime_adapter.cleanup_receipt(
+                binding, 1, [], [], [], "2026-08-21T00:00:00Z"
+            )
+
+    def test_single_context_cannot_forge_automatic_worker_control(self):
+        binding = runtime_adapter.bind(
+            "single-context", "automatic", ["dispatch", "query", "tree_query"], "forged"
+        )
+        with self.assertRaisesRegex(ValueError, "single-context"):
+            runtime_adapter.validate_binding(binding)
 
     def test_claude_without_stable_query_downgrades_to_manual(self):
         result = runtime_adapter.negotiate(

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from delivery_next import upgrade_state
+from runtime_adapter import cleanup_receipt, negotiate
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -154,13 +155,13 @@ class DeliveryReportTest(unittest.TestCase):
             "status": "completed",
             "progress": None,
         }]
-        payload["worker_tree_receipt"] = {
-            "observed_revision": 3,
-            "mode": "tree_query",
-            "registered_refs": ["worker-1"],
-            "active_refs": [],
-            "unexpected_refs": [],
-        }
+        payload["runtime_binding"] = negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, ["worker-1"], [], [],
+            "2026-08-21T00:00:00Z",
+        )
 
         result = self.run_report(payload, "text", detail=True)
 

@@ -12,6 +12,13 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+
+
+ROOT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(ROOT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(ROOT_SCRIPTS))
+from delivery_next import validate_state as validate_delegate_state
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -248,14 +255,49 @@ def git_output(workspace, *arguments):
     return result.stdout.strip()
 
 
-def validate_receipt(receipt, batch, workspace):
+def validate_receipt(receipt, batch, workspace, repo_id):
     receipt = require_mapping(receipt, f"receipt {batch['batch_id']}")
-    if receipt.get("protocol_version") != 1:
-        raise ValueError("receipt protocol_version must be 1")
+    if receipt.get("protocol_version") != 2:
+        raise ValueError("receipt protocol_version must be 2")
     if receipt.get("batch_id") != batch["batch_id"]:
         raise ValueError("receipt batch_id does not match")
     if receipt.get("dispatch_id") != batch["dispatch_id"]:
         raise ValueError("receipt dispatch_id does not match")
+    if receipt.get("delegate_run_id") != batch.get("delegate_run_id"):
+        raise ValueError("receipt delegate_run_id does not match")
+    delegate_state = require_mapping(receipt.get("delegate_state"), "receipt delegate state")
+    delegate_fingerprint = require_string(
+        receipt.get("delegate_state_fingerprint"), "receipt.delegate_state_fingerprint"
+    )
+    actual_fingerprint = digest(
+        json.dumps(delegate_state, sort_keys=True, separators=(",", ":"))
+    )
+    if delegate_fingerprint != actual_fingerprint:
+        raise ValueError("receipt delegate state fingerprint is invalid")
+    if delegate_state.get("run_id") != batch.get("delegate_run_id"):
+        raise ValueError("receipt delegate state run_id does not match")
+    if delegate_state.get("task_key") != batch.get("task_id"):
+        raise ValueError("receipt delegate state task_id does not match")
+    if delegate_state.get("workspace") != workspace:
+        raise ValueError("receipt delegate state workspace does not match")
+    if delegate_state.get("repo_id") != repo_id:
+        raise ValueError("receipt delegate state repo_id does not match")
+    if delegate_state.get("baseline", {}).get("commit") != batch["capsule"]["baseline"]:
+        raise ValueError("receipt delegate state baseline does not match")
+    delegate_binding = delegate_state.get("provider_binding", {}).get("binding", {})
+    capsule_binding = batch["capsule"]["provider_binding"]
+    delegate_workflow = delegate_binding.get("workflow_provider", {}).get("id")
+    delegate_stages = {
+        stage: reference.get("id")
+        for stage, reference in delegate_binding.get("stage_providers", {}).items()
+    }
+    if (
+        delegate_workflow != capsule_binding["workflow_provider"]
+        or delegate_stages != capsule_binding["stage_providers"]
+    ):
+        raise ValueError("receipt delegate state provider binding does not match")
+    if validate_delegate_state(delegate_state, SimpleNamespace()) != "complete":
+        raise ValueError("receipt delegate state is not complete")
     commit_id = require_string(receipt.get("commit_id"), "receipt.commit_id")
     commit_id = git_output(workspace, "rev-parse", "--verify", f"{commit_id}^{{commit}}")
     commit_tree = git_output(workspace, "rev-parse", f"{commit_id}^{{tree}}")
@@ -307,6 +349,7 @@ def validate_state(state):
     seen_ids = set()
     seen_tasks = set()
     seen_dispatches = set()
+    seen_delegate_runs = set()
     for index, batch in enumerate(batches):
         batch = require_mapping(batch, f"batches[{index}]")
         batch_id = require_string(batch.get("batch_id"), f"batches[{index}].batch_id")
@@ -333,10 +376,11 @@ def validate_state(state):
         worker_role = batch.get("worker_role")
         worker_owner_run_id = batch.get("worker_owner_run_id")
         worker_status = batch.get("worker_status")
+        delegate_run_id = batch.get("delegate_run_id")
         receipt = batch.get("receipt")
         if schema_version == 3 and batch_status in {"pending", "dispatching"} and any(
             value is not None
-            for value in (worker_ref, worker_role, worker_owner_run_id, worker_status)
+            for value in (worker_ref, worker_role, worker_owner_run_id, worker_status, delegate_run_id)
         ):
             raise ValueError("worker lifecycle is only allowed from running")
         if (
@@ -358,20 +402,26 @@ def validate_state(state):
             require_string(worker_ref, "worker_ref")
         if schema_version == 3:
             if worker_ref is None:
-                if any(value is not None for value in (worker_role, worker_owner_run_id, worker_status)):
+                if any(value is not None for value in (
+                    worker_role, worker_owner_run_id, worker_status, delegate_run_id
+                )):
                     raise ValueError("worker lifecycle fields require worker_ref")
             else:
                 require_string(worker_role, "worker_role")
-                if worker_role != "batch-executor":
-                    raise ValueError("worker_role must be batch-executor")
+                if worker_role != "controller-delegate":
+                    raise ValueError("worker_role must be controller-delegate")
                 if worker_owner_run_id != state["run_id"]:
                     raise ValueError("worker_owner_run_id must match the current run")
                 if worker_status not in WORKER_STATUSES:
                     raise ValueError("worker_status is invalid")
+                require_string(delegate_run_id, "delegate_run_id")
+                if delegate_run_id == state["run_id"] or delegate_run_id in seen_delegate_runs:
+                    raise ValueError("delegate_run_id must identify one unique child run")
+                seen_delegate_runs.add(delegate_run_id)
             if batch_status == "completed" and worker_status != "completed":
                 raise ValueError("completed batch requires worker_status completed")
         if batch_status in {"validating-receipt", "completed"}:
-            validate_receipt(receipt, batch, state["workspace"])
+            validate_receipt(receipt, batch, state["workspace"], state["repo_id"])
         elif receipt is not None:
             raise ValueError("receipt is only allowed after running")
 
@@ -437,7 +487,7 @@ def validate_transition(previous, candidate):
         for old, new in zip(previous["batches"], candidate["batches"]):
             old_without_upgrade = dict(old)
             new_without_upgrade = dict(new)
-            for field in ("worker_role", "worker_owner_run_id", "worker_status"):
+            for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
                 old_value = old_without_upgrade.pop(field, None)
                 new_value = new_without_upgrade.pop(field, None)
                 if old_value is not None and new_value != old_value:
@@ -489,7 +539,7 @@ def validate_transition(previous, candidate):
             raise ValueError("dispatch_id is immutable")
         if old["worker_ref"] is not None and new["worker_ref"] != old["worker_ref"]:
             raise ValueError("worker_ref is immutable")
-        for field in ("worker_role", "worker_owner_run_id"):
+        for field in ("worker_role", "worker_owner_run_id", "delegate_run_id"):
             if old.get(field) is not None and new.get(field) != old.get(field):
                 raise ValueError(f"{field} is immutable")
         old_worker_status = old.get("worker_status")

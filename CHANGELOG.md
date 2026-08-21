@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 0.15.0
+
+- 修复 blocked 后无法回写 worker 中断结果的问题；失败状态保持 blocked，但允许后续 revision 仅登记既有 worker 的宿主终态和新鲜清场回执。
+- Runtime Binding 与清场回执绑定宿主能力指纹，回执模式只能由冻结能力推导，不能由控制器自由声明。
+- Batch worker 统一为 `controller-delegate`；receipt v2 必须绑定并验证完整子 Converge complete state，关闭主调度结束而子 run 未清场的漏洞。
+- 终态 runtime action 强制携带任务/计划身份，并保留真实 `blocked_reason`；运行场景测试改为直接组合生产状态机，不再导入其他测试 fixture。
+- 协议自修改后，旧 Controller Snapshot 仅可继续执行内容校验后的精确 lease release；其他旧协议 helper 仍严格阻塞。
+
 ### 0.14.0
 
 - 修复 provisional 任务画像可直接触发委派、非布尔值被静默接受、未知风险遗漏和依赖任务错误委派；只有 frozen 画像能决定最终拓扑。
