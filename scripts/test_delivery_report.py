@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from delivery_next import upgrade_state
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts/delivery_report.py"
@@ -140,13 +142,25 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual("blocked", payload["diagnostic"]["status"])
 
     def test_text_diagnostic_includes_bounded_worker_and_check_summaries(self):
-        payload = state()
+        payload = upgrade_state(state())
         payload["workers"] = [{
             "ref": "worker-1",
+            "parent_ref": None,
+            "task_id": "task-1",
+            "depth": 1,
+            "may_dispatch": False,
             "role": "review",
             "owner_run_id": "run-1",
             "status": "completed",
+            "progress": None,
         }]
+        payload["worker_tree_receipt"] = {
+            "observed_revision": 3,
+            "mode": "tree_query",
+            "registered_refs": ["worker-1"],
+            "active_refs": [],
+            "unexpected_refs": [],
+        }
 
         result = self.run_report(payload, "text", detail=True)
 

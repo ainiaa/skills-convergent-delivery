@@ -158,6 +158,13 @@ def validate_transition(previous, candidate):
         if candidate_workers[ref]["status"] != "working":
             raise ValueError("new workers must be registered as working")
 
+    old_tree_receipt = previous.get("worker_tree_receipt")
+    new_tree_receipt = candidate.get("worker_tree_receipt")
+    if old_tree_receipt is not None and new_tree_receipt is None:
+        raise ValueError("worker tree receipt cannot be removed")
+    if new_tree_receipt != old_tree_receipt and new_tree_receipt["observed_revision"] != candidate["revision"]:
+        raise ValueError("new worker tree receipt must observe the candidate revision")
+
     old_stage = previous["current_stage"]
     new_stage = candidate["current_stage"]
     workflow_provider = previous["provider_binding"]["binding"]["workflow_provider"]["id"]
@@ -214,7 +221,7 @@ def write(arguments):
             current_revision = -1
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
-                migrating_legacy = stored.get("schema_version") in {5, 6}
+                migrating_legacy = stored.get("schema_version") in {5, 6, 7}
                 current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
@@ -227,7 +234,7 @@ def write(arguments):
                     expected = dict(current)
                     expected["revision"] = candidate["revision"]
                     if candidate != expected:
-                        raise ValueError("legacy migration may only add schema v7 fields")
+                        raise ValueError("legacy migration may only add schema v8 fields")
                 else:
                     validate_transition(current, candidate)
             write_private(managed_path, candidate)

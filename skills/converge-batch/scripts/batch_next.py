@@ -17,25 +17,25 @@ from run_contract import action, legacy_action
 def next_action(state):
     status = state["status"]
     if status in {"blocked", "complete"}:
-        return action("block" if status == "blocked" else "complete")
+        return action("block", reason="batch plan is blocked") if status == "blocked" else action("complete")
 
     current = state["current_batch"]
     if current is None:
-        return action("complete" if status == "complete" else "block")
+        return action("complete") if status == "complete" else action("block", reason="active plan has no current batch")
     batch = next(item for item in state["batches"] if item["batch_id"] == current)
     batch_status = batch["status"]
     if batch_status == "pending":
-        return action("dispatch", task_id=batch.get("task_id", batch["batch_id"])) if status == "active" else action("block")
+        return action("dispatch", task_id=batch.get("task_id", batch["batch_id"])) if status == "active" else action("block", reason="plan is not active")
     if batch_status == "dispatching":
         return action("block", reason="dispatch outcome is uncertain")
     if batch_status == "running":
-        return action("query", worker_ref=batch["worker_ref"])
+        return action("query", task_id=batch.get("task_id", batch["batch_id"]), worker_ref=batch["worker_ref"])
     if batch_status == "validating-receipt":
         worker_status = batch.get("worker_status")
         if worker_status == "working":
-            return action("query", worker_ref=batch["worker_ref"])
-        return action("verify", target="receipt") if worker_status == "completed" else action("block")
-    return action("block")
+            return action("query", task_id=batch.get("task_id", batch["batch_id"]), worker_ref=batch["worker_ref"])
+        return action("verify", task_id=batch.get("task_id", batch["batch_id"]), target="receipt") if worker_status == "completed" else action("block", reason="worker did not complete")
+    return action("block", reason="batch state has no safe next action")
 
 
 def main():

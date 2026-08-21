@@ -89,13 +89,16 @@ def normalize_open_issues(value):
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") == 7:
+    if value.get("schema_version") in {7, 8}:
         state = copy.deepcopy(value)
         for worker in state.get("workers", []):
             worker.setdefault("parent_ref", None)
             worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
             worker.setdefault("depth", 1)
             worker.setdefault("may_dispatch", False)
+        if state["schema_version"] == 7:
+            state["schema_version"] = 8
+        state.setdefault("worker_tree_receipt", None)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -122,10 +125,11 @@ def upgrade_state(value):
         if source_schema == 5:
             engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
     state.update(
-        schema_version=7,
+        schema_version=8,
         controller=controller_identity(),
         provider_binding=legacy_provider_binding(engine),
         workers=state.get("workers", []),
+        worker_tree_receipt=None,
     )
     for worker in state["workers"]:
         worker.setdefault("progress", None)
@@ -405,6 +409,32 @@ def validate_state(state, arguments):
                 raise ValueError("workers[].progress event or phase is invalid")
             for field in ("milestone", "activity", "evidence", "next_action", "observed_at"):
                 require_string(progress.get(field), f"workers[].progress.{field}")
+    tree_receipt = state.get("worker_tree_receipt")
+    if tree_receipt is not None:
+        if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
+            "observed_revision", "mode", "registered_refs", "active_refs", "unexpected_refs",
+        }:
+            raise ValueError("worker tree receipt fields are invalid")
+        observed_revision = tree_receipt["observed_revision"]
+        if (
+            not isinstance(observed_revision, int)
+            or isinstance(observed_revision, bool)
+            or observed_revision < 0
+            or observed_revision > revision
+        ):
+            raise ValueError("worker tree receipt observed_revision is invalid")
+        if tree_receipt["mode"] not in {"tree_query", "restrict_dispatch"}:
+            raise ValueError("worker tree receipt mode is invalid")
+        for field in ("registered_refs", "active_refs", "unexpected_refs"):
+            refs = tree_receipt[field]
+            if not isinstance(refs, list) or any(
+                not isinstance(ref, str) or not ref.strip() for ref in refs
+            ) or len(refs) != len(set(refs)):
+                raise ValueError(f"worker tree receipt {field} is invalid")
+        if set(tree_receipt["registered_refs"]) != worker_refs:
+            raise ValueError("worker tree receipt does not match the registry")
+        if not set(tree_receipt["active_refs"]) <= worker_refs:
+            raise ValueError("worker tree receipt active_refs are invalid")
     ledger = require_mapping(state.get("ledger"), "ledger")
     completed_rounds = ledger.get("completed_rounds")
     if (
@@ -501,6 +531,13 @@ def validate_state(state, arguments):
     if status == "complete":
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
+        if workers:
+            if tree_receipt is None or tree_receipt["observed_revision"] != revision:
+                raise ValueError("complete state requires a fresh worker tree receipt")
+            if tree_receipt["active_refs"]:
+                raise ValueError("complete state requires no active workers")
+            if tree_receipt["unexpected_refs"]:
+                raise ValueError("complete state requires no unexpected descendants")
         if not acceptance or not all(
             item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
         ):
@@ -513,6 +550,12 @@ def validate_state(state, arguments):
         if state.get("blocked_code") not in BLOCKED_CODES:
             raise ValueError("invalid blocked_code")
         require_string(state.get("blocked_reason"), "blocked_reason")
+        if workers or tree_receipt is not None:
+            if tree_receipt is None or tree_receipt["observed_revision"] != revision:
+                raise ValueError("blocked state with workers requires a fresh cleanup receipt")
+            working_refs = {worker["ref"] for worker in workers if worker["status"] == "working"}
+            if set(tree_receipt["active_refs"]) != working_refs:
+                raise ValueError("blocked cleanup receipt must list every active worker")
         return "blocked"
     if status != "active":
         raise ValueError("status must be active, complete, or blocked")
@@ -563,7 +606,7 @@ def main():
         state = upgrade_state(json.loads(Path(arguments.state).read_text(encoding="utf-8")))
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
-        result = delivery_action(next_stage)
+        result = delivery_action(next_stage, state["task_key"])
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

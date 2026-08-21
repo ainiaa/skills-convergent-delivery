@@ -6,6 +6,11 @@
 
 ### 0.14.0
 
+- 修复 provisional 任务画像可直接触发委派、非布尔值被静默接受、未知风险遗漏和依赖任务错误委派；只有 frozen 画像能决定最终拓扑。
+- Runtime Action Contract 收紧为实际使用的六类动作，并强制 dispatch/query/verify 绑定 `task_id`、block 携带原因，删除未实现的 wait/interrupt/report 动作。
+- 单任务状态升级为 Schema v8、Controller Protocol v4；有 worker 的 complete 必须携带同 revision 的完整树查询或强制叶子清场回执，活动或意外后代均阻塞。
+- 明确普通 worker 与 Batch `controller-delegate` 的所有权边界；已计划 capsule 在任务画像前短路，避免重复规划。
+- 新增路由、动作、清场与跨 helper 组合场景回归，并纳入正式检查。
 - 新增确定性任务画像与 `inline/planned/delegated/batch` 四路径路由；风险等级与执行拓扑分离，最多评估两次，不按文件数或主观分数决策。
 - 单任务与 Batch next helper 默认输出统一的单动作 JSON，并提供显式 `--format legacy` 兼容模式。
 - Worker 增加 `task_id/parent_ref/depth/may_dispatch` 身份，强制根控制器唯一派发和叶子执行；Runtime Adapter 只有具备完整子树查询或强制叶子能力时才允许自动委派。

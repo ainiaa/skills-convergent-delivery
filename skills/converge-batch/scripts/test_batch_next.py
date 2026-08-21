@@ -32,21 +32,21 @@ class BatchNextTest(unittest.TestCase):
         self.assertEqual("block", batch_next.next_action(state("dispatching"))["action"])
 
     def test_running_batch_recovers_by_querying_the_saved_worker(self):
-        self.assertEqual({"action": "query", "worker_ref": "thread-1"}, batch_next.next_action(state("running", "thread-1")))
+        self.assertEqual({"action": "query", "task_id": "B1", "worker_ref": "thread-1"}, batch_next.next_action(state("running", "thread-1")))
 
     def test_receipt_and_plan_status_actions_are_explicit(self):
         self.assertEqual(
-            {"action": "query", "worker_ref": "thread-1"},
+            {"action": "query", "task_id": "B1", "worker_ref": "thread-1"},
             batch_next.next_action(state("validating-receipt", "thread-1", "working")),
         )
         self.assertEqual(
-            {"action": "verify", "target": "receipt"},
+            {"action": "verify", "task_id": "B1", "target": "receipt"},
             batch_next.next_action(state("validating-receipt", "thread-1", "completed")),
         )
         for status in ("paused", "stopped"):
             value = state("running", "thread-1")
             value["status"] = status
-            self.assertEqual({"action": "query", "worker_ref": "thread-1"}, batch_next.next_action(value))
+            self.assertEqual({"action": "query", "task_id": "B1", "worker_ref": "thread-1"}, batch_next.next_action(value))
         for status in ("blocked", "complete"):
             value = state("pending")
             value["status"] = status

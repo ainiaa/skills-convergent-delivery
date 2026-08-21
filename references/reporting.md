@@ -2,7 +2,7 @@
 
 此文件定义 `converge` 的最终回复。它只决定如何表达已记录的事实，**不会触发新的检查、Agent、状态写入或修复轮次**。完整证据仍保存在 ledger、PDLC 产物和命令输出中。
 
-终态先使用 `scripts/delivery_report.py` 验证 Schema v7（旧 v5/v6/v7 字符串 `open_issues` 可兼容迁移）并计算结果、关键改动、交付轮、修复数和待处理数。新状态以 `handoff.open_issues: []` 保存逐项问题；报告取“未通过验收数”和“结构化问题数”的较大值，不解析自然语言猜数量。默认只有用户 summary；`blocked/decision` 自动附 diagnostic，其他状态仅在明确要求时传 `--detail`。文本 diagnostic 有界展示最多 5 个 worker lifecycle 与 5 项 check command/result，并给出剩余计数；不得静默丢弃 JSON diagnostic 已保留的事实。
+终态先使用 `scripts/delivery_report.py` 验证 Schema v8（旧 v5/v6/v7 字符串 `open_issues` 可兼容迁移）并计算结果、关键改动、交付轮、修复数和待处理数。新状态以 `handoff.open_issues: []` 保存逐项问题；报告取“未通过验收数”和“结构化问题数”的较大值，不解析自然语言猜数量。默认只有用户 summary；`blocked/decision` 自动附 diagnostic，其他状态仅在明确要求时传 `--detail`。文本 diagnostic 有界展示最多 5 个 worker lifecycle 与 5 项 check command/result，并给出剩余计数；不得静默丢弃 JSON diagnostic 已保留的事实。
 
 ## 先选用户状态
 

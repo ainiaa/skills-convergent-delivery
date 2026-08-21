@@ -14,11 +14,13 @@
 
 ## 2. Worker 登记与所有权
 
-任何 PDLC、reviewer、Batch worker、辅助分析或独立前向测试派发都必须由根控制器建立本轮 **run-scoped worker registry**。根控制器拥有唯一派发权；worker 固定登记为 `parent_ref=null`、当前 `task_id`、`depth=1`、`may_dispatch=false` 的叶子。需要帮助时返回结构化 `needs_dispatch`，不得自行创建辅助 worker 或 reviewer。宿主返回引用后，在 wait/query、其他派发或退出前立即登记；无法取得稳定且可查询引用时不得 detached/fire-and-forget，只能手工交接并阻塞。
+任何 PDLC、reviewer、辅助分析或独立前向测试派发都必须由根控制器建立本轮 **run-scoped worker registry**。根控制器拥有本 run 唯一派发权；worker 固定登记为 `parent_ref=null`、当前 `task_id`、`depth=1`、`may_dispatch=false` 的叶子。需要帮助时返回结构化 `needs_dispatch`，不得自行创建辅助 worker 或 reviewer。宿主返回引用后，在 query、其他派发或退出前立即登记；无法取得稳定且可查询引用时不得 detached/fire-and-forget，只能手工交接并阻塞。
+
+Batch scheduler 派发的是新的 `controller-delegate` run，而不是单任务 run 的叶子 worker。它可在自己的新 run 内按上述规则派发叶子，但不得反向操作 scheduler 或其他 Batch。scheduler 只登记并查询 delegate 本身；delegate 必须先完成自己的子树清场，scheduler 才能接受 receipt。该边界不允许普通 worker 递归派发。
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。宿主支持任务树查询时必须核对完整子树；发现 registry 外后代时先登记并阻塞。宿主支持 worker 工具白名单时直接移除派发能力。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。完成前把完整树查询或强制叶子结果写入同 revision 的 `worker_tree_receipt`；发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。宿主支持 worker 工具白名单时直接移除派发能力。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成 heartbeat，并约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 

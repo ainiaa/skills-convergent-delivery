@@ -76,7 +76,7 @@ class DeliveryNextTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(7, upgrade_state(payload)["schema_version"])
+        self.assertEqual(8, upgrade_state(payload)["schema_version"])
 
     def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -243,7 +243,10 @@ class DeliveryNextTest(unittest.TestCase):
             output_format="json",
         )
 
-        self.assertEqual({"action": "verify", "phase": "verify-final"}, json.loads(result.stdout))
+        self.assertEqual(
+            {"action": "verify", "task_id": "task-123", "phase": "verify-final"},
+            json.loads(result.stdout),
+        )
         self.assertEqual(0, result.returncode)
 
     def test_high_risk_semantic_review_moves_to_round_one_verification(self):
@@ -310,6 +313,69 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
+
+    def test_complete_with_workers_requires_fresh_clean_tree_receipt(self):
+        worker = {
+            "ref": "worker-1",
+            "role": "reviewer",
+            "owner_run_id": "run-20260818-120000",
+            "status": "completed",
+            "progress": None,
+        }
+        payload = upgrade_state(state(
+            status="complete", current_stage="verify-final", workers=[worker], revision=3,
+        ))
+
+        missing = self.current(payload, revision=3)
+        self.assertNotEqual(0, missing.returncode)
+        self.assertIn("tree receipt", missing.stderr)
+
+        payload["worker_tree_receipt"] = {
+            "observed_revision": 3,
+            "mode": "tree_query",
+            "registered_refs": ["worker-1"],
+            "active_refs": [],
+            "unexpected_refs": ["nested-worker"],
+        }
+        unexpected = self.current(payload, revision=3)
+        self.assertNotEqual(0, unexpected.returncode)
+        self.assertIn("unexpected", unexpected.stderr)
+
+        payload["worker_tree_receipt"]["unexpected_refs"] = []
+        clean = self.current(payload, revision=3)
+        self.assertEqual(0, clean.returncode, clean.stderr)
+        self.assertEqual("complete\n", clean.stdout)
+
+    def test_blocked_with_active_worker_requires_fresh_cleanup_receipt(self):
+        worker = {
+            "ref": "worker-1",
+            "role": "reviewer",
+            "owner_run_id": "run-20260818-120000",
+            "status": "working",
+            "progress": None,
+        }
+        payload = upgrade_state(state(
+            status="blocked",
+            blocked_code="environment",
+            blocked_reason="manual cleanup required",
+            workers=[worker],
+            revision=4,
+        ))
+
+        missing = self.current(payload, revision=4)
+        self.assertNotEqual(0, missing.returncode)
+        self.assertIn("cleanup receipt", missing.stderr)
+
+        payload["worker_tree_receipt"] = {
+            "observed_revision": 4,
+            "mode": "tree_query",
+            "registered_refs": ["worker-1"],
+            "active_refs": ["worker-1"],
+            "unexpected_refs": [],
+        }
+        recorded = self.current(payload, revision=4)
+        self.assertEqual(0, recorded.returncode, recorded.stderr)
+        self.assertEqual("blocked\n", recorded.stdout)
 
     def test_invalid_state_emits_blocked(self):
         result = self.current(state(schema_version=4))

@@ -81,6 +81,10 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("跨会话", combined)
         self.assertIn("本地 commit 授权", combined)
 
+    def test_planned_capsule_guard_precedes_task_profile_routing(self):
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("planned_task=true"), text.index("task_profile.py"))
+
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
         for loop in ("实现循环", "风险复核循环", "全局集成审查循环"):

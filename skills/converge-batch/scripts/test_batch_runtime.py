@@ -45,14 +45,14 @@ class SimulatedBatchRuntimeTest(unittest.TestCase):
         first["status"] = "running"
 
         action = batch_next.next_action(state)
-        self.assertEqual({"action": "query", "worker_ref": "thread-B1"}, action)
+        self.assertEqual({"action": "query", "task_id": "B1", "worker_ref": "thread-B1"}, action)
         host.query(action["worker_ref"])
         self.assertEqual(["B1"], host.dispatched)
 
         first["status"] = "validating-receipt"
         self.assertEqual("query", batch_next.next_action(state)["action"])
         first["worker_status"] = "completed"
-        self.assertEqual({"action": "verify", "target": "receipt"}, batch_next.next_action(state))
+        self.assertEqual({"action": "verify", "task_id": "B1", "target": "receipt"}, batch_next.next_action(state))
         first["status"] = "completed"
         state["current_batch"] = "B2"
         self.assertEqual("dispatch", batch_next.next_action(state)["action"])

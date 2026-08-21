@@ -1,4 +1,4 @@
-# 轻量状态 Schema v7
+# 轻量状态 Schema v8
 
 仅用于跨服务、跨会话、使用子代理或用户要求恢复的单个 `converge` 任务。无委托且可在当前上下文一次完成的简单任务可以不持久化。状态不得保存密钥、Cookie、请求正文或敏感业务数据；多 Batch 计划继续使用独立 Batch state。
 
@@ -6,7 +6,7 @@
 
 ```json
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "run_id": "run-<id>",
   "repo_id": "/absolute/git/common-dir",
   "task_key": "task-<scope-hash>",
@@ -17,9 +17,9 @@
   "scope_fingerprint": "<hash>",
   "controller": {
     "package_version": "0.12.1",
-    "protocol_version": 3,
+    "protocol_version": 4,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.12.1", "protocol_version": 3, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.14.0", "protocol_version": 4, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -36,6 +36,7 @@
   "requires_stability_round": false,
   "status": "active | complete | blocked",
   "workers": [],
+  "worker_tree_receipt": null,
   "ledger": {},
   "handoff": {"goal": "<goal>", "last_verification": "<evidence>", "open_issues": [], "next_action": "<action>"}
 }
@@ -45,7 +46,7 @@
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
-旧 v5/v6 状态第一次读取时只允许迁移为 v7：旧 `engine` 转成等价 Provider Binding，旧 worker 增加 `progress=null`，controller 转为分离版本。已有 controller 的 v6 只接受已发布且明确兼容的 0.10.0 协议身份，不能用当前身份覆盖未知或被篡改的来源。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+旧 v5/v6 状态第一次读取时只允许迁移为 v8：旧 `engine` 转成等价 Provider Binding，旧 worker 增加叶子身份和 `progress=null`，并增加空的树回执。v7 只添加 `worker_tree_receipt` 并升为 v8；旧 controller 协议不兼容时明确阻塞并重新开始，不能伪造升级。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
 ## 2. Provider Binding
 
@@ -89,6 +90,20 @@
 - 正式状态只保留每个 worker 最新快照，不保存无界事件日志。
 - 文本去换行并限制长度；不得记录敏感输入。进度只用于用户可见性，不能替代宿主终态、测试、源码指纹或验收证据。
 - complete 前当前 run 的全部 worker 必须到达宿主终态。
+
+完成态若曾创建 worker，还必须携带同 revision 的清场回执：
+
+```json
+{
+  "observed_revision": 4,
+  "mode": "tree_query | restrict_dispatch",
+  "registered_refs": ["<worker-ref>"],
+  "active_refs": [],
+  "unexpected_refs": []
+}
+```
+
+`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
 
 生成和展示：
 

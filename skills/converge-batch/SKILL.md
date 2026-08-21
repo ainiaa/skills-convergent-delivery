@@ -38,7 +38,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、Provider Binding、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
-按 Runtime Adapters 选择宿主能力，并遵循 [执行控制](../../references/execution-control.md) 的公共 worker/watchdog 规则。capsule 显式要求使用 `$converge`，并携带 `planned_task=true` 防止递归规划；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
+按 Runtime Adapters 选择宿主能力，并遵循 [执行控制](../../references/execution-control.md) 的公共 worker/watchdog 规则。Batch worker 是一个新的 `controller-delegate` run：capsule 显式要求使用 `$converge` 并携带 `planned_task=true`，它只能管理自己 run 内的叶子，完成自身清场后再向 scheduler 返回 receipt；宿主不支持时输出可直接交接的 capsule，并标记需要用户启动，不伪造自动调度。
 
 上游 `converge-plan` 的 wave 用于确认依赖和路径冲突。**Batch Protocol v1 默认顺序**执行；当前 Schema 只有一个 `current_batch`，在多 worktree 集成和多 receipt 恢复协议落地前不得宣称并行写入。
 

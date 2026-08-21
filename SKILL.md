@@ -51,9 +51,11 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 ## 4. 建立有限执行计划
 
+若 capsule 已包含 `planned_task=true`，先校验并冻结其中的 `plan_id/task_id`、范围、验收和验证；跳过任务画像和再次规划，直接执行该 task。
+
 先读取 [任务路由](references/task-routing.md)，把观察到的范围、耦合、不确定性、验证和风险信号通过 `task_profile.py` 冻结为 `inline|planned|delegated|batch`。最多评估两次；风险强度不自动触发代理。
 
-读取 [计划执行与无响应保护](references/execution-control.md)。若 capsule 已包含 `planned_task=true`，跳过规划，只执行其中冻结的 `plan_id/task_id`、范围、验收和验证。
+读取 [计划执行与无响应保护](references/execution-control.md)。
 
 其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 

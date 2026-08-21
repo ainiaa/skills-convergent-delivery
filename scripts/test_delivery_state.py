@@ -213,8 +213,9 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(7, written["schema_version"])
+            self.assertEqual(8, written["schema_version"])
             self.assertEqual([], written["workers"])
+            self.assertIsNone(written["worker_tree_receipt"])
             self.assertEqual(
                 {"package_version", "protocol_version", "protocol_fingerprint"},
                 set(written["controller"]),

@@ -39,7 +39,7 @@ CONTROL_RESOURCE_FILES = (
     "references/reporting.md",
     "references/tdd-providers.md",
 )
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 
 def provider_files(root):

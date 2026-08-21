@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Behavior tests for deterministic task routing."""
 
+import json
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from task_profile import classify
 
 
 def profile(**overrides):
     value = {
-        "assessment_round": 2,
+        "schema_version": 2,
+        "assessment_phase": "frozen",
         "scope": "local",
         "coupling": "single",
         "uncertainty": "low",
@@ -44,9 +49,44 @@ class TaskProfileTest(unittest.TestCase):
     def test_cross_session_always_uses_batch(self):
         self.assertEqual(classify(profile(cross_session=True))["route"], "batch")
 
-    def test_rejects_more_than_two_assessments(self):
-        with self.assertRaisesRegex(ValueError, "assessment_round"):
-            classify(profile(assessment_round=3))
+    def test_provisional_profile_never_dispatches(self):
+        result = classify(profile(assessment_phase="provisional", cross_session=True))
+        self.assertEqual("planned", result["route"])
+        self.assertEqual("batch", result["recommended_route"])
+
+    def test_dependent_work_is_not_delegated(self):
+        result = classify(profile(
+            coupling="dependent", delegable_tasks=2, context_isolation_benefit=True,
+        ))
+        self.assertEqual("planned", result["route"])
+
+    def test_complete_risk_enum_drives_high_review(self):
+        for risk in ("time", "timezone", "sql", "mapper", "sensitive-log", "release-contract"):
+            with self.subTest(risk=risk):
+                self.assertEqual("high", classify(profile(risk_flags=[risk]))["review_tier"])
+
+    def test_rejects_unknown_fields_unknown_risks_and_non_boolean_flags(self):
+        invalid = (
+            (profile(extra=True), "fields"),
+            (profile(risk_flags=["typo-risk"]), "risk_flags"),
+            (profile(cross_session="yes"), "cross_session"),
+            (profile(context_isolation_benefit=1), "context_isolation_benefit"),
+        )
+        for value, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                classify(value)
+
+    def test_cli_errors_are_structured_without_a_traceback(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("task_profile.py")), "--input", "file.json"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(1, result.returncode)
+        self.assertEqual("", result.stderr)
+        self.assertEqual("error", json.loads(result.stdout)["status"])
 
 
 if __name__ == "__main__":

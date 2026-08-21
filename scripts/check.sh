@@ -41,6 +41,9 @@ python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
 python3 scripts/test_provider_contract.py
 python3 scripts/test_runtime_adapter.py
+python3 scripts/test_task_profile.py
+python3 scripts/test_run_contract.py
+python3 scripts/test_runtime_scenarios.py
 python3 scripts/test_controller_snapshot.py
 python3 scripts/test_delivery_progress.py
 python3 scripts/test_delivery_state.py

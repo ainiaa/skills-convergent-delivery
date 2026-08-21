@@ -27,14 +27,14 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - PDLC 每个 task 只形成一个有限 Provider Run，完整委托需求、设计、TDD、实现和阶段评审；根 Converge 只控制范围与证据，不复制内部阶段。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - `checkpoint=same_session` 的多任务在同一会话顺序执行且不要求 commit；只有 `checkpoint=cross_session` 才进入 Batch 并请求一次本地 commit 授权。
-- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/wait/interrupt 能力；父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
+- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果绑定源码指纹；代码变化后旧结论自动失效。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
 - 父控制器从 Git 展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前动作，不表示任务累计规模。
 - `converge-eval` 将最终覆盖分为 `known_acceptance`、`history`、`exploration` 和 `uncovered`，指定场景通过不等于未知范围为零。
-- 单任务 Schema v7 分离包版本、Controller Snapshot 与 Provider Binding，并持久化 worker 最新进度；快照位于目标 workspace 外，自修改不接管当前任务。Batch state Schema v3 继续独立管理计划调度。
+- 单任务 Schema v8 分离包版本、Controller Snapshot 与 Provider Binding，并持久化 worker 最新进度和同 revision 的子树清场回执；快照位于目标 workspace 外，自修改不接管当前任务。Batch state Schema v3 继续独立管理计划调度。
 - 默认报告只输出面向用户的 summary；异常或显式 `--detail` 才附 Provider、阶段、worker 与检查诊断。
 
 ## Install
@@ -144,7 +144,7 @@ Claude Code 是否显示 `/` 命令取决于其当前 Skill 发现机制；自�
 
 同一问题在同一阶段最多自动修一次；问题复现或没有客观进展时阻塞，不无限循环。高风险改动使用全新上下文的 `converge-review` 盲审；极高风险或用户明确要求时再增加意图审查。
 
-复杂任务由 `converge-plan` 生成 Plan Contract v3，按独立可验收的业务切片形成多个 task。每个 task 冻结自己的 Provider Binding；PDLC 仍完整负责一个 task 内部流程。已派发任务携带严格校验的 `planned_task=true`、`plan_id`、`task_id` 和 binding，子执行者不会再次规划。
+复杂任务由 `converge-plan` 生成 Plan Contract v3，按独立可验收的业务切片形成多个 task。每个 task 冻结自己的 Provider Binding；PDLC 仍完整负责一个 task 内部流程。已派发任务先校验 `planned_task=true`、`plan_id`、`task_id` 和 binding，再跳过画像与重新规划。
 
 Plan v3 的 `checkpoint=same_session` 在同一工作区顺序执行，不要求 commit；只有显式 `checkpoint=cross_session` 才进入 Batch，并在 checkpoint 前请求本地 commit 授权。任务数量本身不产生 commit 权限。
 
@@ -161,7 +161,7 @@ worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](re
 
 Codex 保存 task/thread id；Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；单上下文始终手工交接。三者都先以 `runtime_adapter.py` 协商本会话实际能力，详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
-Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。
+Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。普通 worker 永远是叶子；Batch 只派发新的 `controller-delegate` run，新 run 完成自己的子树清场后才能回传 receipt。
 
 ### Provider 选择
 
@@ -180,7 +180,7 @@ Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只
 
 ## 状态、多窗口与恢复
 
-- 单任务状态：`~/.convergent-delivery/state/`，Schema v7（新任务可绑定 `controller.snapshot`；旧 v5/v6 首次写入只添加迁移）。
+- 单任务状态：`~/.convergent-delivery/state/`，Schema v8（新任务可绑定 `controller.snapshot`；旧 v5/v6 首次写入只添加迁移，旧 v7 controller 不兼容时明确阻塞重启）。
 - Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1 / state Schema v3；旧 v1/v2 先迁移再写。
 - Batch scheduler lease：位于 Batch state 根下，按 `repo_id + plan_id` 唯一，默认两小时；过期后仅显式 takeover。
 - writer lease：`~/.convergent-delivery/leases/`，默认两小时。
