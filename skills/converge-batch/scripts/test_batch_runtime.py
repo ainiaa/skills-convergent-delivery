@@ -38,24 +38,24 @@ class SimulatedBatchRuntimeTest(unittest.TestCase):
         state = plan()
         host = FakeHost()
 
-        self.assertEqual("dispatch", batch_next.next_action(state))
+        self.assertEqual("dispatch", batch_next.next_action(state)["action"])
         first = state["batches"][0]
         first["worker_ref"] = host.dispatch("B1")
         first["worker_status"] = "working"
         first["status"] = "running"
 
         action = batch_next.next_action(state)
-        self.assertEqual("query:thread-B1", action)
-        host.query(action.removeprefix("query:"))
+        self.assertEqual({"action": "query", "worker_ref": "thread-B1"}, action)
+        host.query(action["worker_ref"])
         self.assertEqual(["B1"], host.dispatched)
 
         first["status"] = "validating-receipt"
-        self.assertEqual("query:thread-B1", batch_next.next_action(state))
+        self.assertEqual("query", batch_next.next_action(state)["action"])
         first["worker_status"] = "completed"
-        self.assertEqual("validate-receipt", batch_next.next_action(state))
+        self.assertEqual({"action": "verify", "target": "receipt"}, batch_next.next_action(state))
         first["status"] = "completed"
         state["current_batch"] = "B2"
-        self.assertEqual("dispatch", batch_next.next_action(state))
+        self.assertEqual("dispatch", batch_next.next_action(state)["action"])
         host.dispatch("B2")
 
         self.assertEqual(["B1", "B2"], host.dispatched)
@@ -66,7 +66,7 @@ class SimulatedBatchRuntimeTest(unittest.TestCase):
         state["batches"][0]["status"] = "dispatching"
         host = FakeHost()
 
-        self.assertEqual("blocked", batch_next.next_action(state))
+        self.assertEqual("block", batch_next.next_action(state)["action"])
         self.assertEqual([], host.dispatched)
 
 

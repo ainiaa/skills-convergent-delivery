@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 0.14.0
+
+- 新增确定性任务画像与 `inline/planned/delegated/batch` 四路径路由；风险等级与执行拓扑分离，最多评估两次，不按文件数或主观分数决策。
+- 单任务与 Batch next helper 默认输出统一的单动作 JSON，并提供显式 `--format legacy` 兼容模式。
+- Worker 增加 `task_id/parent_ref/depth/may_dispatch` 身份，强制根控制器唯一派发和叶子执行；Runtime Adapter 只有具备完整子树查询或强制叶子能力时才允许自动委派。
+- 复核改为风险驱动：低风险自检，普通任务一个 fresh reviewer，高风险一个 blind reviewer，多任务或跨服务才执行 integration review。
+- `converge-eval` 的确定性场景默认一个样本，仅关键控制决策或不稳定结果使用三个样本。
+- 简单写任务不创建正式 state 或 snapshot，但继续使用轻量 writer lease 保证多窗口安全。
+
 ### 0.13.0
 
 - Suite 集成 Plan Contract v3、实现/单任务双轴审查/全局集成审查三类独立有限循环，以及 `converge-eval` 的差分、多样本和历史逃逸行为验收；根 `converge` 保持控制面，不复制 PDLC/TDD 内部阶段。

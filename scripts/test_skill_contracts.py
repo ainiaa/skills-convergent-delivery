@@ -42,7 +42,7 @@ class SkillContractTest(unittest.TestCase):
         checks = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertEqual("0.13.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("0.14.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
             "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,
@@ -81,15 +81,15 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("跨会话", combined)
         self.assertIn("本地 commit 授权", combined)
 
-    def test_three_bounded_loops_have_distinct_termination_conditions(self):
+    def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
-        for loop in ("实现循环", "单任务双轴审查循环", "全局集成审查循环"):
+        for loop in ("实现循环", "风险复核循环", "全局集成审查循环"):
             self.assertIn(loop, control)
         for stop in (
             "红灯转绿",
-            "每个轴最多一次修复和一次复核",
+            "最多一次修复和一次定向复核",
             "重复 finding",
-            "只执行一次 integration 审查",
+            "执行一次 integration 审查",
             "本轮 active worker 数为 0",
         ):
             self.assertIn(stop, control)
@@ -227,9 +227,9 @@ class SkillContractTest(unittest.TestCase):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
         for marker in (
             "run-scoped worker registry",
-            "worker_role",
+            "task_id",
             "owner_run_id",
-            "worker_status",
+            "may_dispatch=false",
             "completed|interrupted|blocked",
             "等价 `finally`",
             "自然语言回执",

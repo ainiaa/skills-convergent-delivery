@@ -14,11 +14,11 @@
 
 ## 2. Worker 登记与所有权
 
-任何 PDLC、reviewer、Batch worker、辅助分析或独立前向测试派发都必须由 owner 建立本轮 **run-scoped worker registry**。宿主返回引用后，在 wait/query、其他派发或退出前立即登记 `worker_ref`、`worker_role`、`owner_run_id` 和 `worker_status=working`；若 create API 必须携带初始任务，则创建与提交视为一次原子派发，返回后的第一动作仍是登记。无法取得稳定且可查询引用时不得 detached/fire-and-forget，只能手工交接并阻塞。`worker_ref` 是宿主身份，不能用自然语言名称或回执代替。
+任何 PDLC、reviewer、Batch worker、辅助分析或独立前向测试派发都必须由根控制器建立本轮 **run-scoped worker registry**。根控制器拥有唯一派发权；worker 固定登记为 `parent_ref=null`、当前 `task_id`、`depth=1`、`may_dispatch=false` 的叶子。需要帮助时返回结构化 `needs_dispatch`，不得自行创建辅助 worker 或 reviewer。宿主返回引用后，在 wait/query、其他派发或退出前立即登记；无法取得稳定且可查询引用时不得 detached/fire-and-forget，只能手工交接并阻塞。
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。宿主支持任务树查询时必须核对完整子树；发现 registry 外后代时先登记并阻塞。宿主支持 worker 工具白名单时直接移除派发能力。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成 heartbeat，并约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 
@@ -34,7 +34,7 @@ worker 只在阶段切换、客观产物产生及长命令前后发送 objective
 
 ## 4. 宿主 watchdog 能力边界
 
-以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；只有同时暴露活动/进程 query、计时 wait、interrupt 和同一任务恢复时，执行者才能自动完成软探测、硬中断与恢复；缺少任一能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断或恢复。
+以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；自动 worker 除稳定 dispatch/query 外，还必须具备完整 `tree_query` 或能强制 `restrict_dispatch`。只有同时暴露活动/进程 query、计时 wait、interrupt 和同一任务恢复时，执行者才能自动完成软探测、硬中断与恢复；缺少能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断、恢复或清场。
 
 活动信号包括 commentary、工具调用、状态 revision、diff、日志增长、子任务回执或仍在运行的测试/构建/PDLC 进程。
 
@@ -53,13 +53,13 @@ worker 只在阶段切换、客观产物产生及长命令前后发送 objective
 
 Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。红灯转绿且最后生产变更后的目标验证新鲜通过时停止；同一问题指纹最多自动修复一次，修复后复现或没有客观改善时立即停止并阻塞。Converge 不在 Provider 外再跑一套 requirements/design/TDD/implementation/review。
 
-### 单任务双轴审查循环
+### 风险复核循环
 
-先执行 spec 审查，再执行 quality 审查，前一轴未通过时不启动后一轴。每个轴最多一次修复和一次复核；复核通过即关闭该轴，重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。
+低风险由主执行者自检；普通任务由一个 fresh reviewer 一次返回 spec 与 quality 两个独立结论；高风险使用一个 blind reviewer。finding 按根因合并，最多一次修复和一次定向复核；重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。
 
 ### 全局集成审查循环
 
-全部计划 task 通过后只执行一次 integration 审查，且只覆盖跨任务接口、组合行为和计划级验收；不得重复单任务 spec/quality 审查。integration finding 最多一次修复和一次 closure 复核，随后无论通过或阻塞都停止。交付前还必须确认本轮 active worker 数为 0。
+只有多任务或跨服务计划在全部 task 通过后执行一次 integration 审查，且只覆盖跨任务接口、组合行为和计划级验收；单任务不创建 integration reviewer。integration finding 最多一次修复和一次 closure 复核，随后无论通过或阻塞都停止。交付前还必须确认本轮 active worker 数为 0。
 
 ## 6. 执行结束与清场屏障
 

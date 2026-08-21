@@ -12,16 +12,18 @@ SPEC.loader.exec_module(runtime_adapter)
 class RuntimeAdapterTest(unittest.TestCase):
     def test_codex_negotiates_only_observed_capabilities(self):
         result = runtime_adapter.negotiate(
-            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": False}
+            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": False,
+                      "tree_query": True, "restrict_dispatch": False}
         )
 
         self.assertEqual("automatic", result["mode"])
-        self.assertEqual(["dispatch", "query", "wait"], result["capabilities"])
+        self.assertEqual(["dispatch", "query", "wait", "tree_query"], result["capabilities"])
         self.assertNotIn("interrupt", result["capabilities"])
 
     def test_claude_without_stable_query_downgrades_to_manual(self):
         result = runtime_adapter.negotiate(
-            "claude-code", {"dispatch": True, "query": False, "wait": True, "interrupt": True}
+            "claude-code", {"dispatch": True, "query": False, "wait": True, "interrupt": True,
+                            "tree_query": False, "restrict_dispatch": True}
         )
 
         self.assertEqual("manual", result["mode"])
@@ -30,11 +32,21 @@ class RuntimeAdapterTest(unittest.TestCase):
 
     def test_single_context_never_claims_worker_control(self):
         result = runtime_adapter.negotiate(
-            "single-context", {"dispatch": True, "query": True, "wait": True, "interrupt": True}
+            "single-context", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                               "tree_query": True, "restrict_dispatch": True}
         )
 
         self.assertEqual("manual", result["mode"])
         self.assertEqual([], result["capabilities"])
+
+    def test_automatic_workers_require_leaf_enforcement_or_subtree_visibility(self):
+        result = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                      "tree_query": False, "restrict_dispatch": False}
+        )
+
+        self.assertEqual("manual", result["mode"])
+        self.assertIn("subtree", result["reason"])
 
     def test_wait_timeout_and_host_status_are_normalized_without_false_terminal_state(self):
         self.assertEqual("working", runtime_adapter.normalize_status("timeout"))

@@ -24,6 +24,7 @@ from delivery_lease import is_expired, lease_paths, read_record, same_owner
 from controller_snapshot import validate_snapshot
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
+from run_contract import action, delivery_action, legacy_action
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -90,6 +91,11 @@ def upgrade_state(value):
         raise ValueError("state must be an object")
     if value.get("schema_version") == 7:
         state = copy.deepcopy(value)
+        for worker in state.get("workers", []):
+            worker.setdefault("parent_ref", None)
+            worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
+            worker.setdefault("depth", 1)
+            worker.setdefault("may_dispatch", False)
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -123,6 +129,10 @@ def upgrade_state(value):
     )
     for worker in state["workers"]:
         worker.setdefault("progress", None)
+        worker.setdefault("parent_ref", None)
+        worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
+        worker.setdefault("depth", 1)
+        worker.setdefault("may_dispatch", False)
     handoff = state.get("handoff")
     if isinstance(handoff, dict) and "open_issues" in handoff:
         handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -352,11 +362,17 @@ def validate_state(state, arguments):
     worker_refs = set()
     for worker in workers:
         if not isinstance(worker, dict) or set(worker) != {
-            "ref", "role", "owner_run_id", "status", "progress"
+            "ref", "parent_ref", "task_id", "depth", "may_dispatch",
+            "role", "owner_run_id", "status", "progress"
         }:
             raise ValueError("workers[] fields are invalid")
         ref = require_string(worker.get("ref"), "workers[].ref")
         require_string(worker.get("role"), "workers[].role")
+        require_string(worker.get("task_id"), "workers[].task_id")
+        if worker.get("parent_ref") is not None:
+            raise ValueError("workers must be controller-owned leaves")
+        if worker.get("depth") != 1 or worker.get("may_dispatch") is not False:
+            raise ValueError("workers must be non-dispatching leaves")
         if ref in worker_refs:
             raise ValueError("workers[].ref must be unique")
         worker_refs.add(ref)
@@ -538,6 +554,7 @@ def main():
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--scope-fingerprint")
+    parser.add_argument("--format", choices=("json", "legacy"), default="json")
     arguments = parser.parse_args()
 
     try:
@@ -546,10 +563,12 @@ def main():
         state = upgrade_state(json.loads(Path(arguments.state).read_text(encoding="utf-8")))
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
-        print(next_stage)
+        result = delivery_action(next_stage)
+        print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        print("blocked")
+        result = action("block", reason=str(error))
+        print("blocked" if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         print(f"delivery state blocked: {error}", file=sys.stderr)
         return 2
 

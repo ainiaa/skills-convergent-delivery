@@ -132,7 +132,9 @@ def validate_transition(previous, candidate):
         raise ValueError("workers are append-only")
     for ref, old_worker in previous_workers.items():
         new_worker = candidate_workers[ref]
-        if any(new_worker[field] != old_worker[field] for field in ("ref", "role", "owner_run_id")):
+        if any(new_worker[field] != old_worker[field] for field in (
+            "ref", "parent_ref", "task_id", "depth", "may_dispatch", "role", "owner_run_id"
+        )):
             raise ValueError("worker identity is immutable")
         if old_worker["status"] in WORKER_TERMINAL_STATUSES and new_worker != old_worker:
             raise ValueError("worker host terminal status is immutable")

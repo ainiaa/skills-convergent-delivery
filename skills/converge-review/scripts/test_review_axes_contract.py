@@ -19,20 +19,21 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.orchestration = ORCHESTRATION.read_text(encoding="utf-8")
         self.root_skill = ROOT_SKILL.read_text(encoding="utf-8")
 
-    def test_root_controller_enforces_mandatory_axes_in_order(self):
+    def test_root_controller_routes_review_by_risk(self):
         for marker in (
-            "每个 task 必须依次通过 `spec -> quality`",
-            "每轴最多一次 repair 和一次 re-review",
-            "全部 task 的两个 mandatory 轴",
-            "高风险可追加新鲜 `blind` 审查，但不得替代",
+            "低风险 task",
+            "一个 fresh reviewer",
+            "高风险使用一个 blind reviewer",
+            "多任务或跨服务计划",
+            "最多一次 repair 和一次定向 re-review",
         ):
             self.assertIn(marker, self.root_skill)
 
     def test_task_review_keeps_spec_before_quality_and_results_separate(self):
         self.assertIn("Review Protocol v2", self.contract)
         self.assertIn('"axis": "spec | quality | integration"', self.contract)
-        self.assertIn("spec -> quality", self.orchestration)
-        self.assertIn("不得合并、覆盖或相互抵消", self.orchestration)
+        self.assertIn("需求符合性与实现质量仍分别保存结论", self.orchestration)
+        self.assertIn("一次请求中返回两轴", self.orchestration)
 
     def test_each_axis_has_one_repair_and_one_re_review_budget(self):
         self.assertIn('"repair_budget": 1', self.orchestration)
@@ -42,7 +43,7 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.assertIn('"status": "blocked"', self.orchestration)
 
     def test_integration_review_runs_after_tasks_and_only_for_cross_task_risk(self):
-        self.assertIn("全部任务的 spec 与 quality", self.orchestration)
+        self.assertIn("多个任务或跨服务契约", self.orchestration)
         self.assertIn("只审查跨任务风险", self.orchestration)
         self.assertIn("task-local", self.contract)
         self.assertIn('"axis": "integration"', self.skill)

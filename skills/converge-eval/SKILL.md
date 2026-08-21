@@ -24,7 +24,7 @@ description: Evaluate Converge Suite behavior with frozen control/candidate comp
 
 ## 多样本与判定
 
-每个关键决策至少使用契约规定数量的 fresh-context samples。每个 sample 不继承其他 sample 的结论或实现理由，并记录独立结果。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。
+确定性场景默认一个 fresh-context sample；只有修改路由、循环、worker 清场等关键模型决策，或首次结果不稳定时，才使用契约规定的三个 samples。每个 sample 不继承其他 sample 的结论或实现理由，并记录独立结果。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。
 
 candidate 只有在已知验收不回归、历史逃逸不复现，且差分证据未显示稳定性下降时才可通过。探索 finding 单列；未覆盖范围始终保留。
 

@@ -7,7 +7,7 @@ import sys
 
 
 PROFILES = {"codex", "claude-code", "single-context"}
-CAPABILITIES = ("dispatch", "query", "wait", "interrupt")
+CAPABILITIES = ("dispatch", "query", "wait", "interrupt", "tree_query", "restrict_dispatch")
 STATUS_MAP = {
     "working": "working",
     "running": "working",
@@ -34,6 +34,8 @@ def negotiate(profile, observed):
         return {"profile": profile, "mode": "manual", "capabilities": [], "reason": "single context has no recoverable worker"}
     if not observed.get("dispatch") or not observed.get("query"):
         return {"profile": profile, "mode": "manual", "capabilities": [], "reason": "automatic workers require dispatch and stable query"}
+    if not observed.get("tree_query") and not observed.get("restrict_dispatch"):
+        return {"profile": profile, "mode": "manual", "capabilities": [], "reason": "automatic workers require subtree query or enforced leaf workers"}
     return {
         "profile": profile,
         "mode": "automatic",

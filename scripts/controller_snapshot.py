@@ -25,6 +25,8 @@ CONTROLLER_FILES = (
     "scripts/delivery_state.py",
     "scripts/delivery_task_key.py",
     "scripts/provider_contract.py",
+    "scripts/run_contract.py",
+    "scripts/task_profile.py",
     "scripts/runtime_adapter.py",
     "scripts/controller_snapshot.py",
 )
@@ -33,6 +35,7 @@ CONTROL_RESOURCE_FILES = (
     "references/activation.md",
     "references/evaluation-scenarios.md",
     "references/state-schema.md",
+    "references/task-routing.md",
     "references/reporting.md",
     "references/tdd-providers.md",
 )

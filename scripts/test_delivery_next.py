@@ -173,7 +173,7 @@ class DeliveryNextTest(unittest.TestCase):
             "tdd_skill_fingerprint": file_fingerprint(path),
         }, path
 
-    def run_helper(self, payload, *, run_id=None, writer_id=None, revision=None, acquire=True):
+    def run_helper(self, payload, *, run_id=None, writer_id=None, revision=None, acquire=True, output_format="legacy"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
             path = Path(directory) / "state.json"
@@ -209,6 +209,8 @@ class DeliveryNextTest(unittest.TestCase):
                 str(path),
                 "--lease-root",
                 str(root),
+                "--format",
+                output_format,
             ]
             if run_id is not None:
                 arguments.extend(["--run-id", run_id])
@@ -232,6 +234,16 @@ class DeliveryNextTest(unittest.TestCase):
         result = self.current()
 
         self.assertEqual("verify-final\n", result.stdout)
+        self.assertEqual(0, result.returncode)
+
+    def test_json_output_uses_shared_action_contract(self):
+        payload = state()
+        result = self.run_helper(
+            payload, run_id=payload["run_id"], writer_id=payload["writer_id"], revision=0,
+            output_format="json",
+        )
+
+        self.assertEqual({"action": "verify", "phase": "verify-final"}, json.loads(result.stdout))
         self.assertEqual(0, result.returncode)
 
     def test_high_risk_semantic_review_moves_to_round_one_verification(self):

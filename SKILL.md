@@ -51,6 +51,8 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 ## 4. 建立有限执行计划
 
+先读取 [任务路由](references/task-routing.md)，把观察到的范围、耦合、不确定性、验证和风险信号通过 `task_profile.py` 冻结为 `inline|planned|delegated|batch`。最多评估两次；风险强度不自动触发代理。
+
 读取 [计划执行与无响应保护](references/execution-control.md)。若 capsule 已包含 `planned_task=true`，跳过规划，只执行其中冻结的 `plan_id/task_id`、范围、验收和验证。
 
 其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
@@ -67,9 +69,9 @@ Plan Contract v3 校验结果为 `current` 时在当前上下文执行；`fresh`
 
 ## 6. 审查路由
 
-每个 task 必须依次通过 `spec -> quality`，两轴结果分别保存；spec 未新鲜通过或任一轴 blocked 时不得启动后续轴。每轴最多一次 repair 和一次 re-review；重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked。
+低风险 task 使用主执行者自检和新鲜验证，不创建 reviewer。普通 task 使用一个 fresh reviewer，并在同一回执中分别保存 spec 与 quality 结论；高风险使用一个 blind reviewer。只有多任务或跨服务计划才在全部 task 通过后增加一次 integration review。
 
-全部 task 的两个 mandatory 轴都新鲜通过后，必须执行一次 `integration` 审查且只检查跨任务风险；它可使用同一组 repair/re-review 上限，但不得重新开启 initial review。高风险可追加新鲜 `blind` 审查，但不得替代 mandatory axes；用户明确要求时也可追加兼容的 `intent` 审查。宿主无法提供全新上下文时可以降级自审，但必须记录 `independent=false`，不得宣称完成独立审查。
+一轮 finding 按根因合并，最多一次 repair 和一次定向 re-review；重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked，不重新开放式扫描。宿主无法提供全新上下文时可以降级自审，但必须记录 `independent=false`。
 
 风险触发器：金额、时间/时区、SQL/Mapper、迁移、事务、锁/并发、幂等、公共 DTO/API、权限、敏感日志、跨服务或发布契约。
 
@@ -81,7 +83,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 - 每批修复必须带来回归测试红转绿、客观检查消除问题，或严重度降低且未扩大范围。
 - 不得通过删测试、降低阈值、跳过检查或扩大范围制造绿灯。
 - 最后一次生产代码修改后必须重新产生新鲜验证证据；审查结论也绑定源码指纹，无关生产代码变化后变为陈旧。
-- 实现循环、单任务双轴审查循环和全局集成审查循环的职责与终止条件只在 [执行控制](references/execution-control.md) 定义；根 Converge 只编排和核验证据，不复制 Provider 的 PDLC/TDD 内部阶段。
+- 实现循环、风险复核循环和条件式集成审查循环的职责与终止条件只在 [执行控制](references/execution-control.md) 定义；根 Converge 只编排和核验证据，不复制 Provider 的 PDLC/TDD 内部阶段。
 
 ## 8. 计划审计、终态和回执
 
@@ -89,7 +91,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
-持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。父控制器从 Git 读取并展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前工具动作，不能冒充任务总量或覆盖父 Git 真值。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
+持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 snapshot，但写工作区时仍获取轻量 writer lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。父控制器从 Git 读取并展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前工具动作，不能冒充任务总量或覆盖父 Git 真值。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 

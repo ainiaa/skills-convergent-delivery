@@ -210,7 +210,7 @@ def render_status_update(state, previous_fingerprint=None):
         milestone = receipt.get("milestone", "尚无客观里程碑")
         next_action = receipt.get("next_action", "等待更新")
         lines.append(
-            f"{worker.get('ref', '?')}：状态={worker.get('status', '?')}；"
+            f"[{worker.get('task_id', '?')}] {worker.get('ref', '?')}：状态={worker.get('status', '?')}；"
             f"{phase}；{milestone}；下一步：{next_action}"
         )
     lines.append(render_workspace_change_summary(workspace_change_summary(state)))
@@ -227,6 +227,7 @@ def render_status(state):
             " | ".join(
                 (
                     str(worker.get("ref", "?")),
+                    str(worker.get("task_id", "?")),
                     str(worker.get("status", "?")),
                     str(progress.get("phase", "waiting")),
                     str(progress.get("milestone", "No progress receipt yet")),

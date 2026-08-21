@@ -26,6 +26,7 @@ REQUIRED_SOURCE_FILES=(
   references/review-orchestration.md
   references/reporting.md
   references/state-schema.md
+  references/task-routing.md
   references/tdd-providers.md
   providers/generic-tdd-v1.json
   providers/mattpocock-tdd-v1.json
@@ -40,6 +41,8 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_state.py
   scripts/delivery_task_key.py
   scripts/provider_contract.py
+  scripts/run_contract.py
+  scripts/task_profile.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   skills/converge-plan/SKILL.md

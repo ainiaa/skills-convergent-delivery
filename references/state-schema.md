@@ -61,6 +61,10 @@
 ```json
 {
   "ref": "<stable host reference>",
+  "parent_ref": null,
+  "task_id": "<Plan Contract task id or task key>",
+  "depth": 1,
+  "may_dispatch": false,
   "role": "implementation",
   "owner_run_id": "run-<id>",
   "status": "working | completed | interrupted | blocked",
@@ -79,6 +83,7 @@
 ```
 
 - 宿主返回稳定 ref 后立即登记 worker，初始 `progress=null`。
+- 只有根控制器可以派发；worker 是 `parent_ref=null/depth=1/may_dispatch=false` 的叶子。宿主任务树中出现未登记后代时阻止 complete。
 - 子代理只回传 objective milestone；持有 writer lease 的父代理使用 `delivery_progress.py event --event milestone` 生成带可信时间的候选。
 - heartbeat 只能由父代理根据 Runtime Adapter 对精确 worker ref 的宿主 query 结果，用 `delivery_progress.py observe` 生成。每次事件 `sequence + 1`；首次 heartbeat 允许 `objective_revision=0`，只有 milestone 才能让它 `+1`。
 - 正式状态只保留每个 worker 最新快照，不保存无界事件日志。

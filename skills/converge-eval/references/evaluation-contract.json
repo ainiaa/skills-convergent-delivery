@@ -20,6 +20,7 @@
     ]
   },
   "sampling": {
+    "default_fresh_samples": 1,
     "critical_min_fresh_samples": 3,
     "fresh_context_per_sample": true,
     "single_pass_establishes_stability": false,

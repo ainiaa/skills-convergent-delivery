@@ -27,6 +27,7 @@ class EvaluationContractTest(unittest.TestCase):
 
     def test_critical_decisions_require_fresh_samples_and_statistics(self):
         sampling = self.contract["sampling"]
+        self.assertEqual(1, sampling["default_fresh_samples"])
         self.assertGreaterEqual(sampling["critical_min_fresh_samples"], 2)
         self.assertTrue(sampling["fresh_context_per_sample"])
         self.assertEqual(

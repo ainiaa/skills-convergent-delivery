@@ -11,7 +11,7 @@
 | 同会话顺序执行 | Plan v3 为 `checkpoint=same_session` 且有多个 task | 在同一会话顺序完成，不要求 commit；任务数量不产生 commit 权限。 |
 | 跨会话 checkpoint | Plan v3 为 `checkpoint=cross_session` | 进入 Batch 前单独请求本地 commit 授权；授权不包含 push、tag、merge 或发布。 |
 | 实现循环终止 | 已有有效红灯，目标修复可验证 | 红灯转绿和最后生产变更后的新鲜验证通过即停；同一问题复现或无改善时阻塞。 |
-| 单任务双轴终止 | task 需要 spec 与 quality 审查 | spec 先于 quality；每轴最多一次修复和一次复核，重复 finding 停止。 |
+| 风险复核终止 | 普通或高风险 task 需要独立复核 | 一次请求分别返回 spec 与 quality；最多一次修复和一次定向复核，重复 finding 停止。 |
 | 全局集成审查终止 | 所有 task 已通过 | 只运行一次只覆盖跨任务风险的 integration 审查；finding 最多一次修复和 closure。 |
 | 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
 | 模型无响应 | 既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
