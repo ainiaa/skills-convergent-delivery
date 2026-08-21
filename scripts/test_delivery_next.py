@@ -22,6 +22,18 @@ def state(**overrides):
         "workspace": "/workspace/service",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
+        "source_fingerprint": "a" * 64,
+        "execution_control": {
+            "routing": {
+                "schema_version": 1, "status": "frozen", "assessment_count": 1,
+                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
+            },
+            "review": {
+                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
+                "integration_budget_remaining": 0, "requests": [],
+            },
+        },
         "engine": {
             "name": "native-v1",
             "selection": "auto",
@@ -44,6 +56,7 @@ def state(**overrides):
                     "evidence": "targeted test",
                     "result": "pass",
                     "freshness": "fresh",
+                    "source_fingerprint": "a" * 64,
                 }
             ],
         },
@@ -84,7 +97,28 @@ class DeliveryNextTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(8, upgrade_state(payload)["schema_version"])
+        self.assertEqual(9, upgrade_state(payload)["schema_version"])
+
+    def test_v8_state_with_workers_requires_manual_recovery(self):
+        payload = upgrade_state(state())
+        payload["schema_version"] = 8
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "manual recovery"):
+            upgrade_state(payload)
+
+    def test_v8_state_without_workers_migrates_without_inventing_host_facts(self):
+        payload = upgrade_state(state())
+        payload["schema_version"] = 8
+
+        migrated = upgrade_state(payload)
+
+        self.assertEqual(9, migrated["schema_version"])
+        self.assertEqual([], migrated["workers"])
 
     def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -298,6 +332,51 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("blocked\n", result.stdout)
         self.assertEqual(0, result.returncode)
 
+    def test_active_and_complete_states_reject_blocked_metadata(self):
+        for status, stage in (("active", "round-1-semantic-review"), ("complete", "verify-final")):
+            with self.subTest(status=status):
+                result = self.current(state(
+                    status=status,
+                    current_stage=stage,
+                    blocked_code="environment",
+                    blocked_reason="stale reason",
+                ))
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("blocked", result.stderr)
+
+    def test_worker_task_id_must_match_the_state_task_key(self):
+        payload = upgrade_state(state())
+        payload["runtime_binding"] = runtime_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": "another-task",
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("task", result.stderr)
+
+    def test_state_requires_a_frozen_route_and_persisted_assessment_count(self):
+        payload = upgrade_state(state())
+        payload.pop("execution_control")
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("execution_control", result.stderr)
+
+    def test_complete_acceptance_must_match_the_current_source_fingerprint(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["acceptance"][0]["source_fingerprint"] = "c" * 64
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("source", result.stderr)
+
     def test_complete_state_requires_fresh_passing_acceptance_evidence(self):
         result = self.current(
             state(
@@ -331,9 +410,11 @@ class DeliveryNextTest(unittest.TestCase):
             "progress": None,
         }
         payload = upgrade_state(state(
-            status="complete", current_stage="verify-final", workers=[worker], revision=3,
+            status="complete", current_stage="verify-final", revision=3,
             runtime_binding=runtime_binding(),
         ))
+        payload["workers"] = [worker]
+        payload = upgrade_state(payload)
 
         missing = self.current(payload, revision=3)
         self.assertNotEqual(0, missing.returncode)
@@ -364,10 +445,11 @@ class DeliveryNextTest(unittest.TestCase):
             status="blocked",
             blocked_code="environment",
             blocked_reason="manual cleanup required",
-            workers=[worker],
             revision=4,
             runtime_binding=runtime_binding(),
         ))
+        payload["workers"] = [worker]
+        payload = upgrade_state(payload)
 
         missing = self.current(payload, revision=4)
         self.assertNotEqual(0, missing.returncode)
@@ -386,6 +468,15 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
+
+    def test_invalid_state_json_block_action_keeps_task_identity(self):
+        payload = state(schema_version=4)
+        result = self.run_helper(
+            payload, run_id=payload["run_id"], writer_id=payload["writer_id"],
+            revision=payload["revision"], output_format="json",
+        )
+
+        self.assertEqual("task-123", json.loads(result.stdout)["task_id"])
 
     def test_relative_repo_id_emits_blocked(self):
         result = self.current(state(repo_id="relative/repo"), acquire=False)

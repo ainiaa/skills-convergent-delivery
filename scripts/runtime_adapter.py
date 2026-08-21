@@ -32,6 +32,7 @@ def fingerprint(value):
 
 def bind(profile, mode, capabilities, reason):
     value = {
+        "schema_version": 1,
         "profile": profile,
         "mode": mode,
         "capabilities": capabilities,
@@ -42,10 +43,15 @@ def bind(profile, mode, capabilities, reason):
 
 def validate_binding(value):
     if not isinstance(value, dict) or set(value) != {
-        "profile", "mode", "capabilities", "reason", "binding_fingerprint"
+        "schema_version", "profile", "mode", "capabilities", "reason", "binding_fingerprint"
     }:
         raise ValueError("runtime binding fields are invalid")
-    expected = {key: value[key] for key in ("profile", "mode", "capabilities", "reason")}
+    if value["schema_version"] != 1:
+        raise ValueError("runtime binding schema_version must be 1")
+    expected = {
+        key: value[key]
+        for key in ("schema_version", "profile", "mode", "capabilities", "reason")
+    }
     if value["binding_fingerprint"] != fingerprint(expected):
         raise ValueError("runtime binding fingerprint is invalid")
     if value["profile"] not in PROFILES or value["mode"] not in {"automatic", "manual"}:
@@ -112,6 +118,7 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
             raise ValueError(f"{name} is invalid")
     mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
     return {
+        "schema_version": 1,
         "observed_revision": observed_revision,
         "observed_at": observed_at,
         "runtime_fingerprint": binding["binding_fingerprint"],

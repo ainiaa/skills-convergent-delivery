@@ -7,7 +7,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只负责读取计划、预检 Batch、生成最小上下文胶囊、派发/恢复执行者并校验结构化 receipt。不读取业务代码，不做代码评审，不修改技术方案，不执行实现，也不持有代码 writer lease；计划级 scheduler lease 只防重复调度。
 
-本 Skill 只接收 Plan Contract v3 的 `checkpoint=cross_session`。`checkpoint=same_session` 由根 `converge` 在同一会话顺序执行，不要求 commit，也不进入 Batch 状态机。
+本 Skill 只接收 Plan Contract v4 的 `checkpoint=cross_session`。`checkpoint=same_session` 由根 `converge` 在同一会话顺序执行，不要求 commit，也不进入 Batch 状态机。
 
 每个执行 Batch 必须在新上下文中显式调用 `$converge`。调度器只根据状态和 receipt 判断完成或阻塞，不能根据执行者的自然语言自评放行。
 
@@ -30,7 +30,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 ## 2. 冻结计划并初始化
 
-冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch state Schema v3；旧 v1/v2 先做只添加身份/worker 生命周期字段的迁移。helper 同时以 `repo_id + plan_id` 获取默认两小时的 scheduler lease，第二个活动 run/window 必须阻塞；过期 owner 仅在确认已停止后用 `--takeover` 接管。后续所有更新必须校验 owner 和 revision。
+冻结 `plan_id`、revision、fingerprint、Batch 顺序和全局约束。使用 `python3 "$CONVERGE_BATCH_SKILL_DIR/scripts/batch_state.py" write --input -` 原子写入 Batch state Schema v4 / Receipt v3；状态路径只由 `repo_id + plan_id` 推导，接管在同一文件转移 owner。无 worker 的旧状态可显式补齐缺失事实后迁移；存在活动 worker 的旧状态必须人工恢复，不能猜测生命周期。helper 同时以 `repo_id + plan_id` 获取默认两小时的 scheduler lease，第二个活动 run/window 必须阻塞；过期 owner 仅在确认已停止后用 `--takeover` 接管。后续所有更新必须校验 owner 和 revision。
 
 计划内容变化时暂停并要求重新协调，不把新要求静默塞入当前 Batch。Batch state 与 `converge` 的单任务 state 分离。
 

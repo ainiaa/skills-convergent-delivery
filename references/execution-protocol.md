@@ -32,7 +32,7 @@
 
 ## Independent risk review
 
-高风险时将冻结的最小材料交给全新 reviewer。返回结果必须符合 Review Protocol v1，并且 `source_fingerprint` 与当前源码一致。PDLC 已有 review 作为意图审查，不再重复；只增加需要的新鲜盲审。
+高风险时将冻结的最小材料交给全新 reviewer。返回结果必须符合 Review Protocol v2，并且 `source_fingerprint` 与当前源码一致；同一 reviewer 先完成 `spec` 单轴请求，通过后才接收 `quality` 单轴请求。PDLC 已有 review 作为意图审查，不再重复；只增加需要的新鲜盲审。
 
 ## Finding closure
 

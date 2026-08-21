@@ -4,9 +4,15 @@
 import argparse
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path, PurePosixPath
+
+
+SUITE_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if not SUITE_SCRIPTS.is_dir():
+    SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
+sys.path.insert(0, str(SUITE_SCRIPTS))
+from evidence_contract import valid_evidence_receipts, workspace_source
 
 
 TASK_STATUSES = {"pending"}
@@ -98,79 +104,14 @@ def task_conflicts(left, right):
     return any(paths_overlap(a, b) for a in left["owned_paths"] for b in right["owned_paths"])
 
 
-def git_bytes(workspace, *arguments):
-    result = subprocess.run(
-        ["git", "-C", str(workspace), *arguments],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise ValueError("workspace must be a readable Git worktree")
-    return result.stdout
-
-
-def workspace_source(workspace):
-    workspace = Path(require_string(str(workspace), "workspace")).expanduser().resolve()
-    root = Path(git_bytes(workspace, "rev-parse", "--show-toplevel").decode().strip()).resolve()
-    commit_id = git_bytes(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
-    tree_hash = git_bytes(root, "rev-parse", "HEAD^{tree}").decode().strip()
-    tracked_diff = git_bytes(
-        root, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"
-    )
-    tracked_paths = git_bytes(
-        root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"
-    ).split(b"\0")
-    untracked_paths = [
-        path
-        for path in git_bytes(
-            root, "ls-files", "--others", "--exclude-standard", "-z"
-        ).split(b"\0")
-        if path and b"__pycache__" not in path.split(b"/") and not path.endswith(b".pyc")
-    ]
-    changed_paths = sorted(
-        {
-            path.decode("utf-8")
-            for path in tracked_paths + untracked_paths
-            if path
-        }
-    )
-    diff_digest = hashlib.sha256(tracked_diff)
-    for relative in sorted(path for path in untracked_paths if path):
-        path = root / relative.decode("utf-8")
-        diff_digest.update(relative)
-        diff_digest.update(b"\0")
-        if path.is_symlink():
-            diff_digest.update(str(path.readlink()).encode("utf-8"))
-        elif path.is_file():
-            diff_digest.update(path.read_bytes())
-        diff_digest.update(b"\0")
-    source = {
-        "commit_id": commit_id,
-        "tree_hash": tree_hash,
-        "diff_fingerprint": diff_digest.hexdigest(),
-        "changed_paths": changed_paths,
-    }
-    source["source_fingerprint"] = hashlib.sha256(
-        json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return source
-
-
-def valid_evidence_receipts(value, source):
-    return (
-        isinstance(value, list)
-        and bool(value)
-        and all(
-            isinstance(item, dict)
-            and isinstance(item.get("command"), str)
-            and bool(item["command"].strip())
-            and isinstance(item.get("exit_code"), int)
-            and not isinstance(item["exit_code"], bool)
-            and item["exit_code"] == 0
-            and item.get("source") == source
-            for item in value
-        )
-    )
+def validate_baseline(value):
+    if not isinstance(value, dict) or set(value) != {"commit", "diff_fingerprint"}:
+        raise ValueError("baseline must contain commit and diff_fingerprint")
+    commit = require_string(value["commit"], "baseline.commit")
+    if len(commit) not in {40, 64} or any(char not in "0123456789abcdef" for char in commit):
+        raise ValueError("baseline.commit must be a full lowercase Git object id")
+    require_sha256(value["diff_fingerprint"], "baseline.diff_fingerprint")
+    return value
 
 
 def validate_planner(value):
@@ -204,7 +145,7 @@ def binding_fingerprint(workflow_provider, stage_providers):
 
 
 def upgrade_plan(plan):
-    if not isinstance(plan, dict) or plan.get("schema_version") not in {1, 2}:
+    if not isinstance(plan, dict) or plan.get("schema_version") not in {1, 2, 3}:
         return plan
     upgraded = json.loads(json.dumps(plan))
     if upgraded["schema_version"] == 1:
@@ -225,18 +166,21 @@ def upgrade_plan(plan):
                 task.setdefault("provider_run", {"scope": "task", "recursive_planning": False})
         upgraded["schema_version"] = 2
 
-    tasks = upgraded.get("tasks")
-    if upgraded.get("context") == "long" and isinstance(tasks, list) and len(tasks) == 1:
-        raise ValueError(
-            "granularity_block reason=legacy_long_single_task; action=upgrade to schema v3 "
-            "with one outcome or split into vertical_slice tasks"
+    if upgraded["schema_version"] == 2:
+        tasks = upgraded.get("tasks")
+        if upgraded.get("context") == "long" and isinstance(tasks, list) and len(tasks) == 1:
+            raise ValueError(
+                "granularity_block reason=legacy_long_single_task; action=upgrade to schema v4 "
+                "with one outcome and explicit baseline or split into vertical_slice tasks"
+            )
+        upgraded["checkpoint"] = (
+            "cross_session" if isinstance(tasks, list) and len(tasks) > 1 else "same_session"
         )
-    upgraded["checkpoint"] = "cross_session" if isinstance(tasks, list) and len(tasks) > 1 else "same_session"
-    for task in upgraded.get("tasks", []):
-        if isinstance(task, dict):
-            task["task_kind"] = "vertical_slice"
-            task["outcomes"] = [task.get("goal")]
-    upgraded["schema_version"] = 3
+        for task in upgraded.get("tasks", []):
+            if isinstance(task, dict):
+                task["task_kind"] = "vertical_slice"
+                task["outcomes"] = [task.get("goal")]
+    upgraded["schema_version"] = 4
     return upgraded
 
 
@@ -273,14 +217,15 @@ def validate_plan(plan):
     plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if plan.get("schema_version") != 3:
-        raise ValueError("schema_version must be 3")
+    if plan.get("schema_version") != 4:
+        raise ValueError("schema_version must be 4")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
     validate_planner(plan.get("planner"))
     context = plan.get("context")
     if context not in {"short", "long"}:
         raise ValueError("context must be short or long")
+    validate_baseline(plan.get("baseline"))
     checkpoint = plan.get("checkpoint")
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
@@ -390,7 +335,7 @@ def validate_plan(plan):
         execution_mode = "fresh" if context == "long" else "current"
     return {
         "status": "valid",
-        "normalized_schema_version": 3,
+        "normalized_schema_version": 4,
         "execution_mode": execution_mode,
         "commit_authorization_required": checkpoint == "cross_session",
         "waves": waves,
@@ -402,7 +347,7 @@ def audit(envelope, workspace):
         raise ValueError("audit input must be an object")
     plan = upgrade_plan(envelope.get("plan"))
     validate_plan(plan)
-    source = workspace_source(workspace)
+    source = workspace_source(workspace, plan["baseline"]["commit"])
     results = envelope.get("task_results")
     if not isinstance(results, dict):
         raise ValueError("task_results must be an object")

@@ -2,7 +2,7 @@
 
 ## Plan preflight
 
-Batch 仅用于 Plan Contract v3 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
+Batch 仅用于 Plan Contract v4 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
 
 计划必须包含有限有序 Batch、全局约束和 `final_acceptance`。每个 Batch 必须能形成下列 context capsule：
 
@@ -20,25 +20,20 @@ Batch 仅用于 Plan Contract v3 的 `checkpoint=cross_session`，因此初始�
   "baseline": "commit",
   "acceptance": ["criterion"],
   "verification": ["real command or objective check"],
-  "provider_binding": {
-    "controller": "converge",
-    "workflow_provider": "native-v1",
-    "stage_providers": {},
-    "binding_fingerprint": "<sha256>"
-  }
+  "provider_binding": {"selection": "auto", "reason": "frozen", "task_kind": "fix", "binding": {"controller": "converge", "workflow_provider": {"id": "native-v1", "manifest": "/absolute/path", "sources": []}, "stage_providers": {}}, "binding_fingerprint": "<sha256>"}
 }
 ```
 
 调度器只能复制和裁剪计划，不能通过读取业务代码自行填充缺失字段。
 Schema v2+ capsule 的 `planned_task` 必须严格为 `true`，`plan_id` 必须匹配冻结计划，`task_id` 必须匹配 Batch 记录；任一缺失或错配都拒绝初始化，避免执行者递归规划。
 
-Schema v3 capsule 还必须携带计划中冻结且摘要匹配的 Provider Binding；缺失或伪造时不得初始化。`preflight.commit_authorized` 必须严格为 `true`。该值只能来自用户对本计划的一次性本地 commit 授权；旧 v1/v2 迁移时必须显式补入授权和 Provider Binding，不能由 helper 推断。push、merge、tag、publish 仍不在授权内。
+Schema v4 capsule 必须携带完整 Provider Binding，包括 manifest、task contract、入口和 closure 来源摘要；只保存 Provider ID 不足以恢复，缺失或伪造时不得初始化。`preflight.commit_authorized` 必须严格为 `true`。该值只能来自用户对本计划的一次性本地 commit 授权；push、merge、tag、publish 仍不在授权内。
 
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 升级为 v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、owner 和 revision。每个新 Batch 持久化 `task_id`、Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。`worker_status` 活动态为 `working`，宿主终态只能是 `completed|interrupted|blocked`。reader 可读取旧 Schema v1/v2，但下一次写入必须先做一次只添加 capsule identity、Provider Binding、recovery 和 worker lifecycle 的原子迁移；迁移不得同时改变计划或 Batch 行为状态。旧状态已有 active worker 时，迁移前必须用保存的 ref 查询真实宿主状态，不能猜测终态。新状态不能再以 v1/v2 初始化。
+Batch Protocol 保持 v1，持久化 state Schema 升级为 v4，完成回执使用 Receipt v3：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个新 Batch 持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取旧 Schema v1-v3；无 worker 状态可在显式补齐缺失事实后迁移，已有 worker 时必须人工恢复，helper 不补写 delegate 或猜测宿主终态。
 
-helper 另以 `repo_id + plan_id` 建立默认两小时的 scheduler lease，并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管，活动 lease 即使带 takeover 也不能抢占。该 lease 只保护计划派发权，不授予代码写权，也不替代每个 `$converge` worker 的 worktree/task writer lease。
+状态文件和 scheduler lease 都以 `repo_id + plan_id` 唯一定位；run takeover 只在同一状态文件转移 owner，不创建第二份状态。lease 默认两小时并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管。
 
 Batch transitions：`pending → dispatching → running → validating-receipt → completed|blocked`。
 
@@ -54,15 +49,16 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 ```json
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "batch_id": "B1",
   "dispatch_id": "dispatch-B1",
   "commit_id": "commit",
   "tree_hash": "verified source tree",
   "verified_tree_hash": "same source tree",
+  "parent_commit_id": "previous receipt commit or plan baseline",
   "delegate_run_id": "delegate-B1",
-  "delegate_state": {"status": "complete", "...": "完整 Converge state"},
-  "delegate_state_fingerprint": "<canonical sha256>",
+  "delegate_state_revision": 4,
+  "delegate_source_fingerprint": "<sha256>",
   "acceptance": [
     {"criterion": "criterion", "evidence": "command/output", "result": "pass", "freshness": "fresh"}
   ],
@@ -70,7 +66,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 }
 ```
 
-completed receipt 必须覆盖 capsule 全部 acceptance，全部为 fresh pass，且没有 open issues。helper 还必须在计划 worktree 中解析 `commit_id`，确认它的真实 Git tree 同时等于 `tree_hash` 和 `verified_tree_hash`；首次接收 receipt 时该提交必须是当前 clean workspace 的 HEAD。回执必须绑定完整、摘要匹配的子 Converge state；其 `run_id/task_key/workspace` 必须分别匹配冻结的 delegate run、Batch task 和计划 worktree，并通过单任务状态机的 complete/清场校验。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
+Receipt v3 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源。completed receipt 必须覆盖 capsule 全部 acceptance，全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
 ## Final acceptance
 

@@ -40,6 +40,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_report.py
   scripts/delivery_state.py
   scripts/delivery_task_key.py
+  scripts/evidence_contract.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py

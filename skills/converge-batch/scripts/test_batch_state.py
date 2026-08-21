@@ -10,7 +10,10 @@ from pathlib import Path
 ROOT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if str(ROOT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ROOT_SCRIPTS))
+from delivery_engine import provider_reference
 from delivery_next import upgrade_state
+from delivery_state import state_path as delegate_state_path
+from provider_contract import canonical_fingerprint
 from test_delivery_next import state as single_state
 
 
@@ -23,18 +26,19 @@ SPEC.loader.exec_module(batch_state)
 def provider_binding(workflow="native-v1"):
     binding = {
         "controller": "converge",
-        "workflow_provider": workflow,
+        "workflow_provider": provider_reference(workflow, "feature"),
         "stage_providers": {},
     }
     return {
-        **binding,
-        "binding_fingerprint": hashlib.sha256(
-            json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
+        "selection": "auto",
+        "reason": "frozen for Batch",
+        "task_kind": "feature",
+        "binding": binding,
+        "binding_fingerprint": canonical_fingerprint(binding),
     }
 
 
-def capsule(batch_id, plan_id="plan-1", task_id=None):
+def capsule(batch_id, plan_id="plan-1", task_id=None, baseline="abc123"):
     return {
         "planned_task": True,
         "plan_id": plan_id,
@@ -45,7 +49,7 @@ def capsule(batch_id, plan_id="plan-1", task_id=None):
         "global_constraints": ["keep compatibility"],
         "consumes": ["baseline"],
         "produces": [f"output-{batch_id}"],
-        "baseline": "abc123",
+        "baseline": baseline,
         "acceptance": [f"accept-{batch_id}"],
         "verification": [f"test-{batch_id}"],
         "provider_binding": provider_binding(),
@@ -54,18 +58,20 @@ def capsule(batch_id, plan_id="plan-1", task_id=None):
 
 def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
     value = {
-        "protocol_version": 2,
+        "protocol_version": 3,
         "batch_id": batch_id,
         "dispatch_id": dispatch_id,
         "commit_id": commit_id,
         "tree_hash": tree_hash,
         "verified_tree_hash": tree_hash,
+        "parent_commit_id": commit_id,
         "acceptance": [
             {
                 "criterion": f"accept-{batch_id}",
                 "evidence": f"test-{batch_id}",
                 "result": "pass",
                 "freshness": "fresh",
+                "source_fingerprint": "a" * 64,
             }
         ],
         "open_issues": [],
@@ -80,25 +86,35 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
             task_key=batch_id.replace("B", "T"),
             status="complete",
             current_stage="verify-final",
+            baseline={"commit": commit_id, "diff_fingerprint": "clean"},
         ))
+        state_root = Path(workspace).parent / "delegate-state"
+        path = delegate_state_path(
+            state_root, child["repo_id"], child["task_key"], child["run_id"]
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(child), encoding="utf-8")
+        value["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
         value.update(
             delegate_run_id=run_id,
-            delegate_state=child,
-            delegate_state_fingerprint=hashlib.sha256(
-                json.dumps(child, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest(),
+            delegate_state_revision=child["revision"],
+            delegate_source_fingerprint=child["source_fingerprint"],
         )
     return value
 
 
 def candidate(workspace, revision=0):
+    baseline = subprocess.check_output(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True
+    ).strip()
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "run_id": "batch-run-1",
         "writer_id": "scheduler-1",
         "revision": revision,
         "repo_id": str(workspace / ".git"),
         "workspace": str(workspace),
+        "delegate_state_root": str(workspace.parent / "delegate-state"),
         "plan": {
             "plan_id": "plan-1",
             "plan_revision": 1,
@@ -117,7 +133,7 @@ def candidate(workspace, revision=0):
                 "batch_id": "B1",
                 "task_id": "T1",
                 "status": "pending",
-                "capsule": capsule("B1"),
+                "capsule": capsule("B1", baseline=baseline),
                 "dispatch_id": None,
                 "worker_ref": None,
                 "worker_role": None,
@@ -131,7 +147,7 @@ def candidate(workspace, revision=0):
                 "batch_id": "B2",
                 "task_id": "T2",
                 "status": "pending",
-                "capsule": capsule("B2"),
+                "capsule": capsule("B2", baseline=baseline),
                 "dispatch_id": None,
                 "worker_ref": None,
                 "worker_role": None,
@@ -143,7 +159,7 @@ def candidate(workspace, revision=0):
             },
         ],
         "final_acceptance": [
-            {"criterion": "whole-plan", "evidence": None, "result": "unknown", "freshness": "unavailable"}
+            {"criterion": "whole-plan", "evidence": None, "result": "unknown", "freshness": "unavailable", "source_fingerprint": None}
         ],
         "blocked_reason": None,
     }
@@ -190,6 +206,13 @@ class BatchStateTest(unittest.TestCase):
     def write(self, state, expected_revision):
         return batch_state.write_state(self.root, state, expected_revision)
 
+    def test_plan_state_path_is_stable_across_scheduler_takeover(self):
+        repo = str(self.workspace / ".git")
+        first = batch_state.state_path(self.root, repo, "plan-1", "run-1")
+        second = batch_state.state_path(self.root, repo, "plan-1", "run-2")
+
+        self.assertEqual(first, second)
+
     def test_preflight_requires_one_time_commit_authorization_before_dispatch(self):
         missing = candidate(self.workspace)
         missing["preflight"].pop("commit_authorized")
@@ -225,6 +248,38 @@ class BatchStateTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "delegate"):
+            batch_state.validate_state(value)
+
+    def test_receipt_rejects_an_embedded_self_asserted_delegate_state(self):
+        value = candidate(self.workspace)
+        value["batches"][0].update(
+            status="validating-receipt", dispatch_id="dispatch-B1",
+            worker_ref="thread-1", worker_role="controller-delegate",
+            worker_owner_run_id=value["run_id"], worker_status="completed",
+            delegate_run_id="delegate-B1",
+        )
+        value["batches"][0]["receipt"] = receipt(
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
+        )
+        value["batches"][0]["receipt"]["delegate_state"] = {"status": "complete"}
+
+        with self.assertRaisesRegex(ValueError, "self-asserted"):
+            batch_state.validate_state(value)
+
+    def test_receipt_must_continue_the_recorded_git_chain(self):
+        value = candidate(self.workspace)
+        value["batches"][0].update(
+            status="validating-receipt", dispatch_id="dispatch-B1",
+            worker_ref="thread-1", worker_role="controller-delegate",
+            worker_owner_run_id=value["run_id"], worker_status="completed",
+            delegate_run_id="delegate-B1",
+        )
+        value["batches"][0]["receipt"] = receipt(
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
+        )
+        value["batches"][0]["receipt"]["parent_commit_id"] = "0" * 40
+
+        with self.assertRaisesRegex(ValueError, "chain"):
             batch_state.validate_state(value)
 
     def test_delegate_run_identity_is_unique_across_batches(self):
@@ -292,7 +347,11 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 9
         state["status"] = "complete"
         state["final_acceptance"] = [
-            {"criterion": "whole-plan", "evidence": "e2e", "result": "pass", "freshness": "fresh"}
+            {
+                "criterion": "whole-plan", "evidence": "e2e", "result": "pass",
+                "freshness": "fresh",
+                "source_fingerprint": state["batches"][-1]["receipt"]["delegate_source_fingerprint"],
+            }
         ]
         self.write(state, 8)
         self.assertEqual(9, json.loads(path.read_text(encoding="utf-8"))["revision"])
@@ -378,7 +437,7 @@ class BatchStateTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "worker lifecycle.*running"):
                     batch_state.validate_state(state)
 
-    def test_应该_当v1或v2活动状态迁移时_按阶段补齐v3生命周期(self):
+    def test_应该_当旧状态已有活动worker时_要求人工恢复而不伪造生命周期(self):
         for schema_version in (1, 2):
             with self.subTest(schema_version=schema_version):
                 legacy = candidate(self.workspace)
@@ -401,7 +460,8 @@ class BatchStateTest(unittest.TestCase):
                 register_worker(upgraded, 0, "thread-1")
 
                 batch_state.validate_state(upgraded)
-                batch_state.validate_transition(legacy, upgraded)
+                with self.assertRaisesRegex(ValueError, "manual recovery"):
+                    batch_state.validate_transition(legacy, upgraded)
 
     def test_应该_当v1或v2未启动状态迁移时_允许无worker引用(self):
         for schema_version in (1, 2):
@@ -529,7 +589,7 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 2
         state["batches"][0]["status"] = "dispatching"
         state["batches"][0]["dispatch_id"] = "dispatch-B1"
-        with self.assertRaisesRegex(ValueError, "active plan"):
+        with self.assertRaisesRegex(ValueError, "terminal plan"):
             self.write(state, 1)
 
     def test_receipt_must_resolve_to_the_verified_git_tree(self):
@@ -549,7 +609,7 @@ class BatchStateTest(unittest.TestCase):
             "B1", "dispatch-B1", "definitely-not-a-git-commit", "self-asserted-tree",
             self.workspace,
         )
-        with self.assertRaisesRegex(ValueError, "Git commit"):
+        with self.assertRaisesRegex(ValueError, "baseline|Git commit"):
             self.write(state, 2)
 
     def test_应该_当胶囊缺少计划身份时_拒绝递归规划风险(self):
@@ -603,6 +663,51 @@ class BatchStateTest(unittest.TestCase):
 
         self.assertTrue(path.exists())
 
+    def test_应该_当已有状态被接管时_在同一文件转移owner而不复制状态(self):
+        original = candidate(self.workspace)
+        path = self.write(original, -1)
+        lease_path = batch_state.scheduler_lease_path(
+            self.root, original["repo_id"], original["plan"]["plan_id"]
+        )
+        lease = json.loads(lease_path.read_text(encoding="utf-8"))
+        lease["lease_expires_at"] = "2000-01-01T00:00:00Z"
+        lease_path.write_text(json.dumps(lease), encoding="utf-8")
+        replacement = candidate(self.workspace, revision=1)
+        replacement["run_id"] = "batch-run-2"
+        replacement["writer_id"] = "scheduler-2"
+
+        written = batch_state.write_state(
+            self.root, replacement, 0, takeover=True
+        )
+
+        self.assertEqual(path, written)
+        self.assertEqual("batch-run-2", json.loads(path.read_text())["run_id"])
+        self.assertEqual(1, len(list(path.parent.glob("*.json"))))
+
+    def test_terminal_plan_and_final_acceptance_are_immutable(self):
+        previous = candidate(self.workspace)
+        previous["status"] = "stopped"
+        candidate_state = json.loads(json.dumps(previous))
+        candidate_state["revision"] = 1
+        candidate_state["final_acceptance"][0]["evidence"] = "rewritten"
+
+        with self.assertRaisesRegex(ValueError, "terminal plan"):
+            batch_state.validate_transition(previous, candidate_state)
+
+    def test_takeover_keeps_completed_worker_owner_as_historical_provenance(self):
+        value = candidate(self.workspace)
+        value["run_id"] = "new-scheduler-run"
+        value["writer_id"] = "new-scheduler"
+        value["batches"][0].update(
+            status="completed", dispatch_id="dispatch-B1", worker_ref="thread-1",
+            worker_role="controller-delegate", worker_owner_run_id="old-scheduler-run",
+            worker_status="completed", delegate_run_id="delegate-B1",
+            receipt=receipt("B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace),
+        )
+        value["current_batch"] = "B2"
+
+        batch_state.validate_state(value)
+
     def test_应该_当恢复真实旧v1状态时_迁移到新Schema并继续(self):
         legacy = candidate(self.workspace)
         legacy["schema_version"] = 1
@@ -616,7 +721,7 @@ class BatchStateTest(unittest.TestCase):
             for field in ("planned_task", "plan_id", "task_id"):
                 batch["capsule"].pop(field)
         batch_state.validate_state(legacy)
-        with self.assertRaisesRegex(ValueError, "schema_version 3"):
+        with self.assertRaisesRegex(ValueError, "schema_version 4"):
             batch_state.write_state(self.root / "new-state", legacy, -1)
         path = batch_state.state_path(
             self.root, legacy["repo_id"], legacy["plan"]["plan_id"], legacy["run_id"]
@@ -624,11 +729,11 @@ class BatchStateTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(legacy), encoding="utf-8")
         upgraded = candidate(self.workspace, revision=1)
-        upgraded["schema_version"] = 3
+        upgraded["schema_version"] = 4
 
         written = self.write(upgraded, 0)
 
-        self.assertEqual(3, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
+        self.assertEqual(4, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
 
     def test_应该_当恢复次数倒退或超过一次时_拒绝状态更新(self):
         state = candidate(self.workspace)
@@ -681,7 +786,7 @@ class BatchStateTest(unittest.TestCase):
 
         written = self.write(upgraded, 0)
 
-        self.assertEqual(3, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
+        self.assertEqual(4, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
 
 
 if __name__ == "__main__":

@@ -72,15 +72,16 @@ def workspace_change_summary(state):
         root = Path(os.fsdecode(
             _git_bytes(workspace, "rev-parse", "--show-toplevel").rstrip(b"\r\n")
         ))
+        baseline_commit = state["baseline"]["commit"]
         tracked_paths = {
             path for path in _git_bytes(
                 root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z",
-                "HEAD", "--",
+                baseline_commit, "--",
             ).split(b"\0") if path
         }
         tracked_stat = _tracked_numstat(_git_bytes(
             root, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z",
-            "HEAD", "--",
+            baseline_commit, "--",
         ))
         untracked_paths = {
             path for path in _git_bytes(

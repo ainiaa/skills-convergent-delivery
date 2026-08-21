@@ -18,7 +18,10 @@ from types import SimpleNamespace
 ROOT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if str(ROOT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ROOT_SCRIPTS))
-from delivery_next import validate_state as validate_delegate_state
+from delivery_next import (
+    validate_provider_binding as validate_complete_provider_binding,
+    validate_state as validate_delegate_state,
+)
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -99,6 +102,9 @@ def digest(value):
 
 
 def validate_provider_binding(value):
+    if "selection" in require_mapping(value, "capsule provider binding"):
+        validate_complete_provider_binding(value)
+        return
     value = require_mapping(value, "capsule provider binding")
     if set(value) != {
         "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
@@ -122,9 +128,9 @@ def validate_provider_binding(value):
         raise ValueError("capsule provider binding fingerprint is invalid")
 
 
-def state_path(root, repo_id, plan_id, run_id):
+def state_path(root, repo_id, plan_id, run_id=None):
     base = Path(root).expanduser().resolve()
-    return base / digest(canonical_path(repo_id)) / digest(plan_id) / f"{digest(run_id)}.json"
+    return base / digest(canonical_path(repo_id)) / f"{digest(plan_id)}.json"
 
 
 def scheduler_lease_path(root, repo_id, plan_id):
@@ -194,7 +200,7 @@ def write_private(path, payload):
         temporary.unlink(missing_ok=True)
 
 
-def validate_evidence(entries, name, *, require_pass=False):
+def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None):
     for index, entry in enumerate(require_list(entries, name, non_empty=True)):
         entry = require_mapping(entry, f"{name}[{index}]")
         require_string(entry.get("criterion"), f"{name}[{index}].criterion")
@@ -208,6 +214,8 @@ def validate_evidence(entries, name, *, require_pass=False):
             require_string(entry.get("evidence"), f"{name}[{index}].evidence")
             if result != "pass" or freshness != "fresh":
                 raise ValueError(f"{name} must contain only fresh passing evidence")
+            if entry.get("source_fingerprint") != source_fingerprint:
+                raise ValueError(f"{name} must match the verified source")
 
 
 def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
@@ -215,7 +223,7 @@ def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
     fields = (
         LEGACY_CAPSULE_FIELDS
         if schema_version == 1
-        else CAPSULE_FIELDS_V3 if schema_version == 3 else CAPSULE_FIELDS
+        else CAPSULE_FIELDS_V3 if schema_version >= 3 else CAPSULE_FIELDS
     )
     for field in fields:
         if field not in capsule:
@@ -230,7 +238,7 @@ def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
             raise ValueError("capsule plan_id does not match")
         if capsule["task_id"] != task_id:
             raise ValueError("capsule task_id does not match")
-    if schema_version == 3:
+    if schema_version >= 3:
         validate_provider_binding(capsule["provider_binding"])
     for field in ("goal", "baseline"):
         require_string(capsule[field], f"capsule.{field}")
@@ -255,25 +263,38 @@ def git_output(workspace, *arguments):
     return result.stdout.strip()
 
 
-def validate_receipt(receipt, batch, workspace, repo_id):
+def delegate_state_path(root, repo_id, task_id, run_id):
+    return (
+        Path(root).expanduser().resolve()
+        / digest(canonical_path(repo_id))
+        / digest(task_id)
+        / f"{digest(run_id)}.json"
+    )
+
+
+def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, previous_commit=None):
     receipt = require_mapping(receipt, f"receipt {batch['batch_id']}")
-    if receipt.get("protocol_version") != 2:
-        raise ValueError("receipt protocol_version must be 2")
+    if receipt.get("protocol_version") != 3:
+        raise ValueError("receipt protocol_version must be 3")
     if receipt.get("batch_id") != batch["batch_id"]:
         raise ValueError("receipt batch_id does not match")
     if receipt.get("dispatch_id") != batch["dispatch_id"]:
         raise ValueError("receipt dispatch_id does not match")
     if receipt.get("delegate_run_id") != batch.get("delegate_run_id"):
         raise ValueError("receipt delegate_run_id does not match")
-    delegate_state = require_mapping(receipt.get("delegate_state"), "receipt delegate state")
-    delegate_fingerprint = require_string(
-        receipt.get("delegate_state_fingerprint"), "receipt.delegate_state_fingerprint"
+    if "delegate_state" in receipt or "delegate_state_fingerprint" in receipt:
+        raise ValueError("receipt cannot embed a self-asserted delegate state")
+    managed = delegate_state_path(
+        delegate_state_root, repo_id, batch["task_id"], batch["delegate_run_id"]
     )
-    actual_fingerprint = digest(
-        json.dumps(delegate_state, sort_keys=True, separators=(",", ":"))
-    )
-    if delegate_fingerprint != actual_fingerprint:
-        raise ValueError("receipt delegate state fingerprint is invalid")
+    try:
+        delegate_state = json.loads(managed.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("managed delegate state is unavailable") from error
+    if receipt.get("delegate_state_revision") != delegate_state.get("revision"):
+        raise ValueError("receipt delegate state revision does not match")
+    if receipt.get("delegate_source_fingerprint") != delegate_state.get("source_fingerprint"):
+        raise ValueError("receipt delegate source fingerprint does not match")
     if delegate_state.get("run_id") != batch.get("delegate_run_id"):
         raise ValueError("receipt delegate state run_id does not match")
     if delegate_state.get("task_key") != batch.get("task_id"):
@@ -284,16 +305,11 @@ def validate_receipt(receipt, batch, workspace, repo_id):
         raise ValueError("receipt delegate state repo_id does not match")
     if delegate_state.get("baseline", {}).get("commit") != batch["capsule"]["baseline"]:
         raise ValueError("receipt delegate state baseline does not match")
-    delegate_binding = delegate_state.get("provider_binding", {}).get("binding", {})
+    delegate_binding = delegate_state.get("provider_binding")
     capsule_binding = batch["capsule"]["provider_binding"]
-    delegate_workflow = delegate_binding.get("workflow_provider", {}).get("id")
-    delegate_stages = {
-        stage: reference.get("id")
-        for stage, reference in delegate_binding.get("stage_providers", {}).items()
-    }
-    if (
-        delegate_workflow != capsule_binding["workflow_provider"]
-        or delegate_stages != capsule_binding["stage_providers"]
+    if any(
+        delegate_binding.get(field) != capsule_binding.get(field)
+        for field in ("task_kind", "binding", "binding_fingerprint")
     ):
         raise ValueError("receipt delegate state provider binding does not match")
     if validate_delegate_state(delegate_state, SimpleNamespace()) != "complete":
@@ -306,7 +322,20 @@ def validate_receipt(receipt, batch, workspace, repo_id):
         raise ValueError("receipt was not verified against the committed tree")
     if tree_hash != commit_tree:
         raise ValueError("receipt tree does not match its Git commit")
-    validate_evidence(receipt.get("acceptance"), "receipt.acceptance", require_pass=True)
+    expected_parent = previous_commit or batch["capsule"]["baseline"]
+    if receipt.get("parent_commit_id") != expected_parent:
+        raise ValueError("receipt parent commit does not match the batch chain")
+    ancestor = subprocess.run(
+        ["git", "-C", workspace, "merge-base", "--is-ancestor", expected_parent, commit_id],
+        capture_output=True,
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError("receipt commit is not descended from the prior checkpoint")
+    validate_evidence(
+        receipt.get("acceptance"), "receipt.acceptance", require_pass=True,
+        source_fingerprint=delegate_state["source_fingerprint"],
+    )
     expected = set(batch["capsule"]["acceptance"])
     actual = {item["criterion"] for item in receipt["acceptance"]}
     if expected != actual:
@@ -318,14 +347,16 @@ def validate_receipt(receipt, batch, workspace, repo_id):
 def validate_state(state):
     state = require_mapping(state, "state")
     schema_version = state.get("schema_version")
-    if schema_version not in {1, 2, 3}:
-        raise ValueError("schema_version must be 1, 2 or 3")
+    if schema_version not in {1, 2, 3, 4}:
+        raise ValueError("schema_version must be 1, 2, 3 or 4")
     for field in ("run_id", "writer_id"):
         require_string(state.get(field), field)
     if not isinstance(state.get("revision"), int) or state["revision"] < 0:
         raise ValueError("revision must be a non-negative integer")
     canonical_path(state.get("repo_id"))
     canonical_path(state.get("workspace"))
+    delegate_state_root = canonical_path(state.get("delegate_state_root")) \
+        if schema_version == 4 else None
 
     plan = require_mapping(state.get("plan"), "plan")
     require_string(plan.get("plan_id"), "plan.plan_id")
@@ -339,7 +370,7 @@ def validate_state(state):
     if preflight.get("passed") is not True or require_list(preflight.get("issues"), "preflight.issues"):
         raise ValueError("preflight must pass without issues")
     require_string(preflight.get("checked_at"), "preflight.checked_at")
-    if schema_version == 3 and preflight.get("commit_authorized") is not True:
+    if schema_version >= 3 and preflight.get("commit_authorized") is not True:
         raise ValueError("preflight requires one-time commit authorization")
 
     status = state.get("status")
@@ -378,7 +409,7 @@ def validate_state(state):
         worker_status = batch.get("worker_status")
         delegate_run_id = batch.get("delegate_run_id")
         receipt = batch.get("receipt")
-        if schema_version == 3 and batch_status in {"pending", "dispatching"} and any(
+        if schema_version >= 3 and batch_status in {"pending", "dispatching"} and any(
             value is not None
             for value in (worker_ref, worker_role, worker_owner_run_id, worker_status, delegate_run_id)
         ):
@@ -400,7 +431,7 @@ def validate_state(state):
             seen_dispatches.add(dispatch_id)
         if batch_status in {"running", "validating-receipt", "completed"}:
             require_string(worker_ref, "worker_ref")
-        if schema_version == 3:
+        if schema_version >= 3:
             if worker_ref is None:
                 if any(value is not None for value in (
                     worker_role, worker_owner_run_id, worker_status, delegate_run_id
@@ -410,8 +441,9 @@ def validate_state(state):
                 require_string(worker_role, "worker_role")
                 if worker_role != "controller-delegate":
                     raise ValueError("worker_role must be controller-delegate")
-                if worker_owner_run_id != state["run_id"]:
-                    raise ValueError("worker_owner_run_id must match the current run")
+                require_string(worker_owner_run_id, "worker_owner_run_id")
+                if worker_status == "working" and worker_owner_run_id != state["run_id"]:
+                    raise ValueError("working worker_owner_run_id must match the current run")
                 if worker_status not in WORKER_STATUSES:
                     raise ValueError("worker_status is invalid")
                 require_string(delegate_run_id, "delegate_run_id")
@@ -420,8 +452,18 @@ def validate_state(state):
                 seen_delegate_runs.add(delegate_run_id)
             if batch_status == "completed" and worker_status != "completed":
                 raise ValueError("completed batch requires worker_status completed")
+            if schema_version == 4 and batch_status == "running" and worker_status != "working":
+                raise ValueError("running batch requires a working worker")
         if batch_status in {"validating-receipt", "completed"}:
-            validate_receipt(receipt, batch, state["workspace"], state["repo_id"])
+            if schema_version == 4:
+                completed = [item for item in batches[:index] if item.get("status") == "completed"]
+                previous_commit = completed[-1]["receipt"]["commit_id"] if completed else None
+                validate_receipt(
+                    receipt, batch, state["workspace"], state["repo_id"],
+                    delegate_state_root, previous_commit,
+                )
+            elif receipt is None:
+                raise ValueError("receipt is required")
         elif receipt is not None:
             raise ValueError("receipt is only allowed after running")
 
@@ -447,7 +489,11 @@ def validate_state(state):
     if status == "complete":
         if completed_prefix != len(batches):
             raise ValueError("all batches must be completed")
-        validate_evidence(state["final_acceptance"], "final_acceptance", require_pass=True)
+        final_source = batches[-1]["receipt"]["delegate_source_fingerprint"]
+        validate_evidence(
+            state["final_acceptance"], "final_acceptance", require_pass=True,
+            source_fingerprint=final_source,
+        )
     blocked_reason = state.get("blocked_reason")
     if status == "blocked":
         require_string(blocked_reason, "blocked_reason")
@@ -455,19 +501,31 @@ def validate_state(state):
         raise ValueError("blocked_reason is only valid for blocked status")
 
 
-def validate_transition(previous, candidate):
-    upgrading = previous["schema_version"] in {1, 2} and candidate["schema_version"] == 3
+def validate_transition(previous, candidate, *, takeover=False):
+    upgrading = previous["schema_version"] in {1, 2, 3} and candidate["schema_version"] == 4
     if candidate["schema_version"] != previous["schema_version"] and not upgrading:
         raise ValueError("invalid schema transition")
-    for field in ("run_id", "writer_id", "repo_id", "workspace", "plan"):
+    for field in ("run_id", "writer_id", "repo_id", "workspace", "plan", "delegate_state_root"):
+        if upgrading and field == "delegate_state_root":
+            continue
         if candidate[field] != previous[field]:
+            if field in {"run_id", "writer_id"} and takeover:
+                continue
             if field == "plan":
                 raise ValueError("plan is immutable")
             raise ValueError(f"{field} is immutable")
     if candidate["revision"] != previous["revision"] + 1:
         raise ValueError("candidate revision must be the next revision")
     if upgrading:
-        if set(candidate) != set(previous):
+        if any(batch.get("worker_ref") for batch in previous["batches"]):
+            raise ValueError("legacy active worker state requires manual recovery")
+        if "delegate_state_root" not in candidate:
+            raise ValueError("schema upgrade requires delegate_state_root")
+        previous_without_root = dict(previous)
+        candidate_without_root = dict(candidate)
+        previous_without_root.pop("delegate_state_root", None)
+        candidate_without_root.pop("delegate_state_root")
+        if set(candidate_without_root) != set(previous_without_root):
             raise ValueError("schema upgrade must preserve state fields")
         for field in previous:
             if field in {"schema_version", "revision", "batches"}:
@@ -517,6 +575,12 @@ def validate_transition(previous, candidate):
             new_without_upgrade["capsule"] = new_capsule
             if new_without_upgrade != old_without_upgrade or new_capsule != old_capsule:
                 raise ValueError("schema upgrade must only add capsule identity")
+        return
+    if previous["status"] in {"complete", "blocked", "stopped"}:
+        expected = dict(previous)
+        expected["revision"] = candidate["revision"]
+        if candidate != expected:
+            raise ValueError("terminal plan state is immutable")
         return
     if candidate["status"] not in PLAN_TRANSITIONS[previous["status"]]:
         raise ValueError("invalid plan transition")
@@ -575,6 +639,9 @@ def validate_transition(previous, candidate):
                 raise ValueError("receipt workspace is not clean")
     if changed > 1:
         raise ValueError("only one batch may transition per revision")
+    if any(item.get("result") == "pass" for item in previous["final_acceptance"]) \
+            and candidate["final_acceptance"] != previous["final_acceptance"]:
+        raise ValueError("passing final acceptance is immutable")
 
 
 def write_state(
@@ -586,8 +653,8 @@ def write_state(
     ttl_seconds=DEFAULT_SCHEDULER_LEASE_TTL_SECONDS,
 ):
     validate_state(candidate)
-    if candidate["schema_version"] != 3:
-        raise ValueError("new writes require schema_version 3; migrate legacy v1/v2 state first")
+    if candidate["schema_version"] != 4:
+        raise ValueError("new writes require schema_version 4; migrate legacy state first")
     path = state_path(
         root,
         candidate["repo_id"],
@@ -620,7 +687,7 @@ def write_state(
                     current_revision = previous["revision"]
                     if current_revision != expected_revision:
                         raise ValueError("expected revision does not match current state")
-                    validate_transition(previous, candidate)
+                    validate_transition(previous, candidate, takeover=takeover)
                 elif expected_revision != -1:
                     raise ValueError("expected revision does not match missing state")
                 if candidate["revision"] != current_revision + 1:
@@ -651,8 +718,8 @@ def main():
     arguments = parser.parse_args()
     try:
         if arguments.command == "path":
-            if not all((arguments.repo, arguments.plan_id, arguments.run_id)):
-                raise ValueError("path requires --repo, --plan-id, and --run-id")
+            if not all((arguments.repo, arguments.plan_id)):
+                raise ValueError("path requires --repo and --plan-id")
             print(state_path(arguments.state_root, arguments.repo, arguments.plan_id, arguments.run_id))
             return 0
         if arguments.input != "-":

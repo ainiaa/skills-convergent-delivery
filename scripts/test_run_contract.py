@@ -14,6 +14,7 @@ class RunContractTest(unittest.TestCase):
             ("query", {"worker_ref": "worker-1"}),
             ("verify", {"task_id": "T1"}),
             ("block", {}),
+            ("block", {"reason": "missing identity"}),
             ("complete", {}),
         )
         for kind, details in invalid:

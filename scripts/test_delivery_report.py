@@ -23,6 +23,18 @@ def state(status="complete"):
         "workspace": "/repo/worktree",
         "baseline": {"commit": "abc123", "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-1",
+        "source_fingerprint": "a" * 64,
+        "execution_control": {
+            "routing": {
+                "schema_version": 1, "status": "frozen", "assessment_count": 1,
+                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
+            },
+            "review": {
+                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
+                "integration_budget_remaining": 0, "requests": [],
+            },
+        },
         "engine": {"name": "native-v1", "selection": "auto", "reason": "fallback"},
         "current_stage": "verify-final",
         "requires_stability_round": False,
@@ -38,6 +50,7 @@ def state(status="complete"):
                     "evidence": "test_install",
                     "result": "pass",
                     "freshness": "fresh",
+                    "source_fingerprint": "a" * 64,
                 }
             ],
             "report_history": {
@@ -84,6 +97,12 @@ class DeliveryReportTest(unittest.TestCase):
             payload = state()
             payload["workspace"] = str(workspace)
             payload["repo_id"] = str(workspace / ".git")
+            payload["baseline"]["commit"] = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
             payload["workspace_changes"] = {
                 "file_count": 999,
@@ -141,6 +160,27 @@ class DeliveryReportTest(unittest.TestCase):
 
         self.assertIn("diagnostic", payload)
         self.assertEqual("blocked", payload["diagnostic"]["status"])
+
+    def test_blocked_diagnostic_reports_active_and_unexpected_cleanup_refs(self):
+        payload = upgrade_state(state("blocked"))
+        payload["runtime_binding"] = negotiate(
+            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                      "tree_query": True, "restrict_dispatch": False}
+        )
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], payload["revision"], ["worker-1"],
+            ["worker-1"], ["unexpected-1"], "2026-08-21T00:00:00Z",
+        )
+
+        report = json.loads(self.run_report(payload, "json").stdout)
+
+        self.assertEqual(["worker-1"], report["diagnostic"]["cleanup"]["active_refs"])
+        self.assertEqual(["unexpected-1"], report["diagnostic"]["cleanup"]["unexpected_refs"])
 
     def test_text_diagnostic_includes_bounded_worker_and_check_summaries(self):
         payload = upgrade_state(state())

@@ -36,11 +36,23 @@ def blocked_worker_state():
                   "tree_query": True, "restrict_dispatch": False}
     )
     value = {
-        "schema_version": 8,
+        "schema_version": 9,
         "run_id": "run-runtime", "repo_id": "/repo/common.git", "task_key": "T1",
         "writer_id": "writer-runtime", "revision": 0, "workspace": "/repo/worktree",
         "baseline": {"commit": "abc123", "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-runtime", "controller": controller_identity(),
+        "source_fingerprint": "a" * 64,
+        "execution_control": {
+            "routing": {
+                "schema_version": 1, "status": "frozen", "assessment_count": 1,
+                "route": "planned", "review_tier": "normal", "profile_fingerprint": "b" * 64,
+            },
+            "review": {
+                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
+                "integration_budget_remaining": 0, "requests": [],
+            },
+        },
         "provider_binding": {
             "selection": "auto", "reason": "native fallback", "task_kind": "fix",
             "binding": binding, "binding_fingerprint": canonical_fingerprint(binding),
@@ -58,6 +70,7 @@ def blocked_worker_state():
             "checks": [], "acceptance": [{
                 "criterion": "cleanup is recorded", "evidence": "host query",
                 "result": "unknown", "freshness": "unavailable",
+                "source_fingerprint": "a" * 64,
             }], "acceptance_history": [],
         },
         "handoff": {

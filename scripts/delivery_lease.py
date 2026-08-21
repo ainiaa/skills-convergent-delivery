@@ -224,10 +224,50 @@ def release(arguments, paths):
             if not same_owner(record, arguments.run_id, arguments.writer_id):
                 payload("blocked_owner", holder=record)
                 return 2
+    state = formal_state(arguments)
+    if state is not None:
+        try:
+            validate_cleanup_for_release(state, arguments)
+        except ValueError as error:
+            payload("blocked_cleanup", reason=str(error))
+            return 2
     for path in paths.values():
         remove_if_owned(path, arguments.run_id, arguments.writer_id)
     payload("released")
     return 0
+
+
+def formal_state(arguments):
+    path = (
+        Path(arguments.state_root).expanduser().resolve()
+        / digest(arguments.repo)
+        / digest(arguments.task_key)
+        / f"{digest(arguments.run_id)}.json"
+    )
+    return read_record(path) if path.exists() else None
+
+
+def validate_cleanup_for_release(state, arguments):
+    expected = {
+        "repo_id": arguments.repo,
+        "workspace": arguments.workspace,
+        "task_key": arguments.task_key,
+        "run_id": arguments.run_id,
+        "writer_id": arguments.writer_id,
+    }
+    if any(state.get(field) != value for field, value in expected.items()):
+        raise ValueError("formal state owner does not match the lease")
+    if state.get("status") not in {"complete", "blocked"}:
+        raise ValueError("formal state is not terminal")
+    workers = state.get("workers", [])
+    if any(worker.get("status") == "working" for worker in workers):
+        raise ValueError("worker cleanup is incomplete")
+    if workers:
+        receipt = state.get("worker_tree_receipt")
+        if not isinstance(receipt, dict) or receipt.get("observed_revision") != state.get("revision"):
+            raise ValueError("worker cleanup receipt is not fresh")
+        if receipt.get("active_refs") or receipt.get("unexpected_refs"):
+            raise ValueError("worker cleanup receipt is not empty")
 
 
 def move(arguments, paths, repo, workspace):
@@ -301,6 +341,9 @@ def main():
     parser.add_argument("--writer-id")
     parser.add_argument("--ttl-seconds", type=int, default=DEFAULT_TTL_SECONDS)
     parser.add_argument("--takeover", action="store_true")
+    parser.add_argument(
+        "--state-root", default=str(Path.home() / ".convergent-delivery" / "state")
+    )
     arguments = parser.parse_args()
 
     try:
@@ -310,6 +353,8 @@ def main():
             raise ValueError("ttl_seconds must be positive")
         repo = canonical_path(arguments.repo)
         workspace = canonical_path(arguments.workspace)
+        arguments.repo = repo
+        arguments.workspace = workspace
         paths = lease_paths(arguments.root, repo, workspace, arguments.task_key)
         if arguments.command in {"renew", "release", "move"} and (
             not arguments.run_id or not arguments.writer_id

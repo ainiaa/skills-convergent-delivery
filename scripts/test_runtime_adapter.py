@@ -17,6 +17,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
 
         self.assertEqual("automatic", result["mode"])
+        self.assertEqual(1, result["schema_version"])
         self.assertEqual(["dispatch", "query", "wait", "tree_query"], result["capabilities"])
         self.assertNotIn("interrupt", result["capabilities"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
@@ -32,6 +33,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
 
         self.assertEqual("tree_query", receipt["mode"])
+        self.assertEqual(1, receipt["schema_version"])
         self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
         self.assertEqual(3, receipt["observed_revision"])
 

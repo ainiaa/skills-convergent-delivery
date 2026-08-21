@@ -205,11 +205,43 @@ class ControllerSnapshotTest(unittest.TestCase):
             command = controller_snapshot.trusted_command(
                 descriptor_path, "scripts/delivery_lease.py", ["release"]
             )
-            self.assertTrue(command[1].endswith("scripts/delivery_lease.py"))
+            self.assertEqual(
+                str(MODULE_PATH.with_name("delivery_lease.py").resolve()),
+                command[1],
+            )
             with self.assertRaisesRegex(ValueError, "protocol changed"):
                 controller_snapshot.trusted_command(
                     descriptor_path, "scripts/delivery_next.py", []
                 )
+
+    def test_legacy_release_never_executes_the_snapshot_lease_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control"
+            )
+            snapshot_script = Path(descriptor["root"]) / "scripts/delivery_lease.py"
+            snapshot_script.chmod(0o600)
+            snapshot_script.write_text("raise RuntimeError('legacy payload executed')\n")
+            snapshot_script.chmod(0o400)
+            descriptor["protocol_version"] -= 1
+            descriptor["protocol_fingerprint"] = controller_snapshot.aggregate_fingerprint(
+                descriptor["root"], descriptor["files"]
+            )
+            snapshot = Path(descriptor["root"])
+            renamed = snapshot.with_name(descriptor["protocol_fingerprint"])
+            snapshot.rename(renamed)
+            descriptor["root"] = str(renamed)
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            command = controller_snapshot.trusted_command(
+                descriptor_path, "scripts/delivery_lease.py", ["release"]
+            )
+
+            self.assertEqual(
+                str(MODULE_PATH.with_name("delivery_lease.py").resolve()),
+                command[1],
+            )
 
 
 if __name__ == "__main__":

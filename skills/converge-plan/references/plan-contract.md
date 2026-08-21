@@ -1,10 +1,10 @@
-# Plan Contract v3
+# Plan Contract v4
 
 ## 1. Schema
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "plan_id": "plan-<stable-id>",
   "requirement_fingerprint": "<lowercase sha256>",
   "planner": {
@@ -13,6 +13,7 @@
     "source_fingerprint": "<sha256 or null>"
   },
   "context": "short | long",
+  "baseline": {"commit": "<full Git object id>", "diff_fingerprint": "<sha256>"},
   "checkpoint": "same_session | cross_session",
   "tasks": [
     {
@@ -43,7 +44,7 @@
 
 任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；Provider Binding 摘要必须与 workflow/stage ID 的规范 JSON 一致。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
-旧 v1/v2 的短单任务和多任务可安全迁移为 v3；long context 单任务无法证明只有一个结果，必须显式升级 v3 并声明唯一 outcome，或拆成多个垂直切片。新计划不得再写 `engine` 或旧 schema。
+旧 v1/v2 只有在调用者显式提供真实 baseline 时才可迁移为 v4；v3 缺少 baseline 时明确阻塞，不能用当前 `HEAD` 伪造任务起点。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。新计划不得再写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 
@@ -86,9 +87,12 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD
       "status": "DONE",
       "fresh_pass": true,
       "evidence": [{
+        "schema_version": 1,
         "command": "real verification command",
         "exit_code": 0,
         "source": {
+          "schema_version": 1,
+          "baseline_commit": "<plan baseline commit>",
           "commit_id": "<Git HEAD>",
           "tree_hash": "<HEAD tree>",
           "diff_fingerprint": "<workspace diff sha256>",
@@ -103,9 +107,12 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD
     "result": "pass",
     "freshness": "fresh",
     "evidence": {
+      "schema_version": 1,
       "command": "real integration check",
       "exit_code": 0,
       "source": {
+        "schema_version": 1,
+        "baseline_commit": "<same plan baseline commit>",
         "commit_id": "<same Git HEAD>",
         "tree_hash": "<same HEAD tree>",
         "diff_fingerprint": "<same workspace diff sha256>",
@@ -117,7 +124,7 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD
 }
 ```
 
-`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff HEAD` 和未跟踪文件，计算结构化 source receipt 与 `changed_paths`。Git 返回的相对路径保持原生字节语义，文件名中的反斜杠不会按调用者路径规则改写成 `/`。调用者提供的同名顶层字段不会成为真源。helper 只运行固定的只读 Git 子命令；receipt 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。
+`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v1 与 `changed_paths`；已提交和未提交变更都不会因中途 commit 消失。Git 返回的相对路径保持原生字节语义，文件名中的反斜杠不会按调用者路径规则改写成 `/`。调用者提供的同名顶层字段不会成为真源。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v1 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。
 
 状态语义：
 

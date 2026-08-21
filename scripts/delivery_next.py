@@ -54,6 +54,8 @@ BLOCKED_CODES = {
 DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
 WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
+ROUTES = {"inline", "planned", "delegated", "batch"}
+REVIEW_TIERS = {"low", "normal", "high"}
 PROGRESS_EVENTS = {"heartbeat", "milestone"}
 PROGRESS_PHASES = {
     "understanding", "planning", "reproducing", "testing", "implementing",
@@ -87,20 +89,53 @@ def normalize_open_issues(value):
     raise ValueError("handoff.open_issues must be a string or a list of strings")
 
 
+def legacy_execution_control():
+    return {
+        "routing": {
+            "schema_version": 1,
+            "status": "legacy_unavailable",
+            "assessment_count": 0,
+            "route": None,
+            "review_tier": None,
+            "profile_fingerprint": None,
+        },
+        "review": {
+            "protocol_version": 2,
+            "source_fingerprint": None,
+            "repair_budget_remaining": 1,
+            "re_review_budget_remaining": 1,
+            "integration_budget_remaining": 0,
+            "requests": [],
+        },
+    }
+
+
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") in {7, 8}:
+    if value.get("schema_version") == 9:
         state = copy.deepcopy(value)
         for worker in state.get("workers", []):
             worker.setdefault("parent_ref", None)
             worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
             worker.setdefault("depth", 1)
             worker.setdefault("may_dispatch", False)
-        if state["schema_version"] == 7:
-            state["schema_version"] = 8
         state.setdefault("worker_tree_receipt", None)
         state.setdefault("runtime_binding", None)
+        handoff = state.get("handoff")
+        if isinstance(handoff, dict) and "open_issues" in handoff:
+            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
+        return state
+    if value.get("schema_version") in {7, 8}:
+        if value.get("workers"):
+            raise ValueError("legacy worker state requires manual recovery")
+        state = copy.deepcopy(value)
+        state["schema_version"] = 9
+        state.setdefault("workers", [])
+        state.setdefault("worker_tree_receipt", None)
+        state.setdefault("runtime_binding", None)
+        state.setdefault("source_fingerprint", None)
+        state.setdefault("execution_control", legacy_execution_control())
         handoff = state.get("handoff")
         if isinstance(handoff, dict) and "open_issues" in handoff:
             handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -127,12 +162,14 @@ def upgrade_state(value):
         if source_schema == 5:
             engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
     state.update(
-        schema_version=8,
+        schema_version=9,
         controller=controller_identity(),
         provider_binding=legacy_provider_binding(engine),
         workers=state.get("workers", []),
         worker_tree_receipt=None,
         runtime_binding=state.get("runtime_binding"),
+        source_fingerprint=state.get("source_fingerprint"),
+        execution_control=state.get("execution_control", legacy_execution_control()),
     )
     for worker in state["workers"]:
         worker.setdefault("progress", None)
@@ -140,6 +177,8 @@ def upgrade_state(value):
         worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
         worker.setdefault("depth", 1)
         worker.setdefault("may_dispatch", False)
+    if state["workers"]:
+        raise ValueError("legacy worker state requires manual recovery")
     handoff = state.get("handoff")
     if isinstance(handoff, dict) and "open_issues" in handoff:
         handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
@@ -321,6 +360,69 @@ def validate_provider_binding(value):
     return workflow
 
 
+def require_sha256(value, name, *, optional=False):
+    if optional and value is None:
+        return None
+    value = require_string(value, name)
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError(f"{name} must be a lowercase sha256")
+    return value
+
+
+def validate_execution_control(value, source_fingerprint):
+    value = require_mapping(value, "execution_control")
+    if set(value) != {"routing", "review"}:
+        raise ValueError("execution_control fields are invalid")
+    routing = require_mapping(value["routing"], "execution_control.routing")
+    if set(routing) != {
+        "schema_version", "status", "assessment_count", "route", "review_tier",
+        "profile_fingerprint",
+    } or routing["schema_version"] != 1:
+        raise ValueError("execution_control.routing fields are invalid")
+    count = routing["assessment_count"]
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 2:
+        raise ValueError("routing assessment_count must be from 0 to 2")
+    if routing["status"] == "frozen":
+        if count not in {1, 2} or routing["route"] not in ROUTES \
+                or routing["review_tier"] not in REVIEW_TIERS:
+            raise ValueError("routing must contain one frozen decision")
+        require_sha256(routing["profile_fingerprint"], "routing.profile_fingerprint")
+    elif routing != legacy_execution_control()["routing"]:
+        raise ValueError("routing status is invalid")
+
+    review = require_mapping(value["review"], "execution_control.review")
+    if set(review) != {
+        "protocol_version", "source_fingerprint", "repair_budget_remaining",
+        "re_review_budget_remaining", "integration_budget_remaining", "requests",
+    } or review["protocol_version"] != 2:
+        raise ValueError("execution_control.review fields are invalid")
+    review_source = require_sha256(
+        review["source_fingerprint"], "review.source_fingerprint", optional=True
+    )
+    if review_source is not None and review_source != source_fingerprint:
+        raise ValueError("review source_fingerprint must match the current source")
+    for field in (
+        "repair_budget_remaining", "re_review_budget_remaining", "integration_budget_remaining"
+    ):
+        if review[field] not in {0, 1}:
+            raise ValueError(f"review {field} must be 0 or 1")
+    if not isinstance(review["requests"], list):
+        raise ValueError("review requests must be a list")
+    for request in review["requests"]:
+        if not isinstance(request, dict) or set(request) != {
+            "axis", "phase", "source_fingerprint", "status"
+        }:
+            raise ValueError("review request fields are invalid")
+        if request["axis"] not in {"spec", "quality", "integration"} \
+                or request["phase"] not in {"initial", "re_review", "closure"} \
+                or request["status"] not in {"pass", "findings", "blocked"}:
+            raise ValueError("review request value is invalid")
+        if require_sha256(request["source_fingerprint"], "review request source") \
+                != source_fingerprint:
+            raise ValueError("review request source must match the current source")
+    return routing, review
+
+
 def validate_state(state, arguments):
     state = upgrade_state(state)
 
@@ -362,6 +464,12 @@ def validate_state(state, arguments):
     require_string(baseline.get("commit"), "baseline.commit")
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
+    source_fingerprint = require_sha256(
+        state.get("source_fingerprint"), "source_fingerprint", optional=True
+    )
+    routing, review_control = validate_execution_control(
+        state.get("execution_control"), source_fingerprint
+    )
     workflow_provider = validate_provider_binding(state.get("provider_binding"))
     runtime_binding = state.get("runtime_binding")
     if runtime_binding is not None:
@@ -379,6 +487,8 @@ def validate_state(state, arguments):
         ref = require_string(worker.get("ref"), "workers[].ref")
         require_string(worker.get("role"), "workers[].role")
         require_string(worker.get("task_id"), "workers[].task_id")
+        if worker["task_id"] != task_key:
+            raise ValueError("workers[].task_id must match task_key")
         if worker.get("parent_ref") is not None:
             raise ValueError("workers must be controller-owned leaves")
         if worker.get("depth") != 1 or worker.get("may_dispatch") is not False:
@@ -420,10 +530,12 @@ def validate_state(state, arguments):
         raise ValueError("workers require a frozen runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
-            "observed_revision", "observed_at", "runtime_fingerprint", "mode",
+            "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
             "registered_refs", "active_refs", "unexpected_refs",
         }:
             raise ValueError("worker tree receipt fields are invalid")
+        if tree_receipt["schema_version"] != 1:
+            raise ValueError("worker tree receipt schema_version must be 1")
         observed_revision = tree_receipt["observed_revision"]
         if (
             not isinstance(observed_revision, int)
@@ -492,6 +604,11 @@ def validate_state(state, arguments):
             raise ValueError("ledger.acceptance[].result must be pass, fail, or unknown")
         if item.get("freshness") not in FRESHNESS:
             raise ValueError("ledger.acceptance[].freshness is invalid")
+        require_sha256(
+            item.get("source_fingerprint"),
+            "ledger.acceptance[].source_fingerprint",
+            optional=True,
+        )
     acceptance_history = ledger.get("acceptance_history", [])
     if not isinstance(acceptance_history, list):
         raise ValueError("ledger.acceptance_history must be a list")
@@ -512,6 +629,11 @@ def validate_state(state, arguments):
             raise ValueError("ledger.acceptance_history[].result is invalid")
         if snapshot.get("freshness") not in FRESHNESS:
             raise ValueError("ledger.acceptance_history[].freshness is invalid")
+        require_sha256(
+            snapshot.get("source_fingerprint"),
+            "ledger.acceptance_history[].source_fingerprint",
+            optional=True,
+        )
     handoff = require_mapping(state.get("handoff"), "handoff")
     for field in ("goal", "last_verification", "next_action"):
         require_string(handoff.get(field), f"handoff.{field}")
@@ -546,7 +668,15 @@ def validate_state(state, arguments):
         raise ValueError("scope_fingerprint does not match")
 
     status = state.get("status")
+    if status != "blocked" and (
+        state.get("blocked_code") is not None or state.get("blocked_reason") is not None
+    ):
+        raise ValueError("blocked metadata is only valid for blocked state")
     if status == "complete":
+        if routing["status"] != "frozen":
+            raise ValueError("complete state requires a frozen route")
+        if source_fingerprint is None:
+            raise ValueError("complete state requires a source_fingerprint")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
         if workers:
@@ -557,9 +687,12 @@ def validate_state(state, arguments):
             if tree_receipt["unexpected_refs"]:
                 raise ValueError("complete state requires no unexpected descendants")
         if not acceptance or not all(
-            item["result"] == "pass" and item["freshness"] == "fresh" for item in acceptance
+            item["result"] == "pass"
+            and item["freshness"] == "fresh"
+            and item.get("source_fingerprint") == source_fingerprint
+            for item in acceptance
         ):
-            raise ValueError("complete state requires fresh passing acceptance evidence")
+            raise ValueError("complete state requires fresh source-bound passing acceptance evidence")
         expected_final = "verify-final" if workflow_provider == "native-v1" else "pdlc-run"
         if stage != expected_final:
             raise ValueError("complete state must follow final verification")
@@ -618,17 +751,22 @@ def main():
     parser.add_argument("--format", choices=("json", "legacy"), default="json")
     arguments = parser.parse_args()
 
+    state = None
     try:
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
-        state = upgrade_state(json.loads(Path(arguments.state).read_text(encoding="utf-8")))
+        state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+        state = upgrade_state(state)
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
         result = delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        result = action("block", reason=str(error))
+        task_id = (
+            state.get("task_key") if isinstance(state, dict) else arguments.task_key
+        ) or "unknown-task"
+        result = action("block", task_id=task_id, reason=str(error))
         print("blocked" if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         print(f"delivery state blocked: {error}", file=sys.stderr)
         return 2

@@ -34,7 +34,11 @@ def next_action(state):
     if batch_status == "dispatching":
         return action("block", task_id=task_id, reason="dispatch outcome is uncertain")
     if batch_status == "running":
-        return action("query", task_id=task_id, worker_ref=batch["worker_ref"])
+        return (
+            action("query", task_id=task_id, worker_ref=batch["worker_ref"])
+            if batch.get("worker_status") in {None, "working"}
+            else action("block", task_id=task_id, reason="running batch has a terminal worker")
+        )
     if batch_status == "validating-receipt":
         worker_status = batch.get("worker_status")
         if worker_status == "working":
@@ -48,6 +52,7 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--format", choices=("json", "legacy"), default="json")
     arguments = parser.parse_args()
+    state = None
     try:
         if arguments.input != "-":
             raise ValueError("only --input - is accepted")
@@ -57,7 +62,10 @@ def main():
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (KeyError, OSError, StopIteration, ValueError, json.JSONDecodeError) as error:
-        result = action("block", reason=str(error))
+        task_id = (
+            state.get("plan", {}).get("plan_id") if isinstance(state, dict) else None
+        ) or "unknown-plan"
+        result = action("block", task_id=task_id, reason=str(error))
         print("blocked" if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         print(f"batch runtime blocked: {error}", file=sys.stderr)
         return 2

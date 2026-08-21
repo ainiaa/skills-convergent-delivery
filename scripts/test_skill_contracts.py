@@ -1,4 +1,5 @@
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,18 @@ def frontmatter(path):
 
 
 class SkillContractTest(unittest.TestCase):
+    def test_repository_does_not_track_generated_python_bytecode(self):
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "*.pyc"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual("", result.stdout.strip())
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("__pycache__/", ignore)
+        self.assertIn("*.py[cod]", ignore)
+
     def test_five_skills_have_distinct_names_and_triggers(self):
         paths = {
             "converge": ROOT / "SKILL.md",
@@ -42,7 +55,7 @@ class SkillContractTest(unittest.TestCase):
         checks = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertEqual("0.15.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("0.16.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
             "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,
@@ -64,7 +77,7 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(runtime, readme)
         self.assertIn("五个 Skill", readme)
 
-    def test_plan_v3_and_checkpoint_commit_semantics_are_integrated(self):
+    def test_plan_v4_and_checkpoint_commit_semantics_are_integrated(self):
         root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         batch_skill = (ROOT / "skills/converge-batch/SKILL.md").read_text(encoding="utf-8")
@@ -73,7 +86,7 @@ class SkillContractTest(unittest.TestCase):
         )
         combined = root_skill + readme + batch_skill + batch_contract
 
-        self.assertIn("Plan Contract v3", combined)
+        self.assertIn("Plan Contract v4", combined)
         self.assertIn("checkpoint=same_session", combined)
         self.assertIn("同会话顺序执行", combined)
         self.assertIn("不要求 commit", combined)

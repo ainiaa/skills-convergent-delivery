@@ -64,6 +64,7 @@ def build_report(state):
 def build_diagnostic(state):
     upgraded = upgrade_state(state)
     binding = upgraded["provider_binding"]["binding"]
+    cleanup = upgraded.get("worker_tree_receipt") or {}
     return {
         "status": upgraded["status"],
         "current_stage": upgraded["current_stage"],
@@ -76,6 +77,10 @@ def build_diagnostic(state):
             {"ref": worker["ref"], "status": worker["status"]}
             for worker in upgraded["workers"]
         ],
+        "cleanup": {
+            "active_refs": cleanup.get("active_refs", []),
+            "unexpected_refs": cleanup.get("unexpected_refs", []),
+        },
         "checks": upgraded["ledger"]["checks"],
     }
 

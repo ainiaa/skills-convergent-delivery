@@ -6,7 +6,7 @@ ACTIONS = {
     "dispatch": ({"task_id"}, {"task_id"}),
     "query": ({"task_id", "worker_ref"}, {"task_id", "worker_ref"}),
     "verify": ({"task_id"}, {"task_id", "phase", "target"}),
-    "block": ({"reason"}, {"reason", "task_id"}),
+    "block": ({"reason", "task_id"}, {"reason", "task_id"}),
     "complete": ({"task_id"}, {"task_id"}),
 }
 

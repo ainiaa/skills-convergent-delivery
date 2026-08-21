@@ -52,7 +52,7 @@ REQUIRED_FORBIDDEN_ACTIONS = {
     "publish",
     "install",
 }
-CONTROLLER_PROTOCOL_VERSION = 5
+CONTROLLER_PROTOCOL_VERSION = 6
 
 
 def skill_path(root, name):

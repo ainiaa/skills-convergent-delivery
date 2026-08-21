@@ -28,6 +28,18 @@ def state(revision=0, writer_id="writer-1"):
         "workspace": "/repo/worktree-a",
         "baseline": {"commit": "abc123", "diff_fingerprint": "base-diff"},
         "scope_fingerprint": "scope-123",
+        "source_fingerprint": "a" * 64,
+        "execution_control": {
+            "routing": {
+                "schema_version": 1, "status": "frozen", "assessment_count": 1,
+                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
+            },
+            "review": {
+                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
+                "integration_budget_remaining": 0, "requests": [],
+            },
+        },
         "engine": {
             "name": "native-v1",
             "selection": "auto",
@@ -46,6 +58,7 @@ def state(revision=0, writer_id="writer-1"):
                     "evidence": "targeted test",
                     "result": "pass",
                     "freshness": "fresh",
+                    "source_fingerprint": "a" * 64,
                 }
             ],
         },
@@ -221,7 +234,7 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(8, written["schema_version"])
+            self.assertEqual(9, written["schema_version"])
             self.assertEqual([], written["workers"])
             self.assertIsNone(written["worker_tree_receipt"])
             self.assertEqual(
@@ -230,6 +243,23 @@ class DeliveryStateTest(unittest.TestCase):
             )
             self.assertEqual("native-v1", written["provider_binding"]["binding"]["workflow_provider"]["id"])
             self.assertNotIn("engine", written)
+
+    def test_state_write_renews_the_owned_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            for record_path in root.rglob("*.json"):
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                record["renewed_at"] = "2000-01-01T00:00:00Z"
+                record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            result = self.write(root, state_home, state(), -1)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            for record_path in root.rglob("*.json"):
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                self.assertNotEqual("2000-01-01T00:00:00Z", record["renewed_at"])
 
     def test_v5_migration_rejects_stage_or_ledger_changes(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 0.16.0
+
+- 修复 20 项控制面缺陷：旧 Snapshot 不再执行冻结的历史 lease 代码；Controller Protocol 升为 v6，并共享 Source/Evidence Receipt Schema v1。
+- Plan Contract v4 冻结真实 Git baseline；工作区统计和范围审计覆盖 baseline 之后的已提交、已暂存、未提交及未跟踪变更。
+- Single State v9 持久化路由、评估次数、审查预算和源码指纹；worker task、清场、租约续期、终态字段与错误动作身份均收紧。
+- Batch State v4 / Receipt v3 使用 repo+plan 单一状态、正式 delegate state、完整 Provider 来源和 Git 前序链；旧活动 worker 状态不再伪迁移。
+- 统一 Review Protocol v2 为同一 reviewer 的两个有序单轴请求；Runtime Binding 与清场 Receipt 显式升级为 Schema v1。
+- 停止跟踪 Python 字节码并增加仓库卫生回归检查，避免运行 helper 后污染工作区和累计变更统计。
+
 ### 0.15.0
 
 - 修复 blocked 后无法回写 worker 中断结果的问题；失败状态保持 blocked，但允许后续 revision 仅登记既有 worker 的宿主终态和新鲜清场回执。

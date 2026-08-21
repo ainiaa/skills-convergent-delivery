@@ -104,6 +104,36 @@ class DeliveryProgressTest(unittest.TestCase):
         self.assertEqual("git_read_failed", summary["error"])
         self.assertIsNone(summary["file_count"])
 
+    def test_workspace_change_summary_keeps_committed_changes_since_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True)
+            baseline = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            (workspace / "committed.txt").write_text("one\ntwo\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "committed.txt"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "task"], check=True)
+            current = state()
+            current["workspace"] = str(workspace)
+            current["baseline"] = {"commit": baseline, "diff_fingerprint": "clean"}
+
+            summary = delivery_progress.workspace_change_summary(current)
+
+            self.assertEqual(1, summary["file_count"])
+            self.assertEqual(2, summary["lines_added"])
+
     def test_status_uses_parent_git_summary_instead_of_worker_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

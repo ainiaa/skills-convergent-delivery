@@ -1,0 +1,7 @@
+## Keep the repository-provided Claude Code skill entry point versioned.
+!.claude/
+!.claude/skills/
+!.claude/skills/convergent-delivery
+
+__pycache__/
+*.py[cod]

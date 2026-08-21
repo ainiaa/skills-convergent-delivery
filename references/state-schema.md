@@ -1,4 +1,4 @@
-# 轻量状态 Schema v8
+# 轻量状态 Schema v9
 
 仅用于跨服务、跨会话、使用子代理或用户要求恢复的单个 `converge` 任务。无委托且可在当前上下文一次完成的简单任务可以不持久化。状态不得保存密钥、Cookie、请求正文或敏感业务数据；多 Batch 计划继续使用独立 Batch state。
 
@@ -6,7 +6,7 @@
 
 ```json
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "run_id": "run-<id>",
   "repo_id": "/absolute/git/common-dir",
   "task_key": "task-<scope-hash>",
@@ -15,11 +15,12 @@
   "workspace": "/absolute/worktree",
   "baseline": {"commit": "<commit>", "diff_fingerprint": "<hash>"},
   "scope_fingerprint": "<hash>",
+  "source_fingerprint": "<current Source Receipt fingerprint>",
   "controller": {
-    "package_version": "0.12.1",
-    "protocol_version": 5,
+    "package_version": "0.16.0",
+    "protocol_version": 6,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.15.0", "protocol_version": 5, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.16.0", "protocol_version": 6, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -33,6 +34,10 @@
     "binding_fingerprint": "<sha256>"
   },
   "runtime_binding": null,
+  "execution_control": {
+    "routing": {"schema_version": 1, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile_fingerprint": "<sha256>"},
+    "review": {"protocol_version": 2, "source_fingerprint": "<same current source>", "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "requests": []}
+  },
   "current_stage": "scope",
   "requires_stability_round": false,
   "status": "active | complete | blocked",
@@ -47,7 +52,7 @@
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
-旧 v5/v6 状态第一次读取时只允许迁移为 v8：旧 `engine` 转成等价 Provider Binding，旧 worker 增加叶子身份和 `progress=null`，并增加空的 Runtime Binding 与树回执。v7 只添加运行时字段并升为 v8；旧 controller 协议不兼容时明确阻塞并重新开始，不能伪造升级。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+无 worker 的旧 v5-v8 状态可保守迁移为 v9：旧 `engine` 转成等价 Provider Binding，缺失的宿主事实明确记为 `legacy_unavailable`，不能据此完成任务。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
 ## 2. Provider Binding
 
@@ -58,7 +63,7 @@
 - `binding_fingerprint` 是完整 binding 的 canonical JSON sha256，恢复时任一来源变化都会阻塞。
 - 兼容旧输出的 `engine` 可以由 binding 派生展示，但不能再写入正式状态。
 
-## 3. Worker 与 Progress Receipt v1
+## 3. Worker、Runtime Binding Schema v1 与 Progress Receipt v1
 
 ```json
 {
@@ -96,6 +101,7 @@
 
 ```json
 {
+  "schema_version": 1,
   "observed_revision": 4,
   "observed_at": "2026-08-21T00:00:00Z",
   "runtime_fingerprint": "<sha256>",
@@ -125,7 +131,7 @@ python3 scripts/delivery_progress.py status < state.json
 
 ## 4. Ledger 与阶段
 
-`ledger` 继续保存：
+`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。`execution_control` 是路由和审查的唯一真源，保存 frozen route、1–2 次画像评估、Review Protocol v2 单轴请求以及剩余 repair/re-review/integration 预算：
 
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；

@@ -33,7 +33,8 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.assertIn("Review Protocol v2", self.contract)
         self.assertIn('"axis": "spec | quality | integration"', self.contract)
         self.assertIn("需求符合性与实现质量仍分别保存结论", self.orchestration)
-        self.assertIn("一次请求中返回两轴", self.orchestration)
+        self.assertIn("两个有序单轴请求", self.orchestration)
+        self.assertNotIn("一次请求中返回两轴", self.orchestration)
 
     def test_each_axis_has_one_repair_and_one_re_review_budget(self):
         self.assertIn('"repair_budget": 1', self.orchestration)

@@ -52,6 +52,7 @@ def plan(tasks, context="short", planner=None):
             "source_fingerprint": None,
         },
         "context": context,
+        "baseline": {"commit": "0" * 40, "diff_fingerprint": SHA},
         "tasks": tasks,
         "final_acceptance": ["all checks pass"],
         "decisions": [],
@@ -60,7 +61,7 @@ def plan(tasks, context="short", planner=None):
 
 def granular_plan(tasks, context="long", checkpoint="same_session"):
     value = plan(tasks, context=context)
-    value["schema_version"] = 3
+    value["schema_version"] = 4
     value["checkpoint"] = checkpoint
     for item in value["tasks"]:
         item.setdefault("task_kind", "vertical_slice")
@@ -69,7 +70,7 @@ def granular_plan(tasks, context="long", checkpoint="same_session"):
 
 
 def evidence_receipt(source, command="bash scripts/check.sh"):
-    return {"command": command, "exit_code": 0, "source": source}
+    return {"schema_version": 1, "command": command, "exit_code": 0, "source": source}
 
 
 def final_evidence(source):
@@ -114,6 +115,7 @@ class PlanCheckTest(unittest.TestCase):
         )
 
     def current_source(self, value):
+        value["baseline"]["commit"] = self.baseline
         result = self.run_check(
             "audit",
             {"plan": value, "task_results": {}, "final_acceptance": []},
@@ -121,6 +123,15 @@ class PlanCheckTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         return json.loads(result.stdout)["source"]
+
+    @property
+    def baseline(self):
+        return subprocess.run(
+            ["git", "-C", str(self.workspace), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
     def write_changes(self, *paths):
         for path in paths:
@@ -207,7 +218,7 @@ class PlanCheckTest(unittest.TestCase):
         result = self.run_check("validate", value)
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(3, json.loads(result.stdout)["normalized_schema_version"])
+        self.assertEqual(4, json.loads(result.stdout)["normalized_schema_version"])
 
     def test_legacy_single_task_migrates_without_a_commit_gate(self):
         for schema_version in (1, 2):
@@ -241,6 +252,16 @@ class PlanCheckTest(unittest.TestCase):
                 output = json.loads(result.stdout)
                 self.assertEqual("batch", output["execution_mode"])
                 self.assertTrue(output["commit_authorization_required"])
+
+    def test_schema_v3_without_an_explicit_baseline_cannot_be_invented(self):
+        value = granular_plan([task("T1", ["src"])])
+        value["schema_version"] = 3
+        value.pop("baseline")
+
+        result = self.run_check("validate", value)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("baseline", result.stderr)
 
     def test_rejects_cycles_unknown_dependencies_and_duplicate_ids(self):
         cases = [
@@ -313,7 +334,7 @@ class PlanCheckTest(unittest.TestCase):
         result = self.run_check("validate", plan([task("wide", ["src"])], context="long"))
 
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("schema v3", result.stderr)
+        self.assertIn("schema v4", result.stderr)
         self.assertIn("split", result.stderr)
 
     def test_same_session_tasks_are_sequential_without_commit_authorization(self):
@@ -469,6 +490,7 @@ class PlanCheckTest(unittest.TestCase):
 
     def test_应该_当Git文件名包含反斜杠时_不归一化为已授权斜杠路径(self):
         value = plan([task("T1", ["src/evil"])])
+        value["baseline"]["commit"] = self.baseline
         self.write_changes("src\\evil")
 
         result = self.run_check(
@@ -479,6 +501,25 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["src\\evil"], json.loads(result.stdout)["scope_drift"])
+
+    def test_audit_detects_committed_scope_drift_since_the_plan_baseline(self):
+        value = plan([task("T1", ["src"])])
+        value["baseline"]["commit"] = self.baseline
+        self.write_changes("outside.txt")
+        subprocess.run(["git", "-C", str(self.workspace), "add", "outside.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.workspace), "commit", "-q", "-m", "outside"],
+            check=True,
+        )
+
+        result = self.run_check(
+            "audit",
+            {"plan": value, "task_results": {}, "final_acceptance": []},
+            self.workspace,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(["outside.txt"], json.loads(result.stdout)["scope_drift"])
 
 
 if __name__ == "__main__":

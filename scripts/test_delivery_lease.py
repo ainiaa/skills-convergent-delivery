@@ -13,7 +13,8 @@ SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 class DeliveryLeaseTest(unittest.TestCase):
     def run_lease(
-        self, root, command, *, workspace, task_key, run_id=None, writer_id=None, from_workspace=None
+        self, root, command, *, workspace, task_key, run_id=None, writer_id=None,
+        from_workspace=None, state_root=None
     ):
         arguments = [
             sys.executable,
@@ -34,6 +35,8 @@ class DeliveryLeaseTest(unittest.TestCase):
             arguments.extend(["--writer-id", writer_id])
         if from_workspace:
             arguments.extend(["--from-workspace", from_workspace])
+        if state_root:
+            arguments.extend(["--state-root", str(state_root)])
         return subprocess.run(arguments, text=True, capture_output=True, check=False)
 
     def test_same_workspace_allows_only_one_writer(self):
@@ -157,6 +160,41 @@ class DeliveryLeaseTest(unittest.TestCase):
             self.assertEqual(2, release.returncode)
             self.assertEqual("blocked_owner", json.loads(release.stdout)["status"])
             self.assertEqual(2, retry.returncode)
+
+    def test_release_is_blocked_while_formal_state_cleanup_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_root = Path(directory) / "state"
+            acquired = self.run_lease(
+                root, "acquire", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+            path = (
+                state_root
+                / __import__("hashlib").sha256("/repo/common.git".encode()).hexdigest()
+                / __import__("hashlib").sha256("payment".encode()).hexdigest()
+                / f"{__import__('hashlib').sha256('run-1'.encode()).hexdigest()}.json"
+            )
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "run_id": "run-1", "writer_id": "writer-1", "repo_id": "/repo/common.git",
+                "workspace": "/repo/a", "task_key": "payment", "revision": 2,
+                "status": "blocked",
+                "workers": [{"ref": "worker-1", "status": "working"}],
+                "worker_tree_receipt": {
+                    "observed_revision": 2, "active_refs": ["worker-1"],
+                    "unexpected_refs": [],
+                },
+            }), encoding="utf-8")
+
+            release = self.run_lease(
+                root, "release", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1", state_root=state_root,
+            )
+
+            self.assertEqual(2, release.returncode)
+            self.assertEqual("blocked_cleanup", json.loads(release.stdout)["status"])
 
     def test_move_releases_the_previous_worktree_lease(self):
         with tempfile.TemporaryDirectory() as directory:

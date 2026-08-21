@@ -10,7 +10,18 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from delivery_lease import is_expired, lease_paths, lock_record, read_record, same_owner
+from delivery_lease import (
+    DEFAULT_TTL_SECONDS,
+    as_timestamp,
+    is_expired,
+    lease_paths,
+    lock_record,
+    now,
+    read_record,
+    replace_record,
+    same_owner,
+)
+from datetime import timedelta
 from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
 
 
@@ -73,6 +84,12 @@ def active_lease(state, lease_root, run_id, writer_id):
                 raise ValueError("active lease is not owned by this writer")
             if any(record.get(field) != state[field] for field in ("repo_id", "workspace", "task_key")):
                 raise ValueError("active lease does not match candidate workspace")
+            timestamp = now()
+            record["renewed_at"] = as_timestamp(timestamp)
+            record["lease_expires_at"] = as_timestamp(
+                timestamp + timedelta(seconds=DEFAULT_TTL_SECONDS)
+            )
+            replace_record(path, record)
         yield
 
 
@@ -136,6 +153,18 @@ def validate_transition(previous, candidate):
         raise ValueError("invalid status transition")
     if previous["requires_stability_round"] and not candidate["requires_stability_round"]:
         raise ValueError("requires_stability_round must not regress")
+    if candidate["execution_control"]["routing"] != previous["execution_control"]["routing"]:
+        raise ValueError("frozen routing is immutable")
+    old_review = previous["execution_control"]["review"]
+    new_review = candidate["execution_control"]["review"]
+    if old_review["protocol_version"] != new_review["protocol_version"]:
+        raise ValueError("review protocol is immutable")
+    for field in (
+        "repair_budget_remaining", "re_review_budget_remaining", "integration_budget_remaining"
+    ):
+        if new_review[field] > old_review[field] or old_review[field] - new_review[field] > 1:
+            raise ValueError("review budget cannot increase or skip")
+    require_prefix(old_review["requests"], new_review["requests"], "review requests")
 
     previous_workers = {worker["ref"]: worker for worker in previous["workers"]}
     candidate_workers = {worker["ref"]: worker for worker in candidate["workers"]}
@@ -236,7 +265,7 @@ def write(arguments):
             current_revision = -1
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
-                migrating_legacy = stored.get("schema_version") in {5, 6, 7}
+                migrating_legacy = stored.get("schema_version") in {5, 6, 7, 8}
                 current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
@@ -249,7 +278,7 @@ def write(arguments):
                     expected = dict(current)
                     expected["revision"] = candidate["revision"]
                     if candidate != expected:
-                        raise ValueError("legacy migration may only add schema v8 fields")
+                        raise ValueError("legacy migration may only add schema v9 fields")
                 else:
                     validate_transition(current, candidate)
             write_private(managed_path, candidate)

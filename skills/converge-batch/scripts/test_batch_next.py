@@ -36,6 +36,12 @@ class BatchNextTest(unittest.TestCase):
     def test_running_batch_recovers_by_querying_the_saved_worker(self):
         self.assertEqual({"action": "query", "task_id": "B1", "worker_ref": "thread-1"}, batch_next.next_action(state("running", "thread-1")))
 
+    def test_running_batch_with_a_terminal_worker_blocks_instead_of_querying(self):
+        result = batch_next.next_action(state("running", "thread-1", "completed"))
+
+        self.assertEqual("block", result["action"])
+        self.assertIn("terminal", result["reason"])
+
     def test_receipt_and_plan_status_actions_are_explicit(self):
         self.assertEqual(
             {"action": "query", "task_id": "B1", "worker_ref": "thread-1"},
