@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "escaped_defects": [
+    {
+      "id": "batch-capsule-recursive-planning-escape",
+      "control_surfaces": [
+        "batch.capsule",
+        "planning.recursion"
+      ],
+      "source": "docs/04_testing/defects/B20260820-185559-converge-protocol-hardening-defect.md",
+      "scenario": "A planned_task capsule with a missing or mismatched plan/task identity must block instead of replanning."
+    },
+    {
+      "id": "worker-receipt-before-host-terminal",
+      "control_surfaces": [
+        "worker.lifecycle",
+        "batch.dispatch"
+      ],
+      "source": "docs/04_testing/defects/B20260820-200236-worker-lifecycle-hardening-defect.md",
+      "scenario": "A receipt returned while its host worker is still working must not complete the task or release the next dispatch."
+    },
+    {
+      "id": "acceptance-freshness-regression-hidden-by-rank",
+      "control_surfaces": [
+        "state.acceptance",
+        "evidence.freshness"
+      ],
+      "source": "docs/04_testing/defects/B20260820-185559-converge-protocol-hardening-defect.md",
+      "scenario": "A fresh pass that becomes stale or failing must replace current acceptance truth while archiving the prior revision."
+    },
+    {
+      "id": "plan-audit-backslash-scope-escape",
+      "control_surfaces": [
+        "plan.audit",
+        "scope.ownership"
+      ],
+      "source": "docs/04_testing/defects/B20260820-185559-converge-protocol-hardening-defect.md",
+      "scenario": "A Git path containing a backslash must remain out of scope when only the slash-normalized path is owned."
+    },
+    {
+      "id": "snapshot-version-missing-from-fingerprint",
+      "control_surfaces": [
+        "controller.snapshot",
+        "provider.binding"
+      ],
+      "source": "docs/04_testing/defects/B20260821-082738-converge-known-findings-closure-defect.md",
+      "scenario": "Changing VERSION alone must create a new controller snapshot identity and must not reuse stale frozen content."
+    }
+  ]
+}

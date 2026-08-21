@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from delivery_next import normalize_open_issues, upgrade_state, validate_state
+from delivery_progress import render_workspace_change_summary, workspace_change_summary
 
 
 NO_NEXT_ACTION = {"", "none", "no", "n/a", "无", "没有", "无需行动"}
@@ -56,6 +57,7 @@ def build_report(state):
         "reason": state.get("blocked_reason") or "；".join(open_issues),
         "open_issues": open_issues,
         "next_action": state["handoff"]["next_action"],
+        "workspace_changes": workspace_change_summary(state),
     }
 
 
@@ -84,6 +86,7 @@ def render_text(report, detail=False):
     ]
     if report["key_changes"]:
         lines.append(f"关键改动：{'；'.join(report['key_changes'])}")
+    lines.append(render_workspace_change_summary(report["workspace_changes"]))
     lines.extend([
         f"已验证：{report['verification']}",
         "过程："

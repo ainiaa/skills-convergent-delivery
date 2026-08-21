@@ -59,6 +59,66 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
+    def test_final_report_uses_parent_git_summary_and_dirty_baseline_note(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.name", "Test"], check=True
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            (workspace / "tracked.txt").write_text("old\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "tracked.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True
+            )
+            (workspace / "tracked.txt").write_text("new\n", encoding="utf-8")
+            (workspace / "untracked.txt").write_text("one\ntwo\n", encoding="utf-8")
+            (workspace / "untracked.bin").write_bytes(b"\0binary")
+            payload = state()
+            payload["workspace"] = str(workspace)
+            payload["repo_id"] = str(workspace / ".git")
+            payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
+            payload["workspace_changes"] = {
+                "file_count": 999,
+                "lines_added": 999,
+                "lines_deleted": 999,
+                "binary_file_count": 999,
+            }
+
+            report = json.loads(self.run_report(payload, "json").stdout)
+            rendered = self.run_report(payload, "text").stdout
+
+            self.assertEqual(
+                {
+                    "status": "available",
+                    "file_count": 3,
+                    "lines_added": 3,
+                    "lines_deleted": 1,
+                    "binary_file_count": 1,
+                    "baseline_note": "统计包含任务开始前已有改动，不能归因于本任务",
+                    "error": None,
+                },
+                report["workspace_changes"],
+            )
+            self.assertIn("工作区累计：3 files，+3/-1，1 binary", rendered)
+            self.assertIn("统计包含任务开始前已有改动，不能归因于本任务", rendered)
+            self.assertNotIn("999", rendered)
+
+    def test_final_report_degrades_structurally_when_git_is_unavailable(self):
+        payload = state()
+        payload["workspace"] = "/missing/worktree"
+
+        result = self.run_report(payload, "json")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        summary = json.loads(result.stdout)["workspace_changes"]
+        self.assertEqual("unavailable", summary["status"])
+        self.assertEqual("git_read_failed", summary["error"])
+
     def test_default_report_hides_diagnostics_but_detail_includes_them(self):
         summary = self.run_report(state(), "text")
         detailed = self.run_report(state(), "text", detail=True)

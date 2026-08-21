@@ -12,6 +12,8 @@ from pathlib import Path, PurePosixPath
 TASK_STATUSES = {"pending"}
 EXECUTIONS = {"auto", "current", "fresh"}
 AUDIT_STATUSES = {"DONE", "PARTIAL", "NOT_DONE", "CHANGED"}
+TASK_KINDS = {"vertical_slice", "wide_refactor", "integration"}
+CHECKPOINTS = {"same_session", "cross_session"}
 PROVIDER_DIR = Path(__file__).resolve().parents[3] / "providers"
 
 
@@ -118,9 +120,13 @@ def workspace_source(workspace):
     tracked_paths = git_bytes(
         root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"
     ).split(b"\0")
-    untracked_paths = git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z").split(
-        b"\0"
-    )
+    untracked_paths = [
+        path
+        for path in git_bytes(
+            root, "ls-files", "--others", "--exclude-standard", "-z"
+        ).split(b"\0")
+        if path and b"__pycache__" not in path.split(b"/") and not path.endswith(b".pyc")
+    ]
     changed_paths = sorted(
         {
             path.decode("utf-8")
@@ -198,25 +204,39 @@ def binding_fingerprint(workflow_provider, stage_providers):
 
 
 def upgrade_plan(plan):
-    if not isinstance(plan, dict) or plan.get("schema_version") != 1:
+    if not isinstance(plan, dict) or plan.get("schema_version") not in {1, 2}:
         return plan
     upgraded = json.loads(json.dumps(plan))
-    engine = upgraded.pop("engine", None)
-    if engine not in WORKFLOW_PROVIDERS | STAGE_PROVIDERS:
-        raise ValueError("legacy engine is invalid")
-    workflow = engine if engine in WORKFLOW_PROVIDERS else "native-v1"
-    stages = {"tdd": engine} if engine in STAGE_PROVIDERS else {}
-    fingerprint = binding_fingerprint(workflow, stages)
+    if upgraded["schema_version"] == 1:
+        engine = upgraded.pop("engine", None)
+        if engine not in WORKFLOW_PROVIDERS | STAGE_PROVIDERS:
+            raise ValueError("legacy engine is invalid")
+        workflow = engine if engine in WORKFLOW_PROVIDERS else "native-v1"
+        stages = {"tdd": engine} if engine in STAGE_PROVIDERS else {}
+        fingerprint = binding_fingerprint(workflow, stages)
+        for task in upgraded.get("tasks", []):
+            if isinstance(task, dict):
+                task["provider_binding"] = {
+                    "controller": "converge",
+                    "workflow_provider": workflow,
+                    "stage_providers": stages,
+                    "binding_fingerprint": fingerprint,
+                }
+                task.setdefault("provider_run", {"scope": "task", "recursive_planning": False})
+        upgraded["schema_version"] = 2
+
+    tasks = upgraded.get("tasks")
+    if upgraded.get("context") == "long" and isinstance(tasks, list) and len(tasks) == 1:
+        raise ValueError(
+            "granularity_block reason=legacy_long_single_task; action=upgrade to schema v3 "
+            "with one outcome or split into vertical_slice tasks"
+        )
+    upgraded["checkpoint"] = "cross_session" if isinstance(tasks, list) and len(tasks) > 1 else "same_session"
     for task in upgraded.get("tasks", []):
         if isinstance(task, dict):
-            task["provider_binding"] = {
-                "controller": "converge",
-                "workflow_provider": workflow,
-                "stage_providers": stages,
-                "binding_fingerprint": fingerprint,
-            }
-            task.setdefault("provider_run", {"scope": "task", "recursive_planning": False})
-    upgraded["schema_version"] = 2
+            task["task_kind"] = "vertical_slice"
+            task["outcomes"] = [task.get("goal")]
+    upgraded["schema_version"] = 3
     return upgraded
 
 
@@ -253,14 +273,17 @@ def validate_plan(plan):
     plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if plan.get("schema_version") != 2:
-        raise ValueError("schema_version must be 2")
+    if plan.get("schema_version") != 3:
+        raise ValueError("schema_version must be 3")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
     validate_planner(plan.get("planner"))
     context = plan.get("context")
     if context not in {"short", "long"}:
         raise ValueError("context must be short or long")
+    checkpoint = plan.get("checkpoint")
+    if checkpoint not in CHECKPOINTS:
+        raise ValueError("checkpoint must be same_session or cross_session")
     require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
     if not isinstance(plan.get("decisions"), list):
         raise ValueError("decisions must be a list")
@@ -282,8 +305,22 @@ def validate_plan(plan):
             raise ValueError(f"tasks[{index}].execution is invalid")
         if raw.get("status") not in TASK_STATUSES:
             raise ValueError(f"tasks[{index}].status must be pending")
+        task_kind = raw.get("task_kind")
+        if task_kind not in TASK_KINDS:
+            raise ValueError(f"tasks[{index}].task_kind is invalid")
+        outcomes = require_strings(
+            raw.get("outcomes"), f"tasks[{index}].outcomes", non_empty=True
+        )
+        if len(outcomes) != 1:
+            raise ValueError(
+                f"granularity_block task={task_id} reason=multiple_outcomes "
+                "action=split_into_vertical_slice_tasks "
+                "allowed_kinds=vertical_slice,wide_refactor,integration"
+            )
         task = {
             "task_id": task_id,
+            "task_kind": task_kind,
+            "outcomes": outcomes,
             "goal": require_string(raw.get("goal"), f"tasks[{index}].goal"),
             "owned_paths": [
                 clean_path(path, f"tasks[{index}].owned_paths")
@@ -315,6 +352,11 @@ def validate_plan(plan):
             raise ValueError(f"unknown dependency: {sorted(unknown)[0]}")
         if task["task_id"] in task["depends_on"]:
             raise ValueError("a task cannot depend on itself")
+        if task["task_kind"] == "integration" and not task["depends_on"]:
+            raise ValueError(
+                f"granularity_block task={task['task_id']} reason=integration_without_dependency "
+                "action=add_depends_on_or_use_vertical_slice"
+            )
 
     if plan["planner"]["name"] == "pdlc-delegation-v1" and any(
         task["provider_binding"]["workflow_provider"] != "pdlc-v1" for task in tasks
@@ -336,8 +378,10 @@ def validate_plan(plan):
         completed.update(task["task_id"] for task in wave)
         remaining = [task for task in remaining if task not in wave]
 
-    if len(tasks) > 1:
+    if checkpoint == "cross_session":
         execution_mode = "batch"
+    elif len(tasks) > 1:
+        execution_mode = "sequential"
     elif tasks[0]["provider_binding"]["workflow_provider"] == "pdlc-v1":
         execution_mode = "fresh"
     elif tasks[0]["execution"] != "auto":
@@ -346,8 +390,9 @@ def validate_plan(plan):
         execution_mode = "fresh" if context == "long" else "current"
     return {
         "status": "valid",
-        "normalized_schema_version": 2,
+        "normalized_schema_version": 3,
         "execution_mode": execution_mode,
+        "commit_authorization_required": checkpoint == "cross_session",
         "waves": waves,
     }
 

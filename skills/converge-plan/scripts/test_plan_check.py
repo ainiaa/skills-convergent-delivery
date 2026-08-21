@@ -58,6 +58,16 @@ def plan(tasks, context="short", planner=None):
     }
 
 
+def granular_plan(tasks, context="long", checkpoint="same_session"):
+    value = plan(tasks, context=context)
+    value["schema_version"] = 3
+    value["checkpoint"] = checkpoint
+    for item in value["tasks"]:
+        item.setdefault("task_kind", "vertical_slice")
+        item.setdefault("outcomes", [item["goal"]])
+    return value
+
+
 def evidence_receipt(source, command="bash scripts/check.sh"):
     return {"command": command, "exit_code": 0, "source": source}
 
@@ -118,8 +128,17 @@ class PlanCheckTest(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(f"changed {path}\n", encoding="utf-8")
 
+    def test_python_runtime_caches_do_not_change_source_identity(self):
+        cache = self.workspace / "scripts" / "__pycache__" / "helper.cpython-314.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"generated runtime cache")
+
+        source = self.current_source(plan([task("T1", ["src"])]))
+
+        self.assertEqual([], source["changed_paths"])
+
     def test_independent_tasks_share_a_wave_and_dependencies_form_the_next_wave(self):
-        value = plan(
+        value = granular_plan(
             [
                 task("T1", ["src/a"]),
                 task("T2", ["src/b"]),
@@ -132,7 +151,7 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual([["T1", "T2"], ["T3"]], output["waves"])
-        self.assertEqual("batch", output["execution_mode"])
+        self.assertEqual("sequential", output["execution_mode"])
 
     def test_overlapping_paths_are_serialized_even_without_dependencies(self):
         value = plan([task("T1", ["src/shared"]), task("T2", ["src/shared/file.py"])])
@@ -143,7 +162,7 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual([["T1"], ["T2"]], json.loads(result.stdout)["waves"])
 
     def test_multiple_bounded_pdlc_runs_are_allowed_in_one_plan(self):
-        value = plan(
+        value = granular_plan(
             [
                 task("schema", ["providers"], provider=provider_binding("pdlc-v1")),
                 task(
@@ -159,7 +178,7 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual([["schema"], ["runtime"]], json.loads(result.stdout)["waves"])
-        self.assertEqual("batch", json.loads(result.stdout)["execution_mode"])
+        self.assertEqual("sequential", json.loads(result.stdout)["execution_mode"])
 
     def test_rejects_a_forged_provider_binding_fingerprint(self):
         value = plan([task("T1", ["src"])])
@@ -188,7 +207,40 @@ class PlanCheckTest(unittest.TestCase):
         result = self.run_check("validate", value)
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(2, json.loads(result.stdout)["normalized_schema_version"])
+        self.assertEqual(3, json.loads(result.stdout)["normalized_schema_version"])
+
+    def test_legacy_single_task_migrates_without_a_commit_gate(self):
+        for schema_version in (1, 2):
+            with self.subTest(schema_version=schema_version):
+                value = plan([task("T1", ["src"])])
+                value["schema_version"] = schema_version
+                if schema_version == 1:
+                    value["engine"] = "native-v1"
+                    value["tasks"][0].pop("provider_binding")
+
+                result = self.run_check("validate", value)
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                output = json.loads(result.stdout)
+                self.assertFalse(output["commit_authorization_required"])
+                self.assertNotEqual("batch", output["execution_mode"])
+
+    def test_legacy_multi_task_migrates_to_the_batch_commit_gate(self):
+        for schema_version in (1, 2):
+            with self.subTest(schema_version=schema_version):
+                value = plan([task("T1", ["src/a"]), task("T2", ["src/b"], ["T1"])])
+                value["schema_version"] = schema_version
+                if schema_version == 1:
+                    value["engine"] = "native-v1"
+                    for item in value["tasks"]:
+                        item.pop("provider_binding")
+
+                result = self.run_check("validate", value)
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                output = json.loads(result.stdout)
+                self.assertEqual("batch", output["execution_mode"])
+                self.assertTrue(output["commit_authorization_required"])
 
     def test_rejects_cycles_unknown_dependencies_and_duplicate_ids(self):
         cases = [
@@ -218,10 +270,78 @@ class PlanCheckTest(unittest.TestCase):
         self.assertNotEqual(0, self.run_check("validate", unfrozen_planner).returncode)
 
     def test_long_single_task_uses_a_fresh_context(self):
-        result = self.run_check("validate", plan([task("T1", ["src"])], context="long"))
+        result = self.run_check(
+            "validate", granular_plan([task("T1", ["src"])], context="long")
+        )
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("fresh", json.loads(result.stdout)["execution_mode"])
+
+    def test_task_kinds_are_explicit_and_integration_requires_a_dependency(self):
+        for kind in ("vertical_slice", "wide_refactor"):
+            with self.subTest(kind=kind):
+                value = granular_plan([task("T1", ["src"])])
+                value["tasks"][0]["task_kind"] = kind
+                result = self.run_check("validate", value)
+                self.assertEqual(0, result.returncode, result.stderr)
+
+        integration = granular_plan(
+            [task("slice", ["src/a"]), task("integrate", ["src/b"], ["slice"])]
+        )
+        integration["tasks"][1]["task_kind"] = "integration"
+        result = self.run_check("validate", integration)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        missing_dependency = granular_plan([task("integrate", ["src"])])
+        missing_dependency["tasks"][0]["task_kind"] = "integration"
+        result = self.run_check("validate", missing_dependency)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("integration", result.stderr)
+
+    def test_long_task_with_multiple_outcomes_is_blocked_with_an_actionable_reason(self):
+        value = granular_plan([task("wide", ["src"])])
+        value["tasks"][0]["outcomes"] = ["deliver API", "deliver UI"]
+
+        result = self.run_check("validate", value)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("wide", result.stderr)
+        self.assertIn("split", result.stderr)
+        self.assertIn("vertical_slice", result.stderr)
+
+    def test_legacy_long_single_task_cannot_bypass_granularity_review(self):
+        result = self.run_check("validate", plan([task("wide", ["src"])], context="long"))
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("schema v3", result.stderr)
+        self.assertIn("split", result.stderr)
+
+    def test_same_session_tasks_are_sequential_without_commit_authorization(self):
+        value = granular_plan(
+            [task("slice", ["src/a"]), task("integrate", ["src/b"], ["slice"])]
+        )
+        value["tasks"][1]["task_kind"] = "integration"
+
+        result = self.run_check("validate", value)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual("sequential", output["execution_mode"])
+        self.assertFalse(output["commit_authorization_required"])
+
+    def test_only_cross_session_checkpoint_requires_commit_authorization(self):
+        value = granular_plan(
+            [task("slice", ["src/a"]), task("integrate", ["src/b"], ["slice"])],
+            checkpoint="cross_session",
+        )
+        value["tasks"][1]["task_kind"] = "integration"
+
+        result = self.run_check("validate", value)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual("batch", output["execution_mode"])
+        self.assertTrue(output["commit_authorization_required"])
 
     def test_audit_reports_partial_missing_changed_and_scope_drift(self):
         value = plan(

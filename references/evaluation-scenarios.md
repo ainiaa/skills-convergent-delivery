@@ -4,10 +4,15 @@
 
 | 场景 | 输入特征 | 预期行为 |
 |---|---|---|
-| 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`；角色不互相吞并。 |
+| 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划、验收 Converge 规则 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`、`converge-eval`；角色不互相吞并。 |
 | 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
 | PDLC 委托屏障 | PDLC 可用且任务复杂 | 按独立业务切片形成有限 Provider Run；每个 run 完整委托 PDLC，主上下文不生成 PDLC 内部产物。 |
 | 递归规划 | Batch capsule 已有 `planned_task=true` | 子执行者只完成冻结 task，不再次调用 planner 或派发自身。 |
+| 同会话顺序执行 | Plan v3 为 `checkpoint=same_session` 且有多个 task | 在同一会话顺序完成，不要求 commit；任务数量不产生 commit 权限。 |
+| 跨会话 checkpoint | Plan v3 为 `checkpoint=cross_session` | 进入 Batch 前单独请求本地 commit 授权；授权不包含 push、tag、merge 或发布。 |
+| 实现循环终止 | 已有有效红灯，目标修复可验证 | 红灯转绿和最后生产变更后的新鲜验证通过即停；同一问题复现或无改善时阻塞。 |
+| 单任务双轴终止 | task 需要 spec 与 quality 审查 | spec 先于 quality；每轴最多一次修复和一次复核，重复 finding 停止。 |
+| 全局集成审查终止 | 所有 task 已通过 | 只运行一次只覆盖跨任务风险的 integration 审查；finding 最多一次修复和 closure。 |
 | 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
 | 模型无响应 | 既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
 | 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
@@ -50,6 +55,8 @@
 | 清场屏障 | 正常、异常、用户中断、no_progress 或验证失败退出 | 执行等价 `finally`，只处理本轮 worker；本轮 active worker 数为 0 后才允许完成。 |
 | 历史孤儿 | UI 显示旧 Working worker，但没有 ref 或当前 API 不可见 | 报告能力边界并建议用户/UI 处理；Skill 不宣称发现、查询或清理成功。 |
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
+| 父 Git 累计可见性 | Codex 单步角标只显示当前动作，工作区含多任务累计 diff | 父控制器直接读取 Git，展示已跟踪、未跟踪、增删行和二进制累计；脏基线注明不能归因于本任务。 |
+| 分层评估报告 | 已知和历史场景通过，探索仍有 finding 或存在未覆盖面 | 分别报告 `known_acceptance`、`history`、`exploration`、`uncovered`；不得写“未发现任何问题”。 |
 | 技术术语噪音 | 默认交付回执 | 说明结果、关键改动、验证覆盖、待处理，并保留用户可懂的交付轮数/问题数；不展示 `complete`、P0/P1/P2、lease、基线或命令。 |
 | Batch commit 未授权 | 多 Batch 计划完整但用户未授权本地 commit | 在初始化或派发前一次性阻塞；不得以 Batch 调度授权推导 commit/push 权限。 |
 

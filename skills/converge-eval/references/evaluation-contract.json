@@ -1,0 +1,73 @@
+{
+  "protocol": "converge-evaluation-v1",
+  "required_inputs": [
+    "acceptance",
+    "touched_control_surfaces",
+    "control_source",
+    "candidate_source",
+    "allowed_scope",
+    "critical_decisions"
+  ],
+  "differential": {
+    "variants": [
+      "control",
+      "candidate"
+    ],
+    "freeze_control_before_candidate": true,
+    "same_scenarios_and_judging": true,
+    "required_for": [
+      "self-modification"
+    ]
+  },
+  "sampling": {
+    "critical_min_fresh_samples": 3,
+    "fresh_context_per_sample": true,
+    "single_pass_establishes_stability": false,
+    "report_fields": [
+      "sample_count",
+      "pass_count",
+      "fail_count",
+      "pass_rate",
+      "variance"
+    ]
+  },
+  "catalog_selection": {
+    "catalog": "references/evaluation-catalog.json",
+    "match": "intersection(touched_control_surfaces, control_surfaces)",
+    "include_all_matches": true
+  },
+  "result_classes": [
+    "known_acceptance",
+    "history",
+    "exploration",
+    "uncovered"
+  ],
+  "revision": {
+    "max_rule_revisions": 3,
+    "stop_after_consecutive_no_improvement": 1,
+    "improvement_metrics": [
+      "fewer_failing_samples",
+      "lower_variance_without_acceptance_regression"
+    ],
+    "on_stop": "escalate"
+  },
+  "side_effects": {
+    "direct_external_side_effects": false,
+    "allowed": [
+      "read_only",
+      "isolated_temporary_workspace"
+    ]
+  },
+  "result_required_fields": [
+    "control_source",
+    "candidate_source",
+    "touched_control_surfaces",
+    "known_acceptance",
+    "history",
+    "exploration",
+    "uncovered",
+    "sample_distribution",
+    "revisions_used",
+    "stop_reason"
+  ]
+}

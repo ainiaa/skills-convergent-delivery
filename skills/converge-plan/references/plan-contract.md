@@ -1,10 +1,10 @@
-# Plan Contract v2
+# Plan Contract v3
 
 ## 1. Schema
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "plan_id": "plan-<stable-id>",
   "requirement_fingerprint": "<lowercase sha256>",
   "planner": {
@@ -13,9 +13,12 @@
     "source_fingerprint": "<sha256 or null>"
   },
   "context": "short | long",
+  "checkpoint": "same_session | cross_session",
   "tasks": [
     {
       "task_id": "T1",
+      "task_kind": "vertical_slice | wide_refactor | integration",
+      "outcomes": ["one independently verifiable result"],
       "goal": "one independently testable outcome",
       "owned_paths": ["relative/path"],
       "depends_on": [],
@@ -38,11 +41,13 @@
 }
 ```
 
-任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。一个 task 只对应一个可验证结果，一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；Provider Binding 摘要必须与 workflow/stage ID 的规范 JSON 一致。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。旧 v1 `engine` 在首次读取时只迁移为等价 Provider Binding 和有界运行声明；新计划不得再写 `engine`。
+任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；Provider Binding 摘要必须与 workflow/stage ID 的规范 JSON 一致。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
+
+旧 v1/v2 的短单任务和多任务可安全迁移为 v3；long context 单任务无法证明只有一个结果，必须显式升级 v3 并声明唯一 outcome，或拆成多个垂直切片。新计划不得再写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 
-每个 task 只冻结一个 workflow provider。`pdlc-v1` task 使用 fresh context，按冻结的 adapter 入口完整调用 `pdlc-feature`、`pdlc-fix` 或 `pdlc-refactor`；refactor capsule 必须携带“外部行为不变”验收。不得把 PDLC 内部 requirements/design/tdd/implementation/review 再拆成 Converge task，但可以按独立业务切片形成多个 PDLC-backed task。
+每个 task 只冻结一个 workflow provider。`pdlc-v1` task 使用 fresh context，按冻结的 adapter 入口完整调用 `pdlc-feature`、`pdlc-fix` 或 `pdlc-refactor`；`wide_refactor` capsule 必须携带“外部行为不变”验收。不得把 PDLC 内部 requirements/design/tdd/implementation/review 再拆成 Converge task，但可以按独立业务切片形成多个 PDLC-backed task。
 
 PDLC capsule 除 `planned_task/plan_id/task_id` 外，还必须原样携带冻结范围、验收、公共契约和 Converge 决策门禁：业务规则、公共契约、权限、发布及不可逆事项必须停止；provider 的自行假设或自动发布不能提升权限。禁止 `pdlc-ship`、commit、tag、push、publish、install。
 
@@ -52,7 +57,10 @@ PDLC capsule 除 `planned_task/plan_id/task_id` 外，还必须原样携带冻�
 
 - 单个短任务：`current`。
 - 单个长任务、长/压缩上下文或 PDLC：`fresh`。
-- 多任务：`batch`。wave 标识理论上可并行的候选，但内置 Batch Protocol v1 保持顺序执行；在没有多 worktree 集成和多 receipt 状态协议前，不宣称并行写入能力。
+- `checkpoint=same_session` 的多任务：`sequential`，按 wave 顺序执行，`commit_authorization_required=false`。
+- 只有显式 `checkpoint=cross_session`：`batch`，`commit_authorization_required=true`；在 checkpoint 前单独请求一次本地 commit 授权。该授权不包含 push、merge、tag 或发布。
+
+wave 标识理论上可并行的候选；当前共享工作区仍顺序执行，不宣称并行写入能力。任务数量本身不能推导 commit 权限。
 
 派发 capsule 必须包含 `planned_task=true` 和当前 task 的 Provider Binding。该标记是递归保护：子执行者执行冻结 task 后交回 receipt，不创建新计划、不再派发同一 task。
 

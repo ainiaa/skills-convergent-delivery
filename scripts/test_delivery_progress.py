@@ -2,6 +2,7 @@ import copy
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,117 @@ def state():
 
 
 class DeliveryProgressTest(unittest.TestCase):
+    def test_workspace_change_summary_aggregates_tracked_and_untracked_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.name", "Test"], check=True
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            (workspace / "tracked.txt").write_text("old\n", encoding="utf-8")
+            (workspace / "staged.txt").write_text("old\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(workspace), "add", "tracked.txt", "staged.txt"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True
+            )
+            (workspace / "tracked.txt").write_text("new\n", encoding="utf-8")
+            (workspace / "staged.txt").write_text("new\nadded\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "staged.txt"], check=True)
+            (workspace / "untracked.txt").write_text("one\ntwo\n", encoding="utf-8")
+            current = state()
+            current["workspace"] = str(workspace)
+            current["baseline"] = {"commit": "HEAD", "diff_fingerprint": "clean"}
+
+            summary = delivery_progress.workspace_change_summary(current)
+
+            self.assertEqual(3, summary["file_count"])
+            self.assertEqual(5, summary["lines_added"])
+            self.assertEqual(2, summary["lines_deleted"])
+
+    def test_workspace_change_summary_counts_binary_without_fabricating_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.name", "Test"], check=True
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            (workspace / "tracked.bin").write_bytes(b"\0old")
+            subprocess.run(["git", "-C", str(workspace), "add", "tracked.bin"], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True
+            )
+            (workspace / "tracked.bin").write_bytes(b"\0new")
+            (workspace / "untracked.bin").write_bytes(b"\0new")
+            current = state()
+            current["workspace"] = str(workspace)
+            current["baseline"] = {"commit": "HEAD", "diff_fingerprint": "dirty-at-start"}
+
+            summary = delivery_progress.workspace_change_summary(current)
+
+            self.assertEqual("available", summary["status"])
+            self.assertEqual(2, summary["file_count"])
+            self.assertEqual(0, summary["lines_added"])
+            self.assertEqual(0, summary["lines_deleted"])
+            self.assertEqual(2, summary["binary_file_count"])
+            self.assertEqual(
+                "统计包含任务开始前已有改动，不能归因于本任务",
+                summary["baseline_note"],
+            )
+
+    def test_workspace_change_summary_degrades_when_git_cannot_be_read(self):
+        current = state()
+        current["workspace"] = "/missing/worktree"
+        current["baseline"] = {"commit": "HEAD", "diff_fingerprint": "clean"}
+
+        summary = delivery_progress.workspace_change_summary(current)
+
+        self.assertEqual("unavailable", summary["status"])
+        self.assertEqual("git_read_failed", summary["error"])
+        self.assertIsNone(summary["file_count"])
+
+    def test_status_uses_parent_git_summary_instead_of_worker_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.name", "Test"], check=True
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True
+            )
+            (workspace / "actual.txt").write_text("actual\n", encoding="utf-8")
+            current = state()
+            current["workspace"] = str(workspace)
+            current["baseline"] = {"commit": "HEAD", "diff_fingerprint": "clean"}
+            current["workspace_changes"] = {
+                "file_count": 999,
+                "lines_added": 999,
+                "lines_deleted": 999,
+                "binary_file_count": 999,
+            }
+
+            rendered, _ = delivery_progress.render_status_update(current)
+
+            self.assertIn("工作区累计：1 files，+1/-0，0 binary", rendered)
+            self.assertNotIn("999", rendered)
+
     def test_cli_separates_worker_milestone_from_parent_observation(self):
         script = Path(__file__).with_name("delivery_progress.py")
         heartbeat = subprocess.run(

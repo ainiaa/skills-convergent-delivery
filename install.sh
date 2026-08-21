@@ -14,14 +14,16 @@ CODEX_SKILLS_ROOT="${HOME}/.codex/skills"
 CLAUDE_SKILLS_ROOT="${HOME}/.claude/skills"
 LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
-SKILL_NAMES=(converge converge-plan converge-review converge-batch)
+SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
   references/activation.md
+  references/evaluation-catalog.json
   references/evaluation-scenarios.md
   references/execution-control.md
   references/execution-protocol.md
+  references/review-orchestration.md
   references/reporting.md
   references/state-schema.md
   references/tdd-providers.md
@@ -45,11 +47,15 @@ REQUIRED_SOURCE_FILES=(
   skills/converge-plan/scripts/plan_check.py
   skills/converge-review/SKILL.md
   skills/converge-review/references/review-contract.md
+  skills/converge-review/scripts/test_review_axes_contract.py
   skills/converge-batch/SKILL.md
   skills/converge-batch/references/batch-contract.md
   skills/converge-batch/references/runtime-adapters.md
   skills/converge-batch/scripts/batch_next.py
   skills/converge-batch/scripts/batch_state.py
+  skills/converge-eval/SKILL.md
+  skills/converge-eval/references/evaluation-contract.json
+  skills/converge-eval/scripts/test_eval_contract.py
 )
 
 ACTION="install"
@@ -71,7 +77,7 @@ Usage:
   bash install.sh --doctor [--target codex|claude|all] [--offline]
 
 The default target is all (Codex and Claude Code). Installation creates the
-converge, converge-plan, converge-review, and converge-batch symlinks as one
+converge, converge-plan, converge-review, converge-batch, and converge-eval symlinks as one
 Suite. It never replaces an existing directory.
 
 Remote install:
@@ -110,7 +116,7 @@ target_path() {
 skill_source() {
   case "$1" in
     converge) printf '%s\n' "$SOURCE_DIR" ;;
-    converge-plan|converge-review|converge-batch) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
+    converge-plan|converge-review|converge-batch|converge-eval) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
   esac
 }
 
@@ -140,7 +146,7 @@ suite_status() {
   }
   [[ -L "$root" ]] || missing+=(converge)
   local skill
-  for skill in converge-plan converge-review converge-batch; do
+  for skill in converge-plan converge-review converge-batch converge-eval; do
     if ! same_source "$(target_path "$runtime" "$skill")" "$source/skills/$skill"; then
       missing+=("$skill")
     fi

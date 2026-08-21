@@ -1,0 +1,270 @@
+{
+  "schema_version": 3,
+  "plan_id": "plan-converge-013-review-loop-20260821",
+  "requirement_fingerprint": "fb79df9fceef6563f7cb5cd82ecaf386834a7c5b0686f7f923fc065eda48ed21",
+  "planner": {
+    "name": "superpowers-writing-plans-v1",
+    "source_path": "/Users/liuwenyuan/.codex/plugins/cache/openai-curated/superpowers/11c74d6b/skills/writing-plans/SKILL.md",
+    "source_fingerprint": "4fd4627d2c02367879c0307d7249270bed633317ff9be82e926a6d57bf5d331b"
+  },
+  "context": "long",
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "goal": "复杂需求被拆成可独立验收的垂直切片，单个宽泛任务不能绕过粒度审查",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "复杂需求被拆成可独立验收的垂直切片，单个宽泛任务不能绕过粒度审查"
+      ],
+      "owned_paths": [
+        "skills/converge-plan",
+        "docs",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "为宽泛单任务计划补充可复现的失败契约测试",
+        "实现垂直切片声明与计划粒度审查",
+        "验证普通单任务、垂直切片和宽重构计划兼容行为",
+        "记录本切片的PDLC评审与验证证据"
+      ],
+      "acceptance": [
+        "计划明确区分垂直切片、宽重构和最终集成任务",
+        "长上下文中包含多个独立结果的单任务计划被阻塞并给出可操作原因",
+        "真正单结果任务和有依赖的多任务计划继续通过验证",
+        "未授权本地commit时，同会话顺序执行不阻塞；只有跨会话Batch checkpoint才请求commit授权"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 skills/converge-plan/scripts/test_plan_check.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    },
+    {
+      "task_id": "T2",
+      "goal": "每个任务按需求符合性与代码质量两个独立审查轴有限收敛，全部任务后再检查跨任务集成",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "每个任务按需求符合性与代码质量两个独立审查轴有限收敛，全部任务后再检查跨任务集成"
+      ],
+      "owned_paths": [
+        "skills/converge-review",
+        "references/review-orchestration.md",
+        "docs",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "为审查轴隔离、顺序门禁和复核预算补充失败契约测试",
+        "扩展Review Contract以表达spec、quality和integration审查轴",
+        "实现每轴一次修复复核与重复finding停止规则",
+        "验证reviewer独立性、新鲜度和closure兼容行为"
+      ],
+      "acceptance": [
+        "spec审查先于quality审查且两个结果不能互相掩盖",
+        "每个审查轴最多一次修复和一次复核，重复问题转为阻塞",
+        "所有任务结束后存在一次独立integration审查且只覆盖跨任务风险",
+        "旧intent和blind请求仍可兼容读取"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    },
+    {
+      "task_id": "T3",
+      "goal": "Converge Suite拥有独立的差分、多样本和历史逃逸回归行为验收能力",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "Converge Suite拥有独立的差分、多样本和历史逃逸回归行为验收能力"
+      ],
+      "owned_paths": [
+        "skills/converge-eval",
+        "references/evaluation-catalog.json",
+        "docs",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "为无对照样本、单次偶然通过和历史场景漏选补充失败契约测试",
+        "新增职责独立的converge-eval Skill与机器可读评估契约",
+        "实现按受影响控制面选择历史场景和有界多样本策略",
+        "验证对照、候选、探索和未覆盖结果能够分别报告"
+      ],
+      "acceptance": [
+        "修改Converge自身时同时验证冻结旧版和候选新版行为",
+        "关键决策使用多个全新上下文样本并报告方差而非单次PASS",
+        "历史逃逸缺陷按受影响控制面自动进入回归集合",
+        "最多三次规则修订且连续无改进时停止，不产生无限循环"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    },
+    {
+      "task_id": "T4",
+      "goal": "父控制器以Git真值展示整个工作区累计变更，避免Codex单步角标被误认为任务总量",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "父控制器以Git真值展示整个工作区累计变更，避免Codex单步角标被误认为任务总量"
+      ],
+      "owned_paths": [
+        "scripts/delivery_progress.py",
+        "scripts/test_delivery_progress.py",
+        "scripts/delivery_report.py",
+        "scripts/test_delivery_report.py",
+        "references/state-schema.md",
+        "references/reporting.md",
+        "docs",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "为已跟踪、未跟踪、二进制和脏基线统计补充失败测试",
+        "扩展现有progress helper输出可信工作区累计摘要",
+        "让进度与最终报告区分当前步骤角标和工作区累计真值",
+        "验证子代理回执不能覆盖父控制器读取的Git统计"
+      ],
+      "acceptance": [
+        "累计摘要覆盖已跟踪和未跟踪文件并正确处理二进制文件",
+        "脏基线明确标注统计包含既有改动，不伪造本任务归因",
+        "父控制器在客观里程碑和最终回执展示累计文件数与增删行",
+        "现有progress去重和报告简洁模式保持兼容"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_progress.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_report.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    },
+    {
+      "task_id": "T5",
+      "goal": "Converge 0.13.0将计划、三类有限循环、行为验收和任务级可见性整合为一致的Codex与Claude工作流",
+      "task_kind": "integration",
+      "outcomes": [
+        "Converge 0.13.0将计划、三类有限循环、行为验收和任务级可见性整合为一致的Codex与Claude工作流"
+      ],
+      "owned_paths": [
+        "SKILL.md",
+        "README.md",
+        "VERSION",
+        "install.sh",
+        "scripts/check.sh",
+        "scripts/test_skill_contracts.py",
+        "scripts/test_install.py",
+        "references/execution-control.md",
+        "references/evaluation-scenarios.md",
+        "skills/converge-batch",
+        "agents",
+        "docs",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T4"
+      ],
+      "steps": [
+        "补充Suite级契约测试覆盖新Skill注册与三类有限循环",
+        "接入converge-eval并更新Codex与Claude安装清单",
+        "更新README、SKILL、版本和变更记录",
+        "运行全量、离线诊断和独立差分行为验收",
+        "完成计划审计并生成分层覆盖报告"
+      ],
+      "acceptance": [
+        "Converge只负责编排而不复制Provider内部TDD或PDLC阶段",
+        "Codex和Claude安装均包含converge-eval及全部必需资源",
+        "最终报告分别展示已知验收、历史回归、探索发现和未覆盖范围",
+        "版本为0.13.0且README与CHANGELOG完整描述新行为"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "bash install.sh --doctor --target codex --offline",
+        "bash install.sh --doctor --target claude --offline",
+        "git diff --check"
+      ],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "pdlc-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "b2c0bd3171365e2d0b54b49600d0f36bf9f880eca638ba1b157359e157babd47"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "任务级Git累计统计与Codex单步角标明确区分",
+    "复杂计划形成可独立验收切片而不是单个宽泛任务",
+    "未授权本地commit不会阻塞同会话顺序执行",
+    "实现循环、单任务双轴审查和全局集成审查各有独立有限终止条件",
+    "Converge自身修改通过差分、多样本、历史逃逸和真实端到端行为验收",
+    "默认报告简洁且不会把指定场景通过表述为没有任何未知问题"
+  ],
+  "decisions": [
+    "使用Superpowers writing-plans的垂直切片方法，计划以Plan Contract v3为真源",
+    "保留pdlc-v1优先级；Converge只审计Provider证据，不复制Provider内部阶段",
+    "不采用主观8分质量门槛；使用行为证据、固定修复预算和重复问题停止规则",
+    "实现任务顺序执行，因为PDLC文档与公共契约文件存在共享写入面",
+    "不执行push、tag、publish、install或pdlc-ship；同会话顺序执行不要求commit，跨会话Batch checkpoint才单独请求commit授权"
+  ]
+}

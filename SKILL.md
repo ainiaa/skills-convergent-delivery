@@ -55,7 +55,7 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 
-计划校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文；`batch` 时交给 `converge-batch`。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
+Plan Contract v3 校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文。`checkpoint=same_session` 的多任务在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才以 `batch` 交给 `converge-batch`，并在 checkpoint 前请求一次本地 commit 授权。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 
 所有 PDLC、reviewer、辅助分析和前向 evaluator 委托都必须登记到 [执行控制](references/execution-control.md) 定义的本轮 worker registry；禁止 detached/fire-and-forget。主执行者只管理自己的 `owner_run_id`，所有退出路径执行清场屏障，本轮 active worker 数不为 0 时不得交付完成。
 
@@ -65,16 +65,15 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
 
-## 6. 审查策略
+## 6. 审查路由
 
-- 低风险：执行者完成需求符合性、契约、映射、边界和错误路径的语义审查。
-- 高风险或影响面扩大：委托一个全新上下文显式加载 `converge-review`，使用 `blind` 模式，只传验收项、公共契约、diff/源码指纹和验证结果，不传实现者的理由。
-- 极高风险或用户明确要求双审：增加一个 `intent` reviewer；两个 reviewer 可在宿主支持时并行。
-- 宿主无法提供全新上下文时可以降级自审，但必须记录 `independent=false`，不得宣称完成独立审查。
+每个 task 必须依次通过 `spec -> quality`，两轴结果分别保存；spec 未新鲜通过或任一轴 blocked 时不得启动后续轴。每轴最多一次 repair 和一次 re-review；重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked。
+
+全部 task 的两个 mandatory 轴都新鲜通过后，必须执行一次 `integration` 审查且只检查跨任务风险；它可使用同一组 repair/re-review 上限，但不得重新开启 initial review。高风险可追加新鲜 `blind` 审查，但不得替代 mandatory axes；用户明确要求时也可追加兼容的 `intent` 审查。宿主无法提供全新上下文时可以降级自审，但必须记录 `independent=false`，不得宣称完成独立审查。
 
 风险触发器：金额、时间/时区、SQL/Mapper、迁移、事务、锁/并发、幂等、公共 DTO/API、权限、敏感日志、跨服务或发布契约。
 
-reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff、在授权范围、无业务取舍且可验证”的问题。修复后关闭原 finding，不重新开放式扫描；只有修复扩大风险面时允许一次新的风险审查。
+reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff、在授权范围、无业务取舍且可验证”的问题。修复后只关闭原 finding，不重新开放式扫描；额外风险审查不能重置 mandatory axes 的预算。
 
 ## 7. 有限收敛
 
@@ -82,6 +81,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 - 每批修复必须带来回归测试红转绿、客观检查消除问题，或严重度降低且未扩大范围。
 - 不得通过删测试、降低阈值、跳过检查或扩大范围制造绿灯。
 - 最后一次生产代码修改后必须重新产生新鲜验证证据；审查结论也绑定源码指纹，无关生产代码变化后变为陈旧。
+- 实现循环、单任务双轴审查循环和全局集成审查循环的职责与终止条件只在 [执行控制](references/execution-control.md) 定义；根 Converge 只编排和核验证据，不复制 Provider 的 PDLC/TDD 内部阶段。
 
 ## 8. 计划审计、终态和回执
 
@@ -89,8 +89,8 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
 
-持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
+持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。父控制器从 Git 读取并展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前工具动作，不能冒充任务总量或覆盖父 Git 真值。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 
-修改本 Suite 后使用 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。
+修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。

@@ -4,8 +4,15 @@
 
 ## [Unreleased]
 
-### 0.12.1
+### 0.13.0
 
+- Suite 集成 Plan Contract v3、实现/单任务双轴审查/全局集成审查三类独立有限循环，以及 `converge-eval` 的差分、多样本和历史逃逸行为验收；根 `converge` 保持控制面，不复制 PDLC/TDD 内部阶段。
+- Codex 与 Claude Code 安装、卸载、doctor 和正式检查统一注册五个 Skill，并强制校验 `converge-eval` 的契约、脚本和历史 catalog。
+- 父控制器以 Git 真值展示整个工作区累计文件数、增删行和二进制文件数，明确区别于 Codex 单步角标；脏基线不伪造本任务归因。
+- 最终行为报告分别展示 known acceptance、history、exploration 和 uncovered，不再把指定场景通过表述为没有任何未知问题。
+- 新增职责独立的 `converge-eval`：自修改验收冻结旧版 control 与 candidate 差分，关键决策使用多个 fresh samples 并报告分布/方差，按 touched control surface 从机器 catalog 全选历史逃逸回归，分别报告 known acceptance、history、exploration 与 uncovered；规则修订最多三次且首次无改善即停止升级，不直接执行外部副作用。
+- Review Protocol v2 将任务审查拆为顺序隔离的 spec 与 quality 轴，每轴限制一次修复和一次复核；重复 finding 或无进展立即阻塞，并在全部任务通过后增加一次仅覆盖跨任务风险的 integration 审查，同时保留 v1 intent、blind 和 closure 兼容读取。
+- Plan Contract v3 新增垂直切片、宽重构、集成任务和单 outcome 粒度门禁；同会话多任务改为顺序执行且不要求 commit，只有显式跨会话 checkpoint 才进入 Batch 并请求本地 commit 授权。
 - 修复 Controller Snapshot 中间目录仍可写、VERSION 未进入内容地址且 helper 会在校验前导入模块的问题；完整快照现递归只读，所有冻结 helper 通过 live trusted runner 验证后执行。
 - 修复 Provider registry 与 Snapshot 固定清单漂移的问题；两者现在共享同一动态 manifest 清单。
 - 修复通用 TDD Binding 恢复只核对指纹、不重新检查 TDD 必需词和禁止控制行为的问题。

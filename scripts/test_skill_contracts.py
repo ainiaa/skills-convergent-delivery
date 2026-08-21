@@ -15,12 +15,13 @@ def frontmatter(path):
 
 
 class SkillContractTest(unittest.TestCase):
-    def test_four_skills_have_distinct_names_and_triggers(self):
+    def test_five_skills_have_distinct_names_and_triggers(self):
         paths = {
             "converge": ROOT / "SKILL.md",
             "converge-plan": ROOT / "skills/converge-plan/SKILL.md",
             "converge-review": ROOT / "skills/converge-review/SKILL.md",
             "converge-batch": ROOT / "skills/converge-batch/SKILL.md",
+            "converge-eval": ROOT / "skills/converge-eval/SKILL.md",
         }
         descriptions = {}
         for name, path in paths.items():
@@ -34,6 +35,76 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("plan", descriptions["converge-plan"].lower())
         self.assertIn("read-only", descriptions["converge-review"].lower())
         self.assertIn("batch", descriptions["converge-batch"].lower())
+        self.assertIn("evaluate", descriptions["converge-eval"].lower())
+
+    def test_release_registers_eval_for_install_checks_and_both_runtimes(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        checks = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual("0.13.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertIn(
+            "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
+            installer,
+        )
+        for path in (
+            "skills/converge-eval/SKILL.md",
+            "skills/converge-eval/references/evaluation-contract.json",
+            "skills/converge-eval/scripts/test_eval_contract.py",
+            "references/evaluation-catalog.json",
+            "references/review-orchestration.md",
+        ):
+            self.assertIn(path, installer)
+        self.assertIn("converge-eval", checks)
+        self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
+        self.assertIn(
+            "skills/converge-review/scripts/test_review_axes_contract.py", checks
+        )
+        for runtime in ("Codex", "Claude Code"):
+            self.assertIn(runtime, readme)
+        self.assertIn("五个 Skill", readme)
+
+    def test_plan_v3_and_checkpoint_commit_semantics_are_integrated(self):
+        root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        batch_skill = (ROOT / "skills/converge-batch/SKILL.md").read_text(encoding="utf-8")
+        batch_contract = (ROOT / "skills/converge-batch/references/batch-contract.md").read_text(
+            encoding="utf-8"
+        )
+        combined = root_skill + readme + batch_skill + batch_contract
+
+        self.assertIn("Plan Contract v3", combined)
+        self.assertIn("checkpoint=same_session", combined)
+        self.assertIn("同会话顺序执行", combined)
+        self.assertIn("不要求 commit", combined)
+        self.assertIn("checkpoint=cross_session", combined)
+        self.assertIn("跨会话", combined)
+        self.assertIn("本地 commit 授权", combined)
+
+    def test_three_bounded_loops_have_distinct_termination_conditions(self):
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        for loop in ("实现循环", "单任务双轴审查循环", "全局集成审查循环"):
+            self.assertIn(loop, control)
+        for stop in (
+            "红灯转绿",
+            "每个轴最多一次修复和一次复核",
+            "重复 finding",
+            "只执行一次 integration 审查",
+            "本轮 active worker 数为 0",
+        ):
+            self.assertIn(stop, control)
+
+    def test_final_reporting_separates_coverage_classes_without_blanket_claims(self):
+        root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
+        combined = root_skill + readme + scenarios
+
+        for result_class in ("known_acceptance", "history", "exploration", "uncovered"):
+            self.assertIn(result_class, combined)
+        self.assertIn("不得写“未发现任何问题”", combined)
+        self.assertIn("工作区累计", combined)
+        self.assertIn("Codex 单步角标", combined)
 
     def test_plan_skill_is_planning_only_and_defines_bounded_execution(self):
         skill = (ROOT / "skills/converge-plan/SKILL.md").read_text(encoding="utf-8")

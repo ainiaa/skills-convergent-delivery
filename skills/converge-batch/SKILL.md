@@ -7,6 +7,8 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 
 只负责读取计划、预检 Batch、生成最小上下文胶囊、派发/恢复执行者并校验结构化 receipt。不读取业务代码，不做代码评审，不修改技术方案，不执行实现，也不持有代码 writer lease；计划级 scheduler lease 只防重复调度。
 
+本 Skill 只接收 Plan Contract v3 的 `checkpoint=cross_session`。`checkpoint=same_session` 由根 `converge` 在同一会话顺序执行，不要求 commit，也不进入 Batch 状态机。
+
 每个执行 Batch 必须在新上下文中显式调用 `$converge`。调度器只根据状态和 receipt 判断完成或阻塞，不能根据执行者的自然语言自评放行。
 
 先将当前已选中 `converge-batch/SKILL.md` 所在目录的绝对路径记为 `CONVERGE_BATCH_SKILL_DIR`；helper 必须从这里解析，不能假设被调度项目本身包含该脚本。
@@ -22,7 +24,7 @@ description: Coordinate an existing finite multi-Batch software plan across fres
 - 存在计划级 `final_acceptance`；
 - 使用一个专用分支和 worktree，且没有不属于计划的脏改动；
 - `converge` 已安装；宿主是否能创建/监控全新任务已记录。
-- 用户已一次性授权各 Batch 产生本地 commit；未授权时在任何派发前阻塞或改用普通单任务流程，不能把 Batch 权限解释为 commit 权限。
+- 用户已为这个跨会话 checkpoint 一次性授权各 Batch 产生本地 commit；未授权时在任何派发前阻塞或改用同会话顺序执行，不能把 Batch 权限解释为 commit 权限。
 
 缺口一次性报告并阻塞。不得运行到后续 Batch 才逐项询问，也不得自行补技术方案。
 

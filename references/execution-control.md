@@ -6,6 +6,7 @@
 - 跨文件、跨层、高风险或预计超过一个短执行段：先调用 `converge-plan`。
 - 已携带 `planned_task=true`：只执行 capsule 中冻结的任务，禁止再次规划或递归派发。
 - `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run，保存派发引用后由全新上下文执行该 task 的完整 PDLC；不得把 PDLC 内部阶段再次拆解。复杂计划可以包含多个业务切片级 Provider Run。
+- Plan Contract v3 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。
 
 一个执行段必须有一个清晰结果，并在结束时产生至少一项可观察活动：工具调用、状态更新、diff、测试输出或 worker receipt。不要在一个模型生成步骤中同时准备完整需求、设计、失败测试和实现补丁。
 
@@ -44,7 +45,23 @@ worker 只在阶段切换、客观产物产生及长命令前后发送 objective
 
 连接中断或派发结果不确定时，必须先查询同一 `worker_ref`。没有可靠引用时阻塞或输出手工交接 capsule，不能创建第二个执行者。
 
-## 5. 执行结束与清场屏障
+## 5. 三类有限循环
+
+三类循环互不嵌套，控制器只核对边界与客观证据，不复制 Provider 内部的 PDLC/TDD 阶段。
+
+### 实现循环
+
+Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。红灯转绿且最后生产变更后的目标验证新鲜通过时停止；同一问题指纹最多自动修复一次，修复后复现或没有客观改善时立即停止并阻塞。Converge 不在 Provider 外再跑一套 requirements/design/TDD/implementation/review。
+
+### 单任务双轴审查循环
+
+先执行 spec 审查，再执行 quality 审查，前一轴未通过时不启动后一轴。每个轴最多一次修复和一次复核；复核通过即关闭该轴，重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。
+
+### 全局集成审查循环
+
+全部计划 task 通过后只执行一次 integration 审查，且只覆盖跨任务接口、组合行为和计划级验收；不得重复单任务 spec/quality 审查。integration finding 最多一次修复和一次 closure 复核，随后无论通过或阻塞都停止。交付前还必须确认本轮 active worker 数为 0。
+
+## 6. 执行结束与清场屏障
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 

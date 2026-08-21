@@ -24,7 +24,7 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
   fi
 fi
 
-for skill in converge converge-plan converge-review converge-batch; do
+for skill in converge converge-plan converge-review converge-batch converge-eval; do
   case "$skill" in
     converge) skill_path="$ROOT" ;;
     *) skill_path="$ROOT/skills/$skill" ;;
@@ -48,8 +48,10 @@ python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
 python3 skills/converge-plan/scripts/test_plan_check.py
+python3 skills/converge-review/scripts/test_review_axes_contract.py
 python3 skills/converge-batch/scripts/test_batch_state.py
 python3 skills/converge-batch/scripts/test_batch_next.py
 python3 skills/converge-batch/scripts/test_batch_runtime.py
+python3 skills/converge-eval/scripts/test_eval_contract.py
 
 echo "All checks passed."
