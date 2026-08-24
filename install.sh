@@ -18,6 +18,7 @@ SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
+  evals/evals.json
   references/activation.md
   references/evaluation-catalog.json
   references/evaluation-scenarios.md
@@ -44,6 +45,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
+  scripts/test_trigger_evals.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   skills/converge-plan/SKILL.md

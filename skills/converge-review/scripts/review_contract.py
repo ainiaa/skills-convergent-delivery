@@ -77,6 +77,9 @@ def normalize_result(value, reviewer_ref):
         if mode not in {"shared", "blind"}:
             raise ValueError("review mode is invalid")
         status = value.get("status")
+    if phase == "initial" and axis in {"quality", "integration"} \
+            and (mode != "blind" or not independent):
+        raise ValueError(f"initial {axis} review must be independent blind")
     if status not in STATUSES:
         raise ValueError("review status is invalid")
 

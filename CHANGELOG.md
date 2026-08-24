@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+- Review 完成闸门绑定已登记且宿主终态 completed 的 reviewer，强制 initial quality/integration 独立盲审，并阻止未消费 integration 预算或未通过结果完成。
+- Eval Sample Receipt 升级为 v2，绑定真实证据文件内容；差分报告使用 control/candidate 双侧结果，exploration 单独统计且不作为 completion gate。
+- generic TDD 改为仅显式选择；简单 inline 路径不再创建五阶段宿主计划，并补充精确 lease release 说明。
+- 五个 Skill 增加 Git、Python 3.9+、完整 Suite 与 Codex/Claude Code 兼容性元数据；新增五入口 trigger/hard-negative eval 数据及确定性校验。
+
 ### 0.19.0
 
 - 修复旧 Single State Schema 可绕过 v10 完成证据门禁的问题；旧状态只允许读取或原子迁移，任何新 complete 写入都要求 Source/Evidence Receipt。

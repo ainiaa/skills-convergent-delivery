@@ -1,6 +1,8 @@
 ---
 name: converge-batch
 description: Coordinate an existing finite multi-Batch software plan across fresh execution contexts. Use when asked to run a plan Batch by Batch, hand work between tasks, or supervise long-running sequential delivery; do not use for one implementation or ordinary review.
+metadata:
+  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge Batch：长计划调度器

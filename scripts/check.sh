@@ -51,6 +51,7 @@ python3 scripts/test_delivery_state.py
 python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
+python3 scripts/test_trigger_evals.py
 python3 skills/converge-plan/scripts/test_plan_check.py
 python3 skills/converge-review/scripts/test_review_axes_contract.py
 python3 skills/converge-review/scripts/test_review_contract.py

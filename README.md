@@ -22,7 +22,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 
 核心能力：
 
-- 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → 通用 TDD → native-v1` 稳定解析；也可用 `--provider <id>` 精确选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
+- 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → native-v1` 稳定解析；通用 TDD 仅允许用 `--provider generic-tdd-v1` 显式选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
 - 复杂任务先形成 Plan Contract v5；每个 task 只有一个结果、明确范围、依赖、Source Receipt v2 基线和验证。
 - PDLC 每个 task 只形成一个有限 Provider Run，完整委托需求、设计、TDD、实现和阶段评审；根 Converge 只控制范围与证据，不复制内部阶段。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
@@ -171,7 +171,7 @@ Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规
 |---|---|---|
 | manifest 已适配的 PDLC | `pdlc-v1` | 按 task kind 路由真实入口；Converge 保留控制和最终验收 |
 | 已适配 Superpowers / Matt Pocock TDD | 对应适配器 | 只委托一次红绿阶段 |
-| 其他 TDD Skill 通过预检 | `generic-tdd-v1` | 只采用测试方法，不接管循环和发布 |
+| 显式指定且其他 TDD Skill 通过预检 | `generic-tdd-v1` | 不参加 auto；只采用测试方法，不接管循环和发布 |
 | 都不可用 | `native-v1` | 使用内置有限 TDD 协议 |
 
 Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只要声明当前 task kind、完整入口闭包和兼容授权，即参与同一套发现与冻结。显式 `--provider <id>` 或已冻结 Provider 不可用时阻塞；auto 首次解析可以在业务写入前说明原因并降级。任务开始后冻结 manifest、task contract、实际入口、closure 和来源摘要，恢复时不允许热切换。

@@ -695,33 +695,9 @@ def selection(
             "tdd_skill_fingerprint": adapted_fingerprint,
         })
         return result
-    generic_engine, generic_path, generic_fingerprint = generic_tdd_provider(
-        tdd_roots_argument, task_kind
-    )
-    if generic_path:
-        reason = "auto mode selected a compatible generic TDD provider"
-        if incompatible:
-            reason = f"installed workflow Provider is incompatible ({problem}); {reason}"
-        result = native_result(
-            reason,
-            provider_reference(
-                generic_engine,
-                task_kind,
-                source_path=str(generic_path),
-                source_fingerprint=generic_fingerprint,
-            ),
-            task_kind,
-        )
-        result.update({
-            "status": "selected",
-            "engine": generic_engine,
-            "tdd_skill_path": str(generic_path),
-            "tdd_skill_fingerprint": generic_fingerprint,
-        })
-        return result
-    reason = f"auto mode fell back to native TDD: {problem}; no compatible third-party TDD skill was found"
+    reason = f"auto mode fell back to native TDD: {problem}; no adapted TDD provider was found"
     if incompatible:
-        reason = f"auto mode fell back after incompatible workflow Provider ({problem}); no compatible third-party TDD skill was found"
+        reason = f"auto mode fell back after incompatible workflow Provider ({problem}); no adapted TDD provider was found"
     return native_result(reason, task_kind=task_kind)
 
 

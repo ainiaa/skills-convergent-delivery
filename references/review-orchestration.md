@@ -1,6 +1,6 @@
 # Review Orchestration Contract v1
 
-控制器按风险选择复核成本。需求符合性与实现质量仍分别保存结论；普通任务由同一个 fresh reviewer 接收两个有序单轴请求，先 `spec`，通过后再 `quality`。低风险任务使用实现者自检和新鲜验证，不创建 reviewer。高风险任务使用一个 blind reviewer，同样按单轴顺序执行。只有多任务或跨服务计划才增加一次 integration review。任何源码变化都会使旧结果 stale。
+控制器按风险选择复核成本。需求符合性与实现质量仍分别保存结论；普通任务由同一个已登记且宿主状态为 completed 的 fresh reviewer 接收两个有序单轴请求，先 `spec`，通过后再独立盲审 `quality`。低风险任务使用实现者自检和新鲜验证，不创建 reviewer。高风险任务使用一个 blind reviewer，同样按单轴顺序执行。只有多任务或跨服务计划才增加一次 integration review。任何源码变化都会使旧结果 stale。
 
 ```json
 {

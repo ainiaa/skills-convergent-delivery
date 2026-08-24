@@ -359,14 +359,29 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("native-v1", json.loads(result.stdout)["engine"])
 
-    def test_auto_uses_a_compatible_generic_tdd_skill_after_adapted_providers(self):
+    def test_auto_does_not_select_a_generic_tdd_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.tdd_root(
+                directory,
+                "project-tdd",
+                "Run a test first, then use the red and green cycle.",
+            )
+            result = self.run_engine("--tdd-root", str(root))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("native-v1", payload["engine"])
+
+    def test_explicit_generic_tdd_provider_remains_available(self):
         with tempfile.TemporaryDirectory() as directory:
             root, path = self.tdd_root(
                 directory,
                 "project-tdd",
                 "Run a test first, then use the red and green cycle.",
             )
-            result = self.run_engine("--tdd-root", str(root))
+            result = self.run_engine(
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root)
+            )
 
         self.assertEqual(0, result.returncode, result.stderr)
         payload = json.loads(result.stdout)
@@ -469,7 +484,9 @@ class DeliveryEngineTest(unittest.TestCase):
                 "project-tdd",
                 "Run a test first, then use the red and green cycle.",
             )
-            initial = self.run_engine("--tdd-root", str(root))
+            initial = self.run_engine(
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root)
+            )
             fingerprint = json.loads(initial.stdout)["tdd_skill_fingerprint"]
             result = self.run_engine(
                 "--tdd-root",

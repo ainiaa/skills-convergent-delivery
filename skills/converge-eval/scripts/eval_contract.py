@@ -15,9 +15,12 @@ REQUIRED = {
 SAMPLE_FIELDS = {
     "schema_version", "scenario_id", "scenario_class", "control_source",
     "candidate_source", "judge_fingerprint", "worker_ref", "evidence_source",
-    "control_result", "candidate_result", "receipt_fingerprint",
+    "evidence_fingerprint", "control_result", "candidate_result", "receipt_fingerprint",
 }
 SCENARIO_CLASSES = {"known_acceptance", "history", "exploration"}
+EVIDENCE_FIELDS = SAMPLE_FIELDS - {
+    "evidence_source", "evidence_fingerprint", "receipt_fingerprint",
+}
 
 
 def _string_list(value, name, allow_empty=False):
@@ -28,9 +31,9 @@ def _string_list(value, name, allow_empty=False):
     return value
 
 
-def _sample_receipt(value, control_source, candidate_source):
+def _sample_receipt(value, control_source, candidate_source, artifact_root):
     if not isinstance(value, dict) or set(value) != SAMPLE_FIELDS \
-            or value.get("schema_version") != 1:
+            or value.get("schema_version") != 2:
         raise ValueError("sample receipt fields are invalid")
     for field in ("scenario_id", "worker_ref", "evidence_source"):
         if not isinstance(value[field], str) or not value[field].strip():
@@ -39,7 +42,7 @@ def _sample_receipt(value, control_source, candidate_source):
         raise ValueError("sample receipt scenario_class is invalid")
     if value["control_source"] != control_source or value["candidate_source"] != candidate_source:
         raise ValueError("sample receipt source does not match the evaluation request")
-    for field in ("judge_fingerprint", "receipt_fingerprint"):
+    for field in ("judge_fingerprint", "evidence_fingerprint", "receipt_fingerprint"):
         fingerprint = value[field]
         if not isinstance(fingerprint, str) or len(fingerprint) != 64 \
                 or any(char not in "0123456789abcdef" for char in fingerprint):
@@ -53,6 +56,19 @@ def _sample_receipt(value, control_source, candidate_source):
     ).hexdigest()
     if value["receipt_fingerprint"] != expected:
         raise ValueError("sample receipt fingerprint is invalid")
+    evidence = Path(value["evidence_source"])
+    if not evidence.is_absolute():
+        evidence = artifact_root / evidence
+    if not evidence.is_file() or hashlib.sha256(evidence.read_bytes()).hexdigest() \
+            != value["evidence_fingerprint"]:
+        raise ValueError("sample receipt evidence fingerprint is invalid")
+    try:
+        evidence_identity = json.loads(evidence.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("sample receipt evidence identity is invalid") from error
+    if not isinstance(evidence_identity, dict) or set(evidence_identity) != EVIDENCE_FIELDS \
+            or any(evidence_identity[field] != value[field] for field in EVIDENCE_FIELDS):
+        raise ValueError("sample receipt evidence identity does not match the receipt")
     return value
 
 
@@ -70,12 +86,23 @@ def evaluate(request, catalog_path):
     if not isinstance(samples, list) or not samples:
         raise ValueError("sample_receipts must be a non-empty list")
     samples = [
-        _sample_receipt(item, request["control_source"], request["candidate_source"])
+        _sample_receipt(
+            item, request["control_source"], request["candidate_source"],
+            Path(catalog_path).resolve().parent.parent,
+        )
         for item in samples
     ]
     fingerprints = [item["receipt_fingerprint"] for item in samples]
     if len(fingerprints) != len(set(fingerprints)):
         raise ValueError("sample receipts must be unique")
+    artifact_root = Path(catalog_path).resolve().parent.parent
+    evidence_sources = [
+        str((Path(item["evidence_source"]) if Path(item["evidence_source"]).is_absolute()
+             else artifact_root / item["evidence_source"]).resolve())
+        for item in samples
+    ]
+    if len(evidence_sources) != len(set(evidence_sources)):
+        raise ValueError("sample receipts must use distinct evidence artifacts")
     if len({item["judge_fingerprint"] for item in samples}) != 1:
         raise ValueError("sample receipts must use one frozen judge")
     minimum = 3 if decisions else 1
@@ -112,15 +139,29 @@ def evaluate(request, catalog_path):
         item["scenario_id"] for item in samples
         if item["scenario_class"] == "exploration"
     })
-    results = [item["candidate_result"] for item in samples]
-    pass_count = results.count("pass")
-    pass_rate = pass_count / len(samples)
-    distribution = {
-        "sample_count": len(samples),
-        "pass_count": pass_count,
-        "fail_count": len(samples) - pass_count,
-        "pass_rate": pass_rate,
-        "variance": pass_rate * (1 - pass_rate),
+    def distribution(items):
+        results = [item["candidate_result"] for item in items]
+        pass_count = results.count("pass")
+        pass_rate = pass_count / len(items) if items else 0.0
+        return {
+            "sample_count": len(items),
+            "pass_count": pass_count,
+            "fail_count": len(items) - pass_count,
+            "pass_rate": pass_rate,
+            "variance": pass_rate * (1 - pass_rate),
+        }
+
+    gating_samples = [item for item in samples if item["scenario_class"] != "exploration"]
+    exploration_samples = [item for item in samples if item["scenario_class"] == "exploration"]
+    sample_distribution = distribution(samples)
+    gating_distribution = distribution(gating_samples)
+    exploration_distribution = distribution(exploration_samples)
+    pairs = [(item["control_result"], item["candidate_result"]) for item in gating_samples]
+    differential = {
+        "regressions": pairs.count(("pass", "fail")),
+        "fixes": pairs.count(("fail", "pass")),
+        "both_pass": pairs.count(("pass", "pass")),
+        "both_fail": pairs.count(("fail", "fail")),
     }
 
     revisions = request["revisions"]
@@ -148,7 +189,7 @@ def evaluate(request, catalog_path):
     ):
         raise ValueError("revision metrics are invalid")
     stop_reason = "evidence_gap" if uncovered else (
-        "complete" if pass_count == len(samples) else "failed"
+        "complete" if gating_distribution["fail_count"] == 0 else "failed"
     )
     revisions_used = len(revisions)
     for index, revision in enumerate(revisions):
@@ -170,7 +211,10 @@ def evaluate(request, catalog_path):
         "exploration": exploration,
         "uncovered": uncovered,
         "allowed_scope": allowed_scope,
-        "sample_distribution": distribution,
+        "sample_distribution": sample_distribution,
+        "gating_distribution": gating_distribution,
+        "exploration_distribution": exploration_distribution,
+        "differential": differential,
         "revisions_used": revisions_used,
         "stop_reason": stop_reason,
     }

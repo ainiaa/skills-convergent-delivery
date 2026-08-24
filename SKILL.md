@@ -1,6 +1,8 @@
 ---
 name: converge
 description: Implement, fix, or refactor one authorized software task through finite, evidence-backed delivery. Use for “实现/修复/重构/按方案修改/修复已知问题/闭环完成”, end-to-end implementation, or requests to keep fixing until verified. Do not use for read-only review or multi-Batch plan coordination.
+metadata:
+  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge：单任务闭环执行
@@ -37,7 +39,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 需要精确 Provider 时改用 `--provider <provider-id>`；显式 ID 未注册或来源不完整必须阻塞。resolver 使用共享 Provider Contract 冻结 manifest、当前 task contract、真实入口与 closure，不能只冻结名称或 manifest。
 
-Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → 通过预检的通用 TDD → `native-v1`。
+Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。auto 顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → `native-v1`；`generic-tdd-v1` 仅允许显式选择。
 
 - 显式 Provider 不可用或不兼容时阻塞，不静默替换。
 - auto 模式只在尚未产生业务写入时说明一次原因并降级；已有冻结 binding 时任一来源变化都阻塞。
@@ -57,17 +59,26 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 读取 [计划执行与无响应保护](references/execution-control.md)。
 
-其他任务在实现前建立计划：简单任务只需要一个短 task；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
+其他任务在实现前冻结执行边界：简单 `inline` 只保存一个内联执行条目，不调用 `converge-plan`；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 
 Plan Contract v5 校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文。计划冻结 Source Receipt v2 基线；`checkpoint=same_session` 的多任务在同一会话、同一工作区顺序执行，每个 task 保存 `source_before/source_after` 并只认领 `owned_paths` 内增量，不要求 commit；只有 `checkpoint=cross_session` 才以 `batch` 交给 `converge-batch`，并在 checkpoint 前请求一次本地 commit 授权。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 
-宿主提供原生计划 UI 时，主执行者必须使用同一组稳定任务调用原生计划更新：简单任务直接显示五阶段计划；Plan v5 多任务只显示顶层 task，不重复展开 PDLC 内部阶段。持久任务先运行 `delivery_progress.py projection`；`delivery_next.py` 返回 `sync-plan` 时，先把 projection 原样同步到宿主，再将其 `projection_fingerprint` 写入 `host_sync.acknowledged_fingerprint`。宿主没有原生计划 API 时记录 `mode=text|legacy_unavailable` 并继续文本进度，不能循环等待。
+宿主提供原生计划 UI 时，Plan v5 多任务只显示顶层 task，不重复展开 PDLC 内部阶段；简单 `inline` 不创建宿主计划项，只用简短 commentary 报告当前动作。持久任务先运行 `delivery_progress.py projection`；`delivery_next.py` 返回 `sync-plan` 时，先把 projection 原样同步到宿主，再将其 `projection_fingerprint` 写入 `host_sync.acknowledged_fingerprint`。宿主没有原生计划 API 时记录 `mode=text|legacy_unavailable` 并继续文本进度，不能循环等待。
 
 所有 PDLC、reviewer、辅助分析和前向 evaluator 委托都必须登记到 [执行控制](references/execution-control.md) 定义的本轮 worker registry；禁止 detached/fire-and-forget。主执行者只管理自己的 `owner_run_id`，所有退出路径执行清场屏障，本轮 active worker 数不为 0 时不得交付完成。
 
 ## 5. 并发与恢复
 
-任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，终态释放，过期后不自动抢占。
+任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，过期后不自动抢占。所有终态路径在 worker 清场后使用获取时返回的同一身份释放；简单路径的精确命令为：
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release \
+  --root "<lease-root>" --repo "<absolute-git-common-dir>" \
+  --workspace "<absolute-worktree>" --task-key "<task-key>" \
+  --run-id "<run-id>" --writer-id "<writer-id>"
+```
+
+只有输出 `{"status":"released"}` 才算释放成功；持久任务以 `controller_snapshot.py run` 包裹同一 helper 与参数，并额外传入实际 `--state-root`。
 
 跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
 

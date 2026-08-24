@@ -50,7 +50,8 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.assertIn('"axis": "integration"', self.skill)
 
     def test_quality_and_integration_preserve_independence_and_freshness(self):
-        self.assertIn("quality 与 integration 初审必须使用 `blind` 和全新上下文", self.contract)
+        self.assertIn("quality 与 integration 初审必须使用 `blind`", self.contract)
+        self.assertIn("`independent=true` 和全新上下文", self.contract)
         self.assertIn("源码变化后旧结果立即 stale", self.contract)
 
     def test_legacy_intent_blind_and_closure_requests_remain_readable(self):

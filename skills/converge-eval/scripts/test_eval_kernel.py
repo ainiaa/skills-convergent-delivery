@@ -2,7 +2,9 @@
 """Executable tests for deterministic evaluation bookkeeping."""
 
 import hashlib
+import itertools
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,22 +12,28 @@ from eval_contract import evaluate
 
 
 ROOT = Path(__file__).resolve().parents[3]
+ARTIFACTS = tempfile.TemporaryDirectory()
+unittest.addModuleCleanup(ARTIFACTS.cleanup)
+ARTIFACT_SEQUENCE = itertools.count(1)
 
 
 def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **overrides):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "scenario_id": scenario_id,
         "scenario_class": scenario_class,
         "control_source": "control",
         "candidate_source": "candidate",
         "judge_fingerprint": "a" * 64,
         "worker_ref": worker_ref,
-        "evidence_source": f"artifacts/{worker_ref}/{scenario_id}.json",
         "control_result": "pass",
         "candidate_result": result,
     }
     value.update(overrides)
+    artifact = Path(ARTIFACTS.name) / f"{next(ARTIFACT_SEQUENCE)}.json"
+    artifact.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    value["evidence_source"] = str(artifact)
+    value["evidence_fingerprint"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
     value["receipt_fingerprint"] = hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -73,6 +81,8 @@ class EvalKernelTest(unittest.TestCase):
         self.assertEqual(10, result["sample_distribution"]["sample_count"])
         self.assertEqual(9, result["sample_distribution"]["pass_count"])
         self.assertEqual(9 / 10, result["sample_distribution"]["pass_rate"])
+        self.assertEqual(8 / 9, result["gating_distribution"]["pass_rate"])
+        self.assertEqual("failed", result["stop_reason"])
         self.assertEqual(["new-worker-probe"], result["exploration"])
         self.assertEqual([], result["uncovered"])
         self.assertEqual(
@@ -151,6 +161,87 @@ class EvalKernelTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+    def test_rejects_evidence_changed_after_the_receipt_was_created(self):
+        receipt = sample("contract", "known_acceptance")
+        Path(receipt["evidence_source"]).write_text("tampered", encoding="utf-8")
+        request = {
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control",
+            "candidate_source": "candidate",
+            "allowed_scope": ["skills/converge-review"],
+            "critical_decisions": [],
+            "sample_receipts": [receipt],
+            "revisions": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "evidence fingerprint"):
+            evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+    def test_evidence_artifact_must_bind_the_claimed_worker_and_results(self):
+        receipt = sample("contract", "known_acceptance")
+        receipt["worker_ref"] = "forged-worker"
+        receipt["receipt_fingerprint"] = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in receipt.items() if key != "receipt_fingerprint"},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        request = {
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control",
+            "candidate_source": "candidate",
+            "allowed_scope": ["skills/converge-review"],
+            "critical_decisions": [],
+            "sample_receipts": [receipt],
+            "revisions": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "evidence identity"):
+            evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+    def test_control_and_candidate_results_are_classified_differentially(self):
+        request = {
+            "acceptance": ["contract", "fixed"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control",
+            "candidate_source": "candidate",
+            "allowed_scope": ["skills/converge-review"],
+            "critical_decisions": [],
+            "sample_receipts": [
+                sample("contract", "known_acceptance", "fail", control_result="pass"),
+                sample("fixed", "known_acceptance", "pass", control_result="fail"),
+            ],
+            "revisions": [],
+        }
+
+        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+        self.assertEqual(1, result["differential"]["regressions"])
+        self.assertEqual(1, result["differential"]["fixes"])
+        self.assertEqual("failed", result["stop_reason"])
+
+    def test_exploration_failures_are_reported_but_do_not_block_completion(self):
+        request = {
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control",
+            "candidate_source": "candidate",
+            "allowed_scope": ["skills/converge-review"],
+            "critical_decisions": [],
+            "sample_receipts": [
+                sample("contract", "known_acceptance"),
+                sample("probe", "exploration", "fail", worker_ref="worker-2"),
+            ],
+            "revisions": [],
+        }
+
+        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+        self.assertEqual("complete", result["stop_reason"])
+        self.assertEqual(1, result["exploration_distribution"]["fail_count"])
 
     def test_rejects_receipts_from_another_source_or_judge(self):
         base = {

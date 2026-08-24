@@ -28,7 +28,7 @@
 
 ### 2.2 Provider Resolver（`scripts/delivery_engine.py`）
 
-- auto 顺序固定：兼容 workflow（按 ID）→适配 stage（manifest ID 顺序）→generic→native。
+- auto 顺序固定：兼容 workflow（按 ID）→适配 stage（manifest ID 顺序）→native；generic 仅允许显式选择。
 - `--provider <id>` 为精确选择；不存在、不兼容或来源缺失均阻塞，不回退。
 - `--mode native|pdlc` 作为兼容入口映射到精确 workflow。
 - PDLC 缺失时 Native 使用自身入口与闭包完整绑定，可独立走 Native 协议。

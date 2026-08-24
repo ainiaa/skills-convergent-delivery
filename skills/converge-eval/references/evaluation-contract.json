@@ -27,7 +27,7 @@
     "fresh_context_per_sample": true,
     "single_pass_establishes_stability": false,
     "receipt_schema": {
-      "schema_version": 1,
+      "schema_version": 2,
       "required_fields": [
         "scenario_id",
         "scenario_class",
@@ -36,12 +36,13 @@
         "judge_fingerprint",
         "worker_ref",
         "evidence_source",
+        "evidence_fingerprint",
         "control_result",
         "candidate_result",
         "receipt_fingerprint"
       ],
-      "immutable": "receipt_fingerprint is sha256 of the canonical receipt without itself",
-      "freshness": "critical decisions require at least three distinct worker_ref values for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
+      "immutable": "the JSON evidence artifact must bind scenario, sources, judge, worker and both results; evidence_fingerprint binds its bytes; receipt_fingerprint is sha256 of the canonical receipt without itself",
+      "freshness": "critical decisions require at least three distinct worker_ref values and evidence artifacts for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
       "coverage": "known acceptance and selected history scenarios absent from receipts become uncovered"
     },
     "report_fields": [
@@ -63,6 +64,10 @@
     "exploration",
     "uncovered"
   ],
+  "exploration": {
+    "gating": false,
+    "report_failures": true
+  },
   "revision": {
     "max_rule_revisions": 3,
     "stop_after_consecutive_no_improvement": 1,
@@ -94,6 +99,9 @@
     "exploration",
     "uncovered",
     "sample_distribution",
+    "gating_distribution",
+    "exploration_distribution",
+    "differential",
     "revisions_used",
     "stop_reason"
   ]

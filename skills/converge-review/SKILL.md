@@ -1,6 +1,8 @@
 ---
 name: converge-review
 description: Perform an evidence-based read-only review of a software diff or implementation. Use for “检查/评审当前改动”, independent intent review, or fresh-context blind review; do not use to implement or fix code.
+metadata:
+  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge Review：独立只读审查

@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "suite": "converge",
+  "evals": [
+    {
+      "id": "implement-known-fixes-zh",
+      "prompt": "把评审里已经发现的问题全部修掉，先补测试再实现并跑完验证。",
+      "expected_skill": "converge",
+      "should_trigger": true
+    },
+    {
+      "id": "implement-refactor-en",
+      "prompt": "Refactor this service without changing behavior and keep fixing until the tests verify it.",
+      "expected_skill": "converge",
+      "should_trigger": true
+    },
+    {
+      "id": "plan-only-zh",
+      "prompt": "先不要改代码，帮我把这个跨服务需求拆成一个有限、可验收的执行计划。",
+      "expected_skill": "converge-plan",
+      "should_trigger": true
+    },
+    {
+      "id": "plan-only-en",
+      "prompt": "Create a bounded implementation plan with dependencies and verification, but do not implement it.",
+      "expected_skill": "converge-plan",
+      "should_trigger": true
+    },
+    {
+      "id": "review-only-zh",
+      "prompt": "只读评审当前 diff，按严重度列出有证据的问题，不要修改代码。",
+      "expected_skill": "converge-review",
+      "should_trigger": true
+    },
+    {
+      "id": "review-only-en",
+      "prompt": "Independently review this implementation for defects; report findings only and make no edits.",
+      "expected_skill": "converge-review",
+      "should_trigger": true
+    },
+    {
+      "id": "batch-existing-plan-zh",
+      "prompt": "按已经批准的 Plan v5 一批一批接力执行，支持暂停和恢复。",
+      "expected_skill": "converge-batch",
+      "should_trigger": true
+    },
+    {
+      "id": "batch-existing-plan-en",
+      "prompt": "Coordinate the existing cross-session Batch plan and verify each receipt before dispatching the next Batch.",
+      "expected_skill": "converge-batch",
+      "should_trigger": true
+    },
+    {
+      "id": "eval-suite-change-zh",
+      "prompt": "我改了 Converge 的路由规则，请冻结 control/candidate 并做独立行为验收。",
+      "expected_skill": "converge-eval",
+      "should_trigger": true
+    },
+    {
+      "id": "eval-suite-change-en",
+      "prompt": "Evaluate this Converge rule change against the frozen control and historical escape scenarios.",
+      "expected_skill": "converge-eval",
+      "should_trigger": true
+    },
+    {
+      "id": "hard-negative-explanation",
+      "prompt": "解释一下 TDD 的 red-green-refactor 是什么意思，不需要操作仓库。",
+      "expected_skill": null,
+      "should_trigger": false
+    },
+    {
+      "id": "hard-negative-status",
+      "prompt": "当前分支名是什么，只告诉我结果。",
+      "expected_skill": null,
+      "should_trigger": false
+    }
+  ]
+}

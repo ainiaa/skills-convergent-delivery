@@ -43,6 +43,9 @@ class SkillContractTest(unittest.TestCase):
             description = next(line for line in header.splitlines() if line.startswith("description:"))
             descriptions[name] = description
             self.assertGreater(len(text), len(header))
+            self.assertIn("compatibility: Requires Git and Python 3.9+", header)
+            self.assertIn("complete Converge Suite", header)
+            self.assertIn("Codex and Claude Code", header)
 
         self.assertIn("implement", descriptions["converge"].lower())
         self.assertIn("plan", descriptions["converge-plan"].lower())
@@ -66,10 +69,13 @@ class SkillContractTest(unittest.TestCase):
             "skills/converge-eval/scripts/test_eval_contract.py",
             "references/evaluation-catalog.json",
             "references/review-orchestration.md",
+            "evals/evals.json",
+            "scripts/test_trigger_evals.py",
         ):
             self.assertIn(path, installer)
         self.assertIn("converge-eval", checks)
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
+        self.assertIn("scripts/test_trigger_evals.py", checks)
         self.assertIn(
             "skills/converge-review/scripts/test_review_axes_contract.py", checks
         )
@@ -153,6 +159,23 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("独立可验收的业务切片", text)
         self.assertIn("PDLC task 内部仍整体委托", text)
         self.assertIn("execution-control.md", text)
+
+    def test_simple_inline_path_skips_generic_discovery_and_host_plan_ui(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+
+        self.assertIn("generic-tdd-v1` 仅允许显式选择", skill + tdd)
+        self.assertIn("简单 `inline` 不创建宿主计划项", skill + control)
+        self.assertNotIn("简单任务直接显示五阶段计划", skill + control)
+
+    def test_writer_lease_has_an_exact_terminal_release_recipe(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("delivery_lease.py\" release", skill)
+        for argument in ("--root", "--repo", "--workspace", "--task-key", "--run-id", "--writer-id"):
+            self.assertIn(argument, skill)
+        self.assertIn('"status":"released"', skill)
 
     def test_provider_and_progress_contracts_remain_controller_owned(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

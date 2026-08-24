@@ -94,6 +94,53 @@ def runtime_binding():
     )
 
 
+def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
+                            integration_budget=0, integration_status=None,
+                            integration_reviewer="reviewer-a"):
+    payload = upgrade_state(state(
+        status="complete", current_stage="verify-final", revision=3,
+        runtime_binding=runtime_binding(),
+    ))
+    source = payload["source_fingerprint"]
+    payload["execution_control"]["routing"]["review_tier"] = "normal"
+    review = payload["execution_control"]["review"]
+    review["integration_budget_remaining"] = integration_budget
+    base = {
+        "phase": "initial", "source_fingerprint": source, "status": "pass",
+        "reviewer_ref": "reviewer-a", "finding_fingerprints": [],
+    }
+    requests = [
+        {**base, "axis": "spec", "mode": "shared", "independent": False},
+        {**base, "axis": "quality", "mode": quality_mode,
+         "independent": quality_mode == "blind"},
+    ]
+    if integration_status is not None:
+        requests.append({
+            **base, "axis": "integration", "status": integration_status,
+            "reviewer_ref": integration_reviewer, "mode": "blind", "independent": True,
+        })
+    review["rounds"] = [{"source_fingerprint": source, "requests": requests}]
+    if reviewer_registered:
+        payload["workers"] = [{
+            "ref": "reviewer-a", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "completed", "progress": None,
+        }]
+        if integration_reviewer != "reviewer-a":
+            payload["workers"].append({
+                "ref": integration_reviewer, "parent_ref": None,
+                "task_id": payload["task_key"], "depth": 1, "may_dispatch": False,
+                "role": "reviewer", "owner_run_id": payload["run_id"],
+                "status": "completed", "progress": None,
+            })
+        reviewer_refs = [worker["ref"] for worker in payload["workers"]]
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, reviewer_refs, [], [],
+            "2026-08-21T00:00:00Z",
+        )
+    return payload
+
+
 class DeliveryNextTest(unittest.TestCase):
     def test_current_complete_state_requires_real_source_and_command_receipts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -538,6 +585,45 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("review", result.stderr)
+
+    def test_normal_review_requires_a_registered_completed_reviewer(self):
+        payload = reviewed_complete_state(reviewer_registered=False)
+
+        with self.assertRaisesRegex(ValueError, "registered completed reviewer"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_normal_review_requires_initial_quality_to_be_independent_and_blind(self):
+        payload = reviewed_complete_state(quality_mode="shared")
+
+        with self.assertRaisesRegex(ValueError, "quality.*independent blind"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_normal_review_accepts_shared_spec_and_blind_quality_from_one_reviewer(self):
+        payload = reviewed_complete_state()
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_required_integration_review_cannot_remain_unspent_at_completion(self):
+        payload = reviewed_complete_state(integration_budget=1)
+
+        with self.assertRaisesRegex(ValueError, "integration review is still required"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_consumed_integration_review_requires_a_current_pass(self):
+        payload = reviewed_complete_state(integration_status="findings")
+        payload["execution_control"]["review"]["rounds"][0]["requests"][-1][
+            "finding_fingerprints"
+        ] = ["d" * 64]
+
+        with self.assertRaisesRegex(ValueError, "integration review requires a current pass"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_integration_may_use_a_different_registered_reviewer(self):
+        payload = reviewed_complete_state(
+            integration_status="pass", integration_reviewer="reviewer-b"
+        )
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
     def test_later_review_finding_invalidates_an_earlier_pass(self):
         payload = upgrade_state(state(status="complete", current_stage="verify-final"))

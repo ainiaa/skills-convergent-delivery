@@ -21,8 +21,9 @@
 | 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一适配能力 | 环境阻塞；不得降级为 native。 |
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |
 | 伪造已适配来源 | 同名或相似措辞的 Superpowers/Matt TDD 文件，内容并非已登记版本 | 不得当作已适配引擎；只可经通用预检选择或回退内置流程。 |
-| 通用 TDD 降级 | PDLC 和已适配 TDD 不可用，但存在满足预检的非编排 TDD Skill | 选择 `generic-tdd-v1`，冻结其路径；没有有效红绿和命令证据不得完成。 |
-| 内置 TDD 降级 | 没有兼容 PDLC 或第三方 TDD Skill | 选择 `native-v1`，报告中写明降级原因；原生流程仍可完整交付。 |
+| 通用 TDD 显式选择 | 用户指定 `generic-tdd-v1`，且存在满足预检的非编排 TDD Skill | 选择并冻结其路径；没有有效红绿和命令证据不得完成。 |
+| 通用 TDD 不自动触发 | PDLC 和已适配 TDD 不可用，但只存在关键词相似的通用 TDD Skill | 选择 `native-v1`；不得扫描并自动执行通用 Skill。 |
+| 内置 TDD 降级 | 没有兼容 PDLC 或已适配 TDD Skill | 选择 `native-v1`，报告中写明降级原因；原生流程仍可完整交付。 |
 | 引擎恢复 | 已冻结的 PDLC 或第三方 TDD 任务恢复时能力消失，或 native 任务恢复时发现外部能力 | 前两者 `blocked_environment`；后者继续 native；不得静默切换或混用状态机。 |
 | 冻结内容变化 | 恢复前 PDLC 所需 Skill 或第三方 `SKILL.md` 被更新 | `blocked_environment`；不得使用替换来源、更新后的内容或原生流程续跑。 |
 | 低风险局部 Bug | 私有方法空值遗漏，单模块可复现 | 一轮完成；有有效红绿回归；稳定轮跳过。 |

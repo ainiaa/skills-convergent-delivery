@@ -1,6 +1,8 @@
 ---
 name: converge-plan
 description: Create and validate a finite software execution plan before implementation. Use for planning complex work, splitting a task into bounded steps, deciding sequential versus safe parallel execution, or preparing a plan for converge-batch. Do not use to modify business code, review a diff, or control PDLC internals.
+metadata:
+  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge Plan：有限执行计划

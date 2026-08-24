@@ -507,6 +507,13 @@ def validate_execution_control(value, source_fingerprint):
                     or request["mode"] not in {"shared", "blind"} \
                     or not isinstance(request["independent"], bool):
                 raise ValueError("review request value is invalid")
+            if round_source == source_fingerprint \
+                    and request["phase"] == "initial" \
+                    and request["axis"] in {"quality", "integration"} \
+                    and (request["mode"] != "blind" or not request["independent"]):
+                raise ValueError(
+                    f"initial {request['axis']} review must be independent blind"
+                )
             require_string(request["reviewer_ref"], "review request reviewer_ref")
             findings = request["finding_fingerprints"]
             if not isinstance(findings, list) or len(findings) != len(set(findings)) or any(
@@ -522,26 +529,44 @@ def validate_execution_control(value, source_fingerprint):
     return routing, review
 
 
-def validate_review_gate(routing, review):
+def validate_review_gate(routing, review, workers):
     tier = routing["review_tier"]
-    if tier == "low":
-        return
     requests = review["rounds"][-1]["requests"] if review["rounds"] else []
     latest = {}
     positions = {}
     for position, request in enumerate(requests):
         latest[request["axis"]] = request
         positions[request["axis"]] = position
-    if not {"spec", "quality"} <= set(latest) \
-            or any(latest[axis]["status"] != "pass" for axis in ("spec", "quality")):
-        raise ValueError(f"{tier} review requires current spec and quality passes")
-    if positions["spec"] >= positions["quality"]:
-        raise ValueError("review must pass spec before quality")
-    if tier == "high" and not all(
-        latest[axis]["independent"] and latest[axis]["mode"] == "blind"
-        for axis in ("spec", "quality")
-    ):
-        raise ValueError("high review requires independent blind spec and quality passes")
+    required_axes = []
+    if tier != "low":
+        required_axes.extend(("spec", "quality"))
+        if not {"spec", "quality"} <= set(latest) \
+                or any(latest[axis]["status"] != "pass" for axis in ("spec", "quality")):
+            raise ValueError(f"{tier} review requires current spec and quality passes")
+        if positions["spec"] >= positions["quality"]:
+            raise ValueError("review must pass spec before quality")
+        if latest["quality"]["mode"] != "blind" or not latest["quality"]["independent"]:
+            raise ValueError("quality review requires an independent blind pass")
+        if tier == "high" and (
+            latest["spec"]["mode"] != "blind" or not latest["spec"]["independent"]
+        ):
+            raise ValueError("high review requires independent blind spec and quality passes")
+    if review["integration_budget_remaining"]:
+        raise ValueError("integration review is still required")
+    if "integration" in latest:
+        required_axes.append("integration")
+        if latest["integration"]["status"] != "pass":
+            raise ValueError("integration review requires a current pass")
+    if required_axes:
+        if tier != "low" and latest["spec"]["reviewer_ref"] != latest["quality"]["reviewer_ref"]:
+            raise ValueError("current spec and quality axes must use one reviewer")
+        reviewer_refs = {latest[axis]["reviewer_ref"] for axis in required_axes}
+        completed_reviewers = {
+            worker["ref"] for worker in workers
+            if worker["role"] == "reviewer" and worker["status"] == "completed"
+        }
+        if not reviewer_refs <= completed_reviewers:
+            raise ValueError("review pass requires a registered completed reviewer")
 
 
 def validate_state(state, arguments):
@@ -857,7 +882,7 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a source_receipt")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
-        validate_review_gate(routing, review_control)
+        validate_review_gate(routing, review_control, workers)
         if workers and tree_receipt is None:
             raise ValueError("complete state requires a fresh worker tree receipt")
         if tree_receipt is not None:
