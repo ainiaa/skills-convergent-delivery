@@ -1,5 +1,5 @@
 {
-  "protocol": "converge-evaluation-v3",
+  "protocol": "converge-evaluation-v4",
   "required_inputs": [
     "acceptance",
     "touched_control_surfaces",
@@ -9,9 +9,22 @@
     "critical_decisions",
     "sample_receipts",
     "judge_source",
-    "worker_registry",
+    "worker_state_source",
     "revisions"
   ],
+  "locked_surface": {
+    "owner": "the pre-candidate Controller Snapshot executing eval_contract.py",
+    "judge": "skills/converge-eval/references/evaluation-contract.json from that snapshot",
+    "catalog": "references/evaluation-catalog.json from that snapshot",
+    "candidate_may_modify": false,
+    "result_fingerprints": [
+      "judge_fingerprint",
+      "catalog_fingerprint",
+      "evaluator_fingerprint",
+      "state_validator_fingerprint",
+      "worker_state_fingerprint"
+    ]
+  },
   "differential": {
     "variants": [
       "control",
@@ -22,6 +35,19 @@
     "required_for": [
       "self-modification"
     ]
+  },
+  "bootstrap": {
+    "only_from_protocol": 9,
+    "only_to_protocol": 10,
+    "reason": "protocol v9 snapshots contain eval_contract.py but do not authorize it through the trusted runner",
+    "required_evidence": [
+      "old v9 snapshot runner rejects the exact eval helper as unauthorized",
+      "fresh independent read-only evaluator report",
+      "full suite and targeted behavior tests",
+      "locked differential evaluation reported as uncovered"
+    ],
+    "may_claim_locked_evaluation": false,
+    "applies_after_protocol_10": false
   },
   "sampling": {
     "default_fresh_samples": 1,
@@ -45,7 +71,7 @@
         "candidate_result",
         "receipt_fingerprint"
       ],
-      "immutable": "Git resolves both sources; judge_source bytes define judge_fingerprint; the host-observed worker registry binds worker_ref; touched_paths stay within allowed_scope; the JSON evidence artifact and receipt fingerprints bind every claim",
+      "immutable": "Git resolves both sources to distinct trees; the pre-candidate Controller Snapshot fixes judge, catalog, and evaluator bytes; worker_state_source binds samples to the managed Single State v10 registry and its host-observed terminal tree receipt; touched_paths are canonical repository-relative paths within allowed_scope; JSON evidence and receipt fingerprints bind every claim",
       "freshness": "critical decisions require at least three distinct worker_ref values and evidence artifacts for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
       "coverage": "known acceptance and selected history scenarios absent from receipts become uncovered"
     },
@@ -56,6 +82,15 @@
       "pass_rate",
       "variance"
     ]
+  },
+  "worker_state_schema": {
+    "schema_version": 10,
+    "source_required": true,
+    "source_location": "the delivery_state.py-derived path below ~/.convergent-delivery/state and outside the candidate repository",
+    "workspace_binding": "state.workspace equals the evaluated repository and state.controller.snapshot equals the executing pre-candidate snapshot",
+    "required_status": "completed",
+    "required_role": "evaluator",
+    "required_tree_receipt": "schema v2, host_observed, no active or unexpected refs"
   },
   "catalog_selection": {
     "catalog": "references/evaluation-catalog.json",
@@ -97,6 +132,11 @@
   "result_required_fields": [
     "control_source",
     "candidate_source",
+    "judge_fingerprint",
+    "catalog_fingerprint",
+    "evaluator_fingerprint",
+    "state_validator_fingerprint",
+    "worker_state_fingerprint",
     "touched_control_surfaces",
     "known_acceptance",
     "history",

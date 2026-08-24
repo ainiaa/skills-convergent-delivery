@@ -45,6 +45,87 @@
       ],
       "source": "docs/04_testing/defects/B20260821-082738-converge-known-findings-closure-defect.md",
       "scenario": "Changing VERSION alone must create a new controller snapshot identity and must not reuse stale frozen content."
+    },
+    {
+      "id": "blocked-cleanup-cannot-reopen-terminal-state",
+      "control_surfaces": [
+        "state.blocked_cleanup",
+        "runtime.binding"
+      ],
+      "source": "docs/04_testing/defects/B20260821-141254-converge-lifecycle-contract-closure-defect.md",
+      "scenario": "A blocked run may append host terminal cleanup evidence for existing workers, but must not register workers, rewrite task facts, or return to active/complete."
+    },
+    {
+      "id": "complete-requires-source-and-evidence-receipts",
+      "control_surfaces": [
+        "state.schema_compat",
+        "evidence.completion"
+      ],
+      "source": "docs/04_testing/defects/B20260821-194926-converge-evidence-hardening-defect.md",
+      "scenario": "Writing complete through a legacy state shape must still require current Source Receipt and per-acceptance Evidence Receipt gates."
+    },
+    {
+      "id": "plan-acknowledgement-cannot-advance-stage",
+      "control_surfaces": [
+        "plan.sync",
+        "state.transition"
+      ],
+      "source": "docs/04_testing/defects/B20260821-191424-converge-control-contract-closure-defect.md",
+      "scenario": "A host plan acknowledgement transition must not also advance execution stage or rewrite any other task fact."
+    },
+    {
+      "id": "plan-open-decision-accepted-as-valid",
+      "control_surfaces": [
+        "planning.decisions",
+        "plan.validation"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "A Plan v5 containing an open, malformed, or unstructured decision must block before execution instead of returning valid."
+    },
+    {
+      "id": "plan-incomplete-audit-zero-exit",
+      "control_surfaces": [
+        "plan.audit",
+        "completion.gate"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "Final plan audit with incomplete tasks, stale evidence, source-chain gaps, or scope drift must return a non-zero completion-gate exit."
+    },
+    {
+      "id": "eval-candidate-controls-judge-or-catalog",
+      "control_surfaces": [
+        "evaluation.locked_surface",
+        "controller.snapshot"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "A candidate must not change or redirect the judge, catalog, or evaluator used to decide whether that candidate passes."
+    },
+    {
+      "id": "eval-worker-registry-without-source",
+      "control_surfaces": [
+        "evaluation.worker_registry",
+        "worker.provenance"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "A caller-provided worker list or parallel registry must not replace the managed Single State v10 registry and its host-observed terminal tree receipt."
+    },
+    {
+      "id": "eval-touched-path-traversal",
+      "control_surfaces": [
+        "evaluation.scope",
+        "scope.ownership"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "Absolute, parent-traversal, or backslash-disguised touched paths must not pass an allowed repository scope."
+    },
+    {
+      "id": "trigger-selector-error-counted-as-none",
+      "control_surfaces": [
+        "trigger.selector",
+        "evaluation.metrics"
+      ],
+      "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
+      "scenario": "A selector crash or invalid output must be reported as an execution error and must not preserve a perfect trigger F1."
     }
   ]
 }

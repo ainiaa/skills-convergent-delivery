@@ -6,8 +6,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 | 运行时 | 安装位置 | 调用方式 |
 |---|---|---|
-| Codex | `~/.codex/skills/{converge,converge-plan,converge-review,converge-batch}` | 自然语言或对应 `$skill-name` |
-| Claude Code | `~/.claude/skills/{converge,converge-plan,converge-review,converge-batch}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
+| Codex | `~/.codex/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval}` | 自然语言或对应 `$skill-name` |
+| Claude Code | `~/.claude/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
 
 ## 前置条件
 
@@ -36,9 +36,9 @@ bash install.sh --upgrade --target all
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 四个入口是否来自同一版本、必需文件、Git、Python 和 Provider 解析，不修改安装。
+`--doctor` 检查 Suite 五个入口是否来自同一版本、必需文件、Git、Python 和 Provider 解析，不修改安装。
 
-安装器先预检两个运行时的全部四个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
+安装器先预检两个运行时的全部五个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
 
@@ -91,7 +91,7 @@ PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Conve
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和四个 Skill 的官方 quick_validate。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
+3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和五个 Skill 的官方 quick_validate。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
 不要为 Codex 和 Claude Code 复制两份 Skill 源码；如需调整流程，修改仓库中的对应 Skill。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

@@ -62,8 +62,9 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     *(path for path in CONTROLLER_FILES if path.startswith("scripts/")),
     "skills/converge-batch/scripts/batch_next.py",
     "skills/converge-batch/scripts/batch_state.py",
+    "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 10
 
 
 def provider_files(root):

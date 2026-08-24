@@ -119,10 +119,12 @@ class PlanCheckTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def run_check(self, command, payload, workspace=None):
+    def run_check(self, command, payload, workspace=None, require_complete=False):
         arguments = ["python3", str(SCRIPT), command, "--input", "-"]
         if workspace is not None:
             arguments.extend(["--workspace", str(workspace)])
+        if require_complete:
+            arguments.append("--require-complete")
         return subprocess.run(
             arguments,
             input=json.dumps(payload),
@@ -180,6 +182,31 @@ class PlanCheckTest(unittest.TestCase):
         output = json.loads(result.stdout)
         self.assertEqual([["T1", "T2"], ["T3"]], output["waves"])
         self.assertEqual("sequential", output["execution_mode"])
+
+    def test_only_resolved_structured_decisions_can_enter_execution(self):
+        resolved = granular_plan([task("T1", ["src"])])
+        baseline_source = self.current_source(resolved)
+        resolved["schema_version"] = 5
+        resolved["baseline"] = {"commit": self.baseline, "source": baseline_source}
+        resolved["decisions"] = [{
+            "id": "D1",
+            "status": "resolved",
+            "question": "Which local cache name should be used?",
+            "resolution": "Reuse the existing cache name.",
+            "source": "code",
+        }]
+        self.assertEqual(0, self.run_check("validate", resolved).returncode)
+
+        for decision in (
+            {"status": "open", "question": "Which public API is correct?"},
+            "assume the public API",
+        ):
+            with self.subTest(decision=decision):
+                value = json.loads(json.dumps(resolved))
+                value["decisions"] = [decision]
+                result = self.run_check("validate", value)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("decision", result.stderr)
 
     def test_overlapping_paths_are_serialized_even_without_dependencies(self):
         value = plan([task("T1", ["src/shared"]), task("T2", ["src/shared/file.py"])])
@@ -416,6 +443,12 @@ class PlanCheckTest(unittest.TestCase):
         )
         self.assertEqual(["extra.txt"], output["scope_drift"])
         self.assertFalse(output["complete"])
+
+        gated = self.run_check(
+            "audit", envelope, self.workspace, require_complete=True
+        )
+        self.assertEqual(1, gated.returncode, gated.stderr)
+        self.assertFalse(json.loads(gated.stdout)["complete"])
 
     def test_done_without_bound_evidence_is_downgraded_to_partial(self):
         value = plan([task("T1", ["src/a"])])

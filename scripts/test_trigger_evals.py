@@ -79,6 +79,27 @@ class TriggerEvalTest(unittest.TestCase):
                 "evals": [{"id": "broken", "expected_skill": None, "should_trigger": False}],
             }, selector)
 
+    def test_selector_errors_are_not_reported_as_no_selection_or_perfect_f1(self):
+        dataset = {
+            "schema_version": 1,
+            "suite": "converge",
+            "evals": [
+                {"id": "implement", "prompt": "implement", "expected_skill": "converge", "should_trigger": True},
+                {"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False},
+            ],
+        }
+        selector = (
+            "import json,sys\n"
+            "if sys.argv[1] == 'explain': raise SystemExit(7)\n"
+            "print(json.dumps({'selected_skill':'converge'}))"
+        )
+
+        result = run_evals(dataset, [sys.executable, "-c", selector])
+
+        self.assertEqual(1, result["error_count"])
+        self.assertLess(result["f1"], 1.0)
+        self.assertEqual(1, result["confusion_matrix"]["<none>"]["<error>"])
+
 
 if __name__ == "__main__":
     unittest.main()

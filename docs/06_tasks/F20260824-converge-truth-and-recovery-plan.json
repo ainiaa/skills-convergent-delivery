@@ -210,9 +210,33 @@
     "实现不新增第三方依赖、外发动作或第二套状态真源"
   ],
   "decisions": [
-    "显式使用 native-v1：实现开始时未发现可登记和查询的叶子 worker，不伪装 PDLC 委托完成；最终审查阶段宿主暴露该能力后只派发一次 fresh blind reviewer，并按无进展规则清场",
-    "复用现有 Schema v10、Source Receipt、Provider Binding 和标准库，不引入新依赖",
-    "真实性校验以阻止错误完成为目标，不声称能抵抗同一系统用户恶意篡改文件",
-    "不执行 commit、tag、push、publish、install 或任何外部副作用"
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "本轮自托管实现使用哪个 Provider？",
+      "resolution": "使用 native-v1；只有宿主真实提供可登记和查询的叶子 worker 时才派发一次 fresh blind reviewer。",
+      "source": "code"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "是否引入新的状态或依赖？",
+      "resolution": "复用 Schema v10、Source Receipt、Provider Binding 和标准库，不引入新依赖。",
+      "source": "reversible-default"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "真实性校验承诺什么威胁模型？",
+      "resolution": "阻止正常控制路径错误完成，不声称抵抗同一系统用户恶意篡改文件。",
+      "source": "docs"
+    },
+    {
+      "id": "D4",
+      "status": "resolved",
+      "question": "本轮是否执行外部或发布动作？",
+      "resolution": "不执行 commit、tag、push、publish、install 或其他外部副作用。",
+      "source": "user"
+    }
   ]
 }

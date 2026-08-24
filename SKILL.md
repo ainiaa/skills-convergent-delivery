@@ -80,7 +80,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release \
 
 只有输出 `{"status":"released"}` 才算释放成功；持久任务以 `controller_snapshot.py run` 包裹同一 helper 与参数，并额外传入实际 `--state-root`。
 
-跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py`、`trigger_eval.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；冷恢复先用 `delivery_state.py list|doctor --workspace <absolute-worktree>` 发现并诊断正式状态，不猜 repo/task/run。不得把 `/tmp` 文件当真源。
+跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py`、`trigger_eval.py`、`delivery_next.py` 或精确的 `skills/converge-eval/scripts/eval_contract.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；冷恢复先用 `delivery_state.py list|doctor --workspace <absolute-worktree>` 发现并诊断正式状态，不猜 repo/task/run。不得把 `/tmp` 文件当真源。
 
 ## 6. 审查路由
 
@@ -102,7 +102,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 ## 8. 计划审计、终态和回执
 
-有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit` 对账计划任务、逐任务源码增量和新鲜证据；存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、`task_scope_drift` 或 `scope_drift` 时不能宣称完成。
+有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit --workspace <worktree> --input - --require-complete` 对账计划任务、逐任务源码增量和新鲜证据；退出码非 0，或存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、`task_scope_drift`、`scope_drift` 时不能宣称完成。
 
 只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项必须由 `evidence_contract.py run --workspace ... --baseline ... -- <argv>` 实际执行并生成 observed Evidence Receipt v2；最后源码仍位于冻结 `allowed_paths` 且没有新增未声明风险时，才能宣称完成。
 
@@ -110,4 +110,4 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 
-修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。
+修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。Protocol v9→v10 首次授权冻结 Eval helper 的一次性 bootstrap 只按 Eval Contract 记录独立报告与 `uncovered`，不能冒充 locked differential 通过。

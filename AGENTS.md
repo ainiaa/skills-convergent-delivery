@@ -38,6 +38,7 @@ Converge 的价值是让一个已授权的软件任务以尽量少的人为介�
 | Harness 与独立评估 | `harness-engineering`、`evaluation`、`advanced-evaluation`、Superpowers `verification-before-completion` |
 | 控制面和人工边界 | HumanLayer `design-control-loop` / `build-iterated-agentic-loop` |
 | 交付与交接 | Matt `handoff`、Superpowers ledger/report/review package 模式 |
+| 自进化研究（暂不进入运行时） | [自进化参考备忘](docs/02_design/architecture/self-improving.md) |
 
 检索时先看 Skills.sh 对应分类和排行榜，再核对原始 GitHub `SKILL.md`、脚本、测试与宿主官方文档。安装量只能用于发现，不能替代架构和行为证据；复制、二手介绍和仅有文案的 Skill 不作为关键设计依据。
 

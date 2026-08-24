@@ -57,6 +57,7 @@ class SkillContractTest(unittest.TestCase):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
         checks = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
         self.assertEqual("0.20.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
@@ -82,6 +83,10 @@ class SkillContractTest(unittest.TestCase):
         for runtime in ("Codex", "Claude Code"):
             self.assertIn(runtime, readme)
         self.assertIn("五个 Skill", readme)
+        self.assertIn("五个入口", usage)
+        self.assertIn("五个目标", usage)
+        self.assertIn("五个 Skill", usage)
+        self.assertIn("converge-eval", usage)
 
     def test_plan_v5_and_checkpoint_commit_semantics_are_integrated(self):
         root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

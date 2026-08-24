@@ -20,6 +20,7 @@ EXECUTIONS = {"auto", "current", "fresh"}
 AUDIT_STATUSES = {"DONE", "PARTIAL", "NOT_DONE", "CHANGED"}
 TASK_KINDS = {"vertical_slice", "wide_refactor", "integration"}
 CHECKPOINTS = {"same_session", "cross_session"}
+DECISION_SOURCES = {"user", "code", "docs", "reversible-default"}
 PROVIDER_DIR = Path(__file__).resolve().parents[3] / "providers"
 
 
@@ -220,6 +221,30 @@ def validate_provider_run(value, name):
     return value
 
 
+def validate_decisions(value, schema_version):
+    if not isinstance(value, list):
+        raise ValueError("decisions must be a list")
+    if schema_version < 5:
+        require_strings(value, "decisions")
+        return value
+    seen = set()
+    fields = {"id", "status", "question", "resolution", "source"}
+    for index, decision in enumerate(value):
+        if not isinstance(decision, dict) or set(decision) != fields:
+            raise ValueError(f"decisions[{index}] fields are invalid")
+        decision_id = require_string(decision["id"], f"decisions[{index}].id")
+        if decision_id in seen:
+            raise ValueError("decision id must be unique")
+        seen.add(decision_id)
+        if decision["status"] != "resolved":
+            raise ValueError(f"decision_required id={decision_id}")
+        require_string(decision["question"], f"decisions[{index}].question")
+        require_string(decision["resolution"], f"decisions[{index}].resolution")
+        if decision["source"] not in DECISION_SOURCES:
+            raise ValueError(f"decisions[{index}].source is invalid")
+    return value
+
+
 def validate_plan(plan):
     plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
@@ -239,8 +264,7 @@ def validate_plan(plan):
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
     require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
-    if not isinstance(plan.get("decisions"), list):
-        raise ValueError("decisions must be a list")
+    validate_decisions(plan.get("decisions"), plan["schema_version"])
 
     raw_tasks = plan.get("tasks")
     if not isinstance(raw_tasks, list) or not raw_tasks:
@@ -470,6 +494,7 @@ def main():
     parser.add_argument("command", choices=("validate", "audit"))
     parser.add_argument("--input", required=True)
     parser.add_argument("--workspace")
+    parser.add_argument("--require-complete", action="store_true")
     arguments = parser.parse_args()
     try:
         payload = read_input(arguments.input)
@@ -483,7 +508,8 @@ def main():
         print(f"plan check failed: {error}", file=sys.stderr)
         return 2
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
-    return 0
+    return 1 if arguments.command == "audit" and arguments.require_complete \
+        and not output["complete"] else 0
 
 
 if __name__ == "__main__":

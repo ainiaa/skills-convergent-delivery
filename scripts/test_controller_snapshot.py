@@ -238,6 +238,12 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("--input", result.stdout)
+            eval_command = controller_snapshot.trusted_command(
+                descriptor_path,
+                "skills/converge-eval/scripts/eval_contract.py",
+                ["--help"],
+            )
+            self.assertTrue(eval_command[1].endswith("skills/converge-eval/scripts/eval_contract.py"))
             with self.assertRaisesRegex(ValueError, "not authorized"):
                 controller_snapshot.trusted_command(
                     descriptor_path,

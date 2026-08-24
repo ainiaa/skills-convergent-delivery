@@ -13,7 +13,7 @@ metadata:
 
 ## 1. 冻结输入
 
-记录需求、验收项、允许范围、基线、已有脏文件、公共契约和不可逆边界。信息足够时直接规划；涉及业务规则、公共契约或不可逆选择时，按 [决策门禁](../../references/execution-control.md) 一次只提出一个带推荐的问题。
+记录需求、验收项、允许范围、基线、已有脏文件、公共契约和不可逆边界。先从代码、测试、项目文档和已有 ADR 查找答案；信息足够时直接规划。仍涉及业务规则、公共契约或不可逆选择时，按 [决策门禁](../../references/execution-control.md) 一次只提出一个带推荐、理由和影响的问题。除非用户明确把文档修改纳入范围，不因澄清自动创建或更新 `CONTEXT.md`、ADR 或其他项目文件。
 
 ## 2. 选择 planner provider
 
@@ -31,6 +31,7 @@ metadata:
 - 明确 `owned_paths`、`depends_on`、验收行为和真实验证命令。
 - 简单任务仍可只有一个 task，不为它增加虚构阶段。
 - 每个 task 冻结自己的 Provider Binding，并声明 `provider_run={scope: task, recursive_planning: false}`。PDLC 仍完整负责一个 task 内部阶段，但一个计划可以包含多个边界独立、可分别验收的 PDLC-backed task。
+- Plan v5 的 `decisions` 只记录结构化已决事项；任何业务、公共契约、权限、发布或不可逆问题尚未解决时，不生成可执行计划。
 
 将完整 JSON 经 stdin 校验：
 

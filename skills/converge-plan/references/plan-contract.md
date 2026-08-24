@@ -38,7 +38,13 @@
     }
   ],
   "final_acceptance": ["integrated observable behavior"],
-  "decisions": []
+  "decisions": [{
+    "id": "D1",
+    "status": "resolved",
+    "question": "one concrete decision",
+    "resolution": "the selected answer",
+    "source": "user | code | docs | reversible-default"
+  }]
 }
 ```
 
@@ -69,14 +75,15 @@ wave 标识理论上可并行的候选；当前共享工作区仍顺序执行，
 
 ## 4. 决策记录
 
-可逆技术选择和有明确默认的局部选择自动记录到 `decisions`。业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。
+Plan v5 的 `decisions` 只接受字段精确的已决记录：`id/status/question/resolution/source`，其中 `status` 必须为 `resolved`，`source` 只能是 `user|code|docs|reversible-default`。可逆技术选择和有明确默认的局部选择自动记录；业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。未决问题不能写成普通字符串或伪装成已决记录，`plan_check.py validate` 会以 `decision_required` 拒绝进入执行。旧 v1-v4 计划的字符串 decisions 只作为只读兼容输入。
 
 ## 5. 完成审计
 
 执行结束后，将以下 envelope 传给：
 
 ```bash
-python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD" --input -
+python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit \
+  --workspace "$PWD" --input - --require-complete
 ```
 
 ```json
@@ -140,7 +147,7 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit --workspace "$PWD
 }
 ```
 
-`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v5 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v1 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。
+`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v5 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v2 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。`--require-complete` 在输出审计 JSON 后以退出码 1 表示未完成；不带该参数只用于中途诊断，不能作为最终完成门禁。
 
 状态语义：
 

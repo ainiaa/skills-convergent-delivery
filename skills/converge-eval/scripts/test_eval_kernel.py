@@ -5,14 +5,21 @@ import hashlib
 import itertools
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import eval_contract
 from eval_contract import evaluate
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from delivery_next import upgrade_state  # noqa: E402
+from runtime_adapter import cleanup_receipt, negotiate  # noqa: E402
+from test_delivery_state import state as legacy_state  # noqa: E402
+
 ARTIFACTS = tempfile.TemporaryDirectory()
 unittest.addModuleCleanup(ARTIFACTS.cleanup)
 ARTIFACT_SEQUENCE = itertools.count(1)
@@ -26,6 +33,17 @@ CANDIDATE_COMMIT = subprocess.run(
 ).stdout.strip()
 JUDGE_SOURCE = ROOT / "skills/converge-eval/references/evaluation-contract.json"
 JUDGE_FINGERPRINT = hashlib.sha256(JUDGE_SOURCE.read_bytes()).hexdigest()
+WORKER_REFS = [f"worker-{number}" for number in range(1, 5)]
+HOST_OBSERVATION = {
+    "query_id": "host-query-eval-workers",
+    "observed_at": "2026-08-24T00:00:00Z",
+    "registered_refs": WORKER_REFS,
+    "active_refs": [],
+    "unexpected_refs": [],
+}
+HOST_OBSERVATION_FINGERPRINT = hashlib.sha256(json.dumps(
+    HOST_OBSERVATION, sort_keys=True, separators=(",", ":")
+).encode()).hexdigest()
 
 
 def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **overrides):
@@ -37,7 +55,7 @@ def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **
         "candidate_source": CANDIDATE_COMMIT,
         "judge_fingerprint": JUDGE_FINGERPRINT,
         "worker_ref": worker_ref,
-        "worker_observation_fingerprint": hashlib.sha256(worker_ref.encode()).hexdigest(),
+        "worker_observation_fingerprint": HOST_OBSERVATION_FINGERPRINT,
         "touched_paths": [],
         "control_result": "pass",
         "candidate_result": result,
@@ -60,15 +78,32 @@ def secure(request):
     if request.get("candidate_source") == "candidate":
         request["candidate_source"] = CANDIDATE_COMMIT
     request["judge_source"] = str(JUDGE_SOURCE)
-    request["worker_registry"] = [
-        {
+    state = upgrade_state(legacy_state())
+    state["workspace"] = str(ROOT)
+    state["runtime_binding"] = negotiate(
+        "codex", {
+            "dispatch": True, "query": True, "wait": True, "interrupt": True,
+            "tree_query": True, "restrict_dispatch": False,
+        },
+    )
+    state["workers"] = [{
             "ref": ref,
+            "parent_ref": None,
+            "task_id": state["task_key"],
+            "depth": 1,
+            "may_dispatch": False,
+            "role": "evaluator",
+            "owner_run_id": state["run_id"],
             "status": "completed",
-            "evidence_level": "host_observed",
-            "observation_fingerprint": hashlib.sha256(ref.encode()).hexdigest(),
-        }
-        for ref in sorted({item["worker_ref"] for item in request.get("sample_receipts", [])})
-    ]
+            "progress": None,
+        } for ref in WORKER_REFS]
+    state["worker_tree_receipt"] = cleanup_receipt(
+        state["runtime_binding"], state["revision"], WORKER_REFS, [], [],
+        HOST_OBSERVATION["observed_at"], HOST_OBSERVATION,
+    )
+    artifact = Path(ARTIFACTS.name) / f"state-{next(ARTIFACT_SEQUENCE)}.json"
+    artifact.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+    request["worker_state_source"] = str(artifact)
     return request
 
 
@@ -108,7 +143,7 @@ class EvalKernelTest(unittest.TestCase):
             }],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual(10, result["sample_distribution"]["sample_count"])
         self.assertEqual(9, result["sample_distribution"]["pass_count"])
@@ -117,6 +152,7 @@ class EvalKernelTest(unittest.TestCase):
         self.assertEqual("failed", result["stop_reason"])
         self.assertEqual(["new-worker-probe"], result["exploration"])
         self.assertEqual([], result["uncovered"])
+        self.assertEqual(64, len(result["state_validator_fingerprint"]))
         self.assertEqual(
             {
                 "batch-capsule-recursive-planning-escape",
@@ -140,7 +176,7 @@ class EvalKernelTest(unittest.TestCase):
             }],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual("no_improvement", result["stop_reason"])
         self.assertEqual(1, result["revisions_used"])
@@ -158,7 +194,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "fields"):
-            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT)
 
     def test_reports_missing_required_scenarios_as_uncovered(self):
         request = {
@@ -172,7 +208,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual(["known_acceptance:cleanup"], result["uncovered"])
         self.assertEqual("evidence_gap", result["stop_reason"])
@@ -192,7 +228,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "fingerprint"):
-            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT)
 
     def test_rejects_evidence_changed_after_the_receipt_was_created(self):
         receipt = sample("contract", "known_acceptance")
@@ -209,7 +245,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "evidence fingerprint"):
-            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT)
 
     def test_evidence_artifact_must_bind_the_claimed_worker_and_results(self):
         receipt = sample("contract", "known_acceptance")
@@ -232,7 +268,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "worker|evidence identity"):
-            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT)
 
     def test_control_and_candidate_results_are_classified_differentially(self):
         request = {
@@ -249,7 +285,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual(1, result["differential"]["regressions"])
         self.assertEqual(1, result["differential"]["fixes"])
@@ -270,7 +306,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual("complete", result["stop_reason"])
         self.assertEqual(1, result["exploration_distribution"]["fail_count"])
@@ -291,7 +327,7 @@ class EvalKernelTest(unittest.TestCase):
                 "sample_receipts": [sample(
                     "contract", "known_acceptance", candidate_source="another-candidate"
                 )],
-            }), ROOT / "references/evaluation-catalog.json")
+            }), ROOT)
 
         with self.assertRaisesRegex(ValueError, "frozen judge"):
             evaluate(secure({
@@ -303,7 +339,7 @@ class EvalKernelTest(unittest.TestCase):
                         judge_fingerprint="b" * 64,
                     ),
                 ],
-            }), ROOT / "references/evaluation-catalog.json")
+            }), ROOT)
 
     def test_wrong_scenario_class_cannot_cover_required_acceptance(self):
         request = {
@@ -317,7 +353,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT)
 
         self.assertEqual(["known_acceptance:contract"], result["uncovered"])
 
@@ -338,7 +374,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "known_acceptance:contract.*3 fresh"):
-            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT)
 
     def test_sources_must_resolve_to_frozen_git_commits(self):
         receipt = sample(
@@ -357,7 +393,36 @@ class EvalKernelTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "Git"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(request, ROOT)
+
+    def test_sources_may_be_frozen_git_trees(self):
+        control_tree = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", f"{CONTROL_COMMIT}^{{tree}}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        candidate_tree = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", f"{CANDIDATE_COMMIT}^{{tree}}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        receipt = sample(
+            "contract", "known_acceptance",
+            control_source=control_tree, candidate_source=candidate_tree,
+        )
+        request = secure({
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": control_tree,
+            "candidate_source": candidate_tree,
+            "allowed_scope": ["scripts"],
+            "critical_decisions": [],
+            "sample_receipts": [receipt],
+            "revisions": [],
+        })
+
+        result = evaluate(request, ROOT)
+
+        self.assertEqual(candidate_tree, result["candidate_identity"]["tree"])
+        self.assertIsNone(result["candidate_identity"]["commit"])
 
     def test_judge_worker_and_touched_paths_are_bound_to_frozen_inputs(self):
         receipt = sample(
@@ -375,17 +440,73 @@ class EvalKernelTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "allowed_scope"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(request, ROOT)
 
         request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
-        request["worker_registry"] = []
-        with self.assertRaisesRegex(ValueError, "worker"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+        Path(request["worker_state_source"]).write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "worker|schema_version"):
+            evaluate(request, ROOT)
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        state = json.loads(Path(request["worker_state_source"]).read_text(encoding="utf-8"))
+        state.pop("controller")
+        Path(request["worker_state_source"]).write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "controller"):
+            evaluate(request, ROOT)
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        state = json.loads(Path(request["worker_state_source"]).read_text(encoding="utf-8"))
+        state["workspace"] = "/another/workspace"
+        Path(request["worker_state_source"]).write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            evaluate(request, ROOT)
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        state = json.loads(Path(request["worker_state_source"]).read_text(encoding="utf-8"))
+        state["workers"][0]["role"] = "implementer"
+        Path(request["worker_state_source"]).write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "evaluator"):
+            evaluate(request, ROOT)
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        request["worker_state_source"] = str(JUDGE_SOURCE)
+        with self.assertRaisesRegex(ValueError, "outside the candidate repository"):
+            evaluate(request, ROOT)
 
         request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
         request["judge_source"] = str(ROOT / "README.md")
         with self.assertRaisesRegex(ValueError, "judge"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(request, ROOT)
+
+    def test_touched_paths_cannot_escape_even_when_repository_root_is_allowed(self):
+        for touched in (["../outside.py"], ["/outside.py"], ["scripts\\inside.py"]):
+            with self.subTest(touched=touched):
+                receipt = sample(
+                    "contract", "known_acceptance", touched_paths=touched
+                )
+                request = secure({
+                    "acceptance": ["contract"],
+                    "touched_control_surfaces": ["review.protocol"],
+                    "control_source": "control",
+                    "candidate_source": "candidate",
+                    "allowed_scope": ["."],
+                    "critical_decisions": [],
+                    "sample_receipts": [receipt],
+                    "revisions": [],
+                })
+                with self.assertRaisesRegex(ValueError, "touched_paths|allowed_scope"):
+                    evaluate(request, ROOT)
+
+    def test_frozen_eval_requires_the_default_managed_state_path(self):
+        payload = {
+            "repo_id": str(ROOT / ".git"),
+            "task_key": "task-eval",
+            "run_id": "run-eval",
+        }
+        with self.assertRaisesRegex(ValueError, "managed state"):
+            eval_contract._require_managed_state_path(
+                payload, Path(ARTIFACTS.name) / "parallel-state.json", True
+            )
 
 
 if __name__ == "__main__":

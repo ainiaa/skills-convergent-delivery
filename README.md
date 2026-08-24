@@ -30,8 +30,8 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；仅绑定真实 host query 原始观察的清场回执可标记 `host_observed`，普通参数永远是 `controller_attested`。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果通过冻结请求绑定 task、验收、范围、baseline、源码和 reviewer，再由可执行 `review_contract.py normalize` 转成内部 Review v3 记录；代码变化后旧结论自动失效。
-- `converge-eval` 只接受 Sample Receipt v3：control/candidate 必须解析为 Git commit/tree，judge 绑定文件字节，worker 来自 host-observed registry，touched paths 位于 allowed scope。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。
-- `scripts/trigger_eval.py` 会先完整校验数据集，再把每条 prompt 交给外部 selector 命令，报告精确匹配、混淆矩阵、precision/recall/F1，并绑定 dataset、selector 与 runner 指纹；`test_trigger_evals.py` 只负责离线验证 runner 与数据契约。
+- `converge-eval` 只接受 Sample Receipt v3：control/candidate 必须解析为 Git commit/tree；judge、catalog、evaluator 与 Single State validator 来自修改前冻结的 Controller Snapshot；worker 绑定默认 managed state root 中的正式 Single State v10、evaluator role 与 host-observed 终态 tree receipt，不建立第二套 registry；touched paths 必须是 allowed scope 内不含反斜杠或 `..` 的仓库相对路径。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。仅 v9→v10 首次授权 Eval helper 的 bootstrap 明确记录 locked differential 为 `uncovered`，不冒充通过。
+- `scripts/trigger_eval.py` 会先完整校验数据集，再把每条 prompt 交给外部 selector 命令，报告精确匹配、错误数、混淆矩阵、precision/recall/F1，并绑定 dataset、selector 与 runner 指纹；selector 错误单列为 `<error>` 且不能保留满分 F1。`test_trigger_evals.py` 只负责离线验证 runner 与数据契约。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
 - 父控制器从 Git 展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前动作，不表示任务累计规模。
@@ -217,7 +217,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
 
 每个执行任务应使用独立 worktree；同一 worktree 只允许一个 writer。Batch scheduler 只持有防重复派发的计划级 lease，不持有代码 writer lease；每个 Batch 执行者仍由 `$converge` 独立管理。
 
-计划完成审计必须传入真实 Git workspace。helper 自己绑定 `HEAD` commit/tree、当前 diff、未跟踪文件与 Git 原生 changed paths，只接受绑定同一 source receipt 的结构化验证证据；它不会执行 receipt 中的任意命令文本，也不会把文件名中的反斜杠改写成目录分隔符。
+计划完成审计必须传入真实 Git workspace，并在最终门禁使用 `--require-complete`。helper 自己绑定 `HEAD` commit/tree、当前 diff、未跟踪文件与 Git 原生 changed paths，只接受绑定同一 source receipt 的结构化验证证据；它不会执行 receipt 中的任意命令文本，也不会把文件名中的反斜杠改写成目录分隔符。审计不完整时仍输出诊断 JSON，但退出码为 1。
 
 ## 最终报告
 
@@ -241,6 +241,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
 - [激活与触发](references/activation.md)
 - [单任务状态 Schema](references/state-schema.md)
 - [Plan Contract](skills/converge-plan/references/plan-contract.md)
+- [自进化参考备忘](docs/02_design/architecture/self-improving.md)
 - [执行控制与无响应保护](references/execution-control.md)
 - [Batch Protocol](skills/converge-batch/references/batch-contract.md)
 - [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)

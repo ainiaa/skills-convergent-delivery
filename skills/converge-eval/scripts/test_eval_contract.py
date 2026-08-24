@@ -24,6 +24,17 @@ class EvaluationContractTest(unittest.TestCase):
         self.assertTrue(differential["freeze_control_before_candidate"])
         self.assertTrue(differential["same_scenarios_and_judging"])
         self.assertIn("self-modification", differential["required_for"])
+        locked = self.contract["locked_surface"]
+        self.assertFalse(locked["candidate_may_modify"])
+        self.assertIn("evaluator_fingerprint", locked["result_fingerprints"])
+        self.assertIn("worker_state_fingerprint", locked["result_fingerprints"])
+        self.assertIn("state_validator_fingerprint", locked["result_fingerprints"])
+        self.assertIn("worker_state_source", self.contract["required_inputs"])
+        self.assertNotIn("worker_registry", self.contract["required_inputs"])
+        bootstrap = self.contract["bootstrap"]
+        self.assertEqual(9, bootstrap["only_from_protocol"])
+        self.assertEqual(10, bootstrap["only_to_protocol"])
+        self.assertFalse(bootstrap["may_claim_locked_evaluation"])
 
     def test_critical_decisions_require_fresh_samples_and_statistics(self):
         sampling = self.contract["sampling"]
@@ -68,6 +79,15 @@ class EvaluationContractTest(unittest.TestCase):
             },
             selected,
         )
+
+    def test_every_defect_document_contributes_a_historical_scenario(self):
+        documented = {
+            str(path.relative_to(ROOT))
+            for path in (ROOT / "docs/04_testing/defects").glob("*.md")
+        }
+        catalogued = {entry["source"] for entry in self.catalog["escaped_defects"]}
+
+        self.assertEqual(set(), documented - catalogued)
 
     def test_result_classes_are_explicit_and_non_overlapping(self):
         self.assertEqual(

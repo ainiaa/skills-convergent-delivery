@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Controller Protocol 升级为 v10：冻结 Eval helper 成为可信 runner 的精确白名单入口；judge、catalog 与 evaluator 固定到修改前 Snapshot，样本绑定默认 managed state 中正式 Single State v10 的 evaluator/host-observed 清场证据，Git tree 与反斜杠/touched-path 边界按真实对象执行；v9→v10 一次性 bootstrap 必须把 locked differential 记为 uncovered。
+- Plan v5 decisions 改为结构化已决记录，未决事项不能进入执行；最终 `audit --require-complete` 用退出码执行完成门禁。selector 运行错误单列并使 F1 失去满分，避免错误被统计成正常未选择。
+- 新增独立自进化研究备忘；当前 Suite 不启用自动自改、后台学习或第二套记忆状态。
 - 0.20 控制真实性加固：Routing Receipt v2 绑定完整任务画像、允许路径、review tier 与 integration requirement；完成门禁按真实 Git diff 阻止路由降级、范围漂移和未声明 SQL/权限等风险。
 - Evidence Receipt 升级为 v2，由标准库 runner 直接执行 argv（不经 shell）并绑定退出码、输出摘要、runner、receipt 与 Source Receipt；报告强制严格证据，不再把旧回执或 controller attestation 洗成 ready。
 - Review result 绑定 canonical request 的 task/验收/范围/baseline/source；repair、re-review 与 integration 预算按动作精确消费；缺少 fresh context 时自审只能给 suggestion，不能满足独立盲审门禁。

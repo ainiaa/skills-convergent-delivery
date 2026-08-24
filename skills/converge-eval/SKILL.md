@@ -11,9 +11,22 @@ metadata:
 
 ## 输入与冻结
 
-开始前读取 [机器契约](references/evaluation-contract.json) 和根级 [历史逃逸 catalog](../../references/evaluation-catalog.json)。使用 [确定性 helper](scripts/eval_contract.py) 全选匹配历史项、校验 Sample Receipt v3、计算样本分布并执行有限修订停止规则。control/candidate 必须是当前仓库可解析且不同的完整 Git commit/tree；`judge_source` 的真实字节定义 judge fingerprint；worker 必须来自冻结的 completed/host-observed registry；每个样本的 `touched_paths` 必须位于 `allowed_scope`。`evidence_source` 指向实际 JSON 证据文件并绑定上述身份与双侧结果。旧 `samples=["pass"]` 或 Sample v2 不是证据，必须拒绝。
+开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在默认 managed state root 推导的正式 Single State v10 路径，位于候选仓库外，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。`evidence_source` 指向实际 JSON 证据文件并绑定上述身份与双侧结果。旧 `samples=["pass"]` 或 Sample v2 不是证据，必须拒绝。
 
-修改 Converge 自身时，在接触 candidate 前把旧版 control 固定为不可变 commit、tree 或隔离快照。control 与 candidate 必须运行相同场景、输入、判定器和样本预算；分别保存原始结果，再计算差分。不能冻结旧版时不得用当前候选冒充对照。
+通过 live trusted runner 执行冻结 helper，不能直接运行 candidate 中的副本：
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
+  --descriptor <old-snapshot-or-state-json> \
+  --script skills/converge-eval/scripts/eval_contract.py -- \
+  --input <evaluation-request.json> --repository <absolute-candidate-repository>
+```
+
+request 中的 `judge_source` 必须精确指向 `<old-snapshot-root>/skills/converge-eval/references/evaluation-contract.json`；helper 从自己的旧快照读取 `references/evaluation-catalog.json`，用同一快照的 `delivery_next.py` 完整校验 Single State，并在结果中输出 judge、catalog、evaluator、state-validator 与 worker-state fingerprint。缺少旧快照或正式 worker state 时必须阻塞。
+
+control 与 candidate 必须运行相同场景、输入、判定器和样本预算；分别保存原始结果，再计算差分。不能冻结旧版时不得用当前候选冒充对照。
+
+仅 Controller Protocol v9→v10 首次把 Eval helper 加入 trusted runner 时，旧 v9 Snapshot 虽含 helper 但确定性拒绝执行。该次迁移必须保存旧 runner 的 unauthorized 证据、一个 fresh 独立只读 evaluator 报告和全量/定向测试，并把 locked differential 明确列为 `uncovered`；不得宣称 locked eval 通过。此 bootstrap 不适用于 v10 之后的任何变更。
 
 ## 场景集合
 

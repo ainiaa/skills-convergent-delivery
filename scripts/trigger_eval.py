@@ -74,7 +74,7 @@ def run_evals(dataset, command, timeout=60):
             false_negative += int(expected is not None)
             false_positive += int(selected is not None)
         expected_label = expected or "<none>"
-        actual_label = selected or "<none>"
+        actual_label = "<error>" if error is not None else selected or "<none>"
         confusion.setdefault(expected_label, {})[actual_label] = (
             confusion.setdefault(expected_label, {}).get(actual_label, 0) + 1
         )
@@ -82,11 +82,14 @@ def run_evals(dataset, command, timeout=60):
             "id": case["id"], "expected_skill": expected, "selected_skill": selected,
             "exact": exact, "error": error,
         })
+    error_count = sum(item["error"] is not None for item in results)
     precision = true_positive / (true_positive + false_positive) \
         if true_positive + false_positive else 0.0
     recall = true_positive / (true_positive + false_negative) \
         if true_positive + false_negative else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    if error_count:
+        f1 = 0.0
     return {
         "dataset_fingerprint": dataset_fingerprint,
         "selector_fingerprint": selector_fingerprint,
@@ -100,6 +103,7 @@ def run_evals(dataset, command, timeout=60):
         "true_negative": true_negative,
         "false_positive": false_positive,
         "false_negative": false_negative,
+        "error_count": error_count,
         "confusion_matrix": confusion,
         "cases": results,
     }
