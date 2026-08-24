@@ -9,6 +9,7 @@ import sys
 import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from delivery_lease import (
     DEFAULT_TTL_SECONDS,
@@ -215,6 +216,7 @@ def validate_transition(previous, candidate):
         raise ValueError("review rounds must advance by at most one")
     if len(new_rounds) > len(old_rounds):
         require_prefix(old_rounds, new_rounds, "review rounds")
+        added_requests = new_rounds[-1]["requests"]
     elif old_rounds:
         require_prefix(old_rounds[:-1], new_rounds, "review rounds")
         old_current, new_current = old_rounds[-1], new_rounds[-1]
@@ -223,6 +225,27 @@ def validate_transition(previous, candidate):
         require_prefix(
             old_current["requests"], new_current["requests"], "current review requests"
         )
+        added_requests = new_current["requests"][len(old_current["requests"]):]
+    else:
+        added_requests = []
+
+    rechecks = [
+        request for request in added_requests if request["phase"] in {"re_review", "closure"}
+    ]
+    integrations = [request for request in added_requests if request["axis"] == "integration"]
+    if len(rechecks) > 1 or len(integrations) > 1:
+        raise ValueError("review transition may consume each finite budget only once")
+    repair_steps = len(candidate["ledger"]["repair_fingerprints"]) - len(
+        previous["ledger"]["repair_fingerprints"]
+    )
+    expected_budget_steps = {
+        "repair_budget_remaining": repair_steps,
+        "re_review_budget_remaining": int(bool(rechecks)),
+        "integration_budget_remaining": int(bool(integrations)),
+    }
+    for field, expected_step in expected_budget_steps.items():
+        if old_review[field] - new_review[field] != expected_step:
+            raise ValueError(f"review {field} must match its consumed action")
 
     previous_workers = {worker["ref"]: worker for worker in previous["workers"]}
     candidate_workers = {worker["ref"]: worker for worker in candidate["workers"]}
@@ -360,12 +383,43 @@ def write(arguments):
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
 
+def discover(workspace, diagnose=False):
+    workspace = str(Path(workspace).expanduser().resolve())
+    states = []
+    for path in sorted(DEFAULT_STATE_ROOT.rglob("*.json")):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if state.get("workspace") != workspace:
+                continue
+            summary = {
+                "path": str(path),
+                "run_id": state.get("run_id"),
+                "task_key": state.get("task_key"),
+                "status": state.get("status"),
+                "revision": state.get("revision"),
+                "workspace": state.get("workspace"),
+            }
+            if diagnose:
+                try:
+                    summary["next_action"] = validate_state(
+                        state, SimpleNamespace(strict_evidence=False)
+                    )
+                    summary["health"] = "valid"
+                except (KeyError, OSError, ValueError) as error:
+                    summary.update(health="blocked", reason=str(error))
+            states.append(summary)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {"workspace": workspace, "states": states}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("path", "write"))
+    parser.add_argument("command", choices=("path", "write", "list", "doctor"))
     parser.add_argument("--input")
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
     parser.add_argument("--repo")
+    parser.add_argument("--workspace")
     parser.add_argument("--task-key")
     parser.add_argument("--run-id")
     parser.add_argument("--writer-id")
@@ -378,6 +432,14 @@ def main():
                 raise ValueError("path requires --repo, --task-key, and --run-id")
             print(state_path(DEFAULT_STATE_ROOT, arguments.repo, arguments.task_key, arguments.run_id))
             return 0
+        if arguments.command in {"list", "doctor"}:
+            if not arguments.workspace:
+                raise ValueError(f"{arguments.command} requires --workspace")
+            result = discover(arguments.workspace, arguments.command == "doctor")
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0 if arguments.command == "list" or all(
+                state.get("health") == "valid" for state in result["states"]
+            ) else 1
         if not all(
             (
                 arguments.input,

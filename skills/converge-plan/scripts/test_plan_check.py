@@ -1,12 +1,17 @@
 import json
 import hashlib
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("plan_check.py")
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+import evidence_contract
 SHA = "a" * 64
 
 
@@ -70,7 +75,19 @@ def granular_plan(tasks, context="long", checkpoint="same_session"):
 
 
 def evidence_receipt(source, command="bash scripts/check.sh"):
-    return {"schema_version": 1, "command": command, "exit_code": 0, "source": source}
+    argv = [sys.executable, "-c", "pass", command]
+    receipt = {
+        "schema_version": 2,
+        "argv": argv,
+        "command": shlex.join(argv),
+        "exit_code": 0,
+        "stdout_fingerprint": hashlib.sha256(b"").hexdigest(),
+        "stderr_fingerprint": hashlib.sha256(b"").hexdigest(),
+        "runner_fingerprint": evidence_contract._runner_fingerprint(),
+        "evidence_level": "observed",
+        "source": source,
+    }
+    return {**receipt, "receipt_fingerprint": evidence_contract._fingerprint(receipt)}
 
 
 def final_evidence(source):

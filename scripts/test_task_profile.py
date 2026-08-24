@@ -7,7 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from task_profile import classify
+from task_profile import classify, freeze_routing, infer_path_risks
 
 
 def profile(**overrides):
@@ -87,6 +87,27 @@ class TaskProfileTest(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertEqual("", result.stderr)
         self.assertEqual("error", json.loads(result.stdout)["status"])
+
+    def test_frozen_routing_binds_profile_route_review_and_scope(self):
+        value = profile(scope="cross-service", risk_flags=["cross-service"])
+
+        routing = freeze_routing(value, ["service-a", "service-b"])
+
+        self.assertEqual(2, routing["schema_version"])
+        self.assertEqual("planned", routing["route"])
+        self.assertEqual("high", routing["review_tier"])
+        self.assertTrue(routing["integration_required"])
+        self.assertEqual(value, routing["profile"])
+        self.assertEqual(64, len(routing["profile_fingerprint"]))
+
+    def test_scope_paths_are_canonical_and_risk_inference_is_conservative(self):
+        with self.assertRaisesRegex(ValueError, "allowed_paths"):
+            freeze_routing(profile(), ["../outside"])
+
+        self.assertEqual(
+            {"sql", "permission", "security"},
+            infer_path_risks(["db/permission.sql"]),
+        )
 
 
 if __name__ == "__main__":

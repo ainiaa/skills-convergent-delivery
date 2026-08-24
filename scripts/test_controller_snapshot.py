@@ -15,6 +15,7 @@ SPEC = importlib.util.spec_from_file_location("controller_snapshot", MODULE_PATH
 controller_snapshot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(controller_snapshot)
 REQUIRED_CONTROL_REFERENCES = (
+    "evals/evals.json",
     "references/activation.md",
     "references/evaluation-scenarios.md",
     "references/evaluation-catalog.json",
@@ -33,6 +34,7 @@ REQUIRED_CONTROL_REFERENCES = (
     "skills/converge-eval/SKILL.md",
     "skills/converge-eval/references/evaluation-contract.json",
     "skills/converge-eval/scripts/eval_contract.py",
+    "scripts/trigger_eval.py",
 )
 
 

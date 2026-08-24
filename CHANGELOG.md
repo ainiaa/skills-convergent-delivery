@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+- 0.20 控制真实性加固：Routing Receipt v2 绑定完整任务画像、允许路径、review tier 与 integration requirement；完成门禁按真实 Git diff 阻止路由降级、范围漂移和未声明 SQL/权限等风险。
+- Evidence Receipt 升级为 v2，由标准库 runner 直接执行 argv（不经 shell）并绑定退出码、输出摘要、runner、receipt 与 Source Receipt；报告强制严格证据，不再把旧回执或 controller attestation 洗成 ready。
+- Review result 绑定 canonical request 的 task/验收/范围/baseline/source；repair、re-review 与 integration 预算按动作精确消费；缺少 fresh context 时自审只能给 suggestion，不能满足独立盲审门禁。
+- Runtime cleanup 只有绑定原始 host tree-query observation 才标记 `host_observed`；新增按 workspace 的 state `list/doctor` 冷恢复入口。
+- Eval Contract 升级为 v3，control/candidate 解析 Git commit/tree、judge 绑定文件字节、worker 绑定 host-observed registry、样本路径受 allowed scope 约束；新增真实 selector 触发 runner、混淆矩阵与 F1，执行前完整校验 case 并绑定 dataset/selector/runner 指纹，且纳入 Controller Snapshot。
+- generic TDD 显式选择必须提供唯一 `--tdd-skill <exact-SKILL.md>`，删除按字典序猜选；Controller Protocol 升级为 v9，Suite 版本升级为 0.20.0。
 - Review 完成闸门绑定已登记且宿主终态 completed 的 reviewer，强制 initial quality/integration 独立盲审，并阻止未消费 integration 预算或未通过结果完成。
 - Eval Sample Receipt 升级为 v2，绑定真实证据文件内容；差分报告使用 control/candidate 双侧结果，exploration 单独统计且不作为 completion gate。
 - generic TDD 改为仅显式选择；简单 inline 路径不再创建五阶段宿主计划，并补充精确 lease release 说明。

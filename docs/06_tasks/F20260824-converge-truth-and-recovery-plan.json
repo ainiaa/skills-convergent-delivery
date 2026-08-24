@@ -1,0 +1,218 @@
+{
+  "schema_version": 5,
+  "plan_id": "plan-converge-truth-and-recovery-20260824",
+  "requirement_fingerprint": "35980f43b4ac0279a3030a40b8d228ec953c331fcf0bdb790e8e05931f729753",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "ee25ce6444d900adfdc5c9a10ae86b38e743f73b",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "ee25ce6444d900adfdc5c9a10ae86b38e743f73b",
+      "commit_id": "ee25ce6444d900adfdc5c9a10ae86b38e743f73b",
+      "tree_hash": "302f9e8b2c6cdb5ca5f7341c25a7a8d2fd5a5891",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "4ce61c4f53ddde647fd0ccb6014664aa32bd69c8dcb568cd941e99cf5381d0a8"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "wide_refactor",
+      "outcomes": [
+        "完成态只能由规范路由、真实执行证据、绑定审查和有限预算共同支撑"
+      ],
+      "goal": "关闭路由降级、证据自证、审查解绑、预算失控、集成遗漏、范围风险漂移和宿主观察冒充问题",
+      "owned_paths": [
+        "scripts/task_profile.py",
+        "scripts/evidence_contract.py",
+        "scripts/delivery_next.py",
+        "scripts/delivery_state.py",
+        "scripts/runtime_adapter.py",
+        "scripts/test_task_profile.py",
+        "scripts/test_evidence_contract.py",
+        "scripts/test_delivery_next.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_runtime_adapter.py",
+        "skills/converge-review/scripts/review_contract.py",
+        "skills/converge-review/scripts/test_review_contract.py",
+        "skills/converge-review/scripts/test_review_axes_contract.py",
+        "skills/converge-batch/scripts/test_batch_state.py",
+        "skills/converge-plan/references/plan-contract.md",
+        "skills/converge-plan/scripts/test_plan_check.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "为已复现的伪造完成路径添加失败测试",
+        "在共享校验入口绑定规范画像、命令执行、审查请求和源码范围",
+        "让修复、复核与集成预算随合法转换单调消耗",
+        "补充工作区状态发现与诊断入口",
+        "运行控制内核定向测试"
+      ],
+      "acceptance": [
+        "调用者不能用低风险路由覆盖规范任务画像",
+        "不存在的命令或调用者伪填退出码不能形成通过证据",
+        "审查结果必须绑定原始请求、任务、源码和 reviewer",
+        "repair、re-review 和 integration 预算不能重复消费或绕过",
+        "实际变更越过声明范围或提高风险时阻止完成",
+        "控制器自述不能标为 host_observed",
+        "可按工作区列出状态并诊断恢复阻塞"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_task_profile.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_evidence_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_next.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_state.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_runtime_adapter.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 skills/converge-review/scripts/test_review_contract.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "评估、Provider 选择和控制快照使用可复现且不可歧义的输入"
+      ],
+      "goal": "收紧评估来源与判定器绑定，消除通用 TDD 随机选择，并加入可运行的触发选择评测",
+      "owned_paths": [
+        "evals/evals.json",
+        "scripts/controller_snapshot.py",
+        "scripts/delivery_engine.py",
+        "scripts/test_controller_snapshot.py",
+        "scripts/test_delivery_engine.py",
+        "scripts/test_trigger_evals.py",
+        "scripts/trigger_eval.py",
+        "skills/converge-eval/references/evaluation-contract.json",
+        "skills/converge-eval/scripts/eval_contract.py",
+        "skills/converge-eval/scripts/test_eval_contract.py",
+        "skills/converge-eval/scripts/test_eval_kernel.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "先添加来源、判定器、范围和真实触发执行的失败测试",
+        "绑定 Git 来源、judge 定义、样本范围和证据内容",
+        "让 generic-tdd-v1 必须显式指定唯一 SKILL.md",
+        "用标准库实现可注入命令的触发评测 runner，并绑定 dataset、selector 与 runner 指纹",
+        "把触发评测资产加入控制快照并运行定向测试"
+      ],
+      "acceptance": [
+        "control 与 candidate 必须解析为冻结 Git 对象",
+        "judge 与 evidence 内容指纹不可由样本自由声明",
+        "样本触达路径不得越过 allowed_scope",
+        "generic-tdd-v1 多候选时不会按字典序静默选择",
+        "触发评测会先完整校验数据集，再实际调用选择命令并报告混淆矩阵、F1 与运行身份指纹",
+        "控制快照包含评测数据与 runner"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_engine.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_controller_snapshot.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_trigger_evals.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 skills/converge-eval/scripts/test_eval_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 skills/converge-eval/scripts/test_eval_kernel.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": [
+        "文档、报告和全量行为检查与加固后的真实边界一致"
+      ],
+      "goal": "同步用户可见协议和报告证据等级，并完成整套回归与安装诊断",
+      "owned_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "SKILL.md",
+        "VERSION",
+        "docs",
+        "references",
+        "scripts/delivery_report.py",
+        "scripts/test_delivery_report.py",
+        "scripts/test_reporting_contract.py",
+        "scripts/test_skill_contracts.py",
+        "skills/converge-eval/SKILL.md",
+        "skills/converge-review/SKILL.md",
+        "skills/converge-review/references/review-contract.md"
+      ],
+      "depends_on": [
+        "T1",
+        "T2"
+      ],
+      "steps": [
+        "添加报告不得洗白低等级证据的失败测试",
+        "让报告显示证据等级并保守选择用户状态",
+        "同步状态、路由、审查、评估、恢复和单上下文边界文档",
+        "更新版本与变更日志",
+        "运行全量检查、离线安装诊断和 Git 范围检查"
+      ],
+      "acceptance": [
+        "controller_attested 验证不会被报告成 ready",
+        "单上下文自审只作建议，不能冒充独立盲审",
+        "文档与确定性 helper 的新行为一致",
+        "全部定向与全量测试通过",
+        "安装诊断通过且无计划外改动"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_report.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh",
+        "bash install.sh --doctor --target codex --offline",
+        "git diff --check"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "全部已确认问题都有先失败后通过的行为测试",
+    "全量检查、安装诊断和范围检查通过",
+    "实现不新增第三方依赖、外发动作或第二套状态真源"
+  ],
+  "decisions": [
+    "显式使用 native-v1：实现开始时未发现可登记和查询的叶子 worker，不伪装 PDLC 委托完成；最终审查阶段宿主暴露该能力后只派发一次 fresh blind reviewer，并按无进展规则清场",
+    "复用现有 Schema v10、Source Receipt、Provider Binding 和标准库，不引入新依赖",
+    "真实性校验以阻止错误完成为目标，不声称能抵抗同一系统用户恶意篡改文件",
+    "不执行 commit、tag、push、publish、install 或任何外部副作用"
+  ]
+}

@@ -23,19 +23,28 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertNotIn("interrupt", result["capabilities"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
 
-    def test_cleanup_receipt_is_derived_from_the_frozen_runtime_binding(self):
+    def test_cleanup_receipt_only_becomes_host_observed_with_bound_host_observation(self):
         binding = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
                       "tree_query": True, "restrict_dispatch": False}
         )
 
+        observation = {
+            "query_id": "query-123",
+            "observed_at": "2026-08-21T00:00:00Z",
+            "registered_refs": ["worker-1"],
+            "active_refs": [],
+            "unexpected_refs": [],
+        }
         receipt = runtime_adapter.cleanup_receipt(
-            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
+            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z",
+            host_observation=observation,
         )
 
         self.assertEqual("tree_query", receipt["mode"])
         self.assertEqual(2, receipt["schema_version"])
         self.assertEqual("host_observed", receipt["evidence_level"])
+        self.assertEqual(64, len(receipt["observation_fingerprint"]))
         self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
         self.assertEqual(3, receipt["observed_revision"])
 
@@ -99,6 +108,29 @@ class RuntimeAdapterTest(unittest.TestCase):
 
         self.assertEqual("restrict_dispatch", receipt["mode"])
         self.assertEqual("controller_attested", receipt["evidence_level"])
+        self.assertIsNone(receipt["observation_fingerprint"])
+
+    def test_tree_query_arguments_alone_are_controller_attested(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+
+        receipt = runtime_adapter.cleanup_receipt(
+            binding, 1, [], [], [], "2026-08-21T00:00:00Z"
+        )
+
+        self.assertEqual("controller_attested", receipt["evidence_level"])
+        self.assertIsNone(receipt["observation_fingerprint"])
+
+    def test_cleanup_receipt_requires_a_real_timestamp(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+
+        with self.assertRaisesRegex(ValueError, "timestamp"):
+            runtime_adapter.cleanup_receipt(
+                binding, 1, [], [], [], "caller-claims-this-is-host-observed"
+            )
 
     def test_wait_timeout_and_host_status_are_normalized_without_false_terminal_state(self):
         self.assertEqual("working", runtime_adapter.normalize_status("timeout"))

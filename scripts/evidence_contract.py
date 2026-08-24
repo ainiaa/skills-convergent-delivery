@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Canonical Git source and command evidence receipts."""
 
+import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 
 SOURCE_SCHEMA_VERSION = 2
-EVIDENCE_SCHEMA_VERSION = 1
+EVIDENCE_SCHEMA_VERSION = 2
 
 
 def _git(workspace, *arguments):
@@ -88,19 +91,76 @@ def workspace_source(workspace, baseline_commit="HEAD"):
     return source
 
 
+def _fingerprint(value):
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _runner_fingerprint():
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def run_evidence(workspace, baseline_commit, argv):
+    """Run one argv command and bind its outcome to the resulting workspace source."""
+    workspace = Path(workspace).expanduser().resolve()
+    if not isinstance(argv, list) or not argv or any(
+        not isinstance(item, str) or not item for item in argv
+    ):
+        raise ValueError("evidence argv must be a non-empty string list")
+    try:
+        result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False)
+        exit_code, stdout, stderr = result.returncode, result.stdout, result.stderr
+    except FileNotFoundError as error:
+        exit_code, stdout, stderr = 127, b"", str(error).encode("utf-8")
+    receipt = {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "argv": argv,
+        "command": shlex.join(argv),
+        "exit_code": exit_code,
+        "stdout_fingerprint": hashlib.sha256(stdout).hexdigest(),
+        "stderr_fingerprint": hashlib.sha256(stderr).hexdigest(),
+        "runner_fingerprint": _runner_fingerprint(),
+        "evidence_level": "observed",
+        "source": workspace_source(workspace, baseline_commit),
+    }
+    return {**receipt, "receipt_fingerprint": _fingerprint(receipt)}
+
+
 def valid_evidence_receipts(value, source):
     return (
         isinstance(value, list)
         and bool(value)
         and all(
             isinstance(item, dict)
+            and set(item) == {
+                "schema_version", "argv", "command", "exit_code", "stdout_fingerprint",
+                "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
+                "receipt_fingerprint",
+            }
             and item.get("schema_version") == EVIDENCE_SCHEMA_VERSION
-            and isinstance(item.get("command"), str)
-            and bool(item["command"].strip())
+            and isinstance(item.get("argv"), list)
+            and bool(item["argv"])
+            and all(isinstance(argument, str) and argument for argument in item["argv"])
+            and item.get("command") == shlex.join(item["argv"])
             and isinstance(item.get("exit_code"), int)
             and not isinstance(item["exit_code"], bool)
             and item["exit_code"] == 0
+            and all(
+                isinstance(item.get(field), str)
+                and len(item[field]) == 64
+                and all(character in "0123456789abcdef" for character in item[field])
+                for field in (
+                    "stdout_fingerprint", "stderr_fingerprint", "runner_fingerprint",
+                    "receipt_fingerprint",
+                )
+            )
+            and item["runner_fingerprint"] == _runner_fingerprint()
+            and item.get("evidence_level") == "observed"
             and item.get("source") == source
+            and item["receipt_fingerprint"] == _fingerprint({
+                key: entry for key, entry in item.items() if key != "receipt_fingerprint"
+            })
             for item in value
         )
     )
@@ -153,3 +213,25 @@ def validate_source_receipt(source):
     if fingerprint != expected:
         raise ValueError("source receipt fingerprint is invalid")
     return source
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run")
+    run.add_argument("--workspace", required=True)
+    run.add_argument("--baseline", required=True)
+    run.add_argument("argv", nargs=argparse.REMAINDER)
+    arguments = parser.parse_args()
+    try:
+        argv = arguments.argv[1:] if arguments.argv[:1] == ["--"] else arguments.argv
+        receipt = run_evidence(arguments.workspace, arguments.baseline, argv)
+        print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
+        return 0 if receipt["exit_code"] == 0 else receipt["exit_code"]
+    except (OSError, ValueError) as error:
+        print(f"evidence run blocked: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

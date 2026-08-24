@@ -12,8 +12,9 @@ from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_
 from delivery_next import (
     upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
 )
-from evidence_contract import workspace_source
+from evidence_contract import run_evidence, workspace_source
 from runtime_adapter import cleanup_receipt, negotiate
+from task_profile import freeze_routing
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -24,6 +25,22 @@ HEAD = subprocess.run(
     capture_output=True, text=True,
 ).stdout.strip()
 SOURCE = workspace_source(ROOT, HEAD)
+EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+
+
+def task_profile(**overrides):
+    value = {
+        "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
+        "coupling": "single", "uncertainty": "low", "verification": "local",
+        "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
+        "context_isolation_benefit": False,
+    }
+    value.update(overrides)
+    return value
+
+
+def routing(profile=None, allowed_paths=None):
+    return freeze_routing(profile or task_profile(), allowed_paths or ["."])
 
 
 def state(**overrides):
@@ -36,10 +53,7 @@ def state(**overrides):
         "source_fingerprint": SOURCE["source_fingerprint"],
         "source_receipt": SOURCE,
         "execution_control": {
-            "routing": {
-                "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
-            },
+            "routing": routing(),
             "review": {
                 "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
@@ -69,10 +83,7 @@ def state(**overrides):
                     "result": "pass",
                     "freshness": "fresh",
                     "source_fingerprint": SOURCE["source_fingerprint"],
-                    "evidence_receipts": [{
-                        "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
-                        "source": SOURCE,
-                    }],
+                    "evidence_receipts": [EVIDENCE],
                 }
             ],
         },
@@ -103,14 +114,21 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     ))
     source = payload["source_fingerprint"]
     payload["execution_control"]["routing"]["review_tier"] = "normal"
+    integration_required = integration_budget == 1 or integration_status is not None
+    payload["execution_control"]["routing"] = routing(task_profile(
+        scope="cross-service" if integration_required else "cross-module",
+        risk_flags=["cross-service"] if integration_required else [],
+    ))
     review = payload["execution_control"]["review"]
     review["integration_budget_remaining"] = integration_budget
     base = {
         "phase": "initial", "source_fingerprint": source, "status": "pass",
         "reviewer_ref": "reviewer-a", "finding_fingerprints": [],
+        "task_id": payload["task_key"], "request_fingerprint": "e" * 64,
     }
     requests = [
-        {**base, "axis": "spec", "mode": "shared", "independent": False},
+        {**base, "axis": "spec", "mode": "blind" if integration_required else "shared",
+         "independent": integration_required},
         {**base, "axis": "quality", "mode": quality_mode,
          "independent": quality_mode == "blind"},
     ]
@@ -134,14 +152,64 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
                 "status": "completed", "progress": None,
             })
         reviewer_refs = [worker["ref"] for worker in payload["workers"]]
+        observation = {
+            "query_id": "query-reviewers", "observed_at": "2026-08-21T00:00:00Z",
+            "registered_refs": reviewer_refs, "active_refs": [], "unexpected_refs": [],
+        }
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, reviewer_refs, [], [],
-            "2026-08-21T00:00:00Z",
+            "2026-08-21T00:00:00Z", host_observation=observation,
         )
     return payload
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_caller_cannot_override_the_canonical_profile_route(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"]["route"] = "batch"
+
+        with self.assertRaisesRegex(ValueError, "canonical task profile"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_completion_rejects_scope_and_risk_drift_from_the_frozen_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+            (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True)
+            baseline = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            (workspace / "db").mkdir()
+            (workspace / "db" / "permission.sql").write_text("select 1;\n", encoding="utf-8")
+            source = workspace_source(workspace, baseline)
+            payload = upgrade_state(state())
+            payload.update(
+                status="complete", current_stage="verify-final", workspace=str(workspace),
+                repo_id=str(workspace / ".git"),
+                baseline={"commit": baseline, "diff_fingerprint": "clean"},
+                source_fingerprint=source["source_fingerprint"], source_receipt=source,
+            )
+            payload["ledger"]["acceptance"][0]["source_fingerprint"] = source["source_fingerprint"]
+            payload["ledger"]["acceptance"][0]["evidence_receipts"] = [
+                run_evidence(workspace, baseline, [sys.executable, "-c", "pass"])
+            ]
+            payload["execution_control"]["review"]["rounds"] = []
+            payload["execution_control"]["routing"] = routing(
+                task_profile(), ["docs"]
+            )
+
+            with self.assertRaisesRegex(ValueError, "scope drift"):
+                validate_state(payload, SimpleNamespace())
+
+            payload["execution_control"]["routing"] = routing(task_profile(), ["db"])
+            with self.assertRaisesRegex(ValueError, "risk exceeds"):
+                validate_state(payload, SimpleNamespace())
+
     def test_current_complete_state_requires_real_source_and_command_receipts(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -175,10 +243,9 @@ class DeliveryNextTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Evidence Receipt"):
                 validate_state(payload, SimpleNamespace())
 
-            payload["ledger"]["acceptance"][0]["evidence_receipts"] = [{
-                "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
-                "source": receipt,
-            }]
+            payload["ledger"]["acceptance"][0]["evidence_receipts"] = [
+                run_evidence(workspace, baseline, [sys.executable, "-c", "pass"])
+            ]
             self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
     def test_v6_migration_rejects_an_unknown_frozen_controller(self):
@@ -557,7 +624,15 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, unexpected.returncode)
         self.assertIn("unexpected", unexpected.stderr)
 
-        payload["worker_tree_receipt"]["unexpected_refs"] = []
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, ["worker-1"], [], [],
+            "2026-08-21T00:00:00Z",
+            host_observation={
+                "query_id": "query-clean", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": ["worker-1"], "active_refs": [],
+                "unexpected_refs": [],
+            },
+        )
         clean = self.current(payload, revision=3)
         self.assertEqual(0, clean.returncode, clean.stderr)
         self.assertEqual("complete\n", clean.stdout)
@@ -577,9 +652,21 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("unexpected", result.stderr)
 
+    def test_complete_with_workers_rejects_controller_attested_cleanup(self):
+        payload = reviewed_complete_state()
+        refs = [worker["ref"] for worker in payload["workers"]]
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z"
+        )
+
+        with self.assertRaisesRegex(ValueError, "host-observed"):
+            validate_state(payload, SimpleNamespace())
+
     def test_high_risk_complete_requires_current_spec_and_quality_reviews(self):
         payload = state(status="complete", current_stage="verify-final")
-        payload["execution_control"]["routing"]["review_tier"] = "high"
+        payload["execution_control"]["routing"] = routing(
+            task_profile(risk_flags=["money"])
+        )
 
         result = self.current(payload)
 
@@ -627,12 +714,15 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_later_review_finding_invalidates_an_earlier_pass(self):
         payload = upgrade_state(state(status="complete", current_stage="verify-final"))
-        payload["execution_control"]["routing"]["review_tier"] = "high"
+        payload["execution_control"]["routing"] = routing(
+            task_profile(risk_flags=["money"])
+        )
         source = payload["source_fingerprint"]
         base = {
             "phase": "initial", "source_fingerprint": source,
             "reviewer_ref": "reviewer-a", "mode": "blind", "independent": True,
-            "finding_fingerprints": [],
+            "finding_fingerprints": [], "task_id": payload["task_key"],
+            "request_fingerprint": "e" * 64,
         }
         payload["execution_control"]["review"]["rounds"] = [{
             "source_fingerprint": source,

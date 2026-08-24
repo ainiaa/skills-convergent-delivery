@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import sys
+from datetime import datetime
 
 
 PROFILES = {"codex", "claude-code", "single-context"}
@@ -105,7 +106,7 @@ def negotiate(profile, observed):
 
 
 def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
-                    unexpected_refs, observed_at):
+                    unexpected_refs, observed_at, host_observation=None):
     binding = validate_binding(binding)
     if binding["mode"] != "automatic":
         raise ValueError("cleanup receipt requires an automatic runtime binding")
@@ -114,6 +115,12 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
         raise ValueError("observed_revision must be non-negative")
     if not isinstance(observed_at, str) or not observed_at.strip():
         raise ValueError("observed_at must be a non-empty string")
+    try:
+        parsed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("observed_at must be an ISO timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError("observed_at timestamp must include a timezone")
     for name, refs in (
         ("registered_refs", registered_refs),
         ("active_refs", active_refs),
@@ -124,15 +131,34 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
         ):
             raise ValueError(f"{name} is invalid")
     mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
+    observation_fingerprint = None
+    if host_observation is not None:
+        expected_fields = {
+            "query_id", "observed_at", "registered_refs", "active_refs", "unexpected_refs"
+        }
+        if mode != "tree_query" or not isinstance(host_observation, dict) \
+                or set(host_observation) != expected_fields:
+            raise ValueError("host observation is invalid")
+        if not isinstance(host_observation["query_id"], str) \
+                or not host_observation["query_id"].strip():
+            raise ValueError("host observation query_id is invalid")
+        expected_observation = {
+            "observed_at": observed_at,
+            "registered_refs": registered_refs,
+            "active_refs": active_refs,
+            "unexpected_refs": unexpected_refs,
+        }
+        if any(host_observation[field] != value for field, value in expected_observation.items()):
+            raise ValueError("host observation does not match cleanup refs")
+        observation_fingerprint = fingerprint(host_observation)
     return {
         "schema_version": 2,
         "observed_revision": observed_revision,
         "observed_at": observed_at,
         "runtime_fingerprint": binding["binding_fingerprint"],
         "mode": mode,
-        "evidence_level": (
-            "host_observed" if mode == "tree_query" else "controller_attested"
-        ),
+        "evidence_level": "host_observed" if observation_fingerprint else "controller_attested",
+        "observation_fingerprint": observation_fingerprint,
         "registered_refs": registered_refs,
         "active_refs": active_refs,
         "unexpected_refs": unexpected_refs,
@@ -191,6 +217,7 @@ def main():
                 payload.get("binding"), payload.get("observed_revision"),
                 payload.get("registered_refs"), payload.get("active_refs"),
                 payload.get("unexpected_refs"), payload.get("observed_at"),
+                payload.get("host_observation"),
             ), sort_keys=True))
         return 0
     except (ValueError, json.JSONDecodeError) as error:

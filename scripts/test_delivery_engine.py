@@ -380,13 +380,38 @@ class DeliveryEngineTest(unittest.TestCase):
                 "Run a test first, then use the red and green cycle.",
             )
             result = self.run_engine(
-                "--provider", "generic-tdd-v1", "--tdd-root", str(root)
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root),
+                "--tdd-skill", str(path),
             )
 
         self.assertEqual(0, result.returncode, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual("generic-tdd-v1", payload["engine"])
         self.assertEqual(str(path.resolve()), payload["tdd_skill_path"])
+
+    def test_explicit_generic_tdd_requires_one_exact_skill_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, first = self.tdd_root(
+                directory, "project-tdd", "Run a test first, then use the red and green cycle."
+            )
+            second = root / "another-test" / "SKILL.md"
+            second.parent.mkdir(parents=True)
+            second.write_text(
+                "Run a test first, then use the red and green cycle.\n", encoding="utf-8"
+            )
+
+            ambiguous = self.run_engine(
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root)
+            )
+            exact = self.run_engine(
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root),
+                "--tdd-skill", str(second),
+            )
+
+        self.assertEqual(2, ambiguous.returncode)
+        self.assertIn("exact", json.loads(ambiguous.stdout)["reason"])
+        self.assertEqual(0, exact.returncode, exact.stderr)
+        self.assertEqual(str(second.resolve()), json.loads(exact.stdout)["tdd_skill_path"])
 
     def test_auto_rejects_a_generic_tdd_orchestrator(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -485,7 +510,8 @@ class DeliveryEngineTest(unittest.TestCase):
                 "Run a test first, then use the red and green cycle.",
             )
             initial = self.run_engine(
-                "--provider", "generic-tdd-v1", "--tdd-root", str(root)
+                "--provider", "generic-tdd-v1", "--tdd-root", str(root),
+                "--tdd-skill", str(path),
             )
             fingerprint = json.loads(initial.stdout)["tdd_skill_fingerprint"]
             result = self.run_engine(

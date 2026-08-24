@@ -28,6 +28,7 @@ CONTROLLER_FILES = (
     "scripts/provider_contract.py",
     "scripts/run_contract.py",
     "scripts/task_profile.py",
+    "scripts/trigger_eval.py",
     "scripts/runtime_adapter.py",
     "scripts/controller_snapshot.py",
 )
@@ -41,6 +42,7 @@ CONTROL_RESOURCE_FILES = (
     "references/task-routing.md",
     "references/reporting.md",
     "references/tdd-providers.md",
+    "evals/evals.json",
     "skills/converge-plan/SKILL.md",
     "skills/converge-plan/references/plan-contract.md",
     "skills/converge-plan/scripts/plan_check.py",
@@ -61,7 +63,7 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_next.py",
     "skills/converge-batch/scripts/batch_state.py",
 ))
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 
 
 def provider_files(root):

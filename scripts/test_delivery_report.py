@@ -1,12 +1,14 @@
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from delivery_next import upgrade_state
-from evidence_contract import workspace_source
+from evidence_contract import run_evidence, workspace_source
 from runtime_adapter import cleanup_receipt, negotiate
+from task_profile import freeze_routing
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +18,16 @@ HEAD = subprocess.run(
     capture_output=True, text=True,
 ).stdout.strip()
 SOURCE = workspace_source(ROOT, HEAD)
+EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+
+
+def routing():
+    return freeze_routing({
+        "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
+        "coupling": "single", "uncertainty": "low", "verification": "local",
+        "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
+        "context_isolation_benefit": False,
+    }, ["."])
 
 
 def state(status="complete"):
@@ -32,10 +44,7 @@ def state(status="complete"):
         "source_fingerprint": SOURCE["source_fingerprint"],
         "source_receipt": SOURCE,
         "execution_control": {
-            "routing": {
-                "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
-            },
+            "routing": routing(),
             "review": {
                 "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
@@ -58,10 +67,7 @@ def state(status="complete"):
                     "result": "pass",
                     "freshness": "fresh",
                     "source_fingerprint": SOURCE["source_fingerprint"],
-                    "evidence_receipts": [{
-                        "schema_version": 1, "command": "python3 test.py", "exit_code": 0,
-                        "source": SOURCE,
-                    }],
+                    "evidence_receipts": [EVIDENCE],
                 }
             ],
             "report_history": {
@@ -82,7 +88,7 @@ def state(status="complete"):
         result["blocked_reason"] = "runtime unavailable"
         result["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
         result["handoff"]["open_issues"] = "runtime unavailable"
-    return result
+    return upgrade_state(result)
 
 
 class DeliveryReportTest(unittest.TestCase):
@@ -117,6 +123,7 @@ class DeliveryReportTest(unittest.TestCase):
             payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
             payload.pop("source_receipt")
             payload["ledger"]["acceptance"][0].pop("evidence_receipts")
+            payload.update(status="active", current_stage="round-1-semantic-review")
             payload["workspace_changes"] = {
                 "file_count": 999,
                 "lines_added": 999,
@@ -148,6 +155,7 @@ class DeliveryReportTest(unittest.TestCase):
         payload["workspace"] = "/missing/worktree"
         payload.pop("source_receipt")
         payload["ledger"]["acceptance"][0].pop("evidence_receipts")
+        payload.update(status="active", current_stage="round-1-semantic-review")
 
         result = self.run_report(payload, "json")
 
@@ -217,6 +225,11 @@ class DeliveryReportTest(unittest.TestCase):
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], [],
             "2026-08-21T00:00:00Z",
+            host_observation={
+                "query_id": "query-detail", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": ["worker-1"], "active_refs": [],
+                "unexpected_refs": [],
+            },
         )
 
         result = self.run_report(payload, "text", detail=True)
@@ -250,6 +263,19 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(0, report["pending_items"])
         self.assertEqual("pass", report["acceptance"][0]["result"])
         self.assertEqual(["统一 Provider 契约", "增加可见进度"], report["key_changes"])
+        self.assertEqual(["observed"], report["verification_evidence_levels"])
+        self.assertEqual([], report["verification_scope"]["checks"])
+
+    def test_report_does_not_launder_controller_attested_acceptance_as_ready(self):
+        payload = state()
+        payload["ledger"]["acceptance"][0]["evidence_receipts"][0][
+            "evidence_level"
+        ] = "controller_attested"
+
+        result = self.run_report(payload)
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("Evidence Receipt", result.stderr)
 
     def test_legacy_no_issue_text_is_not_reported_as_pending(self):
         for value in ("No remaining scoped findings", "0"):
@@ -289,11 +315,13 @@ class DeliveryReportTest(unittest.TestCase):
         rendered = self.run_report(payload, "text").stdout
 
         self.assertEqual(
-            "验收：doctor detects incomplete Suite；检查：check",
+            "验收：doctor detects incomplete Suite",
             report["verification"],
         )
+        self.assertEqual(1, report["attested_check_count"])
         self.assertEqual("controller_attested", report["verification_note_level"])
-        self.assertIn("已验证范围：验收：doctor detects incomplete Suite；检查：check", rendered)
+        self.assertIn("已验证范围：验收：doctor detects incomplete Suite", rendered)
+        self.assertIn("1 项控制器记录未计入验证", rendered)
         self.assertIn("说明（controller_attested）：production is fully verified", rendered)
         self.assertNotIn("已验证：production is fully verified", rendered)
 

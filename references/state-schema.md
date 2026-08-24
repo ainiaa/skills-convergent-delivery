@@ -18,10 +18,10 @@
   "source_fingerprint": "<current Source Receipt fingerprint>",
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
-    "package_version": "0.19.0",
-    "protocol_version": 8,
+    "package_version": "0.20.0",
+    "protocol_version": 9,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.19.0", "protocol_version": 8, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.20.0", "protocol_version": 9, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -37,7 +37,7 @@
   "runtime_binding": null,
   "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null, "evidence_level": "controller_attested | host_observed"},
   "execution_control": {
-    "routing": {"schema_version": 1, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile_fingerprint": "<sha256>"},
+    "routing": {"schema_version": 2, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile": {"schema_version": 2, "assessment_phase": "frozen", "scope": "local", "coupling": "single", "uncertainty": "low", "verification": "local", "risk_flags": [], "cross_session": false, "delegable_tasks": 0, "context_isolation_benefit": false}, "allowed_paths": ["src"], "integration_required": false, "profile_fingerprint": "<sha256>"},
     "review": {"protocol_version": 3, "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "rounds": [{"source_fingerprint": "<source>", "requests": []}]}
   },
   "current_stage": "scope",
@@ -56,7 +56,9 @@
 
 无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
-`source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 可以使用另一名 reviewer，但同样必须已登记且宿主状态 completed。`integration_budget_remaining=1` 表示仍必须执行，不能进入完成态；出现 integration 请求时当前结果必须 pass。
+`source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v2 由 `task_profile.freeze_routing` 唯一生成：完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。旧 Routing v1 只读兼容，不能写入新 complete。
+
+Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
 `host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
 
@@ -114,13 +116,14 @@
   "runtime_fingerprint": "<sha256>",
   "mode": "tree_query | restrict_dispatch",
   "evidence_level": "host_observed | controller_attested",
+  "observation_fingerprint": "<sha256-or-null>",
   "registered_refs": ["<worker-ref>"],
   "active_refs": [],
   "unexpected_refs": []
 }
 ```
 
-第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；该 Binding 是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`。之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；`tree_query` 结果标记 `host_observed`，只有强制叶子契约时的 `restrict_dispatch` 标记 `controller_attested`。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active；因此中断成功可以被准确落盘。发现意外后代时保留在 `unexpected_refs` 并进入 blocked，供用户精确清理。
+第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；该 Binding 是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`。之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。只传 caller 参数或使用 `restrict_dispatch` 均为 `controller_attested`，只能支撑 blocked 清场，不能支撑带 worker 的 complete。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
 
 生成和展示：
 
@@ -139,7 +142,7 @@ python3 scripts/delivery_progress.py status < state.json
 
 ## 4. Ledger 与阶段
 
-`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。当前 Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v1，且其完整 Source Receipt v2 等于顶层 `source_receipt`。旧 Schema 只读兼容不能作为新完成态写入。`execution_control` 是路由和审查的唯一真源，保存 frozen route、1–2 次画像评估、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
+`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。当前 Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v2：由 `evidence_contract.py run` 使用 argv（不经 shell）真实执行，保存退出码、stdout/stderr 摘要、runner/receipt 指纹和完整 Source Receipt v2。只有 `exit_code=0/evidence_level=observed` 且 source 等于顶层 `source_receipt` 才通过。旧 Schema 和 Evidence v1 只读兼容不能作为新完成态写入。`execution_control` 是路由和审查的唯一真源，保存 canonical routing、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
 
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；
@@ -163,6 +166,8 @@ Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-r
 
 ```bash
 python3 scripts/delivery_state.py path --repo <repo> --task-key <task> --run-id <run>
+python3 scripts/delivery_state.py list --workspace <absolute-worktree>
+python3 scripts/delivery_state.py doctor --workspace <absolute-worktree>
 python3 scripts/delivery_state.py write --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 scripts/delivery_next.py --state <derived-path> --run-id <run> \

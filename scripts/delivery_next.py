@@ -33,6 +33,7 @@ from delivery_progress import plan_projection_fingerprint
 from evidence_contract import (
     valid_evidence_receipts, validate_source_receipt, workspace_source,
 )
+from task_profile import freeze_routing, infer_path_risks
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -163,6 +164,8 @@ def upgrade_evidence_levels(state):
             "host_observed" if receipt.get("mode") == "tree_query"
             else "controller_attested"
         )
+    if isinstance(receipt, dict) and receipt.get("schema_version") == 2:
+        receipt.setdefault("observation_fingerprint", None)
 
 
 def upgrade_state(value):
@@ -452,20 +455,38 @@ def require_sha256(value, name, *, optional=False):
     return value
 
 
-def validate_execution_control(value, source_fingerprint):
+def _path_contains(owner, changed):
+    return owner == "." or changed == owner or changed.startswith(owner + "/")
+
+
+def validate_execution_control(value, source_fingerprint, task_key=None):
     value = require_mapping(value, "execution_control")
     if set(value) != {"routing", "review"}:
         raise ValueError("execution_control fields are invalid")
     routing = require_mapping(value["routing"], "execution_control.routing")
-    if set(routing) != {
+    legacy_routing_fields = {
         "schema_version", "status", "assessment_count", "route", "review_tier",
         "profile_fingerprint",
-    } or routing["schema_version"] != 1:
+    }
+    frozen_routing_fields = {
+        *legacy_routing_fields, "profile", "allowed_paths", "integration_required",
+    }
+    if set(routing) not in {frozenset(legacy_routing_fields), frozenset(frozen_routing_fields)}:
         raise ValueError("execution_control.routing fields are invalid")
     count = routing["assessment_count"]
     if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 2:
         raise ValueError("routing assessment_count must be from 0 to 2")
-    if routing["status"] == "frozen":
+    if routing["schema_version"] == 2:
+        if routing["status"] != "frozen" or set(routing) != frozen_routing_fields:
+            raise ValueError("routing v2 must contain one frozen decision")
+        expected = freeze_routing(
+            routing.get("profile"), routing.get("allowed_paths"), count
+        )
+        if routing != expected:
+            raise ValueError("routing does not match the canonical task profile")
+    elif routing["schema_version"] != 1:
+        raise ValueError("execution_control.routing schema_version is invalid")
+    elif routing["status"] == "frozen":
         if count not in {1, 2} or routing["route"] not in ROUTES \
                 or routing["review_tier"] not in REVIEW_TIERS:
             raise ValueError("routing must contain one frozen decision")
@@ -496,11 +517,20 @@ def validate_execution_control(value, source_fingerprint):
         if not isinstance(round_value["requests"], list):
             raise ValueError("review requests must be a list")
         for request in round_value["requests"]:
-            if not isinstance(request, dict) or set(request) != {
+            legacy_request_fields = {
                 "axis", "phase", "source_fingerprint", "status", "reviewer_ref",
                 "mode", "independent", "finding_fingerprints",
+            }
+            bound_request_fields = {*legacy_request_fields, "task_id", "request_fingerprint"}
+            if not isinstance(request, dict) or set(request) not in {
+                frozenset(legacy_request_fields), frozenset(bound_request_fields)
             }:
                 raise ValueError("review request fields are invalid")
+            if "request_fingerprint" in request:
+                require_sha256(request["request_fingerprint"], "review request fingerprint")
+                require_string(request["task_id"], "review request task_id")
+                if task_key is not None and request["task_id"] != task_key:
+                    raise ValueError("review request task_id must match the current task")
             if request["axis"] not in {"spec", "quality", "integration"} \
                     or request["phase"] not in {"initial", "re_review", "closure"} \
                     or request["status"] not in {"pass", "findings", "blocked"} \
@@ -526,10 +556,21 @@ def validate_execution_control(value, source_fingerprint):
                 raise ValueError("review request source must match its round")
     if rounds and rounds[-1]["source_fingerprint"] != source_fingerprint:
         raise ValueError("current review round must match the current source")
+    integration_requests = [
+        request for round_value in rounds for request in round_value["requests"]
+        if request["axis"] == "integration"
+    ]
+    if routing["schema_version"] == 2:
+        if routing["integration_required"]:
+            expected_budget = 0 if integration_requests else 1
+            if review["integration_budget_remaining"] != expected_budget:
+                raise ValueError("integration review budget does not match the frozen task profile")
+        elif review["integration_budget_remaining"] or integration_requests:
+            raise ValueError("integration review is not allowed by the frozen task profile")
     return routing, review
 
 
-def validate_review_gate(routing, review, workers):
+def validate_review_gate(routing, review, workers, task_key):
     tier = routing["review_tier"]
     requests = review["rounds"][-1]["requests"] if review["rounds"] else []
     latest = {}
@@ -558,6 +599,11 @@ def validate_review_gate(routing, review, workers):
         if latest["integration"]["status"] != "pass":
             raise ValueError("integration review requires a current pass")
     if required_axes:
+        if any(
+            request.get("task_id") != task_key or not request.get("request_fingerprint")
+            for request in (latest[axis] for axis in required_axes)
+        ):
+            raise ValueError("review pass must be bound to the frozen review request")
         if tier != "low" and latest["spec"]["reviewer_ref"] != latest["quality"]["reviewer_ref"]:
             raise ValueError("current spec and quality axes must use one reviewer")
         reviewer_refs = {latest[axis]["reviewer_ref"] for axis in required_axes}
@@ -624,8 +670,23 @@ def validate_state(state, arguments):
         if workspace_source(workspace, baseline["commit"]) != source_receipt:
             raise ValueError("source_receipt does not match the current workspace")
     routing, review_control = validate_execution_control(
-        state.get("execution_control"), source_fingerprint
+        state.get("execution_control"), source_fingerprint, task_key
     )
+    if source_receipt is not None and routing["schema_version"] == 2:
+        allowed_paths = routing["allowed_paths"]
+        drift = [
+            path for path in source_receipt["changed_paths"]
+            if not any(_path_contains(owner, path) for owner in allowed_paths)
+        ]
+        if drift:
+            raise ValueError(f"source scope drift: {drift[0]}")
+        undeclared_risks = infer_path_risks(source_receipt["changed_paths"]) - set(
+            routing["profile"]["risk_flags"]
+        )
+        if undeclared_risks:
+            raise ValueError(
+                f"source risk exceeds the frozen task profile: {sorted(undeclared_risks)[0]}"
+            )
     workflow_provider = validate_provider_binding(state.get("provider_binding"))
     runtime_binding = state.get("runtime_binding")
     if runtime_binding is not None:
@@ -706,7 +767,8 @@ def validate_state(state, arguments):
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
-            "evidence_level", "registered_refs", "active_refs", "unexpected_refs",
+            "evidence_level", "observation_fingerprint", "registered_refs", "active_refs",
+            "unexpected_refs",
         }:
             raise ValueError("worker tree receipt fields are invalid")
         if tree_receipt["schema_version"] != 2:
@@ -730,9 +792,12 @@ def validate_state(state, arguments):
         )
         if tree_receipt["mode"] != expected_mode:
             raise ValueError("worker tree receipt mode does not match the frozen runtime")
-        expected_level = (
-            "host_observed" if expected_mode == "tree_query" else "controller_attested"
-        )
+        observation_fingerprint = tree_receipt["observation_fingerprint"]
+        if observation_fingerprint is not None:
+            require_sha256(observation_fingerprint, "worker tree observation fingerprint")
+        expected_level = "host_observed" if observation_fingerprint else "controller_attested"
+        if observation_fingerprint is not None and expected_mode != "tree_query":
+            raise ValueError("only a tree query can carry a host observation")
         if tree_receipt["evidence_level"] != expected_level:
             raise ValueError("worker tree receipt evidence_level is invalid")
         for field in ("registered_refs", "active_refs", "unexpected_refs"):
@@ -876,17 +941,21 @@ def validate_state(state, arguments):
     if status == "complete":
         if routing["status"] != "frozen":
             raise ValueError("complete state requires a frozen route")
+        if routing["schema_version"] != 2:
+            raise ValueError("complete state requires canonical routing and scope")
         if source_fingerprint is None:
             raise ValueError("complete state requires a source_fingerprint")
         if strict_evidence and source_receipt is None:
             raise ValueError("complete state requires a source_receipt")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
-        validate_review_gate(routing, review_control, workers)
+        validate_review_gate(routing, review_control, workers, task_key)
         if workers and tree_receipt is None:
             raise ValueError("complete state requires a fresh worker tree receipt")
         if tree_receipt is not None:
             validate_cleanup_barrier(tree_receipt, revision, worker_refs)
+            if tree_receipt["evidence_level"] != "host_observed":
+                raise ValueError("complete worker cleanup must be host-observed")
         if not acceptance or not all(
             item["result"] == "pass"
             and item["freshness"] == "fresh"

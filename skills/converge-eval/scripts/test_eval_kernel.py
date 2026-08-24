@@ -4,6 +4,7 @@
 import hashlib
 import itertools
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,17 +16,29 @@ ROOT = Path(__file__).resolve().parents[3]
 ARTIFACTS = tempfile.TemporaryDirectory()
 unittest.addModuleCleanup(ARTIFACTS.cleanup)
 ARTIFACT_SEQUENCE = itertools.count(1)
+CONTROL_COMMIT = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], check=True,
+    capture_output=True, text=True,
+).stdout.strip()
+CANDIDATE_COMMIT = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    capture_output=True, text=True,
+).stdout.strip()
+JUDGE_SOURCE = ROOT / "skills/converge-eval/references/evaluation-contract.json"
+JUDGE_FINGERPRINT = hashlib.sha256(JUDGE_SOURCE.read_bytes()).hexdigest()
 
 
 def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **overrides):
     value = {
-        "schema_version": 2,
+        "schema_version": 3,
         "scenario_id": scenario_id,
         "scenario_class": scenario_class,
-        "control_source": "control",
-        "candidate_source": "candidate",
-        "judge_fingerprint": "a" * 64,
+        "control_source": CONTROL_COMMIT,
+        "candidate_source": CANDIDATE_COMMIT,
+        "judge_fingerprint": JUDGE_FINGERPRINT,
         "worker_ref": worker_ref,
+        "worker_observation_fingerprint": hashlib.sha256(worker_ref.encode()).hexdigest(),
+        "touched_paths": [],
         "control_result": "pass",
         "candidate_result": result,
     }
@@ -38,6 +51,25 @@ def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return value
+
+
+def secure(request):
+    request = dict(request)
+    if request.get("control_source") == "control":
+        request["control_source"] = CONTROL_COMMIT
+    if request.get("candidate_source") == "candidate":
+        request["candidate_source"] = CANDIDATE_COMMIT
+    request["judge_source"] = str(JUDGE_SOURCE)
+    request["worker_registry"] = [
+        {
+            "ref": ref,
+            "status": "completed",
+            "evidence_level": "host_observed",
+            "observation_fingerprint": hashlib.sha256(ref.encode()).hexdigest(),
+        }
+        for ref in sorted({item["worker_ref"] for item in request.get("sample_receipts", [])})
+    ]
+    return request
 
 
 class EvalKernelTest(unittest.TestCase):
@@ -76,7 +108,7 @@ class EvalKernelTest(unittest.TestCase):
             }],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual(10, result["sample_distribution"]["sample_count"])
         self.assertEqual(9, result["sample_distribution"]["pass_count"])
@@ -108,7 +140,7 @@ class EvalKernelTest(unittest.TestCase):
             }],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual("no_improvement", result["stop_reason"])
         self.assertEqual(1, result["revisions_used"])
@@ -126,7 +158,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "fields"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
     def test_reports_missing_required_scenarios_as_uncovered(self):
         request = {
@@ -140,7 +172,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual(["known_acceptance:cleanup"], result["uncovered"])
         self.assertEqual("evidence_gap", result["stop_reason"])
@@ -160,7 +192,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "fingerprint"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
     def test_rejects_evidence_changed_after_the_receipt_was_created(self):
         receipt = sample("contract", "known_acceptance")
@@ -177,7 +209,7 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "evidence fingerprint"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
     def test_evidence_artifact_must_bind_the_claimed_worker_and_results(self):
         receipt = sample("contract", "known_acceptance")
@@ -199,8 +231,8 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        with self.assertRaisesRegex(ValueError, "evidence identity"):
-            evaluate(request, ROOT / "references/evaluation-catalog.json")
+        with self.assertRaisesRegex(ValueError, "worker|evidence identity"):
+            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
     def test_control_and_candidate_results_are_classified_differentially(self):
         request = {
@@ -217,7 +249,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual(1, result["differential"]["regressions"])
         self.assertEqual(1, result["differential"]["fixes"])
@@ -238,7 +270,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual("complete", result["stop_reason"])
         self.assertEqual(1, result["exploration_distribution"]["fail_count"])
@@ -254,15 +286,15 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
         with self.assertRaisesRegex(ValueError, "source"):
-            evaluate({
+            evaluate(secure({
                 **base,
                 "sample_receipts": [sample(
                     "contract", "known_acceptance", candidate_source="another-candidate"
                 )],
-            }, ROOT / "references/evaluation-catalog.json")
+            }), ROOT / "references/evaluation-catalog.json")
 
         with self.assertRaisesRegex(ValueError, "frozen judge"):
-            evaluate({
+            evaluate(secure({
                 **base,
                 "sample_receipts": [
                     sample("contract", "known_acceptance", worker_ref="worker-1"),
@@ -271,7 +303,7 @@ class EvalKernelTest(unittest.TestCase):
                         judge_fingerprint="b" * 64,
                     ),
                 ],
-            }, ROOT / "references/evaluation-catalog.json")
+            }), ROOT / "references/evaluation-catalog.json")
 
     def test_wrong_scenario_class_cannot_cover_required_acceptance(self):
         request = {
@@ -285,7 +317,7 @@ class EvalKernelTest(unittest.TestCase):
             "revisions": [],
         }
 
-        result = evaluate(request, ROOT / "references/evaluation-catalog.json")
+        result = evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
 
         self.assertEqual(["known_acceptance:contract"], result["uncovered"])
 
@@ -306,6 +338,53 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "known_acceptance:contract.*3 fresh"):
+            evaluate(secure(request), ROOT / "references/evaluation-catalog.json")
+
+    def test_sources_must_resolve_to_frozen_git_commits(self):
+        receipt = sample(
+            "contract", "known_acceptance", control_source="caller-control",
+            candidate_source="caller-candidate",
+        )
+        request = secure({
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "caller-control",
+            "candidate_source": "caller-candidate",
+            "allowed_scope": ["scripts"],
+            "critical_decisions": [],
+            "sample_receipts": [receipt],
+            "revisions": [],
+        })
+
+        with self.assertRaisesRegex(ValueError, "Git"):
+            evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+    def test_judge_worker_and_touched_paths_are_bound_to_frozen_inputs(self):
+        receipt = sample(
+            "contract", "known_acceptance", touched_paths=["outside/file.py"]
+        )
+        request = secure({
+            "acceptance": ["contract"],
+            "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control",
+            "candidate_source": "candidate",
+            "allowed_scope": ["scripts"],
+            "critical_decisions": [],
+            "sample_receipts": [receipt],
+            "revisions": [],
+        })
+
+        with self.assertRaisesRegex(ValueError, "allowed_scope"):
+            evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        request["worker_registry"] = []
+        with self.assertRaisesRegex(ValueError, "worker"):
+            evaluate(request, ROOT / "references/evaluation-catalog.json")
+
+        request = secure({**request, "sample_receipts": [sample("contract", "known_acceptance")]})
+        request["judge_source"] = str(ROOT / "README.md")
+        with self.assertRaisesRegex(ValueError, "judge"):
             evaluate(request, ROOT / "references/evaluation-catalog.json")
 
 

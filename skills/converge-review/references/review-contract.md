@@ -8,18 +8,16 @@
   "mode": "shared | blind",
   "axis": "spec | quality | integration",
   "phase": "initial | re_review | closure",
-  "task_id": "required for spec/quality; omitted for integration",
+  "task_id": "required for every axis; integration uses the plan/task key",
   "acceptance": ["criterion"],
-  "scope": ["module-or-contract"],
-  "baseline": "commit-or-explicit-unavailable",
+  "allowed_scope": ["module-or-contract"],
+  "baseline_commit": "full-git-object-id",
   "source_fingerprint": "sha256",
-  "design_decisions": ["shared mode only"],
-  "prior_findings": ["required for re_review/closure"],
-  "evidence": [{"check": "command or observation", "result": "pass | fail | unknown"}]
+  "prior_findings": ["required for re_review/closure"]
 }
 ```
 
-`blind` 请求不得包含 `design_decisions`、实现者解释或完整会话。缺少验收、范围或源码指纹时返回 blocked result，不猜测。
+请求字段精确校验并 canonical fingerprint；`blind` 请求的外部材料不得包含实现者解释或完整会话。缺少 task、验收、范围、完整 baseline 或源码指纹时返回 blocked result，不猜测。
 
 ## Result
 
@@ -66,10 +64,11 @@ quality 与 integration 初审必须使用 `blind`、`independent=true` 和全�
 
 ## Protocol v1 compatibility
 
-`protocol_version=2` 的 `intent|blind`、`reviewed|blocked` 与描述性 finding 指纹，必须先通过下列可执行边界转换为 v3 状态记录；v3 公开结果也使用同一入口校验：
+`protocol_version=2` 的 `intent|blind`、`reviewed|blocked` 与描述性 finding 指纹，必须先通过下列可执行边界转换为 v3 状态记录；v3 公开结果也使用同一入口校验。adapter 会核对 result 的 axis/phase/mode/source 与冻结 request 完全一致，并输出 `task_id/request_fingerprint`：
 
 ```bash
-python3 scripts/review_contract.py normalize --input - --reviewer-ref <worker-ref> < result.json
+python3 scripts/review_contract.py normalize --input - --reviewer-ref <worker-ref> \
+  --request '<canonical-request-json>' < result.json
 ```
 
 只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。`protocol_version=1` 的旧请求只按原 closure 语义读取；不得推断 axis，也不得把旧结果当作 v3 轴证明。

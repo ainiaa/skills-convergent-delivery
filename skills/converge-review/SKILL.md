@@ -35,4 +35,4 @@ metadata:
 
 ## 输出
 
-用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。任何 v2/v3 公开结果先通过 `python3 scripts/review_contract.py normalize --input - --reviewer-ref <ref>` 生成内部记录，不得由模型手工改写后直接写入状态；v1 只保留读取兼容。
+用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。任何 v2/v3 公开结果先通过 `python3 scripts/review_contract.py normalize --input - --reviewer-ref <ref> --request '<canonical-request-json>'` 对照冻结请求，生成包含 `task_id/request_fingerprint` 的内部记录；不得由模型手工改写后直接写入状态。v1 只保留读取兼容。

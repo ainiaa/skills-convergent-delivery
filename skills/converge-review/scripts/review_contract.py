@@ -10,6 +10,10 @@ import sys
 AXES = {"spec", "quality", "integration"}
 PHASES = {"initial", "re_review", "closure"}
 STATUSES = {"pass", "findings", "blocked"}
+REQUEST_FIELDS = {
+    "protocol_version", "task_id", "axis", "phase", "mode", "acceptance",
+    "allowed_scope", "baseline_commit", "source_fingerprint", "prior_findings",
+}
 
 
 def _string(value, name):
@@ -46,13 +50,53 @@ def _finding_fingerprint(finding, legacy):
     ).hexdigest()
 
 
-def normalize_result(value, reviewer_ref):
+def _strings(value, name, *, non_empty=False):
+    if not isinstance(value, list) or (non_empty and not value):
+        raise ValueError(f"{name} must be a{' non-empty' if non_empty else ''} string list")
+    return [_string(item, f"{name}[]") for item in value]
+
+
+def normalize_request(value):
+    if not isinstance(value, dict) or set(value) != REQUEST_FIELDS:
+        raise ValueError("review request fields are invalid")
+    if value.get("protocol_version") != 3 or value.get("axis") not in AXES \
+            or value.get("phase") not in PHASES or value.get("mode") not in {"shared", "blind"}:
+        raise ValueError("review request identity is invalid")
+    request = {
+        **value,
+        "task_id": _string(value.get("task_id"), "request.task_id"),
+        "acceptance": _strings(value.get("acceptance"), "request.acceptance", non_empty=True),
+        "allowed_scope": _strings(
+            value.get("allowed_scope"), "request.allowed_scope", non_empty=True
+        ),
+        "baseline_commit": _string(value.get("baseline_commit"), "request.baseline_commit"),
+        "source_fingerprint": _sha256(
+            value.get("source_fingerprint"), "request.source_fingerprint"
+        ),
+        "prior_findings": _strings(value.get("prior_findings"), "request.prior_findings"),
+    }
+    if len(request["baseline_commit"]) not in {40, 64} or any(
+        character not in "0123456789abcdef" for character in request["baseline_commit"]
+    ):
+        raise ValueError("request.baseline_commit must be a full Git object id")
+    return request
+
+
+def request_fingerprint(value):
+    request = normalize_request(value)
+    return hashlib.sha256(
+        json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def normalize_result(value, reviewer_ref, request):
     """Return the exact review request record accepted by Single State v10."""
     if not isinstance(value, dict):
         raise ValueError("review result must be an object")
     version = value.get("protocol_version")
     if version not in {2, 3}:
         raise ValueError("unsupported review protocol_version")
+    request = normalize_request(request)
     axis = value.get("axis")
     phase = value.get("phase")
     if axis not in AXES or phase not in PHASES:
@@ -77,6 +121,9 @@ def normalize_result(value, reviewer_ref):
         if mode not in {"shared", "blind"}:
             raise ValueError("review mode is invalid")
         status = value.get("status")
+    if any(value.get(field) != request[field] for field in ("axis", "phase", "source_fingerprint")) \
+            or mode != request["mode"]:
+        raise ValueError("review result does not match the frozen request")
     if phase == "initial" and axis in {"quality", "integration"} \
             and (mode != "blind" or not independent):
         raise ValueError(f"initial {axis} review must be independent blind")
@@ -97,6 +144,8 @@ def normalize_result(value, reviewer_ref):
         _string(value.get("blocked_reason"), "blocked_reason")
 
     return {
+        "task_id": request["task_id"],
+        "request_fingerprint": request_fingerprint(request),
         "axis": axis,
         "phase": phase,
         "source_fingerprint": source,
@@ -113,11 +162,14 @@ def main():
     parser.add_argument("command", choices=("normalize",))
     parser.add_argument("--input", required=True)
     parser.add_argument("--reviewer-ref", required=True)
+    parser.add_argument("--request", required=True)
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("normalize only accepts --input - from stdin")
-        result = normalize_result(json.load(sys.stdin), arguments.reviewer_ref)
+        result = normalize_result(
+            json.load(sys.stdin), arguments.reviewer_ref, json.loads(arguments.request)
+        )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (ValueError, json.JSONDecodeError) as error:

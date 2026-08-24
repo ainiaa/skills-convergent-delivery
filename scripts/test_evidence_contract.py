@@ -1,4 +1,6 @@
+import json
 import subprocess
+import sys
 import tempfile
 import unittest
 import os
@@ -66,21 +68,55 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertNotEqual(before["source_fingerprint"], after["source_fingerprint"])
         self.assertEqual("100755", after["changed_entries"][0]["mode"])
 
-    def test_pass_receipt_must_match_the_exact_source_receipt(self):
+    def test_pass_receipt_is_created_by_running_argv_and_matches_the_exact_source(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
-        receipt = {
-            "schema_version": 1,
-            "command": "python3 test.py",
-            "exit_code": 0,
-            "source": source,
-        }
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-c", "print('verified')"]
+        )
 
         self.assertTrue(evidence_contract.valid_evidence_receipts([receipt], source))
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual([sys.executable, "-c", "print('verified')"], receipt["argv"])
         self.assertFalse(
             evidence_contract.valid_evidence_receipts(
-                [{**receipt, "schema_version": 2}], source
+                [{**receipt, "receipt_fingerprint": "0" * 64}], source
             )
         )
+
+    def test_nonexistent_command_cannot_be_turned_into_a_passing_receipt(self):
+        source = evidence_contract.workspace_source(self.workspace, self.baseline)
+
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, ["definitely-not-a-real-command"]
+        )
+
+        self.assertEqual(127, receipt["exit_code"])
+        self.assertFalse(evidence_contract.valid_evidence_receipts([receipt], source))
+
+    def test_cli_executes_the_command_without_a_shell(self):
+        marker = self.workspace / "marker.txt"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(evidence_contract.__file__)),
+                "run",
+                "--workspace",
+                str(self.workspace),
+                "--baseline",
+                self.baseline,
+                "--",
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path({str(marker)!r}).write_text('ran')",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("ran", marker.read_text(encoding="utf-8"))
+        self.assertEqual(0, json.loads(result.stdout)["exit_code"])
 
     def test_source_receipt_validator_rejects_tampered_metadata(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)

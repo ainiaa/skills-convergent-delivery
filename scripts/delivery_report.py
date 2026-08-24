@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from delivery_next import normalize_open_issues, upgrade_state, validate_state
 from delivery_progress import render_workspace_change_summary, workspace_change_summary
+from evidence_contract import valid_evidence_receipts
 
 
 NO_NEXT_ACTION = {"", "none", "no", "n/a", "无", "没有", "无需行动"}
@@ -22,7 +23,7 @@ TITLES = {
 
 
 def build_report(state):
-    validate_state(state, SimpleNamespace())
+    validate_state(state, SimpleNamespace(strict_evidence=True))
     state = upgrade_state(state)
     acceptance = state["ledger"]["acceptance"]
     pending_acceptance = sum(
@@ -41,9 +42,23 @@ def build_report(state):
         "checks": [
             {"stage": item["stage"], "command": item["command"]}
             for item in state["ledger"]["checks"]
-            if item["result"] == "pass"
+            if item["result"] == "pass" and valid_evidence_receipts(
+                item.get("evidence_receipts"), state.get("source_receipt")
+            )
         ],
     }
+    verification_evidence_levels = sorted({
+        receipt["evidence_level"]
+        for item in acceptance
+        if item["result"] == "pass" and item["freshness"] == "fresh"
+        for receipt in item.get("evidence_receipts", [])
+    })
+    attested_check_count = sum(
+        item["result"] == "pass" and not valid_evidence_receipts(
+            item.get("evidence_receipts"), state.get("source_receipt")
+        )
+        for item in state["ledger"]["checks"]
+    )
     verification_parts = []
     if verification_scope["acceptance"]:
         verification_parts.append(
@@ -69,6 +84,8 @@ def build_report(state):
         "goal": state["handoff"]["goal"],
         "verification": "；".join(verification_parts) or "无结构化验证证据",
         "verification_scope": verification_scope,
+        "verification_evidence_levels": verification_evidence_levels,
+        "attested_check_count": attested_check_count,
         "verification_note": state["handoff"]["last_verification"],
         "verification_note_level": "controller_attested",
         "completed_rounds": state["ledger"]["completed_rounds"],
@@ -94,6 +111,7 @@ def build_report(state):
         key: report[key]
         for key in (
             "outcome", "goal", "verification", "verification_scope", "verification_note",
+            "verification_evidence_levels", "attested_check_count",
             "verification_note_level", "completed_rounds", "repaired_issues",
             "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
         )
@@ -142,6 +160,7 @@ def render_text(report, detail=False):
         return "\n".join([
             f"结果：无新增变化：{report['title']}",
             f"已验证范围：{report['verification']}",
+            "证据等级：" + ("、".join(report["verification_evidence_levels"]) or "无"),
             f"说明（{report['verification_note_level']}）：{report['verification_note']}",
             "待处理："
             f"验收未通过 {report['pending_acceptance']} 项；"
@@ -155,6 +174,9 @@ def render_text(report, detail=False):
     lines.append(render_workspace_change_summary(report["workspace_changes"]))
     lines.extend([
         f"已验证范围：{report['verification']}",
+        "证据等级：" + ("、".join(report["verification_evidence_levels"]) or "无")
+        + (f"；另有 {report['attested_check_count']} 项控制器记录未计入验证"
+           if report["attested_check_count"] else ""),
         f"说明（{report['verification_note_level']}）：{report['verification_note']}",
         "过程："
         f"{report['completed_rounds']} 个交付轮；"

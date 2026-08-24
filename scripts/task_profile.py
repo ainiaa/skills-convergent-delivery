@@ -2,8 +2,11 @@
 """Route an observed task profile without subjective scoring."""
 
 import argparse
+import hashlib
 import json
+import re
 import sys
+from pathlib import PurePosixPath
 
 
 SCOPES = {"local", "cross-module", "cross-service"}
@@ -20,6 +23,19 @@ RISK_FLAGS = {
     "database-migration", "transaction", "concurrency", "idempotency",
     "public-api", "security", "permission", "sensitive-log", "cross-service",
     "release-contract", "irreversible",
+}
+PATH_RISK_MARKERS = {
+    "sql": (".sql",),
+    "database-migration": ("migration", "migrations"),
+    "permission": ("permission", "permissions", "authorization", "authz"),
+    "security": ("security", "permission", "permissions", "authorization", "authz"),
+    "public-api": ("api", "openapi"),
+    "money": ("money", "amount"),
+    "payment": ("payment", "payments"),
+    "transaction": ("transaction", "transactions"),
+    "concurrency": ("concurrency", "concurrent", "lock", "locks"),
+    "idempotency": ("idempotency", "idempotent"),
+    "timezone": ("timezone", "time-zone"),
 }
 
 
@@ -88,6 +104,58 @@ def classify(value):
         "assessment_phase": value["assessment_phase"],
         "reasons": reasons,
     }
+
+
+def _canonical_paths(paths):
+    if not isinstance(paths, list) or not paths:
+        raise ValueError("allowed_paths must be a non-empty list")
+    canonical = []
+    for value in paths:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("allowed_paths must contain non-empty strings")
+        path = value.replace("\\", "/").rstrip("/") or "."
+        parsed = PurePosixPath(path)
+        if parsed.is_absolute() or ".." in parsed.parts:
+            raise ValueError("allowed_paths must stay inside the workspace")
+        canonical.append(str(parsed))
+    if len(canonical) != len(set(canonical)):
+        raise ValueError("allowed_paths must be unique")
+    return sorted(canonical)
+
+
+def freeze_routing(profile, allowed_paths, assessment_count=1):
+    decision = classify(profile)
+    if profile["assessment_phase"] != "frozen" or assessment_count not in {1, 2}:
+        raise ValueError("routing requires one or two frozen assessments")
+    allowed = _canonical_paths(allowed_paths)
+    identity = {"profile": profile, "allowed_paths": allowed}
+    return {
+        "schema_version": 2,
+        "status": "frozen",
+        "assessment_count": assessment_count,
+        "route": decision["route"],
+        "review_tier": decision["review_tier"],
+        "profile": profile,
+        "allowed_paths": allowed,
+        "integration_required": (
+            profile["scope"] == "cross-service" or profile["delegable_tasks"] > 1
+        ),
+        "profile_fingerprint": hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def infer_path_risks(paths):
+    risks = set()
+    for value in paths:
+        lowered = value.lower()
+        parts = set(PurePosixPath(lowered).parts) | set(re.split(r"[^a-z0-9]+", lowered))
+        for risk, markers in PATH_RISK_MARKERS.items():
+            if any(marker.startswith(".") and lowered.endswith(marker) or marker in parts
+                   for marker in markers):
+                risks.add(risk)
+    return risks
 
 
 def main():

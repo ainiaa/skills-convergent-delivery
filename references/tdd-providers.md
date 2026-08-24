@@ -8,7 +8,7 @@
 2. 已适配：`superpowers-tdd-v1`，随后 `mattpocock-tdd-v1`。
 3. 内置流程：`native-v1`。
 
-`generic-tdd-v1` 仅允许显式选择：用户或上层控制器必须传入 `--provider generic-tdd-v1`，auto 不扫描通用 Skill。显式选择后仍执行下述通用预检并冻结来源。
+`generic-tdd-v1` 仅允许显式选择：用户或上层控制器必须同时传入 `--provider generic-tdd-v1 --tdd-skill <exact-SKILL.md>`，且该文件位于允许的 `--tdd-root` 内。auto 不扫描通用 Skill；缺少精确路径时即使只有一个候选也阻塞，不按目录或字典序猜选。显式选择后仍执行下述通用预检并冻结来源。
 
 已适配提供者必须位于 `--tdd-root`、`CONVERGE_TDD_ROOT`、`~/.codex/skills`、`~/.claude/skills` 或 `~/.agents/skills`，且内容摘要与已登记的上游版本完全一致；同名文件或相似措辞不能冒充已适配提供者。上游更新后需重新审查并发布新的适配版本。通用提供者仅接受名称含 `tdd` 或 `test`、说明包含“test first”及红绿循环的非编排 Skill；`pdlc-*`、名称含 `orchestrator`，或声明发布、部署、删除文件、worktree、递归/循环重试的 Skill 不能显式绑定。
 

@@ -58,7 +58,7 @@ class SkillContractTest(unittest.TestCase):
         checks = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertEqual("0.19.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("0.20.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
             "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,

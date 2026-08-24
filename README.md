@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.19.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.20.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -22,15 +22,16 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 
 核心能力：
 
-- 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → native-v1` 稳定解析；通用 TDD 仅允许用 `--provider generic-tdd-v1` 显式选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
+- 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → native-v1` 稳定解析；通用 TDD 仅允许用 `--provider generic-tdd-v1 --tdd-skill <exact-SKILL.md>` 唯一选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
 - 复杂任务先形成 Plan Contract v5；每个 task 只有一个结果、明确范围、依赖、Source Receipt v2 基线和验证。
 - PDLC 每个 task 只形成一个有限 Provider Run，完整委托需求、设计、TDD、实现和阶段评审；根 Converge 只控制范围与证据，不复制内部阶段。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - `checkpoint=same_session` 的多任务在同一会话顺序执行且不要求 commit；只有 `checkpoint=cross_session` 才进入 Batch 并请求一次本地 commit 授权。
-- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；宿主计划、runtime 和进度显式区分 `host_observed` 与 `controller_attested`，不冒充 helper 直接校验的 `verified` 证据。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
+- Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；仅绑定真实 host query 原始观察的清场回执可标记 `host_observed`，普通参数永远是 `controller_attested`。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
-- reviewer 的结果绑定源码指纹，并由可执行 `review_contract.py normalize` 边界转成内部 Review v3 记录；代码变化后旧结论自动失效。
-- `converge-eval` 只接受指纹化 Sample Receipt，绑定 scenario/control/candidate/judge/worker/source；缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。
+- reviewer 的结果通过冻结请求绑定 task、验收、范围、baseline、源码和 reviewer，再由可执行 `review_contract.py normalize` 转成内部 Review v3 记录；代码变化后旧结论自动失效。
+- `converge-eval` 只接受 Sample Receipt v3：control/candidate 必须解析为 Git commit/tree，judge 绑定文件字节，worker 来自 host-observed registry，touched paths 位于 allowed scope。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。
+- `scripts/trigger_eval.py` 会先完整校验数据集，再把每条 prompt 交给外部 selector 命令，报告精确匹配、混淆矩阵、precision/recall/F1，并绑定 dataset、selector 与 runner 指纹；`test_trigger_evals.py` 只负责离线验证 runner 与数据契约。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
 - 父控制器从 Git 展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前动作，不表示任务累计规模。
@@ -171,7 +172,7 @@ Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规
 |---|---|---|
 | manifest 已适配的 PDLC | `pdlc-v1` | 按 task kind 路由真实入口；Converge 保留控制和最终验收 |
 | 已适配 Superpowers / Matt Pocock TDD | 对应适配器 | 只委托一次红绿阶段 |
-| 显式指定且其他 TDD Skill 通过预检 | `generic-tdd-v1` | 不参加 auto；只采用测试方法，不接管循环和发布 |
+| 显式指定唯一 `--tdd-skill <exact-SKILL.md>` 且通过预检 | `generic-tdd-v1` | 不参加 auto、不扫描猜选；只采用测试方法，不接管循环和发布 |
 | 都不可用 | `native-v1` | 使用内置有限 TDD 协议 |
 
 Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只要声明当前 task kind、完整入口闭包和兼容授权，即参与同一套发现与冻结。显式 `--provider <id>` 或已冻结 Provider 不可用时阻塞；auto 首次解析可以在业务写入前说明原因并降级。任务开始后冻结 manifest、task contract、实际入口、closure 和来源摘要，恢复时不允许热切换。
@@ -183,6 +184,7 @@ Converge 始终是 controller。注册的新 workflow 或 TDD stage Provider 只
 ## 状态、多窗口与恢复
 
 - 单任务状态：`~/.convergent-delivery/state/`，Schema v10（无 worker 的旧状态可保守迁移；旧 worker 状态必须人工恢复）。
+- 冷恢复：`python3 scripts/delivery_state.py list --workspace <absolute-worktree>` 列出候选；`doctor` 在不写状态的前提下给出每个 run 的健康和下一动作。
 - Batch 状态：`~/.convergent-delivery/batch-state/`，Batch Protocol v1 / state Schema v4 / Receipt v4；状态按 repo+plan 唯一定位，takeover 不复制状态。
 - Batch scheduler lease：位于 Batch state 根下，按 `repo_id + plan_id` 唯一，默认两小时；过期后仅显式 takeover。
 - writer lease：`~/.convergent-delivery/leases/`，默认两小时。

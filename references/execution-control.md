@@ -22,7 +22,7 @@ Batch scheduler 派发的是新的 `controller-delegate` run，而不是单任�
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。第一次登记 worker 时同时冻结 Runtime Binding；清场回执必须由适配器按该 Binding 生成，不能由控制器自由选择能力模式。任何 complete 转换都必须先通过当前 run 的宿主终态屏障。完成前把完整树查询或强制叶子结果写入同 revision 的 `worker_tree_receipt`；发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。宿主支持 worker 工具白名单时直接移除派发能力。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。第一次登记 worker 时同时冻结 Runtime Binding；清场回执必须由适配器按该 Binding 生成，不能由控制器自由选择能力模式。只传 refs 和时间生成的是 `controller_attested`；只有适配器同时收到与这些字段一致的原始 host tree-query observation，绑定其 fingerprint 后才是 `host_observed`。带 worker 的 complete 必须使用后者；前者只可记录 blocked 清场。发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。milestone 是 `controller_attested`，父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成的 heartbeat 是 `host_observed`；两者都不是 helper 直接校验的 `verified` 业务证据。约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 
@@ -59,11 +59,11 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 ### 风险复核循环
 
-低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、请求和剩余预算写入 Single State v10，不能只留在提示词中。
+低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；repair fingerprint 必须与 repair budget 的 1→0 同步，`re_review|closure` 请求必须与 re-review budget 的 1→0 同步。重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、绑定请求和剩余预算写入 Single State v10，不能只留在提示词中。
 
 ### 全局集成审查循环
 
-只有多任务或跨服务计划在全部 task 通过后执行一次 integration 审查，且只覆盖跨任务接口、组合行为和计划级验收；单任务不创建 integration reviewer。integration finding 最多一次修复和一次 closure 复核，随后无论通过或阻塞都停止。交付前还必须确认本轮 active worker 数为 0。
+`integration_required` 由 frozen task profile 的多任务/跨服务事实确定性生成；必需时初始 budget 为 1，没有请求不得提前写 0，执行一次 integration 审查时必须同步消费为 0。integration 只覆盖跨任务接口、组合行为和计划级验收；单任务不创建 integration reviewer。integration finding 最多一次修复和一次 closure 复核，随后无论通过或阻塞都停止。交付前还必须确认本轮 active worker 数为 0。
 
 ## 6. 执行结束与清场屏障
 

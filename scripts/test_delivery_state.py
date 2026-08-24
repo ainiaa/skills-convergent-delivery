@@ -201,6 +201,28 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertIn("/.convergent-delivery/state/", result.stdout)
             self.assertNotIn("..", result.stdout)
 
+    def test_list_and_doctor_discover_recoverable_states_by_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            environment = self.environment(state_home)
+
+            listed = subprocess.run(
+                [sys.executable, str(STATE_SCRIPT), "list", "--workspace", "/repo/worktree-a"],
+                text=True, capture_output=True, check=False, env=environment,
+            )
+            diagnosed = subprocess.run(
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", "/repo/worktree-a"],
+                text=True, capture_output=True, check=False, env=environment,
+            )
+
+            self.assertEqual(0, listed.returncode, listed.stderr)
+            self.assertEqual("run-1", json.loads(listed.stdout)["states"][0]["run_id"])
+            self.assertEqual(0, diagnosed.returncode, diagnosed.stderr)
+            self.assertEqual("valid", json.loads(diagnosed.stdout)["states"][0]["health"])
+
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}
 
@@ -328,7 +350,7 @@ class DeliveryStateTest(unittest.TestCase):
             result = self.write(root, state_home, candidate, 0)
 
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("source_receipt", result.stderr)
+            self.assertRegex(result.stderr, "source_receipt|canonical routing")
 
     def test_state_write_renews_the_owned_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -837,6 +859,7 @@ class DeliveryStateTest(unittest.TestCase):
             candidate = state(revision=1)
             candidate["ledger"]["completed_rounds"] = 1
             candidate["ledger"]["repair_fingerprints"] = ["fixed-once"]
+            candidate["execution_control"]["review"]["repair_budget_remaining"] = 0
             candidate["ledger"]["checks"] = [
                 {"stage": "verify-final", "command": "test-one", "result": "pass"}
             ]
@@ -916,6 +939,37 @@ class DeliveryStateTest(unittest.TestCase):
             failed = self.write(root, state_home, failed_candidate, 1)
 
             self.assertEqual(0, failed.returncode, failed.stderr)
+
+    def test_review_budgets_must_be_consumed_by_their_exact_actions(self):
+        previous = upgrade_state(state())
+
+        repair_without_budget = copy.deepcopy(previous)
+        repair_without_budget["revision"] = 1
+        repair_without_budget["ledger"]["repair_fingerprints"].append("repair-1")
+        with self.assertRaisesRegex(ValueError, "repair_budget"):
+            validate_transition(previous, repair_without_budget)
+
+        review_without_budget = copy.deepcopy(previous)
+        review_without_budget["revision"] = 1
+        review_without_budget["execution_control"]["review"]["rounds"][0]["requests"].append({
+            "axis": "quality", "phase": "re_review", "source_fingerprint": "a" * 64,
+            "status": "pass", "reviewer_ref": "reviewer-1", "mode": "blind",
+            "independent": True, "finding_fingerprints": [],
+        })
+        with self.assertRaisesRegex(ValueError, "re_review_budget"):
+            validate_transition(previous, review_without_budget)
+
+        integration_previous = copy.deepcopy(previous)
+        integration_previous["execution_control"]["review"]["integration_budget_remaining"] = 1
+        integration_without_budget = copy.deepcopy(integration_previous)
+        integration_without_budget["revision"] = 1
+        integration_without_budget["execution_control"]["review"]["rounds"][0]["requests"].append({
+            "axis": "integration", "phase": "initial", "source_fingerprint": "a" * 64,
+            "status": "pass", "reviewer_ref": "reviewer-1", "mode": "blind",
+            "independent": True, "finding_fingerprints": [],
+        })
+        with self.assertRaisesRegex(ValueError, "integration_budget"):
+            validate_transition(integration_previous, integration_without_budget)
 
     def test_应该_当终态候选删除字段时_对称比较并拒绝(self):
         terminal = upgrade_state(state())

@@ -36,8 +36,10 @@ class EvaluationContractTest(unittest.TestCase):
         )
         self.assertFalse(sampling["single_pass_establishes_stability"])
         receipt = sampling["receipt_schema"]
-        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual(3, receipt["schema_version"])
         self.assertIn("evidence_fingerprint", receipt["required_fields"])
+        self.assertIn("worker_observation_fingerprint", receipt["required_fields"])
+        self.assertIn("touched_paths", receipt["required_fields"])
 
     def test_exploration_is_reported_separately_and_is_not_a_completion_gate(self):
         self.assertFalse(self.contract["exploration"]["gating"])

@@ -21,7 +21,10 @@
 | 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一适配能力 | 环境阻塞；不得降级为 native。 |
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |
 | 伪造已适配来源 | 同名或相似措辞的 Superpowers/Matt TDD 文件，内容并非已登记版本 | 不得当作已适配引擎；只可经通用预检选择或回退内置流程。 |
-| 通用 TDD 显式选择 | 用户指定 `generic-tdd-v1`，且存在满足预检的非编排 TDD Skill | 选择并冻结其路径；没有有效红绿和命令证据不得完成。 |
+| 通用 TDD 显式选择 | 用户指定 `generic-tdd-v1` 和唯一 `--tdd-skill <exact-SKILL.md>`，且该文件通过预检 | 只选择并冻结该路径；缺少精确路径或路径不兼容时阻塞，不猜选。 |
+| 路由与范围漂移 | 调用者填 low/inline，但冻结画像为跨服务/高风险；或实际 diff 出现范围外 SQL/权限文件 | helper 重算 canonical routing，并按 changed paths 阻止降级、scope drift 或未声明风险完成。 |
+| 命令回执伪造 | 调用者填写不存在命令和 `exit_code=0` | 只接受 `evidence_contract.py run` 实际执行 argv 后生成的 observed Evidence Receipt v2；伪造回执不能完成。 |
+| 真实触发评测 | trigger 数据集结构合法，但需要验证实际 selector 行为 | `trigger_eval.py` 在执行前完整校验所有 case，逐条执行 selector，报告混淆矩阵和 F1，并绑定 dataset/selector/runner 指纹；只检查 JSON 形状不算行为验收。 |
 | 通用 TDD 不自动触发 | PDLC 和已适配 TDD 不可用，但只存在关键词相似的通用 TDD Skill | 选择 `native-v1`；不得扫描并自动执行通用 Skill。 |
 | 内置 TDD 降级 | 没有兼容 PDLC 或已适配 TDD Skill | 选择 `native-v1`，报告中写明降级原因；原生流程仍可完整交付。 |
 | 引擎恢复 | 已冻结的 PDLC 或第三方 TDD 任务恢复时能力消失，或 native 任务恢复时发现外部能力 | 前两者 `blocked_environment`；后者继续 native；不得静默切换或混用状态机。 |

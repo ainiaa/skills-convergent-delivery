@@ -16,6 +16,21 @@ from delivery_next import validate_execution_control
 from review_contract import normalize_result
 
 
+def review_request(axis="spec", phase="initial", mode="shared", source="a" * 64):
+    return {
+        "protocol_version": 3,
+        "task_id": "task-123",
+        "axis": axis,
+        "phase": phase,
+        "mode": mode,
+        "acceptance": ["Requested behavior"],
+        "allowed_scope": ["scripts"],
+        "baseline_commit": "b" * 40,
+        "source_fingerprint": source,
+        "prior_findings": [],
+    }
+
+
 class ReviewContractTest(unittest.TestCase):
     def test_cli_normalizes_stdin_into_the_internal_record(self):
         source = "a" * 64
@@ -28,6 +43,8 @@ class ReviewContractTest(unittest.TestCase):
                 "-",
                 "--reviewer-ref",
                 "reviewer-1",
+                "--request",
+                json.dumps(review_request()),
             ],
             input=json.dumps({
                 "protocol_version": 3,
@@ -48,6 +65,8 @@ class ReviewContractTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("reviewer-1", json.loads(result.stdout)["reviewer_ref"])
         self.assertEqual("pass", json.loads(result.stdout)["status"])
+        self.assertEqual("task-123", json.loads(result.stdout)["task_id"])
+        self.assertEqual(64, len(json.loads(result.stdout)["request_fingerprint"]))
 
     def test_v2_result_normalizes_to_the_internal_v3_record(self):
         source = "a" * 64
@@ -71,7 +90,8 @@ class ReviewContractTest(unittest.TestCase):
             "blocked_reason": None,
         }
 
-        record = normalize_result(result, reviewer_ref="reviewer-1")
+        request = review_request(source=source)
+        record = normalize_result(result, reviewer_ref="reviewer-1", request=request)
 
         self.assertEqual("shared", record["mode"])
         self.assertEqual("findings", record["status"])
@@ -79,8 +99,7 @@ class ReviewContractTest(unittest.TestCase):
         validate_execution_control({
             "routing": {
                 "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "inline", "review_tier": "normal",
-                "profile_fingerprint": "b" * 64,
+                "route": "inline", "review_tier": "normal", "profile_fingerprint": "b" * 64,
             },
             "review": {
                 "protocol_version": 3, "repair_budget_remaining": 1,
@@ -101,7 +120,7 @@ class ReviewContractTest(unittest.TestCase):
                 "status": "blocked",
                 "findings": [{"fingerprint": "b" * 64}],
                 "blocked_reason": "missing source",
-            }, reviewer_ref="reviewer-1")
+            }, reviewer_ref="reviewer-1", request=review_request(axis="quality", mode="blind"))
 
     def test_initial_quality_and_integration_results_must_be_independent_blind_reviews(self):
         for axis in ("quality", "integration"):
@@ -116,7 +135,23 @@ class ReviewContractTest(unittest.TestCase):
                     "status": "pass",
                     "findings": [],
                     "blocked_reason": None,
-                }, reviewer_ref="reviewer-1")
+                }, reviewer_ref="reviewer-1", request=review_request(axis=axis, mode="shared"))
+
+    def test_result_must_match_the_frozen_request(self):
+        result = {
+            "protocol_version": 3,
+            "mode": "shared",
+            "axis": "spec",
+            "phase": "initial",
+            "source_fingerprint": "c" * 64,
+            "independent": False,
+            "status": "pass",
+            "findings": [],
+            "blocked_reason": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "request"):
+            normalize_result(result, "reviewer-1", review_request(source="a" * 64))
 
 
 if __name__ == "__main__":

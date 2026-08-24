@@ -39,7 +39,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 
 需要精确 Provider 时改用 `--provider <provider-id>`；显式 ID 未注册或来源不完整必须阻塞。resolver 使用共享 Provider Contract 冻结 manifest、当前 task contract、真实入口与 closure，不能只冻结名称或 manifest。
 
-Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。auto 顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → `native-v1`；`generic-tdd-v1` 仅允许显式选择。
+Converge 始终是 controller。resolver 返回 workflow provider 和可选 stage providers；兼容字段 `engine` 只能由 binding 派生，不能成为第二真相。auto 顺序固定为 `pdlc-v1` → 已适配 Superpowers TDD → 已适配 Matt Pocock TDD → `native-v1`；`generic-tdd-v1` 仅允许同时显式提供 `--provider generic-tdd-v1 --tdd-skill <exact-SKILL.md>`，不得从多个候选中猜选。
 
 - 显式 Provider 不可用或不兼容时阻塞，不静默替换。
 - auto 模式只在尚未产生业务写入时说明一次原因并降级；已有冻结 binding 时任一来源变化都阻塞。
@@ -55,7 +55,7 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 若 capsule 已包含 `planned_task=true`，先校验并冻结其中的 `plan_id/task_id`、范围、验收和验证；跳过任务画像和再次规划，直接执行该 task。
 
-先读取 [任务路由](references/task-routing.md)，把观察到的范围、耦合、不确定性、验证和风险信号通过 `task_profile.py` 冻结为 `inline|planned|delegated|batch`。最多评估两次；风险强度不自动触发代理。
+先读取 [任务路由](references/task-routing.md)，把观察到的范围、耦合、不确定性、验证、风险信号和 `allowed_paths` 通过 `task_profile.py` 冻结为 canonical routing receipt。`route/review_tier/integration_required/profile_fingerprint` 全部由 helper 推导，不接受调用者覆盖。最多评估两次；风险强度不自动触发代理。
 
 读取 [计划执行与无响应保护](references/execution-control.md)。
 
@@ -80,13 +80,13 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release \
 
 只有输出 `{"status":"released"}` 才算释放成功；持久任务以 `controller_snapshot.py run` 包裹同一 helper 与参数，并额外传入实际 `--state-root`。
 
-跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；不得把 `/tmp` 文件当真源。
+跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py`、`trigger_eval.py` 或 `delivery_next.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；冷恢复先用 `delivery_state.py list|doctor --workspace <absolute-worktree>` 发现并诊断正式状态，不猜 repo/task/run。不得把 `/tmp` 文件当真源。
 
 ## 6. 审查路由
 
 低风险 task 使用主执行者自检和新鲜验证，不创建 reviewer。普通 task 使用一个 fresh reviewer，按两个有序单轴请求先审 `spec`、再审 `quality` 并分别保存结论；高风险使用一个 blind reviewer并保持相同顺序。只有多任务或跨服务计划才在全部 task 通过后增加一次 integration review。
 
-一轮 finding 按根因合并，最多一次 repair 和一次定向 re-review；重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked，不重新开放式扫描。宿主无法提供全新上下文时可以降级自审，但必须记录 `independent=false`。
+一轮 finding 按根因合并，最多一次 repair 和一次定向 re-review；对应预算必须与 repair fingerprint、re-review/closure 请求和 integration 请求在同一合法转换中精确消耗。重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked，不重新开放式扫描。宿主无法提供全新上下文时，自审只能作为 suggestion；普通/高风险任务保持 blocked，`independent=false` 不能满足完成门禁。
 
 风险触发器：金额、时间/时区、SQL/Mapper、迁移、事务、锁/并发、幂等、公共 DTO/API、权限、敏感日志、跨服务或发布契约。
 
@@ -104,7 +104,7 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit` 对账计划任务、逐任务源码增量和新鲜证据；存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、`task_scope_drift` 或 `scope_drift` 时不能宣称完成。
 
-只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项有新鲜通过证据，且没有范围内待修高风险问题时，才能宣称完成。
+只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项必须由 `evidence_contract.py run --workspace ... --baseline ... -- <argv>` 实际执行并生成 observed Evidence Receipt v2；最后源码仍位于冻结 `allowed_paths` 且没有新增未声明风险时，才能宣称完成。
 
 持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 snapshot，但写工作区时仍获取轻量 writer lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。父控制器从 Git 读取并展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前工具动作，不能冒充任务总量或覆盖父 Git 真值。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
 

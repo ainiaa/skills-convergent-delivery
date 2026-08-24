@@ -1,5 +1,5 @@
 {
-  "protocol": "converge-evaluation-v2",
+  "protocol": "converge-evaluation-v3",
   "required_inputs": [
     "acceptance",
     "touched_control_surfaces",
@@ -8,6 +8,8 @@
     "allowed_scope",
     "critical_decisions",
     "sample_receipts",
+    "judge_source",
+    "worker_registry",
     "revisions"
   ],
   "differential": {
@@ -27,7 +29,7 @@
     "fresh_context_per_sample": true,
     "single_pass_establishes_stability": false,
     "receipt_schema": {
-      "schema_version": 2,
+      "schema_version": 3,
       "required_fields": [
         "scenario_id",
         "scenario_class",
@@ -35,13 +37,15 @@
         "candidate_source",
         "judge_fingerprint",
         "worker_ref",
+        "worker_observation_fingerprint",
+        "touched_paths",
         "evidence_source",
         "evidence_fingerprint",
         "control_result",
         "candidate_result",
         "receipt_fingerprint"
       ],
-      "immutable": "the JSON evidence artifact must bind scenario, sources, judge, worker and both results; evidence_fingerprint binds its bytes; receipt_fingerprint is sha256 of the canonical receipt without itself",
+      "immutable": "Git resolves both sources; judge_source bytes define judge_fingerprint; the host-observed worker registry binds worker_ref; touched_paths stay within allowed_scope; the JSON evidence artifact and receipt fingerprints bind every claim",
       "freshness": "critical decisions require at least three distinct worker_ref values and evidence artifacts for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
       "coverage": "known acceptance and selected history scenarios absent from receipts become uncovered"
     },

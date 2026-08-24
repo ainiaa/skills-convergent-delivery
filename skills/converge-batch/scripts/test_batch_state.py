@@ -15,7 +15,7 @@ from delivery_next import upgrade_state
 from delivery_state import state_path as delegate_state_path
 from provider_contract import canonical_fingerprint
 from test_delivery_next import state as single_state
-from evidence_contract import workspace_source
+from evidence_contract import run_evidence, workspace_source
 
 
 MODULE_PATH = Path(__file__).with_name("batch_state.py")
@@ -96,12 +96,10 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
         child["execution_control"]["review"]["rounds"] = []
         child["ledger"]["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
-        child["ledger"]["acceptance"][0]["evidence_receipts"] = [{
-            "schema_version": 1,
-            "command": f"python3 test_{batch_id}.py",
-            "exit_code": 0,
-            "source": child["source_receipt"],
-        }]
+        child["ledger"]["acceptance"][0]["evidence_receipts"] = [run_evidence(
+            workspace, child["source_receipt"]["baseline_commit"],
+            [sys.executable, "-c", "pass", batch_id],
+        )]
         state_root = Path(workspace).parent / "delegate-state"
         path = delegate_state_path(
             state_root, child["repo_id"], child["task_key"], child["run_id"]

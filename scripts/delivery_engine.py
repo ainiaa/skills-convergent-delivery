@@ -52,7 +52,7 @@ REQUIRED_FORBIDDEN_ACTIONS = {
     "publish",
     "install",
 }
-CONTROLLER_PROTOCOL_VERSION = 7
+CONTROLLER_PROTOCOL_VERSION = 9
 
 
 def skill_path(root, name):
@@ -316,10 +316,23 @@ def adapted_tdd_provider(roots, task_kind):
     return None, None, None
 
 
-def exact_tdd_provider(provider_id, roots, task_kind):
+def exact_tdd_provider(provider_id, roots, task_kind, explicit_skill=None):
     if provider_id == "generic-tdd-v1":
-        discovered = generic_tdd_provider(roots, task_kind)
-        return discovered if discovered[0] == provider_id else (None, None, None)
+        if not explicit_skill:
+            return None, None, None
+        path = Path(explicit_skill).expanduser().resolve()
+        allowed_roots = tdd_roots(roots)
+        if not path.is_file() or not any(
+            path == root or root in path.parents for root in allowed_roots
+        ):
+            return None, None, None
+        name = path.parent.name.lower()
+        contract = load_provider_registry()[provider_id]["task_contracts"].get(task_kind, {})
+        if name.startswith("pdlc-") or "orchestrat" in name \
+                or not ("tdd" in name or "test" in name) \
+                or not compatible_stage_source(contract, path):
+            return None, None, None
+        return provider_id, path, file_fingerprint(path)
     for engine, relative_paths, expected_fingerprint in adapted_provider_contracts(task_kind):
         if engine != provider_id:
             continue
@@ -328,35 +341,6 @@ def exact_tdd_provider(provider_id, roots, task_kind):
             if path and file_fingerprint(path) == expected_fingerprint:
                 return engine, path.resolve(), expected_fingerprint
     return None, None, None
-
-
-def generic_tdd_provider(roots, task_kind):
-    candidates = []
-    detectors = []
-    for provider_id, manifest in load_provider_registry().items():
-        contract = manifest["task_contracts"].get(task_kind, {})
-        if (
-            manifest["provider"]["role"] == "stage"
-            and "tdd" in manifest["capabilities"]["stages"]
-            and isinstance(contract.get("required_terms"), list)
-        ):
-            detectors.append((provider_id, contract))
-    for root in tdd_roots(roots):
-        for base in (root, root / "skills"):
-            if not base.is_dir():
-                continue
-            for path in base.glob("*/SKILL.md"):
-                name = path.parent.name.lower()
-                if name.startswith("pdlc-") or name in {"tdd", "test-driven-development"}:
-                    continue
-                if "orchestrat" in name or not ("tdd" in name or "test" in name):
-                    continue
-                for provider_id, contract in detectors:
-                    if compatible_stage_source(contract, path):
-                        candidates.append((provider_id, path.resolve()))
-    provider_id, path = min(candidates, key=lambda item: (str(item[1]), item[0])) \
-        if candidates else (None, None)
-    return (provider_id, path, file_fingerprint(path)) if path else (None, None, None)
 
 
 def compatible_tdd_provider(engine, path, expected_fingerprint):
@@ -581,6 +565,7 @@ def selection(
     previous_pdlc_fingerprint=None,
     pdlc_manifest=None,
     provider_id=None,
+    tdd_skill=None,
 ):
     if mode not in MODES:
         raise ValueError("invalid mode")
@@ -641,8 +626,13 @@ def selection(
         selected_fingerprint = previous_tdd_fingerprint
         if not previous_engine:
             discovered, selected_path, selected_fingerprint = exact_tdd_provider(
-                requested, tdd_roots_argument, task_kind
+                requested, tdd_roots_argument, task_kind, tdd_skill
             )
+            if requested == "generic-tdd-v1" and not tdd_skill:
+                return {
+                    "status": "blocked", "code": "environment",
+                    "reason": "generic-tdd-v1 requires one exact --tdd-skill path",
+                }
         if not compatible_tdd_provider(requested, selected_path, selected_fingerprint):
             return {
                 "status": "blocked",
@@ -709,6 +699,7 @@ def main():
     parser.add_argument("--pdlc-manifest")
     parser.add_argument("--provider")
     parser.add_argument("--tdd-root", action="append", dest="tdd_roots")
+    parser.add_argument("--tdd-skill")
     parser.add_argument("--kind", choices=sorted(TASK_KINDS), default="feature")
     parser.add_argument("--previous-engine")
     parser.add_argument("--previous-tdd-skill")
@@ -729,6 +720,7 @@ def main():
             arguments.previous_pdlc_fingerprint,
             arguments.pdlc_manifest,
             arguments.provider,
+            arguments.tdd_skill,
         )
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         result = {
