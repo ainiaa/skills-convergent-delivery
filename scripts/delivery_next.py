@@ -693,6 +693,8 @@ def validate_state(state, arguments):
     runtime_binding = state.get("runtime_binding")
     if runtime_binding is not None:
         validate_runtime_binding(runtime_binding)
+    profile = routing.get("profile")
+    cross_session = profile.get("cross_session", False) if isinstance(profile, dict) else False
     host_sync = require_mapping(state.get("host_sync"), "host_sync")
     if set(host_sync) != {"mode", "acknowledged_fingerprint", "evidence_level"} \
             or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
@@ -767,8 +769,10 @@ def validate_state(state, arguments):
     if workers and runtime_binding is None:
         raise ValueError("workers require a frozen runtime binding")
     if workers and state.get("status") != "blocked" \
-            and not allows_worker_lifecycle(runtime_binding):
-        raise ValueError("active workers require a trusted Codex Desktop or host-observed runtime binding")
+            and not allows_worker_lifecycle(runtime_binding, cross_session=cross_session):
+        if cross_session:
+            raise ValueError("cross-session worker requires a host-observed runtime binding")
+        raise ValueError("active workers require a trusted local or host-observed runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
@@ -968,9 +972,13 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a fresh worker tree receipt")
         if tree_receipt is not None:
             validate_cleanup_barrier(tree_receipt, revision, worker_refs)
-            if not allows_worker_lifecycle(runtime_binding):
+            if not allows_worker_lifecycle(runtime_binding, cross_session=cross_session):
+                if cross_session:
+                    raise ValueError(
+                        "complete cross-session worker cleanup requires a host-observed runtime"
+                    )
                 raise ValueError(
-                    "complete worker cleanup requires trusted Codex Desktop or host-observed runtime"
+                    "complete worker cleanup requires a trusted local or host-observed runtime"
                 )
         if not acceptance or not all(
             item["result"] == "pass"

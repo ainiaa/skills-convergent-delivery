@@ -38,6 +38,8 @@ class RuntimeAdapterTest(unittest.TestCase):
 
         self.assertTrue(runtime_adapter.allows_worker_lifecycle(codex))
         self.assertTrue(runtime_adapter.allows_worker_lifecycle(claude))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(codex, cross_session=True))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(claude, cross_session=True))
 
     def test_only_a_bound_host_capability_observation_can_enable_auto_watchdog(self):
         controller_attested = runtime_adapter.negotiate(

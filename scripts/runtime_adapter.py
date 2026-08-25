@@ -212,16 +212,18 @@ def can_auto_watchdog(binding):
     return watchdog_mode(binding) == "observed"
 
 
-def allows_worker_lifecycle(binding):
-    """Allow native Codex Desktop workers without inventing a separate bridge protocol."""
+def allows_worker_lifecycle(binding, *, cross_session=False):
+    """Allow trusted local workers only while their host session remains available."""
+    if not isinstance(cross_session, bool):
+        raise ValueError("cross_session must be boolean")
     binding = validate_binding(binding)
+    if binding["evidence_level"] == "host_observed":
+        return True
     return (
-        binding["evidence_level"] == "host_observed"
-        or (
-            binding["profile"] in TRUSTED_LOCAL_PROFILES
-            and binding["mode"] == "automatic"
-            and binding["evidence_level"] == "controller_attested"
-        )
+        not cross_session
+        and binding["profile"] in TRUSTED_LOCAL_PROFILES
+        and binding["mode"] == "automatic"
+        and binding["evidence_level"] == "controller_attested"
     )
 
 

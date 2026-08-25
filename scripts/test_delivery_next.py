@@ -611,6 +611,19 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
 
+    def test_cross_session_worker_requires_a_host_observed_binding(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = routing(task_profile(cross_session=True))
+        payload["runtime_binding"] = desktop_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "cross-session worker"):
+            validate_state(payload, SimpleNamespace())
+
     def test_state_requires_a_frozen_route_and_persisted_assessment_count(self):
         payload = upgrade_state(state())
         payload.pop("execution_control")
