@@ -28,7 +28,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertIsNone(result["capability_observation"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
 
-    def test_only_codex_desktop_trusts_controller_attested_worker_lifecycle(self):
+    def test_only_trusted_local_hosts_allow_controller_attested_worker_lifecycle(self):
         codex = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
@@ -37,7 +37,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
 
         self.assertTrue(runtime_adapter.allows_worker_lifecycle(codex))
-        self.assertFalse(runtime_adapter.allows_worker_lifecycle(claude))
+        self.assertTrue(runtime_adapter.allows_worker_lifecycle(claude))
 
     def test_only_a_bound_host_capability_observation_can_enable_auto_watchdog(self):
         controller_attested = runtime_adapter.negotiate(

@@ -598,7 +598,7 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
 
-    def test_active_worker_rejects_non_codex_controller_attestation(self):
+    def test_active_worker_allows_a_trusted_claude_code_binding(self):
         payload = upgrade_state(state())
         payload["runtime_binding"] = negotiate(
             "claude-code", {"dispatch": True, "query": True, "tree_query": True}
@@ -609,8 +609,7 @@ class DeliveryNextTest(unittest.TestCase):
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
-        with self.assertRaisesRegex(ValueError, "trusted Codex Desktop"):
-            validate_state(payload, SimpleNamespace())
+        self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
 
     def test_state_requires_a_frozen_route_and_persisted_assessment_count(self):
         payload = upgrade_state(state())

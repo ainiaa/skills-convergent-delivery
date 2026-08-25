@@ -14,7 +14,7 @@ worker 的登记、归属、宿主终态、watchdog、一次恢复和退出清�
 python3 scripts/runtime_adapter.py negotiate --profile codex
 ```
 
-automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生 create/query/wait/interrupt 工具是可信本地宿主：`negotiate --profile codex` 产生的 automatic `controller_attested` Binding 可自动派发和清场，不需要额外 receipt 协议。控制器必须保存工具返回的 `worker_ref`，只查询该 ref，派发不确定时不重派，并在下一 Batch 前再次查询。其他宿主仍只有在具体桥接冻结为 `host_observed` 时才能自动派发。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用：父控制器必须执行 `watchdog_action` 返回且绑定精确 `task_id + worker_ref` 的 `query|wait|interrupt|block`。`terminal-only` 禁止自动探测、中断和恢复；没有 wait capability 时 action 退回 query。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
+automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生 create/query/wait/interrupt 工具，以及 Claude Code 当前会话的 `Agent` / task list，都是可信本地宿主：`negotiate --profile codex|claude-code` 产生的 automatic `controller_attested` Binding 可自动派发和清场，不需要额外 receipt 协议。控制器必须保存工具返回的 `worker_ref`，只查询该 ref，派发不确定时不重派，并在下一 Batch 前再次查询。Claude 的普通 Agent 只在当前会话可管理，不能用作跨会话恢复；跨会话必须有实际可查询的宿主能力。其他宿主仍只有在具体桥接冻结为 `host_observed` 时才能自动派发。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用：父控制器必须执行 `watchdog_action` 返回且绑定精确 `task_id + worker_ref` 的 `query|wait|interrupt|block`。`terminal-only` 禁止自动探测、中断和恢复；没有 wait capability 时 action 退回 query。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
 
 ## Bridge release gate
 
@@ -36,8 +36,8 @@ automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生
 
 ## Claude Code
 
-- 仅在当前环境可创建独立 Task/subagent、可获得稳定且可重新查询的 `worker_ref`，并由具体桥接产生 `host_observed` Binding 时自动派发。
-- 若只能发起不可恢复的子任务或无法稳定 query，不把它当作可靠调度；协商结果为 manual 并改为手工交接。
+- 当前会话可直接使用 `Agent` 创建前台或后台 subagent；以返回的 agent id 为 `worker_ref`，通过 task list 查询运行/完成状态。前台任务等待结果，后台任务只在宿主通知完成或 task list 显示终态后推进。
+- 普通 subagent 限当前会话：恢复当前 run 时先查询同一 ref；若当前宿主已不能查询，转手工交接，不重新派发。Agent Teams 是实验能力，不作为默认 Batch 依赖。
 
 ## 其他宿主
 

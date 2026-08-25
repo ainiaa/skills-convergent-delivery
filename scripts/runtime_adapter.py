@@ -11,6 +11,7 @@ from run_contract import action
 
 
 PROFILES = {"codex", "claude-code", "single-context"}
+TRUSTED_LOCAL_PROFILES = {"codex", "claude-code"}
 CAPABILITIES = (
     "dispatch", "query", "activity_query", "process_query", "wait", "interrupt",
     "resume", "tree_query", "restrict_dispatch",
@@ -217,7 +218,7 @@ def allows_worker_lifecycle(binding):
     return (
         binding["evidence_level"] == "host_observed"
         or (
-            binding["profile"] == "codex"
+            binding["profile"] in TRUSTED_LOCAL_PROFILES
             and binding["mode"] == "automatic"
             and binding["evidence_level"] == "controller_attested"
         )

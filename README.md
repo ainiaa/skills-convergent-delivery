@@ -163,7 +163,7 @@ worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](re
 
 调度器不读业务代码、不 review、不替任务决定技术方案。每批使用最小 context capsule；Batch Protocol v1 只承接跨会话 checkpoint 并逐项执行。派发结果不确定时查询原任务，不重复创建任务。
 
-Codex Desktop 直接信任本会话原生的创建、查询、等待和中断能力，记录 `worker_ref` 后可自动派发；推进前必须复查同一 ref，派发不确定时不重派。Claude Code 只有在具体宿主桥接能提供 `host_observed` capability/tree observation，且可获取可恢复 Task/subagent 引用时才自动派发；单上下文始终手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+Codex Desktop 直接信任本会话原生的创建、查询、等待和中断能力；Claude Code 直接信任当前会话的 `Agent` 与 task list。两者记录 `worker_ref` 后可自动派发，推进前必须复查同一 ref，派发不确定时不重派。Claude 普通 subagent 不承诺跨会话恢复；单上下文始终手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
 Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。普通 worker 永远是叶子；Batch 只派发新的 `controller-delegate` run，新 run 完成自己的子树清场后才能回传 receipt。
 
