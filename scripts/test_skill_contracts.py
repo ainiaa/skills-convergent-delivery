@@ -214,6 +214,8 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(marker, skill)
         for marker in ("Progress Receipt v1", "objective_revision", "不编造百分比或 ETA"):
             self.assertIn(marker, state + control)
+        for marker in ("runner_launches", "runner_results", "completed"):
+            self.assertIn(marker, state)
 
     def test_root_skill_no_longer_owns_plan_or_review_modes(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")

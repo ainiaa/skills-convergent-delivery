@@ -81,7 +81,8 @@ def command_for_launch(launch, prompt):
         raise ValueError("Codex write launch requires an isolated Git worktree")
     effective = launch["profile"]["effective"]
     return [
-        configuration["codex_bin"], "exec", "--json", "--ephemeral", "--sandbox",
+        configuration["codex_bin"], "exec", "--json", "--ephemeral", "--ignore-user-config",
+        "--ignore-rules", "--sandbox",
         configuration["sandbox"], "-m", effective["model"],
         "-c", f'model_reasoning_effort="{effective["reasoning_effort"]}"', "-",
     ]
@@ -150,6 +151,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         process.kill()
         for thread in threads:
             thread.join()
+        process.wait()
         status, exit_code = "timed_out", 124
         stdout_fingerprint = digests["stdout"].hexdigest()
         stderr_fingerprint = digests["stderr"].hexdigest()

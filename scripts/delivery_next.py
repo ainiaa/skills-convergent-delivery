@@ -815,6 +815,12 @@ def validate_state(state, arguments):
         if not set(tree_receipt["active_refs"]) <= worker_refs:
             raise ValueError("worker tree receipt active_refs are invalid")
     ledger = require_mapping(state.get("ledger"), "ledger")
+    allowed_ledger_fields = {
+        "completed_rounds", "repair_fingerprints", "key_changes", "checks", "acceptance",
+        "acceptance_history", "runner_launches", "runner_results", "report_history",
+    }
+    if not set(ledger) <= allowed_ledger_fields:
+        raise ValueError("ledger fields are invalid")
     completed_rounds = ledger.get("completed_rounds")
     if (
         not isinstance(completed_rounds, int)

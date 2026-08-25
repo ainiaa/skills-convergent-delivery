@@ -37,6 +37,8 @@ class CodexExecRunnerTest(unittest.TestCase):
         self.assertEqual(shutil.which("codex"), command[0])
         self.assertIn("--json", command)
         self.assertIn("--ephemeral", command)
+        self.assertIn("--ignore-user-config", command)
+        self.assertIn("--ignore-rules", command)
         self.assertIn("--sandbox", command)
         self.assertEqual("read-only", command[command.index("--sandbox") + 1])
         self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
@@ -138,6 +140,34 @@ class CodexExecRunnerTest(unittest.TestCase):
 
         self.assertEqual("unknown", receipt["status"])
         self.assertEqual("OSError", receipt["error_type"])
+
+    def test_reaps_a_timed_out_process(self):
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO()
+            stderr = io.BytesIO()
+            killed = False
+            reaped = False
+
+            def wait(self, timeout=None):
+                if timeout is not None:
+                    raise __import__("subprocess").TimeoutExpired("codex", timeout)
+                self.reaped = True
+                return 124
+
+            def kill(self):
+                self.killed = True
+
+        process = Process()
+        receipt = execute_launch(
+            plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                        "Fix the isolated task", workspace="/tmp"),
+            "Fix the isolated task", allow_execute=True, process_factory=lambda *_args, **_kwargs: process,
+        )
+
+        self.assertEqual("timed_out", receipt["status"])
+        self.assertTrue(process.killed)
+        self.assertTrue(process.reaped)
 
     def test_reaps_a_started_process_when_stdin_fails(self):
         class Input:

@@ -44,6 +44,16 @@ class RunnerContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             validate_launch(launch, "Review")
 
+    def test_rejects_a_non_sha256_prompt_fingerprint(self):
+        launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
+        launch["prompt_fingerprint"] = "g" * 64
+        launch["launch_fingerprint"] = contract_fingerprint({
+            key: item for key, item in launch.items() if key != "launch_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "prompt fingerprint"):
+            validate_launch(launch)
+
     def test_requires_a_completed_result_for_each_frozen_launch(self):
         launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
         result = {

@@ -149,6 +149,7 @@ python3 scripts/delivery_progress.py status < state.json
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；
 - 当前 `acceptance` 及被替换事实的 `acceptance_history`；
+- append-only `runner_launches` 与 `runner_results`；存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
 `host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。

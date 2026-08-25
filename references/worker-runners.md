@@ -26,7 +26,7 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 }
 ```
 
-`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是 controller 的有限派发预算；adapter 强制 timeout，不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
+`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是 controller 的有限派发预算；`max_output_chars` 兼容既有 Profile v1 名称，但 adapter 按 UTF-8 输出字节上限执行。adapter 强制 timeout，不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
 
 - `implementation` 可使用 `codex-exec-v1` 的 isolated-worktree 写权限；`reviewer`、`research` 永远不可写。
 - `codex-exec-v1` 只接受 `effective.provider=openai`、`shell=true`，且 requested/effective 的 model 与 effort 必须完全相同；Codex CLI 不能单独禁用 shell 时不接受 `shell=false` profile。计划冻结 CLI 可执行文件的绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传给 `codex exec ... -`，不进入命令参数。

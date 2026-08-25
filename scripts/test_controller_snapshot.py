@@ -20,6 +20,7 @@ REQUIRED_CONTROL_REFERENCES = (
     "references/evaluation-scenarios.md",
     "references/evaluation-catalog.json",
     "references/review-orchestration.md",
+    "references/worker-runners.md",
     "skills/converge-plan/SKILL.md",
     "skills/converge-plan/references/plan-contract.md",
     "skills/converge-plan/scripts/plan_check.py",
@@ -118,6 +119,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "references/state-schema.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/reporting.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/tdd-providers.md").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "references/worker-runners.md").is_file())
             self.assertIn("scripts/fast_path.py", descriptor["files"])
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
             for relative in REQUIRED_CONTROL_REFERENCES:

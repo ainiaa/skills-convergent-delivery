@@ -166,6 +166,7 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None):
             raw = _response_bytes(response, launch["profile"]["budget"]["max_output_chars"])
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("id"), str) \
+                or not payload["id"].strip() \
                 or payload.get("model") != launch["profile"]["effective"]["model"]:
             raise ValueError("external-model response does not match the frozen effective model")
         usage = payload.get("usage")

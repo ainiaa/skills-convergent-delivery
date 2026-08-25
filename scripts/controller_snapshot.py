@@ -44,6 +44,7 @@ CONTROL_RESOURCE_FILES = (
     "references/evaluation-scenarios.md",
     "references/evaluation-catalog.json",
     "references/review-orchestration.md",
+    "references/worker-runners.md",
     "references/state-schema.md",
     "references/task-routing.md",
     "references/reporting.md",

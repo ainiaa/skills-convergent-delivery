@@ -13,8 +13,10 @@ from delivery_next import (
     upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
+from runner_contract import freeze_launch
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
+from worker_profile import fingerprint as worker_profile_fingerprint
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -248,6 +250,21 @@ class DeliveryNextTest(unittest.TestCase):
             ]
             self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
+            profile = {
+                "schema_version": 1, "worker_id": "research-1", "role": "research",
+                "runner_id": "openai-compatible-v1",
+                "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
+                "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+                "permissions": {"workspace": "read", "shell": False, "network": "egress"},
+                "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 12000},
+            }
+            profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
+            payload["ledger"]["runner_launches"] = [
+                freeze_launch(profile, "Review", {"api_key_env": "GLM_API_KEY"})
+            ]
+            with self.assertRaisesRegex(ValueError, "runner launch"):
+                validate_state(payload, SimpleNamespace())
+
     def test_v6_migration_rejects_an_unknown_frozen_controller(self):
         payload = state(
             schema_version=6,
@@ -458,6 +475,15 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("verify-final\n", result.stdout)
         self.assertEqual(0, result.returncode)
+
+    def test_rejects_undocumented_ledger_data(self):
+        payload = upgrade_state(state())
+        payload["ledger"]["prompt"] = "confidential worker prompt"
+
+        result = self.current(payload)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("ledger fields", result.stderr)
 
     def test_json_output_uses_shared_action_contract(self):
         payload = state()

@@ -109,6 +109,31 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
             )
         self.assertEqual("unknown", receipt["status"])
 
+    def test_rejects_an_empty_response_id_before_issuing_a_completed_receipt(self):
+        class Response:
+            def __init__(self):
+                self.body = io.BytesIO(b'{"id":"","model":"glm-5.2"}')
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        launch = plan_request(
+            profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
+            effort_binding={"field": "thinking.type", "value": "enabled"},
+        )
+        with patch.dict("os.environ", {"GLM_API_KEY": "test-key"}):
+            receipt = execute_request(
+                launch, "Review", allow_network=True, opener=lambda request, timeout: Response(),
+            )
+
+        self.assertEqual("unknown", receipt["status"])
+
     def test_returns_a_terminal_receipt_when_the_frozen_credential_is_missing(self):
         launch = plan_request(
             profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",

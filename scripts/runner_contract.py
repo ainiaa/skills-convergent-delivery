@@ -54,7 +54,7 @@ def validate_launch(value, prompt=None):
     if not isinstance(value["configuration"], dict) or value["status"] != "planned" \
             or value["evidence_source"] != "runner":
         raise ValueError("runner launch contents are invalid")
-    if not isinstance(value["prompt_fingerprint"], str) or len(value["prompt_fingerprint"]) != 64:
+    if not _sha256(value["prompt_fingerprint"]):
         raise ValueError("runner launch prompt fingerprint is invalid")
     if prompt is not None:
         if not isinstance(prompt, str) or fingerprint(prompt) != value["prompt_fingerprint"]:
