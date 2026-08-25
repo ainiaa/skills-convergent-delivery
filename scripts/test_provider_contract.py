@@ -27,6 +27,10 @@ class ProviderContractTest(unittest.TestCase):
             "authorization": {"stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"], "forbidden_actions": ["commit", "tag", "push", "publish", "install"]},
             "outputs": {"progress_protocol": 1, "required_evidence": ["tests"]},
         }
+        digest = hashlib.sha256()
+        for relative in ("demo/SKILL.md", "demo/REFERENCE.md"):
+            digest.update(relative.encode("utf-8") + b"\0" + (root / "skills" / relative).read_bytes())
+        manifest["task_contracts"]["feature"]["source_fingerprint"] = digest.hexdigest()
         path = root / "manifest.json"
         path.write_text(json.dumps(manifest), encoding="utf-8")
         return root, path, manifest
@@ -57,6 +61,15 @@ class ProviderContractTest(unittest.TestCase):
             changed["task_contracts"]["feature"]["preserve_external_behavior"] = True
             path.write_text(json.dumps(changed), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "manifest.*changed"):
+                provider_contract.validate_reference(reference, "feature")
+
+    def test_workflow_reference_must_match_the_contract_source_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path, manifest = self.fixture(directory)
+            (root / "skills/demo/SKILL.md").write_text("forged entry\n", encoding="utf-8")
+            reference = provider_contract.build_reference(manifest, path, "feature", root)
+
+            with self.assertRaisesRegex(ValueError, "source fingerprint"):
                 provider_contract.validate_reference(reference, "feature")
 
     def test_declared_entrypoint_cannot_be_replaced_by_an_unrelated_file(self):

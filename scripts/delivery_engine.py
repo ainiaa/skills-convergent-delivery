@@ -254,7 +254,7 @@ def native_result(reason, stage_provider=None, task_kind="feature"):
     stages = {"tdd": stage_provider} if stage_provider else {}
     engine = stage_provider["id"] if stage_provider else "native-v1"
     return attach_binding(
-        {"status": "selected", "engine": engine, "reason": reason},
+        {"status": "selected", "engine": engine, "reason": reason, "task_kind": task_kind},
         provider_reference("native-v1", task_kind),
         stages,
     )
@@ -678,9 +678,21 @@ def selection(
     return native_result(reason, task_kind=task_kind)
 
 
+def freeze_binding(result, *, selection_mode):
+    if result.get("status") != "selected":
+        return result
+    return {
+        "selection": selection_mode,
+        "reason": result["reason"],
+        "task_kind": result["task_kind"],
+        "binding": result["binding"],
+        "binding_fingerprint": result["binding_fingerprint"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("select",))
+    parser.add_argument("command", choices=("select", "freeze-binding"))
     parser.add_argument("--mode", choices=sorted(MODES), default="auto")
     parser.add_argument("--pdlc-root")
     parser.add_argument("--pdlc-manifest")
@@ -715,7 +727,13 @@ def main():
             "code": "environment",
             "reason": str(error),
         }
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    output = result
+    if arguments.command == "freeze-binding":
+        selection_mode = "explicit" if (
+            arguments.mode != "auto" or arguments.provider or arguments.previous_engine
+        ) else "auto"
+        output = freeze_binding(result, selection_mode=selection_mode)
+    print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0 if result["status"] == "selected" else 2
 
 

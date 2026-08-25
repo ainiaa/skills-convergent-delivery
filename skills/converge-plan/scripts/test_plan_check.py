@@ -12,6 +12,8 @@ SCRIPT = Path(__file__).with_name("plan_check.py")
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import evidence_contract
+from delivery_engine import provider_reference
+from provider_contract import canonical_fingerprint
 SHA = "a" * 64
 PROJECT_HEAD = subprocess.run(
     ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
@@ -20,7 +22,7 @@ PROJECT_HEAD = subprocess.run(
 PROJECT_SOURCE = evidence_contract.workspace_source(ROOT, PROJECT_HEAD)
 
 
-def provider_binding(workflow="native-v1", tdd=None):
+def summary_provider_binding(workflow="native-v1", tdd=None):
     stages = {"tdd": tdd} if tdd else {}
     payload = {
         "controller": "converge",
@@ -32,6 +34,70 @@ def provider_binding(workflow="native-v1", tdd=None):
         "binding_fingerprint": hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
+    }
+
+
+def provider_binding():
+    binding = {
+        "controller": "converge",
+        "workflow_provider": provider_reference("native-v1", "feature"),
+        "stage_providers": {},
+    }
+    return {
+        "selection": "auto",
+        "reason": "native workflow is frozen",
+        "task_kind": "feature",
+        "binding": binding,
+        "binding_fingerprint": canonical_fingerprint(binding),
+    }
+
+
+def pdlc_provider_binding(root):
+    files = [
+        "pdlc-feature/SKILL.md",
+        "pdlc-tdd/SKILL.md",
+        "pdlc-implement/SKILL.md",
+        "pdlc-review/SKILL.md",
+    ]
+    digest = hashlib.sha256()
+    for relative in files:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{relative}\n", encoding="utf-8")
+        digest.update(relative.encode("utf-8") + b"\0" + path.read_bytes())
+    manifest = {
+        "schema_version": 2,
+        "provider": {
+            "id": "pdlc-v1", "source_id": "test/pdlc", "version": "test", "role": "workflow",
+        },
+        "capabilities": {"task_kinds": ["feature"], "stages": ["plan", "tdd", "implement", "review"]},
+        "task_contracts": {
+            "feature": {
+                "entrypoint": files[0], "closure": files[1:],
+                "source_fingerprint": digest.hexdigest(), "preserve_external_behavior": False,
+            }
+        },
+        "authorization": {
+            "stop_for": ["business_rules", "public_contracts", "permissions", "release", "irreversible_actions"],
+            "forbidden_actions": ["pdlc-ship", "commit", "tag", "push", "publish", "install"],
+        },
+        "outputs": {"progress_protocol": 1, "required_evidence": ["tests"]},
+    }
+    manifest_path = root / "converge-provider.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    binding = {
+        "controller": "converge",
+        "workflow_provider": provider_reference(
+            "pdlc-v1", "feature", manifest=str(manifest_path), root=str(root)
+        ),
+        "stage_providers": {},
+    }
+    return {
+        "selection": "explicit",
+        "reason": "test PDLC workflow is frozen",
+        "task_kind": "feature",
+        "binding": binding,
+        "binding_fingerprint": canonical_fingerprint(binding),
     }
 
 
@@ -106,6 +172,7 @@ def final_evidence(source):
 class PlanCheckTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        self.pdlc_root = Path(self.temporary.name) / "pdlc"
         self.workspace = Path(self.temporary.name) / "workspace"
         self.workspace.mkdir()
         subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
@@ -232,12 +299,12 @@ class PlanCheckTest(unittest.TestCase):
     def test_multiple_bounded_pdlc_runs_are_allowed_in_one_plan(self):
         value = granular_plan(
             [
-                task("schema", ["providers"], provider=provider_binding("pdlc-v1")),
+                task("schema", ["providers"], provider=pdlc_provider_binding(self.pdlc_root)),
                 task(
                     "runtime",
                     ["scripts"],
                     ["schema"],
-                    provider=provider_binding("pdlc-v1"),
+                    provider=pdlc_provider_binding(self.pdlc_root),
                 ),
             ]
         )
@@ -260,7 +327,7 @@ class PlanCheckTest(unittest.TestCase):
             {"scope": "task", "recursive_planning": True},
         ):
             with self.subTest(provider_run=provider_run):
-                value = plan([task("T1", ["src"], provider=provider_binding("pdlc-v1"))])
+                value = plan([task("T1", ["src"], provider=pdlc_provider_binding(self.pdlc_root))])
                 value["tasks"][0]["provider_run"] = provider_run
 
                 self.assertNotEqual(0, self.run_check("validate", value).returncode)
@@ -274,6 +341,28 @@ class PlanCheckTest(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("schema_version must be 5", result.stderr)
 
+    def test_unknown_plan_schema_fields_are_rejected(self):
+        cases = (
+            ("plan", lambda value: value.__setitem__("legacy_marker", True)),
+            ("planner", lambda value: value["planner"].__setitem__("legacy_marker", True)),
+            ("task", lambda value: value["tasks"][0].__setitem__("legacy_marker", True)),
+        )
+        for location, mutate in cases:
+            with self.subTest(location=location):
+                value = plan([task("T1", ["src"])])
+                mutate(value)
+                result = self.run_check("validate", value)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("fields are invalid", result.stderr)
+
+    def test_plan_rejects_summary_provider_binding_without_frozen_sources(self):
+        result = self.run_check(
+            "validate", plan([task("T1", ["src"], provider=summary_provider_binding())])
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("provider_binding fields are invalid", result.stderr)
+
     def test_rejects_cycles_unknown_dependencies_and_duplicate_ids(self):
         cases = [
             plan([task("T1", ["a"], ["T2"]), task("T2", ["b"], ["T1"])]),
@@ -286,8 +375,11 @@ class PlanCheckTest(unittest.TestCase):
                 self.assertNotEqual(0, self.run_check("validate", value).returncode)
 
     def test_rejects_unknown_providers_and_unfrozen_third_party_planners(self):
-        unknown_provider = plan(
-            [task("T1", ["a"], provider=provider_binding("invented-v1"))]
+        unknown_provider = plan([task("T1", ["a"])])
+        binding = unknown_provider["tasks"][0]["provider_binding"]["binding"]
+        binding["workflow_provider"]["id"] = "invented-v1"
+        unknown_provider["tasks"][0]["provider_binding"]["binding_fingerprint"] = (
+            canonical_fingerprint(binding)
         )
         unfrozen_planner = plan(
             [task("T1", ["a"])],

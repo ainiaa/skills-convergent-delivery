@@ -458,6 +458,58 @@ class BatchStateTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
                     batch_state.validate_state(legacy)
 
+    def test_unknown_batch_schema_fields_are_rejected(self):
+        cases = (
+            ("state", lambda value: value.__setitem__("legacy_marker", True)),
+            ("plan", lambda value: value["plan"].__setitem__("legacy_marker", True)),
+            ("preflight", lambda value: value["preflight"].__setitem__("legacy_marker", True)),
+            ("batch", lambda value: value["batches"][0].__setitem__("legacy_marker", True)),
+            ("capsule", lambda value: value["batches"][0]["capsule"].__setitem__("legacy_marker", True)),
+        )
+        for location, mutate in cases:
+            with self.subTest(location=location):
+                value = candidate(self.workspace)
+                mutate(value)
+                with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                    batch_state.validate_state(value)
+
+    def test_unknown_persisted_receipt_and_evidence_fields_are_rejected(self):
+        receipt_state = candidate(self.workspace)
+        receipt_state["batches"][0].update(
+            status="validating-receipt", dispatch_id="dispatch-B1", worker_ref="thread-1",
+            worker_role="controller-delegate", worker_owner_run_id=receipt_state["run_id"],
+            worker_status="completed", delegate_run_id="delegate-B1",
+        )
+        receipt_state["batches"][0]["receipt"] = receipt(
+            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
+        )
+        cases = (
+            ("receipt", lambda value: value["batches"][0]["receipt"].__setitem__("legacy_marker", True)),
+            ("receipt acceptance", lambda value: value["batches"][0]["receipt"]["acceptance"][0].__setitem__("legacy_marker", True)),
+            ("final acceptance", lambda value: value["final_acceptance"][0].__setitem__("legacy_marker", True)),
+        )
+        for location, mutate in cases:
+            with self.subTest(location=location):
+                value = json.loads(json.dumps(receipt_state))
+                mutate(value)
+                with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                    batch_state.validate_state(value)
+
+    def test_summary_provider_binding_is_rejected(self):
+        value = candidate(self.workspace)
+        summary = {
+            "controller": "converge",
+            "workflow_provider": "pdlc-v1",
+            "stage_providers": {},
+        }
+        summary["binding_fingerprint"] = batch_state.digest(
+            json.dumps(summary, sort_keys=True, separators=(",", ":"))
+        )
+        value["batches"][0]["capsule"]["provider_binding"] = summary
+
+        with self.assertRaisesRegex(ValueError, "provider_binding fields are invalid"):
+            batch_state.validate_state(value)
+
     def test_rejects_stale_revision_plan_drift_and_illegal_jump(self):
         state = candidate(self.workspace)
         self.write(state, -1)

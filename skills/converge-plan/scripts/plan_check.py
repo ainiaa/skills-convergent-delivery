@@ -13,6 +13,7 @@ if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
 from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source
+from delivery_next import validate_provider_binding as validate_complete_provider_binding
 
 
 TASK_STATUSES = {"pending"}
@@ -20,26 +21,16 @@ EXECUTIONS = {"auto", "current", "fresh"}
 AUDIT_STATUSES = {"DONE", "PARTIAL", "NOT_DONE", "CHANGED"}
 TASK_KINDS = {"vertical_slice", "wide_refactor", "integration"}
 CHECKPOINTS = {"same_session", "cross_session"}
+PLAN_FIELDS = {
+    "schema_version", "plan_id", "requirement_fingerprint", "planner", "context", "baseline",
+    "tasks", "final_acceptance", "decisions", "checkpoint",
+}
+PLANNER_FIELDS = {"name", "source_path", "source_fingerprint"}
+TASK_FIELDS = {
+    "task_id", "task_kind", "outcomes", "goal", "owned_paths", "depends_on", "steps",
+    "acceptance", "verification", "execution", "status", "provider_binding", "provider_run",
+}
 DECISION_SOURCES = {"user", "code", "docs", "reversible-default"}
-PROVIDER_DIR = Path(__file__).resolve().parents[3] / "providers"
-
-
-def registered_provider_roles():
-    roles = {}
-    for path in PROVIDER_DIR.glob("*.json"):
-        try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-            provider = manifest["provider"]
-            if manifest.get("schema_version") == 2 and provider["role"] in {"workflow", "stage"}:
-                roles[provider["id"]] = provider["role"]
-        except (OSError, KeyError, json.JSONDecodeError, TypeError):
-            continue
-    return roles
-
-
-PROVIDER_ROLES = registered_provider_roles()
-WORKFLOW_PROVIDERS = {provider for provider, role in PROVIDER_ROLES.items() if role == "workflow"}
-STAGE_PROVIDERS = {provider for provider, role in PROVIDER_ROLES.items() if role == "stage"}
 PLANNERS = {
     "project-plan-v1",
     "superpowers-writing-plans-v1",
@@ -123,8 +114,8 @@ def validate_baseline(value):
 
 
 def validate_planner(value):
-    if not isinstance(value, dict):
-        raise ValueError("planner must be an object")
+    if not isinstance(value, dict) or set(value) != PLANNER_FIELDS:
+        raise ValueError("planner fields are invalid")
     name = value.get("name")
     if name not in PLANNERS:
         raise ValueError("planner.name is invalid")
@@ -141,38 +132,12 @@ def validate_planner(value):
         raise ValueError("built-in planners cannot declare a source")
 
 
-def binding_fingerprint(workflow_provider, stage_providers):
-    payload = {
-        "controller": "converge",
-        "workflow_provider": workflow_provider,
-        "stage_providers": stage_providers,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
 def validate_provider_binding(value, name):
-    if not isinstance(value, dict) or set(value) != {
-        "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
-    }:
-        raise ValueError(f"{name} is invalid")
-    if value["controller"] != "converge":
-        raise ValueError(f"{name}.controller must be converge")
-    workflow = value["workflow_provider"]
-    if workflow not in WORKFLOW_PROVIDERS:
-        raise ValueError(f"{name}.workflow_provider is invalid")
-    stages = value["stage_providers"]
-    if not isinstance(stages, dict) or set(stages) - {"tdd"}:
-        raise ValueError(f"{name}.stage_providers is invalid")
-    if any(provider not in STAGE_PROVIDERS for provider in stages.values()):
-        raise ValueError(f"{name}.stage provider is invalid")
-    if workflow != "native-v1" and stages:
-        raise ValueError(f"{name} cannot mix external workflow and stage providers")
-    require_sha256(value["binding_fingerprint"], f"{name}.binding_fingerprint")
-    if value["binding_fingerprint"] != binding_fingerprint(workflow, stages):
-        raise ValueError(f"{name}.binding_fingerprint does not match the binding")
-    return value
+    try:
+        validate_complete_provider_binding(value)
+        return value
+    except ValueError as error:
+        raise ValueError(f"{name} is invalid: {error}") from error
 
 
 def validate_provider_run(value, name):
@@ -208,6 +173,8 @@ def validate_decisions(value):
 def validate_plan(plan):
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
+    if set(plan) != PLAN_FIELDS:
+        raise ValueError("plan fields are invalid")
     if plan.get("schema_version") != 5:
         raise ValueError("schema_version must be 5")
     require_string(plan.get("plan_id"), "plan_id")
@@ -231,8 +198,8 @@ def validate_plan(plan):
     tasks = []
     task_ids = set()
     for index, raw in enumerate(raw_tasks):
-        if not isinstance(raw, dict):
-            raise ValueError(f"tasks[{index}] must be an object")
+        if not isinstance(raw, dict) or set(raw) != TASK_FIELDS:
+            raise ValueError(f"tasks[{index}] fields are invalid")
         task_id = require_string(raw.get("task_id"), f"tasks[{index}].task_id")
         if task_id in task_ids:
             raise ValueError("task_id must be unique")
@@ -296,7 +263,8 @@ def validate_plan(plan):
             )
 
     if plan["planner"]["name"] == "pdlc-delegation-v1" and any(
-        task["provider_binding"]["workflow_provider"] != "pdlc-v1" for task in tasks
+        task["provider_binding"]["binding"]["workflow_provider"]["id"] != "pdlc-v1"
+        for task in tasks
     ):
         raise ValueError("pdlc-delegation-v1 requires PDLC-backed tasks")
 
@@ -319,7 +287,7 @@ def validate_plan(plan):
         execution_mode = "batch"
     elif len(tasks) > 1:
         execution_mode = "sequential"
-    elif tasks[0]["provider_binding"]["workflow_provider"] == "pdlc-v1":
+    elif tasks[0]["provider_binding"]["binding"]["workflow_provider"]["id"] == "pdlc-v1":
         execution_mode = "fresh"
     elif tasks[0]["execution"] != "auto":
         execution_mode = tasks[0]["execution"]

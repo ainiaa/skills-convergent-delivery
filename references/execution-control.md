@@ -7,7 +7,7 @@
 - 跨模块、跨层、依赖步骤、未知验证或预计超过一个短执行段：先调用 `converge-plan`。
 - 风险只提高 review/verification；局部高风险任务保持 `inline`，不得以计划替代高风险验证或独立盲审。
 - 已携带 `planned_task=true`：只执行 capsule 中冻结的任务，禁止再次规划或递归派发。
-- `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run，保存派发引用后由全新上下文执行该 task 的完整 PDLC；不得把 PDLC 内部阶段再次拆解。复杂计划可以包含多个业务切片级 Provider Run。
+- `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run。控制器解析冻结 entrypoint，并显式调用对应 `$pdlc-feature|fix|refactor` 完整执行；Provider Binding 或 `pdlc-run` 不算调用，禁止 native 混入。入口不可解析或激活即 `blocked_environment`；PDLC 证据返回 Converge 后再收口，不得拆解其内部阶段。复杂计划可含多个业务切片级 Provider Run。
 - Plan Contract v5 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。Git 汇总和范围审计始终使用计划冻结的 Source Receipt v2 baseline，而不是变化中的 `HEAD`。
 
 Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。简单 `inline` 不创建宿主计划项，只以简短 commentary 显示当前动作；持久任务只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。宿主无原生计划能力时降级为文本，不阻塞业务动作。

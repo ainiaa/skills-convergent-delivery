@@ -9,10 +9,7 @@ from pathlib import Path
 from delivery_engine import (
     TASK_KINDS,
     controller_identity,
-    file_fingerprint,
     load_provider_registry,
-    pdlc_metadata,
-    provider_reference,
     validate_provider_manifest,
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
@@ -66,6 +63,21 @@ PROGRESS_PHASES = {
     "understanding", "planning", "reproducing", "testing", "implementing",
     "verifying", "reviewing", "closing",
 }
+STATE_FIELDS = {
+    "schema_version", "run_id", "workspace", "baseline", "scope_fingerprint",
+    "source_fingerprint", "source_receipt", "execution_control", "controller",
+    "provider_binding", "repo_id", "task_key", "writer_id", "revision",
+    "current_stage", "requires_stability_round", "status", "ledger", "handoff",
+    "workers", "worker_tree_receipt", "runtime_binding", "host_sync", "blocked_code",
+    "blocked_reason",
+}
+BASELINE_FIELDS = {"commit", "diff_fingerprint"}
+HANDOFF_FIELDS = {"goal", "last_verification", "open_issues", "next_action"}
+CHECK_FIELDS = {"stage", "command", "result", "evidence_receipts"}
+ACCEPTANCE_FIELDS = {
+    "criterion", "evidence", "result", "freshness", "source_fingerprint", "evidence_receipts",
+}
+ACCEPTANCE_HISTORY_FIELDS = {"revision", "acceptance"}
 
 def require_string(value, name):
     if not isinstance(value, str) or not value.strip():
@@ -97,6 +109,8 @@ def upgrade_state(value):
         raise ValueError("schema_version must be 10")
     if "engine" in value:
         raise ValueError("legacy engine state is unsupported")
+    if not set(value) <= STATE_FIELDS:
+        raise ValueError("state fields are invalid")
     return value
 
 
@@ -330,6 +344,8 @@ def validate_state(state, arguments):
     if not Path(workspace).is_absolute():
         raise ValueError("workspace must be absolute")
     baseline = require_mapping(state.get("baseline"), "baseline")
+    if set(baseline) != BASELINE_FIELDS:
+        raise ValueError("baseline fields are invalid")
     require_string(baseline.get("commit"), "baseline.commit")
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
@@ -523,6 +539,8 @@ def validate_state(state, arguments):
     if not isinstance(checks, list) or not all(isinstance(item, dict) for item in checks):
         raise ValueError("ledger.checks must be a list of objects")
     for item in checks:
+        if not set(item) <= CHECK_FIELDS:
+            raise ValueError("ledger.checks[] fields are invalid")
         require_string(item.get("stage"), "ledger.checks[].stage")
         require_string(item.get("command"), "ledger.checks[].command")
         if item.get("result") not in CHECK_RESULTS:
@@ -531,6 +549,8 @@ def validate_state(state, arguments):
     if not isinstance(acceptance, list) or not all(isinstance(item, dict) for item in acceptance):
         raise ValueError("ledger.acceptance must be a list of objects")
     for item in acceptance:
+        if not set(item) <= ACCEPTANCE_FIELDS:
+            raise ValueError("ledger.acceptance[] fields are invalid")
         require_string(item.get("criterion"), "ledger.acceptance[].criterion")
         require_string(item.get("evidence"), "ledger.acceptance[].evidence")
         if item.get("result") not in CHECK_RESULTS:
@@ -546,8 +566,8 @@ def validate_state(state, arguments):
     if not isinstance(acceptance_history, list):
         raise ValueError("ledger.acceptance_history must be a list")
     for item in acceptance_history:
-        if not isinstance(item, dict):
-            raise ValueError("ledger.acceptance_history[] must be an object")
+        if not isinstance(item, dict) or set(item) != ACCEPTANCE_HISTORY_FIELDS:
+            raise ValueError("ledger.acceptance_history[] fields are invalid")
         history_revision = item.get("revision")
         if (
             not isinstance(history_revision, int)
@@ -556,6 +576,8 @@ def validate_state(state, arguments):
         ):
             raise ValueError("ledger.acceptance_history[].revision must be non-negative")
         snapshot = require_mapping(item.get("acceptance"), "ledger.acceptance_history[].acceptance")
+        if not set(snapshot) <= ACCEPTANCE_FIELDS:
+            raise ValueError("ledger.acceptance_history[].acceptance fields are invalid")
         require_string(snapshot.get("criterion"), "ledger.acceptance_history[].criterion")
         require_string(snapshot.get("evidence"), "ledger.acceptance_history[].evidence")
         if snapshot.get("result") not in CHECK_RESULTS:
@@ -589,6 +611,8 @@ def validate_state(state, arguments):
         if summary != "none":
             require_sha256(summary, "ledger.report_history.summary_fingerprint")
     handoff = require_mapping(state.get("handoff"), "handoff")
+    if set(handoff) != HANDOFF_FIELDS:
+        raise ValueError("handoff fields are invalid")
     for field in ("goal", "last_verification", "next_action"):
         value = require_string(handoff.get(field), f"handoff.{field}")
         if len(value) > 500:

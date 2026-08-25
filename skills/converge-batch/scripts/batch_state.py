@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and atomically persist Converge Batch Protocol v1 state."""
+"""Validate and atomically persist Converge Batch State Schema v4."""
 
 import argparse
 import fcntl
@@ -42,6 +42,24 @@ CAPSULE_FIELDS = (
     "verification",
 )
 CAPSULE_FIELDS = (*CAPSULE_FIELDS, "provider_binding")
+BATCH_STATE_FIELDS = {
+    "schema_version", "run_id", "writer_id", "revision", "repo_id", "workspace",
+    "delegate_state_root", "plan", "preflight", "status", "current_batch", "batches",
+    "final_acceptance", "blocked_reason",
+}
+BATCH_PLAN_FIELDS = {"plan_id", "plan_revision", "plan_fingerprint"}
+PREFLIGHT_FIELDS = {"passed", "checked_at", "issues", "commit_authorized"}
+BATCH_FIELDS = {
+    "batch_id", "task_id", "status", "capsule", "dispatch_id", "worker_ref",
+    "worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id",
+    "recovery_count", "receipt",
+}
+RECEIPT_FIELDS = {
+    "protocol_version", "batch_id", "dispatch_id", "delegate_run_id", "commit_id", "tree_hash",
+    "verified_tree_hash", "parent_commit_id", "acceptance", "open_issues", "delegate_state_revision",
+    "delegate_source_fingerprint", "delegate_source_receipt",
+}
+EVIDENCE_FIELDS = {"criterion", "evidence", "result", "freshness", "source_fingerprint"}
 BATCH_TRANSITIONS = {
     "pending": {"pending", "dispatching", "blocked"},
     "dispatching": {"dispatching", "running", "blocked"},
@@ -92,30 +110,7 @@ def digest(value):
 
 
 def validate_provider_binding(value):
-    if "selection" in require_mapping(value, "capsule provider binding"):
-        validate_complete_provider_binding(value)
-        return
-    value = require_mapping(value, "capsule provider binding")
-    if set(value) != {
-        "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
-    }:
-        raise ValueError("capsule provider binding fields are invalid")
-    if value["controller"] != "converge":
-        raise ValueError("capsule provider binding controller is invalid")
-    require_string(value.get("workflow_provider"), "capsule provider binding workflow_provider")
-    stages = require_mapping(value.get("stage_providers"), "capsule provider binding stage_providers")
-    for stage, provider in stages.items():
-        require_string(stage, "capsule provider binding stage")
-        require_string(provider, "capsule provider binding provider")
-    binding = {
-        "controller": value["controller"],
-        "workflow_provider": value["workflow_provider"],
-        "stage_providers": stages,
-    }
-    if value.get("binding_fingerprint") != digest(
-        json.dumps(binding, sort_keys=True, separators=(",", ":"))
-    ):
-        raise ValueError("capsule provider binding fingerprint is invalid")
+    validate_complete_provider_binding(value)
 
 
 def state_path(root, repo_id, plan_id, run_id=None):
@@ -193,6 +188,8 @@ def write_private(path, payload):
 def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None):
     for index, entry in enumerate(require_list(entries, name, non_empty=True)):
         entry = require_mapping(entry, f"{name}[{index}]")
+        if set(entry) != EVIDENCE_FIELDS:
+            raise ValueError(f"{name}[{index}] fields are invalid")
         require_string(entry.get("criterion"), f"{name}[{index}].criterion")
         result = entry.get("result")
         freshness = entry.get("freshness")
@@ -214,6 +211,8 @@ def validate_capsule(capsule, batch_id, plan_id, task_id):
         if field not in capsule:
             label = "provider binding" if field == "provider_binding" else field
             raise ValueError(f"capsule {batch_id} is missing {label}")
+    if set(capsule) != set(CAPSULE_FIELDS):
+        raise ValueError(f"capsule {batch_id} fields are invalid")
     if capsule["batch_id"] != batch_id:
         raise ValueError("capsule batch_id does not match")
     if capsule["planned_task"] is not True:
@@ -266,6 +265,8 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt delegate_run_id does not match")
     if "delegate_state" in receipt or "delegate_state_fingerprint" in receipt:
         raise ValueError("receipt cannot embed a self-asserted delegate state")
+    if not set(receipt) <= RECEIPT_FIELDS:
+        raise ValueError("receipt fields are invalid")
     managed = delegate_state_path(
         delegate_state_root, repo_id, batch["task_id"], batch["delegate_run_id"]
     )
@@ -332,6 +333,8 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
 
 def validate_state(state):
     state = require_mapping(state, "state")
+    if not set(state) <= BATCH_STATE_FIELDS:
+        raise ValueError("state fields are invalid")
     schema_version = state.get("schema_version")
     if schema_version != 4:
         raise ValueError("schema_version must be 4")
@@ -344,6 +347,8 @@ def validate_state(state):
     delegate_state_root = canonical_path(state.get("delegate_state_root"))
 
     plan = require_mapping(state.get("plan"), "plan")
+    if set(plan) != BATCH_PLAN_FIELDS:
+        raise ValueError("plan fields are invalid")
     require_string(plan.get("plan_id"), "plan.plan_id")
     if not isinstance(plan.get("plan_revision"), int) or plan["plan_revision"] < 1:
         raise ValueError("plan.plan_revision must be positive")
@@ -352,6 +357,10 @@ def validate_state(state):
         raise ValueError("plan.plan_fingerprint must be a sha256")
 
     preflight = require_mapping(state.get("preflight"), "preflight")
+    if "commit_authorized" not in preflight:
+        raise ValueError("preflight requires one-time commit authorization")
+    if set(preflight) != PREFLIGHT_FIELDS:
+        raise ValueError("preflight fields are invalid")
     if preflight.get("passed") is not True or require_list(preflight.get("issues"), "preflight.issues"):
         raise ValueError("preflight must pass without issues")
     require_string(preflight.get("checked_at"), "preflight.checked_at")
@@ -368,6 +377,10 @@ def validate_state(state):
     seen_delegate_runs = set()
     for index, batch in enumerate(batches):
         batch = require_mapping(batch, f"batches[{index}]")
+        if "recovery_count" not in batch:
+            raise ValueError("recovery_count is required")
+        if set(batch) != BATCH_FIELDS:
+            raise ValueError(f"batches[{index}] fields are invalid")
         batch_id = require_string(batch.get("batch_id"), f"batches[{index}].batch_id")
         task_id = require_string(batch.get("task_id"), f"batches[{index}].task_id")
         if batch_id in seen_ids:
@@ -382,8 +395,6 @@ def validate_state(state):
         validate_capsule(batch.get("capsule"), batch_id, plan["plan_id"], task_id)
         dispatch_id = batch.get("dispatch_id")
         worker_ref = batch.get("worker_ref")
-        if "recovery_count" not in batch:
-            raise ValueError("recovery_count is required")
         recovery_count = batch["recovery_count"]
         worker_role = batch.get("worker_role")
         worker_owner_run_id = batch.get("worker_owner_run_id")

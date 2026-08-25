@@ -1,5 +1,4 @@
 import json
-import hashlib
 import subprocess
 import sys
 import tempfile
@@ -293,6 +292,45 @@ class DeliveryNextTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "schema_version must be 10"):
                     upgrade_state(payload)
 
+    def test_unknown_single_state_fields_are_rejected(self):
+        for field in ("legacy_marker", "misspelled_state_field"):
+            with self.subTest(field=field):
+                payload = state(**{field: True})
+                with self.assertRaisesRegex(ValueError, "state fields are invalid"):
+                    validate_state(payload, SimpleNamespace())
+
+    def test_unknown_persisted_single_state_fields_are_rejected(self):
+        def history_entry(payload, field):
+            payload["ledger"]["acceptance_history"] = [{
+                "revision": 0,
+                "acceptance": dict(payload["ledger"]["acceptance"][0]),
+            }]
+            payload["ledger"]["acceptance_history"][0][field] = True
+
+        def acceptance_snapshot(payload, field):
+            payload["ledger"]["acceptance_history"] = [{
+                "revision": 0,
+                "acceptance": dict(payload["ledger"]["acceptance"][0]),
+            }]
+            payload["ledger"]["acceptance_history"][0]["acceptance"][field] = True
+
+        cases = (
+            ("baseline", lambda value: value["baseline"].__setitem__("legacy_marker", True)),
+            ("handoff", lambda value: value["handoff"].__setitem__("legacy_marker", True)),
+            ("check", lambda value: value["ledger"]["checks"].append({
+                "stage": "test", "command": "true", "result": "pass", "legacy_marker": True,
+            })),
+            ("acceptance", lambda value: value["ledger"]["acceptance"][0].__setitem__("legacy_marker", True)),
+            ("acceptance history", lambda value: history_entry(value, "legacy_marker")),
+            ("acceptance snapshot", lambda value: acceptance_snapshot(value, "legacy_marker")),
+        )
+        for location, mutate in cases:
+            with self.subTest(location=location):
+                payload = state()
+                mutate(payload)
+                with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                    validate_state(payload, SimpleNamespace())
+
     def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(__file__).resolve().parent.parent / "providers" / "native-v1.json"
@@ -310,83 +348,6 @@ class DeliveryNextTest(unittest.TestCase):
 
                     with self.assertRaisesRegex(ValueError, "identity changed"):
                         validate_provider_reference(reference, "workflow", "feature")
-
-    def pdlc_engine(self, directory):
-        root = Path(directory) / "pdlc"
-        for name in ("pdlc-tdd", "pdlc-implement", "pdlc-review", "pdlc-feature"):
-            path = root / "skills" / name / "SKILL.md"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"{name}\n", encoding="utf-8")
-        files = [
-            "pdlc-feature/SKILL.md",
-            "pdlc-tdd/SKILL.md",
-            "pdlc-implement/SKILL.md",
-            "pdlc-review/SKILL.md",
-        ]
-        digest = hashlib.sha256()
-        for relative in files:
-            digest.update(relative.encode() + b"\0" + (root / "skills" / relative).read_bytes())
-        (root / "converge-provider.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 2,
-                    "provider": {
-                        "id": "pdlc-v1",
-                        "source_id": "pdlc-skills",
-                        "version": "test-v1",
-                        "role": "workflow",
-                    },
-                    "capabilities": {
-                        "task_kinds": ["feature"],
-                        "stages": ["plan", "tdd", "implement", "review"],
-                    },
-                    "task_contracts": {
-                        "feature": {
-                            "entrypoint": files[0],
-                            "closure": files[1:],
-                            "source_fingerprint": digest.hexdigest(),
-                            "preserve_external_behavior": False,
-                        }
-                    },
-                    "authorization": {
-                        "stop_for": [
-                            "business_rules", "public_contracts", "permissions",
-                            "release", "irreversible_actions",
-                        ],
-                        "forbidden_actions": [
-                            "pdlc-ship", "commit", "tag", "push", "publish", "install",
-                        ],
-                    },
-                    "outputs": {
-                        "progress_protocol": 1,
-                        "required_evidence": ["tests", "validation", "findings"],
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-        return {
-            "name": "pdlc-v1",
-            "selection": "explicit",
-            "reason": "PDLC v1 is available",
-            "pdlc_root": str(root.resolve()),
-            "feature_id": "F-123",
-            "task_kind": "feature",
-            "pdlc_fingerprint": legacy_pdlc_fingerprint(root, "feature"),
-            "provider_manifest": str(root / "converge-provider.json"),
-        }
-
-    def generic_tdd_engine(self, directory):
-        path = Path(directory) / "project-tdd" / "SKILL.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("Run a test first, then use the red and green cycle.\n", encoding="utf-8")
-        return {
-            "name": "generic-tdd-v1",
-            "selection": "auto",
-            "reason": "generic TDD provider is available",
-            "tdd_skill_path": str(path.resolve()),
-            "tdd_skill_fingerprint": file_fingerprint(path),
-        }, path
 
     def run_helper(self, payload, *, run_id=None, writer_id=None, revision=None, acquire=True, output_format="legacy"):
         with tempfile.TemporaryDirectory() as directory:

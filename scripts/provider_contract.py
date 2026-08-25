@@ -176,4 +176,11 @@ def validate_reference(reference, task_kind, expected_role=None):
         path = Path(source.get("path", ""))
         if not path.is_absolute() or file_fingerprint(path) != source.get("fingerprint"):
             raise ValueError("provider source changed or is unavailable")
+    expected_fingerprint = contract.get("source_fingerprint")
+    if expected_fingerprint and declared:
+        digest = hashlib.sha256()
+        for source, (_kind, relative_path) in zip(sources, declared):
+            digest.update(relative_path.encode("utf-8") + b"\0" + Path(source["path"]).read_bytes())
+        if digest.hexdigest() != expected_fingerprint:
+            raise ValueError("provider source fingerprint does not match the task contract")
     return reference["id"]

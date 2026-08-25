@@ -155,7 +155,7 @@ class DeliveryEngineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "entrypoint"):
             engine_module.validate_provider_manifest(escaping)
 
-    def run_engine(self, *arguments, environment=None):
+    def run_engine(self, *arguments, command="select", environment=None):
         arguments = list(arguments)
         configured_root = None
         if "--pdlc-root" in arguments:
@@ -168,7 +168,7 @@ class DeliveryEngineTest(unittest.TestCase):
             )
         with tempfile.TemporaryDirectory() as home:
             return subprocess.run(
-                [sys.executable, str(SCRIPT), "select", *arguments],
+                [sys.executable, str(SCRIPT), command, *arguments],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -265,6 +265,38 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual("pdlc-v1", payload["binding"]["workflow_provider"]["id"])
         self.assertEqual({}, payload["binding"]["stage_providers"])
         self.assertEqual(64, len(payload["binding_fingerprint"]))
+
+    def test_freeze_binding_emits_an_exact_plan_provider_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_engine(
+                "--mode", "pdlc", "--pdlc-root", str(self.pdlc_root(directory)),
+                "--kind", "fix", command="freeze-binding",
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            {"selection", "reason", "task_kind", "binding", "binding_fingerprint"},
+            set(payload),
+        )
+        self.assertEqual("explicit", payload["selection"])
+        self.assertEqual("fix", payload["task_kind"])
+        self.assertEqual("pdlc-fix/SKILL.md", payload["binding"]["workflow_provider"]["contract"]["entrypoint"])
+
+    def test_freeze_binding_covers_native_and_auto_fallback(self):
+        cases = (
+            ("native", ("--mode", "native", "--kind", "refactor"), "explicit", "refactor"),
+            ("auto", ("--mode", "auto", "--kind", "fix"), "auto", "fix"),
+        )
+        for name, arguments, expected_selection, expected_kind in cases:
+            with self.subTest(path=name):
+                result = self.run_engine(*arguments, command="freeze-binding")
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(expected_selection, payload["selection"])
+                self.assertEqual(expected_kind, payload["task_kind"])
+                self.assertEqual("native-v1", payload["binding"]["workflow_provider"]["id"])
 
     def test_auto_prefers_pdlc_over_an_adapted_tdd_provider(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -174,6 +174,26 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("完整 PDLC v1", tdd)
         self.assertIn("execution-control.md", text)
 
+    def test_pdlc_selection_requires_explicit_frozen_entrypoint_activation(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        batch = (ROOT / "skills/converge-batch/SKILL.md").read_text(encoding="utf-8")
+        combined = root + control + batch
+
+        for marker in (
+            "冻结 entrypoint",
+            "$pdlc-feature|fix|refactor",
+            "`pdlc-run` 不算调用",
+            "禁止 native 混入",
+        ):
+            self.assertIn(marker, combined)
+
+    def test_plan_freezes_bindings_with_the_deterministic_engine_output(self):
+        skill = (ROOT / "skills/converge-plan/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("delivery_engine.py\" freeze-binding", skill)
+        self.assertIn("--kind <feature|fix|refactor>", skill)
+
     def test_simple_inline_path_skips_generic_discovery_and_host_plan_ui(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")

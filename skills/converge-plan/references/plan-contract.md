@@ -29,12 +29,7 @@
       "execution": "auto | current | fresh",
       "status": "pending",
       "provider_run": {"scope": "task", "recursive_planning": false},
-      "provider_binding": {
-        "controller": "converge",
-        "workflow_provider": "<registered workflow Provider id>",
-        "stage_providers": {"tdd": "<registered stage Provider id>"},
-        "binding_fingerprint": "<lowercase sha256>"
-      }
+      "provider_binding": {"selection": "auto | explicit", "reason": "<frozen reason>", "task_kind": "feature | fix | refactor", "binding": {"controller": "converge", "workflow_provider": "<完整 Provider Reference v2>", "stage_providers": {}}, "binding_fingerprint": "<lowercase sha256>"}
     }
   ],
   "final_acceptance": ["integrated observable behavior"],
@@ -48,7 +43,7 @@
 }
 ```
 
-任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；Provider Binding 摘要必须与 workflow/stage ID 的规范 JSON 一致。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
+任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；`workflow_provider` 与每个 stage 都必须是完整 Provider Reference v2（manifest、task contract、entrypoint 与 closure 来源），摘要 ID 一律拒绝。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
 只接受 v5 计划；必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
 

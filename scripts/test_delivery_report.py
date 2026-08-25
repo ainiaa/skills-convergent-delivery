@@ -142,12 +142,6 @@ class DeliveryReportTest(unittest.TestCase):
             payload.pop("source_receipt")
             payload["ledger"]["acceptance"][0].pop("evidence_receipts")
             payload.update(status="active", current_stage="round-1-semantic-review")
-            payload["workspace_changes"] = {
-                "file_count": 999,
-                "lines_added": 999,
-                "lines_deleted": 999,
-                "binary_file_count": 999,
-            }
 
             report = json.loads(self.run_report(payload, "json").stdout)
             rendered = self.run_report(payload, "text").stdout

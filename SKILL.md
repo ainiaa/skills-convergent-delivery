@@ -19,7 +19,7 @@ Converge 始终是 controller；规划、只读、跨会话用 `converge-plan`�
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
 
-Provider Schema v2 binding；`engine` 仅由 binding 派生，不能成为第二真相。Provider 规则见 [TDD 提供者](references/tdd-providers.md)；`pdlc-v1`、`native-v1` 的 task 内部仍整体委托。
+Provider Schema v2；pdlc-v1/native-v1；`engine` 由 binding 派生，不能成为第二真相。PDLC 显式执行冻结入口；见 [TDD](references/tdd-providers.md)、[控制](references/execution-control.md)
 
 ## 路由
 
