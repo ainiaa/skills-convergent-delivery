@@ -47,8 +47,9 @@ class EvaluationContractTest(unittest.TestCase):
         )
         self.assertFalse(sampling["single_pass_establishes_stability"])
         receipt = sampling["receipt_schema"]
-        self.assertEqual(3, receipt["schema_version"])
+        self.assertEqual(4, receipt["schema_version"])
         self.assertIn("evidence_fingerprint", receipt["required_fields"])
+        self.assertIn("evidence_level", receipt["required_fields"])
         self.assertIn("worker_observation_fingerprint", receipt["required_fields"])
         self.assertIn("touched_paths", receipt["required_fields"])
 

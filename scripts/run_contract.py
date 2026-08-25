@@ -5,6 +5,8 @@ ACTIONS = {
     "execute-inline": ({"task_id", "phase"}, {"task_id", "phase"}),
     "dispatch": ({"task_id"}, {"task_id"}),
     "query": ({"task_id", "worker_ref"}, {"task_id", "worker_ref"}),
+    "wait": ({"task_id", "worker_ref"}, {"task_id", "worker_ref"}),
+    "interrupt": ({"task_id", "worker_ref"}, {"task_id", "worker_ref"}),
     "verify": ({"task_id"}, {"task_id", "phase", "target"}),
     "block": ({"reason", "task_id"}, {"reason", "task_id"}),
     "complete": ({"task_id"}, {"task_id"}),
@@ -49,4 +51,6 @@ def legacy_action(value):
         return value["phase"]
     if kind == "query":
         return f"query:{value['worker_ref']}"
+    if kind in {"wait", "interrupt"}:
+        return f"{kind}:{value['worker_ref']}"
     return kind

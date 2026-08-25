@@ -14,7 +14,7 @@ worker 的登记、归属、宿主终态、watchdog、一次恢复和退出清�
 python3 scripts/runtime_adapter.py negotiate --profile codex
 ```
 
-只有返回 `mode=automatic` 才能自动派发；automatic 至少要求稳定 `dispatch + query`。Runtime Adapter 只声明协商结果和规范化宿主状态，不生成、代理或执行宿主动作。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具：`wait`、`interrupt` 只在返回 capabilities 中存在且 worker 仍为 `working` 时调用；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
+只有返回 `mode=automatic` 才能自动派发；automatic 至少要求稳定 `dispatch + query`。`negotiate` 只产生 `controller_attested` Binding；只有具体宿主桥接器用原始 capability observation 调用 `bind_observed`，才可能得到 `host_observed` 的 `observed` watchdog。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用：父控制器必须执行 `watchdog_action` 返回且绑定精确 `task_id + worker_ref` 的 `query|wait|interrupt|block`。`terminal-only` 禁止自动探测、中断和恢复；没有 wait capability 时 action 退回 query。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
 
 1. 先将 Batch 状态写为 `dispatching` 并固定 `dispatch_id`。
 2. 创建调用携带当前 capsule并显式要求执行者使用 `$converge`；按 Batch state 原子保存 worker lifecycle 和 `recovery_count=0` 后进入 `running`。
@@ -24,7 +24,9 @@ python3 scripts/runtime_adapter.py negotiate --profile codex
 ## Codex
 
 - 仅在当前 Codex 宿主实际暴露新任务/thread、等待、查询和中断工具时使用它们，将返回的 task/thread id 记为 `worker_ref`。
-- 用有界的 wait 跟进；超时只表示继续查询，不表示重新派发。
+- 用有界的 wait 跟进；超时只表示继续查询，不表示重新派发、无进展或可中断。
+- 当前 Codex 若只能等待最终状态，`activity_query` 和 `process_query` 必须协商为 false，因此 Binding 为 `terminal-only`；重复 timeout 不能触发 `interrupt=true` 或消耗恢复预算。
+- `send_input(interrupt=false)` 只是排队，不能当作软探测；`interrupt=true` 仅用于用户 stop 或 `observed` Binding 已确认停滞后的收口。
 - wait timeout 规范化为 `working`；宿主 `done/cancelled/failed` 分别规范化为 `completed/interrupted/blocked`。
 - 恢复时按执行控制查询原任务，验证 receipt 后再推进状态。
 

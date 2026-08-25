@@ -38,14 +38,17 @@ worker 只在阶段切换、客观产物产生及长命令前后发送 objective
 
 ## 4. 宿主 watchdog 能力边界
 
-以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；自动 worker 除稳定 dispatch/query 外，还必须具备完整 `tree_query` 或能强制 `restrict_dispatch`。只有同时暴露活动/进程 query、计时 wait、interrupt 和同一任务恢复时，执行者才能自动完成软探测、硬中断与恢复；缺少能力时只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断、恢复或清场。
+以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；它只能生成 `controller_attested` Binding，即使调用方传入的布尔值声称具备全部能力，也只能是 `terminal-only`。只有具体宿主桥接器把带 `query_id/observed_at/profile/capabilities` 的原始能力观察交给 `bind_observed`，且其能力位于已支持的 profile 上限内，Binding 才能成为 `host_observed` 并进入 `observed`。当前 Codex profile 明确不支持 `activity_query/process_query/resume`，不能通过输入布尔值越过该上限。自动 worker 仍必须具备稳定 dispatch/query 和完整 `tree_query` 或强制 `restrict_dispatch`。
+
+`watchdog_action` 返回的不是自然语言建议，而是带精确 `task_id/worker_ref` 的 `query|wait|interrupt|block` Runtime Action；控制器只能执行该动作。没有 `wait` capability 时它返回 `query`，不会生成无法执行的 wait。只有 `host_observed` Binding 同时具备 `activity_query`、`process_query`、计时 `wait`、`interrupt` 和同一任务 `resume` 时才是 `observed`，执行者才能自动完成软探测、硬中断与恢复。其他 automatic Binding 一律是 `terminal-only`：可等待和查询终态，但 `wait` 超时只表示结果未知且仍可能在运行，不能累积为无进展、触发探测/中断或消耗恢复预算。manual 和 terminal-only 只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断、恢复或清场。
 
 活动信号包括 commentary、工具调用、状态 revision、diff、日志增长、子任务回执或仍在运行的测试/构建/PDLC 进程。
 
-- **软探测（约 90 秒）**：所有活动信号均为空且没有运行进程时，向用户说明当前 task，并查询原任务/进程状态。
-- **硬中断（约 180 秒）**：软探测后仍无任何活动且没有运行进程，才中断当前生成；保留 `plan_id`、`task_id`、`worker_ref` 和已有证据。
-- 中断后只恢复同一 `worker_ref` 或同一 task，**最多自动恢复一次**。Batch 必须先把 `worker_ref` 和 `recovery_count=1` 持久化；仍无进展则以 `no_progress` 阻塞，不重新派发、不扩大任务。
+- **软探测（约 90 秒）**：仅 `observed` Binding 可用。所有宿主活动信号均为空且没有运行进程时，保存 worker 最近的 objective milestone、source/diff 与验证输出为 partial handoff，再向用户说明当前 task，并对原任务/进程执行 `query`。这个 partial handoff 只是可恢复进度，不是完成回执；排队消息或没有回复均不能当作进展。
+- **硬中断（约 180 秒）**：仅 `observed` Binding 可用。软探测后仍由宿主确认无任何活动且没有运行进程，才执行返回的精确 `interrupt` action；保留 `plan_id`、`task_id`、`worker_ref` 和上述 partial handoff。
+- 中断后只恢复同一 `worker_ref` 或同一 task，**最多自动恢复一次**。仅 `observed` Binding 可自动恢复；Batch 必须先把 `worker_ref` 和 `recovery_count=1` 持久化；仍无进展则以 `no_progress` 阻塞，不重新派发、不扩大任务。
 - 测试、构建、PDLC 或子任务仍在运行时不触发硬中断；按不超过 60 秒的可见节奏汇报等待状态。
+- 用户明确 stop 可以按宿主中断；排队消息、自然语言回执和重复 `wait` timeout 都不是活动或停滞证据。
 
 连接中断或派发结果不确定时，必须先查询同一 `worker_ref`。没有可靠引用时阻塞或输出手工交接 capsule，不能创建第二个执行者。
 
@@ -69,7 +72,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 
-正常完成、异常、用户中断、`no_progress`、验证失败和其他返回路径都执行等价 `finally`：逐项查询当前 run registry，只以宿主 query/wait 的结果更新状态。收到结果但宿主仍显示 Working 时继续有界等待；确认无活动后才可按 watchdog 中断，并再次查询到 `interrupted`。本轮存在 active worker 时不得宣称完成；无法查询或中断时返回 blocked，列出需 manual cleanup 的精确 `worker_ref`。
+正常完成、异常、用户中断、`no_progress`、验证失败和其他返回路径都执行等价 `finally`：逐项查询当前 run registry，只以宿主 query/wait 的结果更新状态。收到结果但宿主仍显示 Working 时继续有界等待；只有 `observed` Binding 的宿主确认无活动且无进程后才可按 watchdog 中断，并再次查询到 `interrupted`。terminal-only timeout 继续视为 working/unknown，不得为清场强制终止。本轮存在 active worker 时不得宣称完成；无法查询或中断时返回 blocked，列出需 manual cleanup 的精确 `worker_ref`。
 
 若先进入 blocked 才完成宿主中断，状态保持 blocked，但允许后续 revision 仅把既有 worker 更新为宿主终态并刷新清场回执；其他任务事实全部冻结。这样清场结果可恢复、可审计，也不会把失败运行重新伪装为完成。
 

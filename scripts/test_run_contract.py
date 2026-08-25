@@ -12,6 +12,8 @@ class RunContractTest(unittest.TestCase):
             ("execute-inline", {"task_id": "T1"}),
             ("dispatch", {}),
             ("query", {"worker_ref": "worker-1"}),
+            ("wait", {"task_id": "T1"}),
+            ("interrupt", {"worker_ref": "worker-1"}),
             ("verify", {"task_id": "T1"}),
             ("block", {}),
             ("block", {"reason": "missing identity"}),
@@ -24,9 +26,17 @@ class RunContractTest(unittest.TestCase):
     def test_actions_reject_unknown_fields_and_speculative_kinds(self):
         with self.assertRaisesRegex(ValueError, "fields"):
             action("dispatch", task_id="T1", surprise=True)
-        for kind in ("wait", "interrupt", "report"):
+        for kind in ("report",):
             with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "unsupported"):
                 action(kind)
+        self.assertEqual(
+            {"action": "wait", "task_id": "T1", "worker_ref": "worker-1"},
+            action("wait", task_id="T1", worker_ref="worker-1"),
+        )
+        self.assertEqual(
+            {"action": "interrupt", "task_id": "T1", "worker_ref": "worker-1"},
+            action("interrupt", task_id="T1", worker_ref="worker-1"),
+        )
 
     def test_delivery_action_binds_task_id(self):
         self.assertEqual(

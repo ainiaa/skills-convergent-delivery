@@ -9,11 +9,30 @@ import sys
 from pathlib import Path
 
 
-def run_evals(dataset, command, timeout=60):
+def validate_selector(selector):
+    if not isinstance(selector, dict) or set(selector) != {"argv", "artifacts"}:
+        raise ValueError("selector must contain argv and artifacts")
+    command = selector["argv"]
+    artifacts = selector["artifacts"]
     if not isinstance(command, list) or not command or any(
         not isinstance(item, str) or not item for item in command
     ):
-        raise ValueError("command must be a non-empty argv list")
+        raise ValueError("selector argv must be a non-empty list")
+    if not isinstance(artifacts, list) or not artifacts or any(
+        not isinstance(item, str) or not item.strip() for item in artifacts
+    ):
+        raise ValueError("selector artifacts must be a non-empty list")
+    resolved = [Path(item).expanduser().resolve() for item in artifacts]
+    if len(resolved) != len(set(resolved)) or any(not item.is_file() for item in resolved):
+        raise ValueError("selector artifact is unavailable or duplicated")
+    return command, [
+        {"path": str(item), "sha256": hashlib.sha256(item.read_bytes()).hexdigest()}
+        for item in resolved
+    ]
+
+
+def run_evals(dataset, selector, timeout=60):
+    command, artifacts = validate_selector(selector)
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         raise ValueError("timeout must be a positive integer")
     if not isinstance(dataset, dict) or set(dataset) != {"schema_version", "suite", "evals"}:
@@ -40,7 +59,8 @@ def run_evals(dataset, command, timeout=60):
         dataset, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
     selector_fingerprint = hashlib.sha256(json.dumps(
-        command, ensure_ascii=False, separators=(",", ":")
+        {"argv": command, "artifacts": artifacts}, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")
     ).encode()).hexdigest()
     results = []
     confusion = {}
@@ -93,6 +113,7 @@ def run_evals(dataset, command, timeout=60):
     return {
         "dataset_fingerprint": dataset_fingerprint,
         "selector_fingerprint": selector_fingerprint,
+        "selector_artifacts": artifacts,
         "runner_fingerprint": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "executed_cases": len(results),
         "exact_matches": sum(item["exact"] for item in results),
@@ -112,13 +133,13 @@ def run_evals(dataset, command, timeout=60):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--command", required=True, help="JSON argv; prompt is appended")
+    parser.add_argument("--selector", required=True, help="JSON {argv,artifacts}; prompt is appended")
     parser.add_argument("--timeout", type=int, default=60)
     arguments = parser.parse_args()
     try:
         with open(arguments.dataset, encoding="utf-8") as file:
             dataset = json.load(file)
-        result = run_evals(dataset, json.loads(arguments.command), arguments.timeout)
+        result = run_evals(dataset, json.loads(arguments.selector), arguments.timeout)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result["exact_matches"] == result["executed_cases"] else 1
     except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:

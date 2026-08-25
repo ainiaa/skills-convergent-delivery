@@ -20,7 +20,7 @@ SAMPLE_FIELDS = {
     "schema_version", "scenario_id", "scenario_class", "control_source",
     "candidate_source", "judge_fingerprint", "worker_ref", "evidence_source",
     "evidence_fingerprint", "control_result", "candidate_result", "receipt_fingerprint",
-    "worker_observation_fingerprint", "touched_paths",
+    "worker_observation_fingerprint", "evidence_level", "touched_paths",
 }
 SCENARIO_CLASSES = {"known_acceptance", "history", "exploration"}
 EVIDENCE_FIELDS = SAMPLE_FIELDS - {
@@ -179,7 +179,7 @@ def _worker_state(source, artifact_root):
                 "worker state requires unique completed evaluator workers owned by its run"
             )
         workers[worker["ref"]] = {"observation_fingerprint": observation_fingerprint}
-    if receipt.get("registered_refs") != list(workers):
+    if set(receipt.get("registered_refs", [])) != set(workers):
         raise ValueError("worker tree receipt does not match the state registry")
     return workers, hashlib.sha256(raw).hexdigest()
 
@@ -187,13 +187,15 @@ def _worker_state(source, artifact_root):
 def _sample_receipt(value, control_source, candidate_source, artifact_root,
                     judge_fingerprint, workers, allowed_scope):
     if not isinstance(value, dict) or set(value) != SAMPLE_FIELDS \
-            or value.get("schema_version") != 3:
+            or value.get("schema_version") != 4:
         raise ValueError("sample receipt fields are invalid")
     for field in ("scenario_id", "worker_ref", "evidence_source"):
         if not isinstance(value[field], str) or not value[field].strip():
             raise ValueError(f"sample receipt {field} must be a non-empty string")
     if value["scenario_class"] not in SCENARIO_CLASSES:
         raise ValueError("sample receipt scenario_class is invalid")
+    if value["evidence_level"] != "evaluator_attested":
+        raise ValueError("sample receipt evidence_level is invalid")
     if value["control_source"] != control_source or value["candidate_source"] != candidate_source:
         raise ValueError("sample receipt source does not match the evaluation request")
     for field in (
@@ -220,9 +222,16 @@ def _sample_receipt(value, control_source, candidate_source, artifact_root,
     ).hexdigest()
     if value["receipt_fingerprint"] != expected:
         raise ValueError("sample receipt fingerprint is invalid")
-    evidence = Path(value["evidence_source"])
+    evidence = Path(value["evidence_source"]).expanduser()
     if not evidence.is_absolute():
-        evidence = artifact_root / evidence
+        raise ValueError("sample receipt evidence_source must be outside the candidate repository")
+    evidence = evidence.resolve()
+    try:
+        evidence.relative_to(artifact_root)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("sample receipt evidence_source must stay outside the candidate repository")
     if not evidence.is_file() or hashlib.sha256(evidence.read_bytes()).hexdigest() \
             != value["evidence_fingerprint"]:
         raise ValueError("sample receipt evidence fingerprint is invalid")
@@ -272,11 +281,7 @@ def evaluate(request, repository_root):
     fingerprints = [item["receipt_fingerprint"] for item in samples]
     if len(fingerprints) != len(set(fingerprints)):
         raise ValueError("sample receipts must be unique")
-    evidence_sources = [
-        str((Path(item["evidence_source"]) if Path(item["evidence_source"]).is_absolute()
-             else artifact_root / item["evidence_source"]).resolve())
-        for item in samples
-    ]
+    evidence_sources = [str(Path(item["evidence_source"]).expanduser().resolve()) for item in samples]
     if len(evidence_sources) != len(set(evidence_sources)):
         raise ValueError("sample receipts must use distinct evidence artifacts")
     if len({item["judge_fingerprint"] for item in samples}) != 1:

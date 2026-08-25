@@ -3,6 +3,7 @@
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,13 +53,20 @@ class TriggerEvalTest(unittest.TestCase):
                 {"id": "negative", "prompt": "explain it", "expected_skill": None, "should_trigger": False},
             ],
         }
-        selector = (
-            "import json,sys; p=sys.argv[1]; "
-            "s='converge-review' if 'review' in p else ('converge' if 'implement' in p else None); "
-            "print(json.dumps({'selected_skill':s}))"
-        )
-
-        result = run_evals(dataset, [sys.executable, "-c", selector])
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "selector.py"
+            source.write_text(
+                "import json,sys\n"
+                "p=sys.argv[1]\n"
+                "s='converge-review' if 'review' in p else ('converge' if 'implement' in p else None)\n"
+                "print(json.dumps({'selected_skill':s}))\n",
+                encoding="utf-8",
+            )
+            selector = {"argv": [sys.executable, str(source)], "artifacts": [str(source)]}
+            result = run_evals(dataset, selector)
+            original_fingerprint = result["selector_fingerprint"]
+            source.write_text("raise SystemExit(99)\n", encoding="utf-8")
+            changed = run_evals(dataset, selector)
 
         self.assertEqual(3, result["executed_cases"])
         self.assertEqual(1.0, result["f1"])
@@ -67,9 +75,10 @@ class TriggerEvalTest(unittest.TestCase):
         self.assertEqual(64, len(result["dataset_fingerprint"]))
         self.assertEqual(64, len(result["selector_fingerprint"]))
         self.assertEqual(64, len(result["runner_fingerprint"]))
+        self.assertNotEqual(original_fingerprint, changed["selector_fingerprint"])
 
     def test_runner_rejects_malformed_dataset_before_execution(self):
-        selector = [sys.executable, "-c", "raise SystemExit(99)"]
+        selector = {"argv": [sys.executable, "-c", "raise SystemExit(99)"], "artifacts": [str(__file__)]}
         with self.assertRaisesRegex(ValueError, "dataset"):
             run_evals([], selector)
         with self.assertRaisesRegex(ValueError, "case"):
@@ -88,17 +97,35 @@ class TriggerEvalTest(unittest.TestCase):
                 {"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False},
             ],
         }
-        selector = (
-            "import json,sys\n"
-            "if sys.argv[1] == 'explain': raise SystemExit(7)\n"
-            "print(json.dumps({'selected_skill':'converge'}))"
-        )
-
-        result = run_evals(dataset, [sys.executable, "-c", selector])
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "selector.py"
+            source.write_text(
+                "import json,sys\n"
+                "if sys.argv[1] == 'explain': raise SystemExit(7)\n"
+                "print(json.dumps({'selected_skill':'converge'}))\n",
+                encoding="utf-8",
+            )
+            result = run_evals(
+                dataset, {"argv": [sys.executable, str(source)], "artifacts": [str(source)]}
+            )
 
         self.assertEqual(1, result["error_count"])
         self.assertLess(result["f1"], 1.0)
         self.assertEqual(1, result["confusion_matrix"]["<none>"]["<error>"])
+
+    def test_runner_rejects_untracked_or_missing_selector_artifacts(self):
+        dataset = {
+            "schema_version": 1,
+            "suite": "converge",
+            "evals": [{"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False}],
+        }
+        with self.assertRaisesRegex(ValueError, "selector"):
+            run_evals(dataset, [sys.executable, "-c", "print('{}')"])
+        with self.assertRaisesRegex(ValueError, "artifact"):
+            run_evals(
+                dataset,
+                {"argv": [sys.executable, "-c", "print('{}')"], "artifacts": ["/missing-selector"]},
+            )
 
 
 if __name__ == "__main__":

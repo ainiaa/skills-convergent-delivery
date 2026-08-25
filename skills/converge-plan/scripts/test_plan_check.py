@@ -208,6 +208,14 @@ class PlanCheckTest(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("decision", result.stderr)
 
+        for resolution in ("TBD", "unknown", "待定", "待确认"):
+            with self.subTest(resolution=resolution):
+                value = json.loads(json.dumps(resolved))
+                value["decisions"][0]["resolution"] = resolution
+                result = self.run_check("validate", value)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("resolution", result.stderr)
+
     def test_overlapping_paths_are_serialized_even_without_dependencies(self):
         value = plan([task("T1", ["src/shared"]), task("T2", ["src/shared/file.py"])])
 

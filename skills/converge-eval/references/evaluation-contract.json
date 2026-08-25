@@ -1,5 +1,5 @@
 {
-  "protocol": "converge-evaluation-v4",
+  "protocol": "converge-evaluation-v5",
   "required_inputs": [
     "acceptance",
     "touched_control_surfaces",
@@ -55,7 +55,7 @@
     "fresh_context_per_sample": true,
     "single_pass_establishes_stability": false,
     "receipt_schema": {
-      "schema_version": 3,
+      "schema_version": 4,
       "required_fields": [
         "scenario_id",
         "scenario_class",
@@ -64,6 +64,7 @@
         "judge_fingerprint",
         "worker_ref",
         "worker_observation_fingerprint",
+        "evidence_level",
         "touched_paths",
         "evidence_source",
         "evidence_fingerprint",
@@ -71,7 +72,7 @@
         "candidate_result",
         "receipt_fingerprint"
       ],
-      "immutable": "Git resolves both sources to distinct trees; the pre-candidate Controller Snapshot fixes judge, catalog, and evaluator bytes; worker_state_source binds samples to the managed Single State v10 registry and its host-observed terminal tree receipt; touched_paths are canonical repository-relative paths within allowed_scope; JSON evidence and receipt fingerprints bind every claim",
+      "immutable": "Git resolves both sources to distinct trees; the pre-candidate Controller Snapshot fixes judge, catalog, and evaluator bytes; worker_state_source binds samples to the managed Single State v10 registry and its host-observed terminal tree receipt; touched_paths are canonical repository-relative paths within allowed_scope; each absolute evidence artifact stays outside the candidate repository and is explicitly evaluator_attested rather than falsely host-signed; JSON evidence and receipt fingerprints bind every claim",
       "freshness": "critical decisions require at least three distinct worker_ref values and evidence artifacts for every required known acceptance and selected history scenario; exploration cannot satisfy that minimum",
       "coverage": "known acceptance and selected history scenarios absent from receipts become uncovered"
     },

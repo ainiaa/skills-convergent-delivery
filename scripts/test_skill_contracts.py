@@ -173,6 +173,8 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("generic-tdd-v1` 仅允许显式选择", skill + tdd)
         self.assertIn("简单 `inline` 不创建宿主计划项", skill + control)
         self.assertNotIn("简单任务直接显示五阶段计划", skill + control)
+        self.assertIn("仅当路由不是 `inline`", skill)
+        self.assertNotIn("\n读取 [计划执行与无响应保护]", skill)
 
     def test_writer_lease_has_an_exact_terminal_release_recipe(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

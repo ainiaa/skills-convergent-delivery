@@ -64,7 +64,7 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 12
 
 
 def provider_files(root):

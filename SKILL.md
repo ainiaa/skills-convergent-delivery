@@ -57,7 +57,7 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 先读取 [任务路由](references/task-routing.md)，把观察到的范围、耦合、不确定性、验证、风险信号和 `allowed_paths` 通过 `task_profile.py` 冻结为 canonical routing receipt。`route/review_tier/integration_required/profile_fingerprint` 全部由 helper 推导，不接受调用者覆盖。最多评估两次；风险强度不自动触发代理。
 
-读取 [计划执行与无响应保护](references/execution-control.md)。
+仅当路由不是 `inline`、需要 worker/跨会话恢复，或用户明确要求并发与无响应处理时，读取 [计划执行与无响应保护](references/execution-control.md)。简单 `inline` 只遵循本入口的范围、TDD、验证、租约和终态规则，不加载 worker/watchdog 细节。
 
 其他任务在实现前冻结执行边界：简单 `inline` 只保存一个内联执行条目，不调用 `converge-plan`；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
 
@@ -110,4 +110,4 @@ reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff
 
 发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
 
-修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。Protocol v9→v10 首次授权冻结 Eval helper 的一次性 bootstrap 只按 Eval Contract 记录独立报告与 `uncovered`，不能冒充 locked differential 通过。
+修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。Controller Protocol v12 会阻止旧快照继续执行控制 helper（仅允许其释放自身 lease），因此安全规则不会被旧快照绕过。

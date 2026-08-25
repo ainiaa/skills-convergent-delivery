@@ -11,7 +11,7 @@ metadata:
 
 ## 输入与冻结
 
-开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在默认 managed state root 推导的正式 Single State v10 路径，位于候选仓库外，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。`evidence_source` 指向实际 JSON 证据文件并绑定上述身份与双侧结果。旧 `samples=["pass"]` 或 Sample v2 不是证据，必须拒绝。
+开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在默认 managed state root 推导的正式 Single State v10 路径，位于候选仓库外，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。Sample v4 的 `evidence_source` 必须是候选仓库外的绝对 JSON artifact，使用 `evaluator_attested` 明确其来源级别，并绑定 worker、judge 与双侧结果；它不能冒充宿主直接签名的结果。旧 `samples=["pass"]` 或 Sample v3 不是证据，必须拒绝。
 
 通过 live trusted runner 执行冻结 helper，不能直接运行 candidate 中的副本：
 

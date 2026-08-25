@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 控制面一次性硬化：Runtime Binding 升级为 v4，普通 capability 协商只能得到 `controller_attested`；只有绑定完整原始宿主观察的 `bind_observed` 才可启用可观测 watchdog。当前 Codex 的 wait timeout 保持 `terminal-only`，不会因调用方声明能力或重复超时自动中断未完成子任务；中断前保留可恢复的 partial handoff。
+- Runtime Action Contract 新增带精确 task/worker 身份的 `wait` 与 `interrupt`，无 wait 能力时确定性退回 query，避免生成无法执行的 watchdog 建议。Controller Protocol 升级为 v12，旧快照仅可释放自身 lease，不能绕过新的控制规则。
+- Plan v5 拒绝 `TBD`、`unknown`、待定等伪 resolution；trigger eval 的 selector 指纹改为绑定 argv 与实际 artifact 内容。Eval Sample Receipt 升级为 v4，证据文件必须位于 candidate 仓库外并明确为 `evaluator_attested`，worker registry 的顺序不再影响评测结果。
+- 根 Skill 对 simple inline 路径按需加载执行控制细节，减少不需要 worker/recovery 的任务上下文；补充本轮控制面设计取舍与独立前向验收记录。
 - Controller Protocol 升级为 v10：冻结 Eval helper 成为可信 runner 的精确白名单入口；judge、catalog 与 evaluator 固定到修改前 Snapshot，样本绑定默认 managed state 中正式 Single State v10 的 evaluator/host-observed 清场证据，Git tree 与反斜杠/touched-path 边界按真实对象执行；v9→v10 一次性 bootstrap 必须把 locked differential 记为 uncovered。
 - Plan v5 decisions 改为结构化已决记录，未决事项不能进入执行；最终 `audit --require-complete` 用退出码执行完成门禁。selector 运行错误单列并使 F1 失去满分，避免错误被统计成正常未选择。
 - 新增独立自进化研究备忘；当前 Suite 不启用自动自改、后台学习或第二套记忆状态。

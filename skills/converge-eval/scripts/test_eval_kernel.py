@@ -48,7 +48,7 @@ HOST_OBSERVATION_FINGERPRINT = hashlib.sha256(json.dumps(
 
 def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **overrides):
     value = {
-        "schema_version": 3,
+        "schema_version": 4,
         "scenario_id": scenario_id,
         "scenario_class": scenario_class,
         "control_source": CONTROL_COMMIT,
@@ -56,6 +56,7 @@ def sample(scenario_id, scenario_class, result="pass", worker_ref="worker-1", **
         "judge_fingerprint": JUDGE_FINGERPRINT,
         "worker_ref": worker_ref,
         "worker_observation_fingerprint": HOST_OBSERVATION_FINGERPRINT,
+        "evidence_level": "evaluator_attested",
         "touched_paths": [],
         "control_result": "pass",
         "candidate_result": result,
@@ -246,6 +247,40 @@ class EvalKernelTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "evidence fingerprint"):
             evaluate(secure(request), ROOT)
+
+    def test_evidence_artifact_must_stay_outside_the_candidate_repository(self):
+        receipt = sample("contract", "known_acceptance")
+        candidate_artifact = ROOT / "README.md"
+        receipt["evidence_source"] = str(candidate_artifact)
+        receipt["evidence_fingerprint"] = hashlib.sha256(candidate_artifact.read_bytes()).hexdigest()
+        receipt["receipt_fingerprint"] = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in receipt.items() if key != "receipt_fingerprint"},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        request = {
+            "acceptance": ["contract"], "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control", "candidate_source": "candidate", "allowed_scope": ["scripts"],
+            "critical_decisions": [], "sample_receipts": [receipt], "revisions": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "outside the candidate repository"):
+            evaluate(secure(request), ROOT)
+
+    def test_worker_tree_receipt_order_does_not_change_evaluation_identity(self):
+        request = secure({
+            "acceptance": ["contract"], "touched_control_surfaces": ["review.protocol"],
+            "control_source": "control", "candidate_source": "candidate", "allowed_scope": ["scripts"],
+            "critical_decisions": [], "sample_receipts": [sample("contract", "known_acceptance")],
+            "revisions": [],
+        })
+        state_path = Path(request["worker_state_source"])
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["worker_tree_receipt"]["registered_refs"] = list(reversed(WORKER_REFS))
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        self.assertEqual("complete", evaluate(request, ROOT)["stop_reason"])
 
     def test_evidence_artifact_must_bind_the_claimed_worker_and_results(self):
         receipt = sample("contract", "known_acceptance")

@@ -19,9 +19,9 @@
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
     "package_version": "0.20.0",
-    "protocol_version": 10,
+    "protocol_version": 12,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.20.0", "protocol_version": 10, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.20.0", "protocol_version": 12, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -71,7 +71,7 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
 - `binding_fingerprint` 是完整 binding 的 canonical JSON sha256，恢复时任一来源变化都会阻塞。
 - 兼容旧输出的 `engine` 可以由 binding 派生展示，但不能再写入正式状态。
 
-## 3. Worker、Runtime Binding Schema v2 与 Progress Receipt v1
+## 3. Worker、Runtime Binding Schema v4 与 Progress Receipt v1
 
 ```json
 {
@@ -123,7 +123,7 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
 }
 ```
 
-第一次登记 worker 时必须同时冻结 `runtime_adapter.py negotiate` 产生的 Runtime Binding；该 Binding 是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`。之后不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。只传 caller 参数或使用 `restrict_dispatch` 均为 `controller_attested`，只能支撑 blocked 清场，不能支撑带 worker 的 complete。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
+第一次登记 worker 时必须同时冻结 Runtime Binding。`negotiate` 的 Binding 一律是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`；它不能开启自动 watchdog。`bind()` 没有 host-observed 参数，只有具体宿主桥接器将完整原始能力观察交给 `bind_observed` 后才可能构造 `host_observed` Binding；Schema v4 同时保存该 observation 与 fingerprint，并要求 capability 列表与 observation 精确一致。profile 上限拒绝 caller 伪造不存在的能力，当前 Codex 不允许 activity/process/resume。之后 Binding 不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。只传 caller 参数或使用 `restrict_dispatch` 均为 `controller_attested`，只能支撑 blocked 清场，不能支撑带 worker 的 complete。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致（顺序不具有语义）；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
 
 生成和展示：
 

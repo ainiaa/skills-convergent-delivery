@@ -7,9 +7,24 @@ import json
 import sys
 from datetime import datetime
 
+from run_contract import action
+
 
 PROFILES = {"codex", "claude-code", "single-context"}
-CAPABILITIES = ("dispatch", "query", "wait", "interrupt", "tree_query", "restrict_dispatch")
+CAPABILITIES = (
+    "dispatch", "query", "activity_query", "process_query", "wait", "interrupt",
+    "resume", "tree_query", "restrict_dispatch",
+)
+AUTOMATIC_WATCHDOG_CAPABILITIES = frozenset((
+    "activity_query", "process_query", "wait", "interrupt", "resume",
+))
+PROFILE_CAPABILITY_CEILINGS = {
+    "codex": frozenset((
+        "dispatch", "query", "wait", "interrupt", "tree_query", "restrict_dispatch",
+    )),
+    "claude-code": frozenset(CAPABILITIES),
+    "single-context": frozenset(),
+}
 STATUS_MAP = {
     "working": "working",
     "running": "working",
@@ -31,16 +46,25 @@ def fingerprint(value):
     ).hexdigest()
 
 
-def bind(profile, mode, capabilities, reason):
+def _bind(profile, mode, capabilities, reason, evidence_level, capability_observation):
     value = {
-        "schema_version": 2,
+        "schema_version": 4,
         "profile": profile,
         "mode": mode,
         "capabilities": capabilities,
         "reason": reason,
-        "evidence_level": "controller_attested",
+        "evidence_level": evidence_level,
+        "capability_observation": capability_observation,
+        "capability_observation_fingerprint": (
+            fingerprint(capability_observation) if capability_observation is not None else None
+        ),
     }
     return {**value, "binding_fingerprint": fingerprint(value)}
+
+
+def bind(profile, mode, capabilities, reason):
+    """Create only a controller-attested binding from ordinary capability negotiation."""
+    return _bind(profile, mode, capabilities, reason, "controller_attested", None)
 
 
 def validate_binding(value):
@@ -48,13 +72,34 @@ def validate_binding(value):
         "schema_version", "profile", "mode", "capabilities", "reason", "binding_fingerprint"
     }
     fields_v2 = {*fields_v1, "evidence_level"}
-    if not isinstance(value, dict) or set(value) not in {frozenset(fields_v1), frozenset(fields_v2)}:
+    fields_v3 = {*fields_v2, "capability_observation_fingerprint"}
+    fields_v4 = {*fields_v3, "capability_observation"}
+    if not isinstance(value, dict) or set(value) not in {
+        frozenset(fields_v1), frozenset(fields_v2), frozenset(fields_v3), frozenset(fields_v4),
+    }:
         raise ValueError("runtime binding fields are invalid")
-    if value["schema_version"] not in {1, 2} \
-            or (value["schema_version"] == 1) != (set(value) == fields_v1):
+    if value["schema_version"] not in {1, 2, 3, 4} \
+            or (value["schema_version"] == 1) != (set(value) == fields_v1) \
+            or (value["schema_version"] == 2) != (set(value) == fields_v2) \
+            or (value["schema_version"] == 3) != (set(value) == fields_v3) \
+            or (value["schema_version"] == 4) != (set(value) == fields_v4):
         raise ValueError("runtime binding schema_version is invalid")
-    if value.get("evidence_level", "controller_attested") != "controller_attested":
-        raise ValueError("runtime binding must be controller-attested")
+    if value["profile"] not in PROFILES or value["mode"] not in {"automatic", "manual"}:
+        raise ValueError("runtime binding identity is invalid")
+    evidence_level = value.get("evidence_level", "controller_attested")
+    observation_fingerprint = value.get("capability_observation_fingerprint")
+    observation = value.get("capability_observation")
+    if evidence_level not in {"controller_attested", "host_observed"}:
+        raise ValueError("runtime binding evidence level is invalid")
+    if evidence_level == "host_observed":
+        if value["schema_version"] != 4 or not isinstance(observation, dict) \
+                or observation_fingerprint != fingerprint(observation):
+            raise ValueError("host-observed runtime binding requires a capability observation")
+        observed_capabilities = _capability_observation(value["profile"], observation)
+        if observed_capabilities != value["capabilities"]:
+            raise ValueError("host-observed runtime binding capabilities do not match observation")
+    elif observation_fingerprint is not None or observation is not None:
+        raise ValueError("controller-attested runtime binding cannot claim a capability observation")
     expected = {
         key: value[key]
         for key in value
@@ -62,8 +107,6 @@ def validate_binding(value):
     }
     if value["binding_fingerprint"] != fingerprint(expected):
         raise ValueError("runtime binding fingerprint is invalid")
-    if value["profile"] not in PROFILES or value["mode"] not in {"automatic", "manual"}:
-        raise ValueError("runtime binding identity is invalid")
     if not isinstance(value["reason"], str) or not value["reason"].strip():
         raise ValueError("runtime binding reason is invalid")
     capabilities = value["capabilities"]
@@ -76,6 +119,10 @@ def validate_binding(value):
         raise ValueError("runtime binding capabilities are not canonical")
     if value["profile"] == "single-context" and value["mode"] != "manual":
         raise ValueError("single-context runtime binding must be manual")
+    if value["schema_version"] >= 3 and not set(capabilities) <= PROFILE_CAPABILITY_CEILINGS[
+        value["profile"]
+    ]:
+        raise ValueError("runtime binding exceeds the supported host capability profile")
     if value["mode"] == "automatic" and (
         not {"dispatch", "query"} <= set(capabilities)
         or not {"tree_query", "restrict_dispatch"} & set(capabilities)
@@ -97,12 +144,104 @@ def negotiate(profile, observed):
         return bind(profile, "manual", [], "automatic workers require dispatch and stable query")
     if not observed.get("tree_query") and not observed.get("restrict_dispatch"):
         return bind(profile, "manual", [], "automatic workers require subtree query or enforced leaf workers")
+    capabilities = [
+        name for name in CAPABILITIES
+        if observed.get(name) and name in PROFILE_CAPABILITY_CEILINGS[profile]
+    ]
     return bind(
         profile,
         "automatic",
-        [name for name in CAPABILITIES if observed.get(name)],
-        "host exposes a stable dispatch and query contract",
+        capabilities,
+        "controller-attested host capability declaration; automatic watchdog remains disabled",
     )
+
+
+def bind_observed(profile, observation):
+    """Bind a raw capability observation supplied by a concrete host bridge."""
+    if profile not in PROFILES:
+        raise ValueError("unknown runtime profile")
+    capabilities = _capability_observation(profile, observation)
+    if profile == "single-context" or not {"dispatch", "query"} <= set(capabilities) \
+            or not {"tree_query", "restrict_dispatch"} & set(capabilities):
+        raise ValueError("capability observation cannot support automatic workers")
+    return _bind(
+        profile, "automatic", capabilities, "host capability observation is bound to this session",
+        "host_observed", observation,
+    )
+
+
+def _capability_observation(profile, observation):
+    fields = {"query_id", "observed_at", "profile", "capabilities"}
+    if not isinstance(observation, dict) or set(observation) != fields \
+            or observation.get("profile") != profile:
+        raise ValueError("capability observation is invalid")
+    if not isinstance(observation["query_id"], str) or not observation["query_id"].strip():
+        raise ValueError("capability observation query_id is invalid")
+    if not isinstance(observation["observed_at"], str) or not observation["observed_at"].strip():
+        raise ValueError("capability observation timestamp is invalid")
+    try:
+        parsed = datetime.fromisoformat(observation["observed_at"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("capability observation timestamp is invalid") from error
+    if parsed.tzinfo is None:
+        raise ValueError("capability observation timestamp must include a timezone")
+    capabilities = observation["capabilities"]
+    if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) \
+            or any(capability not in CAPABILITIES for capability in capabilities) \
+            or capabilities != [name for name in CAPABILITIES if name in capabilities]:
+        raise ValueError("capability observation capabilities are invalid")
+    if not set(capabilities) <= PROFILE_CAPABILITY_CEILINGS[profile]:
+        raise ValueError("capability observation exceeds the supported host capability profile")
+    return capabilities
+
+
+def watchdog_mode(binding):
+    """Return the watchdog control level justified by a frozen binding."""
+    binding = validate_binding(binding)
+    if binding["mode"] == "manual":
+        return "manual"
+    if binding["evidence_level"] == "host_observed" \
+            and AUTOMATIC_WATCHDOG_CAPABILITIES <= set(binding["capabilities"]):
+        return "observed"
+    return "terminal-only"
+
+
+def can_auto_watchdog(binding):
+    """Automatic probe, interrupt, and recovery require observable liveness."""
+    return watchdog_mode(binding) == "observed"
+
+
+def watchdog_action(binding, *, task_id, worker_ref, wait_timed_out, activity_observed,
+                    process_running, soft_probe_complete, user_stop=False):
+    """Choose the only safe watchdog action for one working worker."""
+    for name, value in (
+        ("wait_timed_out", wait_timed_out),
+        ("soft_probe_complete", soft_probe_complete),
+        ("user_stop", user_stop),
+    ):
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be boolean")
+    for name, value in (
+        ("activity_observed", activity_observed),
+        ("process_running", process_running),
+    ):
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"{name} must be boolean or null")
+    capabilities = set(validate_binding(binding)["capabilities"])
+    if user_stop:
+        return action("interrupt", task_id=task_id, worker_ref=worker_ref) \
+            if "interrupt" in capabilities else action(
+                "block", task_id=task_id, reason="runtime cannot interrupt the worker"
+            )
+    wait_or_query = lambda: action(
+        "wait" if "wait" in capabilities else "query", task_id=task_id, worker_ref=worker_ref
+    )
+    if not wait_timed_out or not can_auto_watchdog(binding):
+        return wait_or_query()
+    if activity_observed is not False or process_running is not False:
+        return wait_or_query()
+    return action("interrupt", task_id=task_id, worker_ref=worker_ref) \
+        if soft_probe_complete else action("query", task_id=task_id, worker_ref=worker_ref)
 
 
 def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,

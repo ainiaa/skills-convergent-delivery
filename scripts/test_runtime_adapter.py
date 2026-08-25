@@ -10,18 +10,55 @@ SPEC.loader.exec_module(runtime_adapter)
 
 
 class RuntimeAdapterTest(unittest.TestCase):
-    def test_codex_negotiates_only_observed_capabilities(self):
+    def test_codex_negotiates_only_controller_attested_supported_capabilities(self):
         result = runtime_adapter.negotiate(
-            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": False,
-                      "tree_query": True, "restrict_dispatch": False}
+            "codex", {"dispatch": True, "query": True, "activity_query": True,
+                      "process_query": True, "wait": True, "interrupt": True,
+                      "resume": True, "tree_query": True, "restrict_dispatch": False}
         )
 
         self.assertEqual("automatic", result["mode"])
-        self.assertEqual(2, result["schema_version"])
+        self.assertEqual(4, result["schema_version"])
         self.assertEqual("controller_attested", result["evidence_level"])
-        self.assertEqual(["dispatch", "query", "wait", "tree_query"], result["capabilities"])
-        self.assertNotIn("interrupt", result["capabilities"])
+        self.assertEqual(["dispatch", "query", "wait", "interrupt", "tree_query"], result["capabilities"])
+        self.assertNotIn("activity_query", result["capabilities"])
+        self.assertNotIn("process_query", result["capabilities"])
+        self.assertNotIn("resume", result["capabilities"])
+        self.assertIsNone(result["capability_observation_fingerprint"])
+        self.assertIsNone(result["capability_observation"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
+
+    def test_only_a_bound_host_capability_observation_can_enable_auto_watchdog(self):
+        controller_attested = runtime_adapter.negotiate(
+            "claude-code", {
+                "dispatch": True, "query": True, "activity_query": True,
+                "process_query": True, "wait": True, "interrupt": True,
+                "resume": True, "tree_query": True,
+            },
+        )
+        observation = {
+            "query_id": "capabilities-123",
+            "observed_at": "2026-08-25T00:00:00Z",
+            "profile": "claude-code",
+            "capabilities": [
+                "dispatch", "query", "activity_query", "process_query", "wait",
+                "interrupt", "resume", "tree_query",
+            ],
+        }
+        host_observed = runtime_adapter.bind_observed("claude-code", observation)
+
+        self.assertEqual("terminal-only", runtime_adapter.watchdog_mode(controller_attested))
+        self.assertEqual("host_observed", host_observed["evidence_level"])
+        self.assertEqual("observed", runtime_adapter.watchdog_mode(host_observed))
+        self.assertEqual(64, len(host_observed["capability_observation_fingerprint"]))
+        self.assertEqual(observation, host_observed["capability_observation"])
+
+    def test_generic_bind_cannot_construct_a_host_observed_runtime_binding(self):
+        with self.assertRaises(TypeError):
+            runtime_adapter.bind(
+                "claude-code", "automatic", ["dispatch", "query", "tree_query"], "forged",
+                evidence_level="host_observed",
+            )
 
     def test_cleanup_receipt_only_becomes_host_observed_with_bound_host_observation(self):
         binding = runtime_adapter.negotiate(
@@ -138,6 +175,86 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertEqual("interrupted", runtime_adapter.normalize_status("cancelled"))
         with self.assertRaisesRegex(ValueError, "unknown host status"):
             runtime_adapter.normalize_status("maybe")
+
+    def test_terminal_only_waiting_cannot_trigger_an_automatic_watchdog_interrupt(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {
+                "dispatch": True, "query": True, "wait": True, "interrupt": True,
+                "tree_query": True, "restrict_dispatch": False,
+            }
+        )
+
+        self.assertEqual("terminal-only", runtime_adapter.watchdog_mode(binding))
+        self.assertFalse(runtime_adapter.can_auto_watchdog(binding))
+        for _ in range(2):
+            self.assertEqual(
+                {"action": "wait", "task_id": "task-1", "worker_ref": "worker-1"},
+                runtime_adapter.watchdog_action(
+                    binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                    activity_observed=None, process_running=None, soft_probe_complete=False,
+                ),
+            )
+        self.assertEqual(
+            {"action": "interrupt", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=False,
+                activity_observed=None, process_running=None, soft_probe_complete=False, user_stop=True,
+            ),
+        )
+
+    def test_only_observable_and_recoverable_workers_allow_automatic_watchdog(self):
+        binding = runtime_adapter.bind_observed("claude-code", {
+            "query_id": "capabilities-456", "observed_at": "2026-08-25T00:00:00Z",
+            "profile": "claude-code",
+            "capabilities": [
+                "dispatch", "query", "activity_query", "process_query", "wait",
+                "interrupt", "resume", "restrict_dispatch",
+            ],
+        })
+
+        self.assertEqual("observed", runtime_adapter.watchdog_mode(binding))
+        self.assertTrue(runtime_adapter.can_auto_watchdog(binding))
+        self.assertEqual(
+            {"action": "query", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=False, process_running=False, soft_probe_complete=False,
+            ),
+        )
+        self.assertEqual(
+            {"action": "interrupt", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=False, process_running=False, soft_probe_complete=True,
+            ),
+        )
+        self.assertEqual(
+            {"action": "wait", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=True, process_running=False, soft_probe_complete=True,
+            ),
+        )
+        self.assertEqual(
+            {"action": "wait", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=False, process_running=True, soft_probe_complete=True,
+            ),
+        )
+
+    def test_watchdog_falls_back_to_query_when_wait_is_not_supported(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+
+        self.assertEqual(
+            {"action": "query", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=False,
+                activity_observed=None, process_running=None, soft_probe_complete=False,
+            ),
+        )
 
 
 if __name__ == "__main__":

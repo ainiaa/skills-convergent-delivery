@@ -239,7 +239,10 @@ def validate_decisions(value, schema_version):
         if decision["status"] != "resolved":
             raise ValueError(f"decision_required id={decision_id}")
         require_string(decision["question"], f"decisions[{index}].question")
-        require_string(decision["resolution"], f"decisions[{index}].resolution")
+        resolution = require_string(decision["resolution"], f"decisions[{index}].resolution")
+        if resolution.casefold() in {"tbd", "unknown", "to be decided"} \
+                or resolution in {"待定", "未定", "待确认"}:
+            raise ValueError(f"decisions[{index}].resolution must record an actual decision")
         if decision["source"] not in DECISION_SOURCES:
             raise ValueError(f"decisions[{index}].source is invalid")
     return value
