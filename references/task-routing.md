@@ -24,6 +24,6 @@
 
 ## fast path
 
-fast path 在 task profile 之前结束：只接受已跟踪普通文档的单文件纯格式改动，必须不改变运行时行为、无业务/公共契约/权限/发布取舍、`risk_flags=[]`、范围局部，且已有可实际执行的确定性检查。先获取 writer lease，再调用 `fast_path.py --workspace <path> --baseline <commit> --risk-flags '[]' --lease-root <root> --repo <absolute-git-common-dir> --task-key <key> --run-id <run> --writer-id <writer> -- <check argv>`：它要求当前 run 同时拥有未过期的 workspace/task lease，check 前后 Source Receipt 完全一致、检查实际成功并绑定当前 Source Receipt，且 `git diff --ignore-all-space` 对唯一文档路径为空；`SKILL.md`、未跟踪文档、风险路径、运行时路径、多文件、语义内容、会修改源码的 check、无回执或无有效 lease 一律拒绝。不创建 Provider Binding、task profile、state、snapshot 或 worker。
+通用 fast path 已停用：`git diff --ignore-all-space` 无法证明 Markdown 等文档不存在语义变化。`fast_path.py` 会确定性拒绝，所有改动均进入完整画像、TDD 和复核路径；只有未来引入 formatter 专属且可验证的语义安全 contract 后才能重新开放。
 
 代码逻辑、运行时配置、依赖升级、迁移、测试语义变化、未知验证、任一风险或范围漂移都不符合 fast path，立即按完整画像路由。fast path 不是低风险业务变更的别名，不能跳过 TDD、验收或 blind review。

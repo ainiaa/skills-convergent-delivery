@@ -27,8 +27,10 @@ class RunnerRegistryTest(unittest.TestCase):
     def test_exposes_two_explicit_capability_sets(self):
         self.assertEqual("local_process", capabilities("codex-exec-v1")["kind"])
         self.assertEqual("network_request", capabilities("openai-compatible-v1")["kind"])
+        self.assertEqual(["egress"], capabilities("openai-compatible-v1")["network"])
         with self.assertRaisesRegex(ValueError, "unknown"):
             capabilities("future-runner")
+        self.assertNotIn("openai-compatible", capabilities("openai-compatible-v1")["providers"])
 
     def test_validates_runner_specific_permissions_and_model_identity(self):
         self.assertEqual(profile(), validate_runner_profile(profile()))
@@ -39,6 +41,19 @@ class RunnerRegistryTest(unittest.TestCase):
             permissions={"workspace": "read", "shell": False, "network": "egress"},
         )
         self.assertEqual(external, validate_runner_profile(external))
+
+        no_egress = profile(
+            "openai-compatible-v1", role="research",
+            requested={"model": "glm-5.2", "reasoning_effort": "high"},
+            effective={"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+            permissions={"workspace": "read", "shell": False, "network": "none"},
+        )
+        with self.assertRaisesRegex(ValueError, "network"):
+            validate_runner_profile(no_egress)
+
+        no_shell = profile(permissions={"workspace": "write", "shell": False, "network": "egress"})
+        with self.assertRaisesRegex(ValueError, "shell"):
+            validate_runner_profile(no_shell)
 
         wrong = profile(effective={"provider": "deepseek", "model": "deepseek-chat", "reasoning_effort": "high"})
         with self.assertRaisesRegex(ValueError, "codex"):

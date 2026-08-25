@@ -4,8 +4,9 @@
 
 ## [Unreleased]
 
-- 0.21：fast-path 现在必须持有当前 run 的有效双租约，且仅为单文件普通文档的空白格式 diff 签发 receipt；Controller Snapshot 同时冻结 fast-path 与新 runner helper。
-- 新增冻结的 Worker Profile v1 与薄 Runner Registry：Codex CLI 可精确绑定 model/reasoning effort/sandbox，DeepSeek、GLM 等 OpenAI-compatible endpoint 初始仅可作无 shell、无工作区写入的结构化 leaf。真实进程或 HTTPS egress 均需调用方显式允许；runner receipt 不冒充宿主 `host_observed`。
+- 0.21：通用 fast path 已停用；Git 空白 diff 不能证明 Markdown 等文档无语义变化，所有改动回到完整验证路径。Controller Snapshot 同时冻结 fast-path 与 runner helper。
+- 新增冻结的 Worker Profile v1 与薄 Runner Registry：Codex CLI 可精确绑定 model/reasoning effort/sandbox；OpenAI-compatible runner 当前仅开放已验证的 Zhipu 无 shell、无工作区写入 leaf。真实进程或 HTTPS egress 均需调用方显式允许；runner receipt 不冒充宿主 `host_observed`。
+- 修复 runner 执行边界：Codex 在执行前复核 sandbox、独立 worktree 与二进制身份，并在 stdin 异常时回收进程；外部请求固定 provider 凭据变量和 effort mapping，缺失凭据返回终态未知回执；畸形 receipt 不再能够通过完成门禁。
 
 - 控制面一次性硬化：Runtime Binding 升级为 v4，普通 capability 协商只能得到 `controller_attested`；只有绑定完整原始宿主观察的 `bind_observed` 才可启用可观测 watchdog。当前 Codex 的 wait timeout 保持 `terminal-only`，不会因调用方声明能力或重复超时自动中断未完成子任务；中断前保留可恢复的 partial handoff。
 - Runtime Action Contract 新增带精确 task/worker 身份的 `wait` 与 `interrupt`，无 wait 能力时确定性退回 query，避免生成无法执行的 watchdog 建议。Controller Protocol 升级为 v12，旧快照仅可释放自身 lease，不能绕过新的控制规则。

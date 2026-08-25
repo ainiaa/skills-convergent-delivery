@@ -73,16 +73,10 @@ def lease():
 
 
 class FastPathTest(unittest.TestCase):
-    def test_accepts_one_checked_local_markdown_change_with_no_risk(self):
+    def test_rejects_generic_markdown_whitespace_changes(self):
         source_value = source()
-        receipt = validate_fast_path(source_value, check(source_value), [], lease())
-
-        self.assertEqual("eligible", receipt["status"])
-        self.assertEqual("local", receipt["scope"])
-        self.assertEqual([], receipt["risk_flags"])
-        self.assertEqual(source_value, receipt["source"])
-        self.assertEqual(lease(), receipt["lease"])
-        self.assertEqual(64, len(receipt["receipt_fingerprint"]))
+        with self.assertRaisesRegex(ValueError, "formatter-specific"):
+            validate_fast_path(source_value, check(source_value), [], lease())
 
     def test_rejects_skill_instruction_and_runtime_or_risk_named_paths(self):
         for path, marker in (
@@ -110,67 +104,10 @@ class FastPathTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "lease"):
                 validate_fast_path(source_value, check(source_value), [], value)
 
-    def test_cli_requires_an_owned_active_lease_and_a_format_only_diff(self):
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory) / "workspace"
-            workspace.mkdir()
-            self.git(workspace, "init")
-            self.git(workspace, "config", "user.email", "fast@example.test")
-            self.git(workspace, "config", "user.name", "Fast Path")
-            document = workspace / "docs" / "guide.md"
-            document.parent.mkdir()
-            document.write_text("# Guide\\n\\nText\\n", encoding="utf-8")
-            self.git(workspace, "add", ".")
-            self.git(workspace, "commit", "-m", "baseline")
-            document.write_text("# Guide\\n\\nText  \\n", encoding="utf-8")
-
-            lease_root = Path(directory) / "leases"
-            common_dir = (workspace / ".git").resolve()
-            acquired = subprocess.run(
-                [
-                    sys.executable, str(LEASE_SCRIPT), "acquire", "--root", str(lease_root),
-                    "--repo", str(common_dir), "--workspace", str(workspace),
-                    "--task-key", "fast-path", "--run-id", "run-1", "--writer-id", "writer-1",
-                ], text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(0, acquired.returncode, acquired.stderr)
-            command = [
-                sys.executable, str(SCRIPT), "--workspace", str(workspace), "--baseline", "HEAD",
-                "--risk-flags", "[]", "--lease-root", str(lease_root), "--repo", str(common_dir),
-                "--task-key", "fast-path", "--run-id", "run-1", "--writer-id", "writer-1",
-                "--", sys.executable, "-c", "pass",
-            ]
-            eligible = subprocess.run(command, text=True, capture_output=True, check=False)
-            self.assertEqual(0, eligible.returncode, eligible.stderr)
-            self.assertEqual("eligible", json.loads(eligible.stdout)["status"])
-
-            mutating_check = [
-                *command[:command.index("--") + 1], sys.executable, "-c",
-                "from pathlib import Path; Path('docs/guide.md').write_text('mutated\\n')",
-            ]
-            blocked_mutation = subprocess.run(mutating_check, text=True, capture_output=True, check=False)
-            self.assertEqual(2, blocked_mutation.returncode)
-            self.assertIn("modified source", blocked_mutation.stderr)
-
-            document.write_text("# Guide\\n\\nText  \\n", encoding="utf-8")
-
-            blocked_owner = subprocess.run(
-                [*command[:command.index("--writer-id") + 1], "writer-2", *command[command.index("--") :]],
-                text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(2, blocked_owner.returncode)
-            self.assertIn("lease", blocked_owner.stderr)
-
-            document.write_text("# Guide\\n\\nDifferent text\\n", encoding="utf-8")
-            blocked_content = subprocess.run(command, text=True, capture_output=True, check=False)
-            self.assertEqual(2, blocked_content.returncode)
-            self.assertIn("format-only", blocked_content.stderr)
-
-            self.git(workspace, "checkout", "--", "docs/guide.md")
-            (workspace / "docs" / "new.md").write_text("# New document\\n", encoding="utf-8")
-            blocked_untracked = subprocess.run(command, text=True, capture_output=True, check=False)
-            self.assertEqual(2, blocked_untracked.returncode)
-            self.assertIn("tracked", blocked_untracked.stderr)
+    def test_cli_blocks_without_evaluating_the_workspace_or_check_command(self):
+        blocked = subprocess.run([sys.executable, str(SCRIPT)], text=True, capture_output=True, check=False)
+        self.assertEqual(2, blocked.returncode)
+        self.assertIn("formatter-specific", blocked.stderr)
 
     def git(self, workspace, *arguments):
         result = subprocess.run(

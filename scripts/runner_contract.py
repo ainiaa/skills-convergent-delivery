@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Immutable, prompt-free launch contracts shared by all worker runners."""
+
+import hashlib
+import json
+
+from runner_registry import validate_runner_profile
+
+
+def fingerprint(value):
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _copy(value, name):
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True))
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"runner launch {name} must be JSON data") from error
+
+
+def freeze_launch(profile, prompt, configuration):
+    """Freeze one launch without persisting its prompt or any credential value."""
+    profile = validate_runner_profile(_copy(profile, "profile"))
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("runner launch prompt is required")
+    if not isinstance(configuration, dict):
+        raise ValueError("runner launch configuration is invalid")
+    value = {
+        "schema_version": 1,
+        "runner_id": profile["runner_id"],
+        "profile": profile,
+        "profile_fingerprint": profile["profile_fingerprint"],
+        "prompt_fingerprint": fingerprint(prompt),
+        "configuration": _copy(configuration, "configuration"),
+        "status": "planned",
+        "evidence_source": "runner",
+    }
+    return {**value, "launch_fingerprint": fingerprint(value)}
+
+
+def validate_launch(value, prompt=None):
+    fields = {
+        "schema_version", "runner_id", "profile", "profile_fingerprint", "prompt_fingerprint",
+        "configuration", "status", "evidence_source", "launch_fingerprint",
+    }
+    if not isinstance(value, dict) or set(value) != fields or value.get("schema_version") != 1:
+        raise ValueError("runner launch fields are invalid")
+    profile = validate_runner_profile(value["profile"])
+    if value["runner_id"] != profile["runner_id"] \
+            or value["profile_fingerprint"] != profile["profile_fingerprint"]:
+        raise ValueError("runner launch profile is invalid")
+    if not isinstance(value["configuration"], dict) or value["status"] != "planned" \
+            or value["evidence_source"] != "runner":
+        raise ValueError("runner launch contents are invalid")
+    if not isinstance(value["prompt_fingerprint"], str) or len(value["prompt_fingerprint"]) != 64:
+        raise ValueError("runner launch prompt fingerprint is invalid")
+    if prompt is not None:
+        if not isinstance(prompt, str) or fingerprint(prompt) != value["prompt_fingerprint"]:
+            raise ValueError("runner launch prompt does not match the frozen request")
+    expected = {key: item for key, item in value.items() if key != "launch_fingerprint"}
+    if value["launch_fingerprint"] != fingerprint(expected):
+        raise ValueError("runner launch fingerprint is invalid")
+    return value
+
+
+def _sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def _non_empty_string(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def runner_results_complete(launches, results):
+    """Validate runner receipts and report whether every frozen launch completed."""
+    if not isinstance(launches, list) or not isinstance(results, list):
+        raise ValueError("runner lifecycle records must be lists")
+    frozen = {}
+    for launch in launches:
+        launch = validate_launch(launch)
+        frozen[launch["launch_fingerprint"]] = launch
+    if len(frozen) != len(launches):
+        raise ValueError("runner launches must be unique")
+    seen = set()
+    for result in results:
+        if not isinstance(result, dict) or not isinstance(result.get("launch_fingerprint"), str):
+            raise ValueError("runner result is invalid")
+        launch_fingerprint = result["launch_fingerprint"]
+        frozen_launch = frozen.get(launch_fingerprint)
+        if frozen_launch is None or result.get("runner_id") != frozen_launch["runner_id"]:
+            raise ValueError("runner result does not match a frozen launch")
+        runner_id = frozen_launch["runner_id"]
+        expected = {key: item for key, item in result.items() if key != "receipt_fingerprint"}
+        if result.get("receipt_fingerprint") != fingerprint(expected):
+            raise ValueError("runner result fingerprint is invalid")
+        if runner_id == "codex-exec-v1":
+            required = {
+                "schema_version", "runner_id", "launch_fingerprint", "status", "exit_code",
+                "stdout_fingerprint", "stderr_fingerprint", "receipt_fingerprint",
+            }
+            statuses = {"completed", "failed", "timed_out", "output_exceeded", "unknown"}
+            if result.get("status") == "unknown":
+                required |= {"error_type"}
+        else:
+            required = {
+                "schema_version", "runner_id", "launch_fingerprint", "status", "receipt_fingerprint"
+            }
+            statuses = {"completed", "unknown"}
+            if result.get("status") == "completed":
+                required |= {"response_id", "response_model", "usage", "response_fingerprint"}
+            else:
+                required |= {"error_type"}
+        if set(result) != required or result.get("schema_version") != 1 \
+                or result.get("status") not in statuses:
+            raise ValueError("runner result fields are invalid")
+        if runner_id == "codex-exec-v1" and (
+            not _sha256(result["stdout_fingerprint"])
+            or not _sha256(result["stderr_fingerprint"])
+            or (result["status"] == "unknown" and not _non_empty_string(result["error_type"]))
+        ):
+            raise ValueError("runner result fields are invalid")
+        if runner_id == "codex-exec-v1" and (
+            not isinstance(result["exit_code"], int) or isinstance(result["exit_code"], bool)
+            or (result["status"] == "completed" and result["exit_code"] != 0)
+        ):
+            raise ValueError("Codex runner result exit code is invalid")
+        if runner_id == "openai-compatible-v1" and result["status"] == "completed" and (
+            not _non_empty_string(result["response_id"])
+            or result["usage"] is not None and not isinstance(result["usage"], dict)
+            or not _sha256(result["response_fingerprint"])
+        ):
+            raise ValueError("runner result fields are invalid")
+        if runner_id == "openai-compatible-v1" and result["status"] == "completed" and (
+            result["response_model"] != frozen_launch["profile"]["effective"]["model"]
+        ):
+            raise ValueError("external runner result model is invalid")
+        if runner_id == "openai-compatible-v1" and result["status"] == "unknown" \
+                and not _non_empty_string(result["error_type"]):
+            raise ValueError("runner result fields are invalid")
+        if launch_fingerprint in seen:
+            raise ValueError("runner result is duplicated")
+        seen.add(launch_fingerprint)
+    return bool(frozen) and set(frozen) == seen and all(
+        result["status"] == "completed" for result in results
+    )

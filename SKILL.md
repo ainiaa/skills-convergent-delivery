@@ -30,9 +30,9 @@ metadata:
 
 ### 最小 fast path
 
-仅普通文档纯格式、无运行时或业务取舍、`risk_flags=[]`、范围局部且有确定性检查时，可走 fast path：先获取有效 writer lease，再由 `fast_path.py` 验证空白 diff、执行检查并签发 receipt。它跳过 Provider Binding、task profile、state、snapshot 或 worker。
+通用 fast path 当前停用：仅凭 Git 空白 diff 不能证明 Markdown 等文档没有语义变化。所有改动进入完整路径，直到某个具体 formatter 提供可验证的语义安全 contract。
 
-fast path 不得用于文档内容语义、代码逻辑、运行时配置、依赖升级、迁移、测试语义变化或未知验证；任何新风险、范围漂移、租约失效或检查未知，立即回到完整路径。
+不得用 fast path 绕过文档内容语义、代码逻辑、运行时配置、依赖升级、迁移、测试语义变化或未知验证。
 
 ## 3. 解析并冻结 Provider Binding
 

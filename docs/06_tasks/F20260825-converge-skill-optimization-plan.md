@@ -40,7 +40,7 @@
 ## 实施记录（2026-08-25）
 
 - 已完成 1：入口缩短至 11,163 UTF-8 bytes；复杂细节继续按需进入 references。
-- 已完成 2：`fast_path.py` 仅为一个普通文档文件签发 receipt，并把实际成功的检查绑定到 Source Receipt；`SKILL.md`、风险/运行时路径、多文件和非空风险声明被确定性拒绝。
+- 已完成 2（历史实现，后续已停用）：原 `fast_path.py` 曾仅为一个普通文档文件签发 receipt；由于 Git 空白 diff 不能证明文档无语义变化，当前通用 fast path 一律拒绝，等待 formatter 专属语义 contract。
 - 已完成 3：自动 worker 在缺少 host-observed bridge 时维持 blocked/manual；`trigger_eval.py` 的本地 selector 结果新增 `release_status=uncovered`，`--release` 固定阻断，避免模拟 selector 形成发布放行。
 - 已完成 4：场景表记录 token、工具调用、用户阻塞、完成率；外部参考采用/不采用记录已更新。
 - 验证：全套 `bash scripts/check.sh` 通过；独立前向评估发现的 fast-path 与 selector 两个可绕过点已补为上述回归测试。真实 host selector/bridge 仍是外部 `blocked_environment`，本仓库不伪造实现。

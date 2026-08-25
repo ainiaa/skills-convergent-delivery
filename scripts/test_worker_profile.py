@@ -37,15 +37,16 @@ class WorkerProfileTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             validate_worker_profile(changed)
 
-    def test_rejects_unsafe_external_or_reviewer_permissions(self):
+    def test_rejects_unsafe_reviewer_permissions_without_owning_runner_policy(self):
         with self.assertRaisesRegex(ValueError, "reviewer"):
             validate_worker_profile(profile(role="reviewer", permissions={
                 "workspace": "write", "shell": False, "network": "egress"
             }))
-        with self.assertRaisesRegex(ValueError, "external"):
-            validate_worker_profile(profile(permissions={
-                "workspace": "read", "shell": True, "network": "egress"
-            }))
+        self.assertEqual(profile(permissions={
+            "workspace": "read", "shell": True, "network": "egress"
+        }), validate_worker_profile(profile(permissions={
+            "workspace": "read", "shell": True, "network": "egress"
+        })))
 
 
 if __name__ == "__main__":

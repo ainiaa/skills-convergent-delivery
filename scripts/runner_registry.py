@@ -10,14 +10,16 @@ RUNNERS = {
         "roles": {"implementation", "reviewer", "research"},
         "providers": {"openai"},
         "workspace": {"read", "write"},
-        "shell": {False, True},
+        "shell": {True},
+        "network": {"egress"},
     },
     "openai-compatible-v1": {
         "kind": "network_request",
         "roles": {"reviewer", "research"},
-        "providers": {"deepseek", "zhipu", "openai-compatible"},
+        "providers": {"zhipu"},
         "workspace": {"none", "read"},
         "shell": {False},
+        "network": {"egress"},
     },
 }
 
@@ -33,6 +35,7 @@ def capabilities(runner_id):
         "providers": sorted(value["providers"]),
         "workspace": sorted(value["workspace"]),
         "shell": sorted(value["shell"]),
+        "network": sorted(value["network"]),
     }
 
 
@@ -51,6 +54,10 @@ def validate_runner_profile(profile):
     if profile["effective"]["provider"] not in runner["providers"]:
         raise ValueError("worker provider is unsupported by this runner")
     permissions = profile["permissions"]
-    if permissions["workspace"] not in runner["workspace"] or permissions["shell"] not in runner["shell"]:
-        raise ValueError("worker permissions are unsupported by this runner")
+    if permissions["workspace"] not in runner["workspace"]:
+        raise ValueError("worker workspace permission is unsupported by this runner")
+    if permissions["shell"] not in runner["shell"]:
+        raise ValueError("worker shell permission is unsupported by this runner")
+    if permissions["network"] not in runner["network"]:
+        raise ValueError("worker network permission is unsupported by this runner")
     return profile

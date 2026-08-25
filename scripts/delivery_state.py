@@ -330,6 +330,14 @@ def validate_transition(previous, candidate):
         new_ledger.get("acceptance_history", []),
         previous["revision"],
     )
+    require_prefix(
+        old_ledger.get("runner_launches", []), new_ledger.get("runner_launches", []),
+        "ledger.runner_launches",
+    )
+    require_prefix(
+        old_ledger.get("runner_results", []), new_ledger.get("runner_results", []),
+        "ledger.runner_results",
+    )
 
 
 def write(arguments):

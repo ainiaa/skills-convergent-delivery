@@ -184,17 +184,15 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("仅当路由不是 `inline`", skill)
         self.assertNotIn("\n读取 [计划执行与无响应保护]", skill)
 
-    def test_fast_path_is_narrow_and_root_keeps_conditional_details_out_of_activation(self):
+    def test_fast_path_is_disabled_without_a_semantics_aware_formatter(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
 
         for marker in (
             "fast path",
-            "普通文档的单文件纯格式改动",
-            "不改变运行时行为",
-            "risk_flags=[]",
-            "--ignore-all-space",
-            "Provider Binding、task profile、state、snapshot 或 worker",
+            "通用 fast path 已停用",
+            "formatter",
+            "完整路径",
         ):
             self.assertIn(marker, skill + routing)
         self.assertLess(len(skill.encode("utf-8")), 11200)

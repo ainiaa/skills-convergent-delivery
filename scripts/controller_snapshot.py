@@ -28,6 +28,7 @@ CONTROLLER_FILES = (
     "scripts/fast_path.py",
     "scripts/worker_profile.py",
     "scripts/runner_registry.py",
+    "scripts/runner_contract.py",
     "scripts/codex_exec_runner.py",
     "scripts/openai_compatible_runner.py",
     "scripts/provider_contract.py",

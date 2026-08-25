@@ -38,7 +38,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - Codex 原生计划与 Converge 使用同一组稳定任务：简单任务直接更新宿主计划，持久任务通过确定性 Plan Projection/确认指纹同步，确认动作不会触发自循环。
 - `converge-eval` 将最终覆盖分为 `known_acceptance`、`history`、`exploration` 和 `uncovered`，指定场景通过不等于未知范围为零。
 - 单任务 Schema v10 分离包版本、Controller Snapshot 与 Provider Binding，并持久化路由、Review v3 源码轮次、计划同步确认、worker 最新进度和同 revision 清场回执。Batch state Schema v4 / Receipt v4 使用唯一 plan 状态、正式 delegate state、Source Receipt v2 与 Git 前序链。
-- 复杂任务可冻结每个 leaf 的 model、reasoning effort、权限和预算。`codex-exec-v1` 可按 profile 启动受 sandbox 约束的 Codex CLI；DeepSeek、GLM 等 OpenAI-compatible endpoint 初始仅可作无 shell、无工作区写入的 research/review leaf，且必须显式冻结 provider 的 effort wire-field 映射。两者都需显式真实执行授权，runner receipt 不冒充宿主 `host_observed`。
+- 复杂任务可冻结每个 leaf 的 model、reasoning effort、权限和预算。`codex-exec-v1` 可按 profile 启动受 sandbox 约束的 Codex CLI；当前 OpenAI-compatible runner 仅开放已验证的 Zhipu research/review leaf，并固定凭据变量与 effort wire-field 映射。两者都需显式真实执行授权，runner receipt 不冒充宿主 `host_observed`。
 - 默认报告只输出面向用户的 summary；异常或显式 `--detail` 才附 Provider、阶段、worker 与检查诊断。
 
 ## Install

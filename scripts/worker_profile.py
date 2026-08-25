@@ -56,10 +56,6 @@ def validate_worker_profile(value):
         raise ValueError("worker profile permissions are invalid")
     if value["role"] in {"reviewer", "research"} and permissions["workspace"] == "write":
         raise ValueError(f"worker profile {value['role']} cannot write the workspace")
-    if value["runner_id"] == "openai-compatible-v1" and (
-        permissions["workspace"] == "write" or permissions["shell"]
-    ):
-        raise ValueError("external runner cannot write the workspace or use a shell")
     budget = value.get("budget")
     if not isinstance(budget, dict) or set(budget) != {
         "max_turns", "timeout_seconds", "max_output_chars"
