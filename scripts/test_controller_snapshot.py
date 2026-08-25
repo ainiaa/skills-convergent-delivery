@@ -21,6 +21,7 @@ REQUIRED_CONTROL_REFERENCES = (
     "references/evaluation-catalog.json",
     "references/review-orchestration.md",
     "references/worker-runners.md",
+    "references/multi-model.md",
     "skills/converge-plan/SKILL.md",
     "skills/converge-plan/references/plan-contract.md",
     "skills/converge-plan/scripts/plan_check.py",

@@ -30,6 +30,7 @@ REQUIRED_SOURCE_FILES=(
   references/task-routing.md
   references/tdd-providers.md
   references/worker-runners.md
+  references/multi-model.md
   providers/generic-tdd-v1.json
   providers/mattpocock-tdd-v1.json
   providers/native-v1.json
@@ -48,6 +49,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/runner_registry.py
   scripts/codex_exec_runner.py
   scripts/openai_compatible_runner.py
+  scripts/multi_model.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py

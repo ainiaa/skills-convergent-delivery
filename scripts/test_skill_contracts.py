@@ -76,7 +76,9 @@ class SkillContractTest(unittest.TestCase):
             "scripts/runner_registry.py",
             "scripts/codex_exec_runner.py",
             "scripts/openai_compatible_runner.py",
+            "scripts/multi_model.py",
             "references/worker-runners.md",
+            "references/multi-model.md",
             "scripts/test_trigger_evals.py",
         ):
             self.assertIn(path, installer)

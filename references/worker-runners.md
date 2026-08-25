@@ -43,3 +43,5 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 ## 当前接线状态
 
 `codex-exec-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。二者当前是受限叶子执行器，不是 Codex Desktop 原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
+
+多模型模式默认使用 Codex reviewer；仅配置 `audit=glm-5.2/high` 时，GLM 审计才把响应文本即时返回给当前调用者。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。

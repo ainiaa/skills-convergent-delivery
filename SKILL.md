@@ -1,15 +1,13 @@
 ---
 name: converge
-description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Excludes read-only review and multi-Batch."
+description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/使用多模型配合开发/闭环完成. Excludes read-only review and multi-Batch."
 metadata:
   compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge：单任务闭环执行
 
-Converge 始终是 controller；规划、只读、跨会话用 `converge-plan`、`converge-review`、`converge-batch`。触发：[激活](references/activation.md)。
-
-持久/跨会话/Suite 改动：从 `CONVERGE_SKILL_DIR` 解析，先快照，见 [状态 Schema](references/state-schema.md)。
+Converge 始终是 controller；规划、只读、跨会话用 `converge-plan`、`converge-review`、`converge-batch`。触发见 [激活](references/activation.md)。
 
 ## 开始
 
@@ -28,6 +26,8 @@ Provider Schema v2；pdlc-v1/native-v1；`engine` 由 binding 派生，不能成
 复杂/未知/长任务用 `converge-plan`，按独立可验收的业务切片执行；仅 `cross_session` 进 `converge-batch` 并先获 commit 授权，见 [Plan Contract](skills/converge-plan/references/plan-contract.md)。
 
 worker 用当前会话真实能力；跨会话需 `host_observed` bridge，缺能力手工交接，见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+
+“使用多模型配合开发”时读 [多模型协作](references/multi-model.md)。
 
 ## 终态
 

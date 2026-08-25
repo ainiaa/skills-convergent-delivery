@@ -89,6 +89,36 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
         self.assertEqual("request-1", receipt["response_id"])
         self.assertEqual("glm-5.2", receipt["response_model"])
 
+    def test_can_return_content_to_the_immediate_caller_without_putting_it_in_the_receipt(self):
+        class Response:
+            def __init__(self):
+                self.body = io.BytesIO(
+                    b'{"id":"request-1","model":"glm-5.2",'
+                    b'"choices":[{"message":{"content":"[]"}}]}'
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, _size=-1):
+                return self.body.read(_size)
+
+        launch = plan_request(
+            profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
+            effort_binding={"field": "thinking.type", "value": "enabled"},
+        )
+        with patch.dict("os.environ", {"GLM_API_KEY": "test-key"}):
+            receipt, content = execute_request(
+                launch, "Review", allow_network=True, capture_content=True,
+                opener=lambda request, timeout: Response(),
+            )
+        self.assertEqual("completed", receipt["status"])
+        self.assertEqual("[]", content)
+        self.assertNotIn("[]", receipt)
+
     def test_rejects_a_response_that_exceeds_the_frozen_output_budget(self):
         class Response:
             def __enter__(self):

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 新增可选多模型协作：默认 Sol high 设计、Luna max 实现、Terra xhigh 审计与一次定向修复/复审；仅用户明确要求时才插入 Terra xhigh 设计复核。新增冻结 Profile、命名配置集合与单次角色覆盖，配置按显式参数、项目、用户级、内置默认依次解析；用户级默认文件位于 `~/.convergent-delivery/multi-model.json`。GLM-5.2 保留为可配置的外部只读审计选项，审计文本只即时交回控制器，正式回执不保存 prompt、密钥或内容。
 - 修复 PDLC Provider 仅被选中却未被实际激活的断点：新增确定性 `freeze-binding`，Plan 与 Batch 仅接受含入口/closure 来源的完整冻结 Binding；native、自动回退与 PDLC 均可据此显式调用对应 Skill，`pdlc-run` 不能替代调用，入口不可用时确定性阻塞。
 - 快速开发阶段移除历史 Schema 读取/迁移：Single State 仅 v10、Runtime Binding 仅 v4、Plan 仅 v5、Batch State 仅 v4、Review 仅 Protocol v3，旧输入直接拒绝；安装器的 `--upgrade` 自动替换受管同名符号链接（不删除目录），并修正 lease 示例中的 Git common-dir 语义。
 - 压缩根 `converge/SKILL.md` 至 2.7KB 内：入口仅保留范围、验证、Provider、路由、租约、审查与终态决策，条件协议下沉到既有 references；Claude Code 现在以当前会话真实的 `Agent` 与 task list 能力协商，任一缺失即确定性回退手工交接，不按安装或版本猜测。

@@ -6,6 +6,8 @@
 
 只要计划使用 `$converge-plan`；只读检查使用 `$converge-review`；有限多 Batch 计划使用 `$converge-batch`；只要方案、解释或状态时不启动写入流程。
 
+用户说“使用多模型配合开发”时仍由 `$converge` 执行，并按 [多模型协作](multi-model.md) 启用固定顺序；这不是 Batch 触发词。
+
 ## 可选 AGENTS.md 片段
 
 若宿主的 Skill 自动发现不稳定，团队可手工加入：

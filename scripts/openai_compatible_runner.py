@@ -130,7 +130,18 @@ def _failure(launch, status, error_type):
     return {**value, "receipt_fingerprint": fingerprint(value)}
 
 
-def execute_request(launch, prompt, *, allow_network=False, opener=None):
+def _response_content(payload):
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("external-model response has no choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("external-model response content is invalid")
+    return content
+
+
+def execute_request(launch, prompt, *, allow_network=False, opener=None, capture_content=False):
     """Perform only the frozen request and preserve an explicit uncertain outcome."""
     if allow_network is not True:
         raise ValueError("real external-model egress requires explicit allow_network=True")
@@ -172,6 +183,7 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None):
         usage = payload.get("usage")
         if usage is not None and not isinstance(usage, dict):
             raise ValueError("external-model response usage is invalid")
+        content = _response_content(payload) if capture_content else None
     except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         return _failure(launch, "unknown", type(error).__name__)
     value = {
@@ -184,4 +196,5 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None):
         "usage": usage,
         "response_fingerprint": fingerprint(payload),
     }
-    return {**value, "receipt_fingerprint": fingerprint(value)}
+    receipt = {**value, "receipt_fingerprint": fingerprint(value)}
+    return (receipt, content) if capture_content else receipt
