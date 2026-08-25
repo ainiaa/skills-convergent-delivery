@@ -73,6 +73,17 @@ class RuntimeAdapterTest(unittest.TestCase):
                 evidence_level="host_observed",
             )
 
+    def test_legacy_runtime_binding_schemas_are_rejected(self):
+        current = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+        for schema_version in (1, 2, 3):
+            with self.subTest(schema_version=schema_version):
+                binding = dict(current)
+                binding["schema_version"] = schema_version
+                with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
+                    runtime_adapter.validate_binding(binding)
+
     def test_cleanup_receipt_only_becomes_host_observed_with_bound_host_observation(self):
         binding = runtime_adapter.bind_observed("codex", {
             "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",

@@ -8,12 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from delivery_engine import legacy_pdlc_fingerprint
+from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
 from delivery_state import validate_transition
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
+from task_profile import freeze_routing
+from provider_contract import canonical_fingerprint
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -21,8 +23,19 @@ STATE_SCRIPT = Path(__file__).with_name("delivery_state.py")
 
 
 def state(revision=0, writer_id="writer-1"):
+    profile = {
+        "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
+        "coupling": "single", "uncertainty": "low", "verification": "local",
+        "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
+        "context_isolation_benefit": False,
+    }
+    binding = {
+        "controller": "converge",
+        "workflow_provider": provider_reference("native-v1", "feature"),
+        "stage_providers": {},
+    }
     return {
-        "schema_version": 5,
+        "schema_version": 10,
         "run_id": "run-1",
         "repo_id": "/repo/common.git",
         "task_key": "task-payment",
@@ -33,20 +46,18 @@ def state(revision=0, writer_id="writer-1"):
         "scope_fingerprint": "scope-123",
         "source_fingerprint": "a" * 64,
         "execution_control": {
-            "routing": {
-                "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "inline", "review_tier": "low", "profile_fingerprint": "b" * 64,
-            },
+            "routing": freeze_routing(profile, ["."]),
             "review": {
-                "protocol_version": 2, "source_fingerprint": "a" * 64,
+                "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
-                "integration_budget_remaining": 0, "requests": [],
+                "integration_budget_remaining": 0,
+                "rounds": [{"source_fingerprint": "a" * 64, "requests": []}],
             },
         },
-        "engine": {
-            "name": "native-v1",
-            "selection": "auto",
-            "reason": "PDLC is unavailable",
+        "controller": controller_identity(),
+        "provider_binding": {
+            "selection": "auto", "reason": "PDLC is unavailable", "task_kind": "feature",
+            "binding": binding, "binding_fingerprint": canonical_fingerprint(binding),
         },
         "current_stage": "round-1-semantic-review",
         "requires_stability_round": False,
@@ -68,8 +79,15 @@ def state(revision=0, writer_id="writer-1"):
         "handoff": {
             "goal": "Fix requested behavior",
             "last_verification": "targeted test passed",
-            "open_issues": "none",
+            "open_issues": [],
             "next_action": "Run final verification",
+        },
+        "workers": [],
+        "worker_tree_receipt": None,
+        "runtime_binding": None,
+        "host_sync": {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
         },
     }
 
@@ -315,7 +333,7 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
 
-    def test_v5_write_migrates_to_provider_binding_and_empty_worker_registry(self):
+    def test_current_state_write_preserves_the_canonical_binding_and_worker_registry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
             state_home = Path(directory) / "home"
@@ -388,28 +406,6 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             for record_path in root.rglob("*.json"):
                 self.assertEqual(before[str(record_path)], record_path.read_text(encoding="utf-8"))
-
-    def test_v5_migration_rejects_stage_or_ledger_changes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "leases"
-            state_home = Path(directory) / "home"
-            state_path = self.state_path(state_home)
-            self.acquire(root)
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            original = state()
-            original["current_stage"] = "scope"
-            state_path.write_text(json.dumps(original), encoding="utf-8")
-            candidate = state(revision=1)
-            candidate["current_stage"] = "round-1-build"
-            candidate["ledger"]["checks"].append(
-                {"stage": "scope", "command": "test", "result": "pass"}
-            )
-
-            result = self.write(root, state_home, candidate, 0)
-
-            self.assertNotEqual(0, result.returncode)
-            self.assertIn("migration", result.stderr.lower())
-            self.assertEqual(original, json.loads(state_path.read_text(encoding="utf-8")))
 
     def test_complete_rejects_a_current_run_worker_without_host_terminal_status(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -583,100 +579,6 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertNotEqual(0, wrong_writer.returncode)
             self.assertIn("lease", wrong_writer.stderr)
 
-    def test_write_persists_the_frozen_pdlc_engine_without_native_stages(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "leases"
-            state_home = Path(directory) / "home"
-            state_path = self.state_path(state_home)
-            self.acquire(root)
-            pdlc_root = Path(directory) / "pdlc"
-            for name in ("pdlc-tdd", "pdlc-implement", "pdlc-review", "pdlc-feature"):
-                skill = pdlc_root / "skills" / name / "SKILL.md"
-                skill.parent.mkdir(parents=True, exist_ok=True)
-                skill.write_text(f"{name}\n", encoding="utf-8")
-            files = [
-                "pdlc-feature/SKILL.md",
-                "pdlc-tdd/SKILL.md",
-                "pdlc-implement/SKILL.md",
-                "pdlc-review/SKILL.md",
-            ]
-            digest = hashlib.sha256()
-            for relative in files:
-                digest.update(
-                    relative.encode("utf-8")
-                    + b"\0"
-                    + (pdlc_root / "skills" / relative).read_bytes()
-                )
-            (pdlc_root / "converge-provider.json").write_text(
-                json.dumps(
-                    {
-                        "schema_version": 2,
-                        "provider": {
-                            "id": "pdlc-v1",
-                            "source_id": "pdlc-skills",
-                            "version": "test-v1",
-                            "role": "workflow",
-                        },
-                        "capabilities": {
-                            "task_kinds": ["feature"],
-                            "stages": ["plan", "tdd", "implement", "review"],
-                        },
-                        "task_contracts": {
-                            "feature": {
-                                "entrypoint": files[0],
-                                "closure": files[1:],
-                                "source_fingerprint": digest.hexdigest(),
-                                "preserve_external_behavior": False,
-                            }
-                        },
-                        "authorization": {
-                            "stop_for": [
-                                "business_rules",
-                                "public_contracts",
-                                "permissions",
-                                "release",
-                                "irreversible_actions",
-                            ],
-                            "forbidden_actions": [
-                                "pdlc-ship",
-                                "commit",
-                                "tag",
-                                "push",
-                                "publish",
-                                "install",
-                            ],
-                        },
-                        "outputs": {
-                            "progress_protocol": 1,
-                            "required_evidence": ["tests", "validation", "findings"],
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            payload = state()
-            payload["engine"] = {
-                "name": "pdlc-v1",
-                "selection": "explicit",
-                "reason": "PDLC v1 capability is available",
-                "pdlc_root": str(pdlc_root.resolve()),
-                "feature_id": "F-123",
-                "task_kind": "feature",
-                "pdlc_fingerprint": legacy_pdlc_fingerprint(pdlc_root, "feature"),
-                "provider_manifest": str(pdlc_root / "converge-provider.json"),
-            }
-            payload["current_stage"] = "pdlc-run"
-
-            result = self.write(root, state_home, payload, -1)
-
-            self.assertEqual(0, result.returncode, result.stderr)
-            written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                "pdlc-v1",
-                written["provider_binding"]["binding"]["workflow_provider"]["id"],
-            )
-            self.assertEqual("pdlc-run", written["current_stage"])
-
     def test_write_rejects_external_candidate_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -778,8 +680,8 @@ class DeliveryStateTest(unittest.TestCase):
             changed_baseline["baseline"]["commit"] = "rewritten"
             changed_scope = state(revision=1)
             changed_scope["scope_fingerprint"] = "rewritten"
-            changed_engine = state(revision=1)
-            changed_engine["engine"]["reason"] = "silently switched"
+            changed_provider = state(revision=1)
+            changed_provider["provider_binding"]["reason"] = "silently switched"
             regressed_stage = state(revision=1)
             regressed_stage["current_stage"] = "round-1-build"
             skipped_stage = state(revision=1)
@@ -801,7 +703,7 @@ class DeliveryStateTest(unittest.TestCase):
                 "writer": (state(), changed_writer),
                 "baseline": (state(), changed_baseline),
                 "scope": (state(), changed_scope),
-                "engine": (state(), changed_engine),
+                "provider": (state(), changed_provider),
                 "stage": (state(), regressed_stage),
                 "stage_skip": (
                     {**state(), "current_stage": "round-1-build"},

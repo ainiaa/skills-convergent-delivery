@@ -173,6 +173,23 @@ class InstallTest(unittest.TestCase):
             self.assertTrue(target.is_dir())
             self.assertIn("refusing to replace existing directory", result.stderr)
 
+    def test_upgrade_replaces_an_existing_managed_skill_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            old_source = home / "old-converge"
+            old_source.mkdir()
+            (old_source / "SKILL.md").write_text(
+                "---\nname: converge\n---\n", encoding="utf-8"
+            )
+            target = home / ".codex/skills/converge"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(old_source)
+
+            result = self.run_installer(home, "--upgrade", "--target", "codex")
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(ROOT, target.resolve())
+
     def test_install_preflights_the_whole_suite_before_creating_links(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

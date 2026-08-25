@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import evidence_contract
 SHA = "a" * 64
+PROJECT_HEAD = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    capture_output=True, text=True,
+).stdout.strip()
+PROJECT_SOURCE = evidence_contract.workspace_source(ROOT, PROJECT_HEAD)
 
 
 def provider_binding(workflow="native-v1", tdd=None):
@@ -33,6 +38,8 @@ def provider_binding(workflow="native-v1", tdd=None):
 def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     return {
         "task_id": task_id,
+        "task_kind": "vertical_slice",
+        "outcomes": [f"deliver {task_id}"],
         "goal": f"deliver {task_id}",
         "owned_paths": paths,
         "depends_on": depends_on or [],
@@ -46,9 +53,9 @@ def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     }
 
 
-def plan(tasks, context="short", planner=None):
+def plan(tasks, context="short", planner=None, checkpoint="same_session"):
     return {
-        "schema_version": 2,
+        "schema_version": 5,
         "plan_id": "plan-example",
         "requirement_fingerprint": SHA,
         "planner": planner or {
@@ -57,21 +64,16 @@ def plan(tasks, context="short", planner=None):
             "source_fingerprint": None,
         },
         "context": context,
-        "baseline": {"commit": "0" * 40, "diff_fingerprint": SHA},
+        "baseline": {"commit": PROJECT_HEAD, "source": PROJECT_SOURCE},
         "tasks": tasks,
         "final_acceptance": ["all checks pass"],
         "decisions": [],
+        "checkpoint": checkpoint,
     }
 
 
 def granular_plan(tasks, context="long", checkpoint="same_session"):
-    value = plan(tasks, context=context)
-    value["schema_version"] = 4
-    value["checkpoint"] = checkpoint
-    for item in value["tasks"]:
-        item.setdefault("task_kind", "vertical_slice")
-        item.setdefault("outcomes", [item["goal"]])
-    return value
+    return plan(tasks, context=context, checkpoint=checkpoint)
 
 
 def evidence_receipt(source, command="bash scripts/check.sh"):
@@ -135,6 +137,9 @@ class PlanCheckTest(unittest.TestCase):
 
     def current_source(self, value):
         value["baseline"]["commit"] = self.baseline
+        value["baseline"]["source"] = evidence_contract.workspace_source(
+            self.workspace, self.baseline
+        )
         result = self.run_check(
             "audit",
             {"plan": value, "task_results": {}, "final_acceptance": []},
@@ -260,60 +265,14 @@ class PlanCheckTest(unittest.TestCase):
 
                 self.assertNotEqual(0, self.run_check("validate", value).returncode)
 
-    def test_v1_engine_plan_is_migrated_to_provider_bindings(self):
-        value = plan([task("pdlc-run", ["."])])
-        value["schema_version"] = 1
-        value["engine"] = "pdlc-v1"
-        value["planner"]["name"] = "pdlc-delegation-v1"
-        value["tasks"][0].pop("provider_binding")
-
-        result = self.run_check("validate", value)
-
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(4, json.loads(result.stdout)["normalized_schema_version"])
-
-    def test_legacy_single_task_migrates_without_a_commit_gate(self):
-        for schema_version in (1, 2):
+    def test_legacy_plan_schemas_are_rejected(self):
+        for schema_version in (1, 2, 3, 4):
             with self.subTest(schema_version=schema_version):
                 value = plan([task("T1", ["src"])])
                 value["schema_version"] = schema_version
-                if schema_version == 1:
-                    value["engine"] = "native-v1"
-                    value["tasks"][0].pop("provider_binding")
-
                 result = self.run_check("validate", value)
-
-                self.assertEqual(0, result.returncode, result.stderr)
-                output = json.loads(result.stdout)
-                self.assertFalse(output["commit_authorization_required"])
-                self.assertNotEqual("batch", output["execution_mode"])
-
-    def test_legacy_multi_task_migrates_to_the_batch_commit_gate(self):
-        for schema_version in (1, 2):
-            with self.subTest(schema_version=schema_version):
-                value = plan([task("T1", ["src/a"]), task("T2", ["src/b"], ["T1"])])
-                value["schema_version"] = schema_version
-                if schema_version == 1:
-                    value["engine"] = "native-v1"
-                    for item in value["tasks"]:
-                        item.pop("provider_binding")
-
-                result = self.run_check("validate", value)
-
-                self.assertEqual(0, result.returncode, result.stderr)
-                output = json.loads(result.stdout)
-                self.assertEqual("batch", output["execution_mode"])
-                self.assertTrue(output["commit_authorization_required"])
-
-    def test_schema_v3_without_an_explicit_baseline_cannot_be_invented(self):
-        value = granular_plan([task("T1", ["src"])])
-        value["schema_version"] = 3
-        value.pop("baseline")
-
-        result = self.run_check("validate", value)
-
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("baseline", result.stderr)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("schema_version must be 5", result.stderr)
 
     def test_rejects_cycles_unknown_dependencies_and_duplicate_ids(self):
         cases = [
@@ -382,11 +341,6 @@ class PlanCheckTest(unittest.TestCase):
         self.assertIn("split", result.stderr)
         self.assertIn("vertical_slice", result.stderr)
 
-    def test_legacy_long_single_task_cannot_bypass_granularity_review(self):
-        result = self.run_check("validate", plan([task("wide", ["src"])], context="long"))
-
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("schema v5", result.stderr)
         self.assertIn("split", result.stderr)
 
     def test_same_session_tasks_are_sequential_without_commit_authorization(self):
@@ -420,14 +374,20 @@ class PlanCheckTest(unittest.TestCase):
         value = plan(
             [task("T1", ["src/a"]), task("T2", ["src/b"]), task("T3", ["src/c"])]
         )
+        value["baseline"] = {
+            "commit": self.baseline,
+            "source": evidence_contract.workspace_source(self.workspace, self.baseline),
+        }
         self.write_changes("src/a/file.py", "src/b/file.py", "extra.txt")
-        source = self.current_source(value)
+        source = evidence_contract.workspace_source(self.workspace, self.baseline)
         envelope = {
             "plan": value,
             "task_results": {
                 "T1": {
                     "status": "DONE",
                     "fresh_pass": True,
+                    "source_before": value["baseline"]["source"],
+                    "source_after": source,
                     "evidence": [evidence_receipt(source, "check-T1")],
                 },
                 "T2": {
@@ -447,7 +407,7 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(
-            {"T1": "DONE", "T2": "PARTIAL", "T3": "CHANGED"}, output["tasks"]
+            {"T1": "PARTIAL", "T2": "PARTIAL", "T3": "CHANGED"}, output["tasks"]
         )
         self.assertEqual(["extra.txt"], output["scope_drift"])
         self.assertFalse(output["complete"])
@@ -548,7 +508,10 @@ class PlanCheckTest(unittest.TestCase):
 
     def test_应该_当Git文件名包含反斜杠时_不归一化为已授权斜杠路径(self):
         value = plan([task("T1", ["src/evil"])])
-        value["baseline"]["commit"] = self.baseline
+        value["baseline"] = {
+            "commit": self.baseline,
+            "source": evidence_contract.workspace_source(self.workspace, self.baseline),
+        }
         self.write_changes("src\\evil")
 
         result = self.run_check(
@@ -562,7 +525,10 @@ class PlanCheckTest(unittest.TestCase):
 
     def test_audit_detects_committed_scope_drift_since_the_plan_baseline(self):
         value = plan([task("T1", ["src"])])
-        value["baseline"]["commit"] = self.baseline
+        value["baseline"] = {
+            "commit": self.baseline,
+            "source": evidence_contract.workspace_source(self.workspace, self.baseline),
+        }
         self.write_changes("outside.txt")
         subprocess.run(["git", "-C", str(self.workspace), "add", "outside.txt"], check=True)
         subprocess.run(

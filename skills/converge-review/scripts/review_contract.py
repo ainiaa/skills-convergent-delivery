@@ -29,7 +29,7 @@ def _sha256(value, name):
     return value
 
 
-def _finding_fingerprint(finding, legacy):
+def _finding_fingerprint(finding):
     if not isinstance(finding, dict):
         raise ValueError("findings[] must be an object")
     value = _string(finding.get("fingerprint"), "findings[].fingerprint")
@@ -39,15 +39,7 @@ def _finding_fingerprint(finding, legacy):
         raise ValueError("findings[].scope is invalid")
     if finding.get("classification") not in {"defect", "suggestion"}:
         raise ValueError("findings[].classification is invalid")
-    if not legacy:
-        return _sha256(value, "findings[].fingerprint")
-    canonical = {
-        key: finding.get(key)
-        for key in ("fingerprint", "evidence", "impact", "root_cause", "scope", "classification")
-    }
-    return hashlib.sha256(
-        json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return _sha256(value, "findings[].fingerprint")
 
 
 def _strings(value, name, *, non_empty=False):
@@ -94,8 +86,8 @@ def normalize_result(value, reviewer_ref, request):
     if not isinstance(value, dict):
         raise ValueError("review result must be an object")
     version = value.get("protocol_version")
-    if version not in {2, 3}:
-        raise ValueError("unsupported review protocol_version")
+    if version != 3:
+        raise ValueError("review protocol_version must be 3")
     request = normalize_request(request)
     axis = value.get("axis")
     phase = value.get("phase")
@@ -106,21 +98,10 @@ def normalize_result(value, reviewer_ref, request):
     if not isinstance(independent, bool):
         raise ValueError("independent must be boolean")
 
-    legacy = version == 2
     mode = value.get("mode")
-    if legacy:
-        if mode not in {"intent", "blind"}:
-            raise ValueError("review mode is invalid")
-        mode = "shared" if mode == "intent" else "blind"
-        status = value.get("axis_status")
-        if value.get("status") not in {"reviewed", "blocked"} or (
-            (value.get("status") == "blocked") != (status == "blocked")
-        ):
-            raise ValueError("blocked review result is inconsistent")
-    else:
-        if mode not in {"shared", "blind"}:
-            raise ValueError("review mode is invalid")
-        status = value.get("status")
+    if mode not in {"shared", "blind"}:
+        raise ValueError("review mode is invalid")
+    status = value.get("status")
     if any(value.get(field) != request[field] for field in ("axis", "phase", "source_fingerprint")) \
             or mode != request["mode"]:
         raise ValueError("review result does not match the frozen request")
@@ -135,7 +116,7 @@ def normalize_result(value, reviewer_ref, request):
         raise ValueError("findings must be a list")
     if status != "findings" and findings:
         raise ValueError(f"{status} result cannot contain findings")
-    fingerprints = [_finding_fingerprint(finding, legacy) for finding in findings]
+    fingerprints = [_finding_fingerprint(finding) for finding in findings]
     if len(fingerprints) != len(set(fingerprints)):
         raise ValueError("finding fingerprints must be unique")
     if status == "findings" and not fingerprints:

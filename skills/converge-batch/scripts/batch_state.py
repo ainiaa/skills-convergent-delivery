@@ -27,17 +27,6 @@ from evidence_contract import validate_source_receipt
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
 DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 7200
-LEGACY_CAPSULE_FIELDS = (
-    "batch_id",
-    "goal",
-    "scope",
-    "global_constraints",
-    "consumes",
-    "produces",
-    "baseline",
-    "acceptance",
-    "verification",
-)
 CAPSULE_FIELDS = (
     "planned_task",
     "plan_id",
@@ -52,7 +41,7 @@ CAPSULE_FIELDS = (
     "acceptance",
     "verification",
 )
-CAPSULE_FIELDS_V3 = (*CAPSULE_FIELDS, "provider_binding")
+CAPSULE_FIELDS = (*CAPSULE_FIELDS, "provider_binding")
 BATCH_TRANSITIONS = {
     "pending": {"pending", "dispatching", "blocked"},
     "dispatching": {"dispatching", "running", "blocked"},
@@ -219,33 +208,25 @@ def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=N
                 raise ValueError(f"{name} must match the verified source")
 
 
-def validate_capsule(capsule, batch_id, plan_id, task_id, schema_version):
+def validate_capsule(capsule, batch_id, plan_id, task_id):
     capsule = require_mapping(capsule, f"capsule {batch_id}")
-    fields = (
-        LEGACY_CAPSULE_FIELDS
-        if schema_version == 1
-        else CAPSULE_FIELDS_V3 if schema_version >= 3 else CAPSULE_FIELDS
-    )
-    for field in fields:
+    for field in CAPSULE_FIELDS:
         if field not in capsule:
             label = "provider binding" if field == "provider_binding" else field
             raise ValueError(f"capsule {batch_id} is missing {label}")
     if capsule["batch_id"] != batch_id:
         raise ValueError("capsule batch_id does not match")
-    if schema_version >= 2:
-        if capsule["planned_task"] is not True:
-            raise ValueError("capsule planned_task must be true")
-        if capsule["plan_id"] != plan_id:
-            raise ValueError("capsule plan_id does not match")
-        if capsule["task_id"] != task_id:
-            raise ValueError("capsule task_id does not match")
-    if schema_version >= 3:
-        validate_provider_binding(capsule["provider_binding"])
+    if capsule["planned_task"] is not True:
+        raise ValueError("capsule planned_task must be true")
+    if capsule["plan_id"] != plan_id:
+        raise ValueError("capsule plan_id does not match")
+    if capsule["task_id"] != task_id:
+        raise ValueError("capsule task_id does not match")
+    validate_provider_binding(capsule["provider_binding"])
     for field in ("goal", "baseline"):
         require_string(capsule[field], f"capsule.{field}")
-    if schema_version >= 2:
-        for field in ("plan_id", "task_id"):
-            require_string(capsule[field], f"capsule.{field}")
+    for field in ("plan_id", "task_id"):
+        require_string(capsule[field], f"capsule.{field}")
     for field in ("scope", "global_constraints", "consumes", "produces", "acceptance", "verification"):
         values = require_list(capsule[field], f"capsule.{field}", non_empty=True)
         for value in values:
@@ -352,16 +333,15 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
 def validate_state(state):
     state = require_mapping(state, "state")
     schema_version = state.get("schema_version")
-    if schema_version not in {1, 2, 3, 4}:
-        raise ValueError("schema_version must be 1, 2, 3 or 4")
+    if schema_version != 4:
+        raise ValueError("schema_version must be 4")
     for field in ("run_id", "writer_id"):
         require_string(state.get(field), field)
     if not isinstance(state.get("revision"), int) or state["revision"] < 0:
         raise ValueError("revision must be a non-negative integer")
     canonical_path(state.get("repo_id"))
     canonical_path(state.get("workspace"))
-    delegate_state_root = canonical_path(state.get("delegate_state_root")) \
-        if schema_version == 4 else None
+    delegate_state_root = canonical_path(state.get("delegate_state_root"))
 
     plan = require_mapping(state.get("plan"), "plan")
     require_string(plan.get("plan_id"), "plan.plan_id")
@@ -375,7 +355,7 @@ def validate_state(state):
     if preflight.get("passed") is not True or require_list(preflight.get("issues"), "preflight.issues"):
         raise ValueError("preflight must pass without issues")
     require_string(preflight.get("checked_at"), "preflight.checked_at")
-    if schema_version >= 3 and preflight.get("commit_authorized") is not True:
+    if preflight.get("commit_authorized") is not True:
         raise ValueError("preflight requires one-time commit authorization")
 
     status = state.get("status")
@@ -389,11 +369,7 @@ def validate_state(state):
     for index, batch in enumerate(batches):
         batch = require_mapping(batch, f"batches[{index}]")
         batch_id = require_string(batch.get("batch_id"), f"batches[{index}].batch_id")
-        task_id = (
-            batch_id
-            if schema_version == 1
-            else require_string(batch.get("task_id"), f"batches[{index}].task_id")
-        )
+        task_id = require_string(batch.get("task_id"), f"batches[{index}].task_id")
         if batch_id in seen_ids:
             raise ValueError("batch_id must be unique")
         seen_ids.add(batch_id)
@@ -403,18 +379,18 @@ def validate_state(state):
         batch_status = batch.get("status")
         if batch_status not in BATCH_TRANSITIONS:
             raise ValueError("invalid batch status")
-        validate_capsule(
-            batch.get("capsule"), batch_id, plan["plan_id"], task_id, schema_version
-        )
+        validate_capsule(batch.get("capsule"), batch_id, plan["plan_id"], task_id)
         dispatch_id = batch.get("dispatch_id")
         worker_ref = batch.get("worker_ref")
-        recovery_count = batch.get("recovery_count", 0)
+        if "recovery_count" not in batch:
+            raise ValueError("recovery_count is required")
+        recovery_count = batch["recovery_count"]
         worker_role = batch.get("worker_role")
         worker_owner_run_id = batch.get("worker_owner_run_id")
         worker_status = batch.get("worker_status")
         delegate_run_id = batch.get("delegate_run_id")
         receipt = batch.get("receipt")
-        if schema_version >= 3 and batch_status in {"pending", "dispatching"} and any(
+        if batch_status in {"pending", "dispatching"} and any(
             value is not None
             for value in (worker_ref, worker_role, worker_owner_run_id, worker_status, delegate_run_id)
         ):
@@ -436,39 +412,35 @@ def validate_state(state):
             seen_dispatches.add(dispatch_id)
         if batch_status in {"running", "validating-receipt", "completed"}:
             require_string(worker_ref, "worker_ref")
-        if schema_version >= 3:
-            if worker_ref is None:
-                if any(value is not None for value in (
-                    worker_role, worker_owner_run_id, worker_status, delegate_run_id
-                )):
-                    raise ValueError("worker lifecycle fields require worker_ref")
-            else:
-                require_string(worker_role, "worker_role")
-                if worker_role != "controller-delegate":
-                    raise ValueError("worker_role must be controller-delegate")
-                require_string(worker_owner_run_id, "worker_owner_run_id")
-                if worker_status == "working" and worker_owner_run_id != state["run_id"]:
-                    raise ValueError("working worker_owner_run_id must match the current run")
-                if worker_status not in WORKER_STATUSES:
-                    raise ValueError("worker_status is invalid")
-                require_string(delegate_run_id, "delegate_run_id")
-                if delegate_run_id == state["run_id"] or delegate_run_id in seen_delegate_runs:
-                    raise ValueError("delegate_run_id must identify one unique child run")
-                seen_delegate_runs.add(delegate_run_id)
-            if batch_status == "completed" and worker_status != "completed":
-                raise ValueError("completed batch requires worker_status completed")
-            if schema_version == 4 and batch_status == "running" and worker_status != "working":
-                raise ValueError("running batch requires a working worker")
+        if worker_ref is None:
+            if any(value is not None for value in (
+                worker_role, worker_owner_run_id, worker_status, delegate_run_id
+            )):
+                raise ValueError("worker lifecycle fields require worker_ref")
+        else:
+            require_string(worker_role, "worker_role")
+            if worker_role != "controller-delegate":
+                raise ValueError("worker_role must be controller-delegate")
+            require_string(worker_owner_run_id, "worker_owner_run_id")
+            if worker_status == "working" and worker_owner_run_id != state["run_id"]:
+                raise ValueError("working worker_owner_run_id must match the current run")
+            if worker_status not in WORKER_STATUSES:
+                raise ValueError("worker_status is invalid")
+            require_string(delegate_run_id, "delegate_run_id")
+            if delegate_run_id == state["run_id"] or delegate_run_id in seen_delegate_runs:
+                raise ValueError("delegate_run_id must identify one unique child run")
+            seen_delegate_runs.add(delegate_run_id)
+        if batch_status == "completed" and worker_status != "completed":
+            raise ValueError("completed batch requires worker_status completed")
+        if batch_status == "running" and worker_status != "working":
+            raise ValueError("running batch requires a working worker")
         if batch_status in {"validating-receipt", "completed"}:
-            if schema_version == 4:
-                completed = [item for item in batches[:index] if item.get("status") == "completed"]
-                previous_commit = completed[-1]["receipt"]["commit_id"] if completed else None
-                validate_receipt(
-                    receipt, batch, state["workspace"], state["repo_id"],
-                    delegate_state_root, previous_commit,
-                )
-            elif receipt is None:
-                raise ValueError("receipt is required")
+            completed = [item for item in batches[:index] if item.get("status") == "completed"]
+            previous_commit = completed[-1]["receipt"]["commit_id"] if completed else None
+            validate_receipt(
+                receipt, batch, state["workspace"], state["repo_id"],
+                delegate_state_root, previous_commit,
+            )
         elif receipt is not None:
             raise ValueError("receipt is only allowed after running")
 
@@ -507,12 +479,9 @@ def validate_state(state):
 
 
 def validate_transition(previous, candidate, *, takeover=False):
-    upgrading = previous["schema_version"] in {1, 2, 3} and candidate["schema_version"] == 4
-    if candidate["schema_version"] != previous["schema_version"] and not upgrading:
+    if candidate["schema_version"] != previous["schema_version"]:
         raise ValueError("invalid schema transition")
     for field in ("run_id", "writer_id", "repo_id", "workspace", "plan", "delegate_state_root"):
-        if upgrading and field == "delegate_state_root":
-            continue
         if candidate[field] != previous[field]:
             if field in {"run_id", "writer_id"} and takeover:
                 continue
@@ -521,66 +490,6 @@ def validate_transition(previous, candidate, *, takeover=False):
             raise ValueError(f"{field} is immutable")
     if candidate["revision"] != previous["revision"] + 1:
         raise ValueError("candidate revision must be the next revision")
-    if upgrading:
-        if any(batch.get("worker_ref") for batch in previous["batches"]):
-            raise ValueError("legacy active worker state requires manual recovery")
-        if "delegate_state_root" not in candidate:
-            raise ValueError("schema upgrade requires delegate_state_root")
-        previous_without_root = dict(previous)
-        candidate_without_root = dict(candidate)
-        previous_without_root.pop("delegate_state_root", None)
-        candidate_without_root.pop("delegate_state_root")
-        if set(candidate_without_root) != set(previous_without_root):
-            raise ValueError("schema upgrade must preserve state fields")
-        for field in previous:
-            if field in {"schema_version", "revision", "batches"}:
-                continue
-            if field == "preflight":
-                if previous[field].get("commit_authorized") is True:
-                    if candidate[field] != previous[field]:
-                        raise ValueError("schema upgrade must preserve commit authorization")
-                else:
-                    migrated = dict(candidate["preflight"])
-                    if migrated.pop("commit_authorized", None) is not True or migrated != previous[field]:
-                        raise ValueError("schema upgrade requires explicit commit authorization")
-            elif candidate.get(field) != previous[field]:
-                raise ValueError("schema upgrade must not change plan state")
-        if len(candidate["batches"]) != len(previous["batches"]):
-            raise ValueError("batch list is immutable")
-        for old, new in zip(previous["batches"], candidate["batches"]):
-            old_without_upgrade = dict(old)
-            new_without_upgrade = dict(new)
-            for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
-                old_value = old_without_upgrade.pop(field, None)
-                new_value = new_without_upgrade.pop(field, None)
-                if old_value is not None and new_value != old_value:
-                    raise ValueError("schema upgrade must preserve worker lifecycle")
-            old_task_id = old_without_upgrade.pop("task_id", None)
-            new_task_id = new_without_upgrade.pop("task_id", None)
-            if previous["schema_version"] >= 2 and new_task_id != old_task_id:
-                raise ValueError("schema upgrade must preserve task_id")
-            if new_without_upgrade.pop("recovery_count", 0) != old.get("recovery_count", 0):
-                raise ValueError("schema upgrade must preserve recovery_count")
-            old_without_upgrade.pop("recovery_count", None)
-            old_capsule = dict(old_without_upgrade["capsule"])
-            new_capsule = dict(new_without_upgrade["capsule"])
-            if previous["schema_version"] == 1:
-                for field in ("planned_task", "plan_id", "task_id"):
-                    old_value = old_capsule.pop(field, None)
-                    if old_value is not None and new_capsule.get(field) != old_value:
-                        raise ValueError("schema upgrade must preserve capsule identity")
-                    new_capsule.pop(field, None)
-            old_binding = old_capsule.pop("provider_binding", None)
-            new_binding = new_capsule.pop("provider_binding", None)
-            if old_binding is not None and new_binding != old_binding:
-                raise ValueError("schema upgrade must preserve provider binding")
-            if new_binding is None:
-                raise ValueError("schema upgrade requires provider binding")
-            old_without_upgrade["capsule"] = old_capsule
-            new_without_upgrade["capsule"] = new_capsule
-            if new_without_upgrade != old_without_upgrade or new_capsule != old_capsule:
-                raise ValueError("schema upgrade must only add capsule identity")
-        return
     if previous["status"] in {"complete", "blocked", "stopped"}:
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
@@ -659,7 +568,7 @@ def write_state(
 ):
     validate_state(candidate)
     if candidate["schema_version"] != 4:
-        raise ValueError("new writes require schema_version 4; migrate legacy state first")
+        raise ValueError("new writes require schema_version 4")
     path = state_path(
         root,
         candidate["repo_id"],

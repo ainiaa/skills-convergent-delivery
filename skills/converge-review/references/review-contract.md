@@ -62,13 +62,13 @@ quality 与 integration 初审必须使用 `blind`、`independent=true` 和全�
 
 `re_review` 输入同轴原 finding、修复后新源码指纹和新鲜验证，只复核原问题与修复影响面。相同 finding 指纹重复、源码指纹未变化或无 finding 关闭时，由编排器立即 blocked。
 
-## Protocol v1 compatibility
+## Canonical adapter
 
-`protocol_version=2` 的 `intent|blind`、`reviewed|blocked` 与描述性 finding 指纹，必须先通过下列可执行边界转换为 v3 状态记录；v3 公开结果也使用同一入口校验。adapter 会核对 result 的 axis/phase/mode/source 与冻结 request 完全一致，并输出 `task_id/request_fingerprint`：
+只接受 `protocol_version=3`；adapter 会核对 result 的 axis/phase/mode/source 与冻结 request 完全一致，并输出 `task_id/request_fingerprint`：
 
 ```bash
 python3 scripts/review_contract.py normalize --input - --reviewer-ref <worker-ref> \
   --request '<canonical-request-json>' < result.json
 ```
 
-只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。`protocol_version=1` 的旧请求只按原 closure 语义读取；不得推断 axis，也不得把旧结果当作 v3 轴证明。
+只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。旧请求和结果直接拒绝。

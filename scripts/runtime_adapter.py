@@ -69,22 +69,14 @@ def bind(profile, mode, capabilities, reason):
 
 
 def validate_binding(value):
-    fields_v1 = {
-        "schema_version", "profile", "mode", "capabilities", "reason", "binding_fingerprint"
+    fields = {
+        "schema_version", "profile", "mode", "capabilities", "reason", "evidence_level",
+        "capability_observation_fingerprint", "capability_observation", "binding_fingerprint",
     }
-    fields_v2 = {*fields_v1, "evidence_level"}
-    fields_v3 = {*fields_v2, "capability_observation_fingerprint"}
-    fields_v4 = {*fields_v3, "capability_observation"}
-    if not isinstance(value, dict) or set(value) not in {
-        frozenset(fields_v1), frozenset(fields_v2), frozenset(fields_v3), frozenset(fields_v4),
-    }:
+    if not isinstance(value, dict) or set(value) != fields:
         raise ValueError("runtime binding fields are invalid")
-    if value["schema_version"] not in {1, 2, 3, 4} \
-            or (value["schema_version"] == 1) != (set(value) == fields_v1) \
-            or (value["schema_version"] == 2) != (set(value) == fields_v2) \
-            or (value["schema_version"] == 3) != (set(value) == fields_v3) \
-            or (value["schema_version"] == 4) != (set(value) == fields_v4):
-        raise ValueError("runtime binding schema_version is invalid")
+    if value["schema_version"] != 4:
+        raise ValueError("runtime binding schema_version must be 4")
     if value["profile"] not in PROFILES or value["mode"] not in {"automatic", "manual"}:
         raise ValueError("runtime binding identity is invalid")
     evidence_level = value.get("evidence_level", "controller_attested")
@@ -93,7 +85,7 @@ def validate_binding(value):
     if evidence_level not in {"controller_attested", "host_observed"}:
         raise ValueError("runtime binding evidence level is invalid")
     if evidence_level == "host_observed":
-        if value["schema_version"] != 4 or not isinstance(observation, dict) \
+        if not isinstance(observation, dict) \
                 or observation_fingerprint != fingerprint(observation):
             raise ValueError("host-observed runtime binding requires a capability observation")
         observed_capabilities = _capability_observation(value["profile"], observation)
@@ -120,7 +112,7 @@ def validate_binding(value):
         raise ValueError("runtime binding capabilities are not canonical")
     if value["profile"] == "single-context" and value["mode"] != "manual":
         raise ValueError("single-context runtime binding must be manual")
-    if value["schema_version"] >= 3 and not set(capabilities) <= PROFILE_CAPABILITY_CEILINGS[
+    if not set(capabilities) <= PROFILE_CAPABILITY_CEILINGS[
         value["profile"]
     ]:
         raise ValueError("runtime binding exceeds the supported host capability profile")

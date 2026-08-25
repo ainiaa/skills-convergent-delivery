@@ -2,20 +2,15 @@
 """Validate a converge state and emit exactly one next-stage token."""
 
 import argparse
-import copy
 import json
 import sys
 from pathlib import Path
 
 from delivery_engine import (
     TASK_KINDS,
-    compatible_root,
-    compatible_tdd_provider,
     controller_identity,
     file_fingerprint,
-    legacy_pdlc_fingerprint,
     load_provider_registry,
-    pdlc_fingerprint,
     pdlc_metadata,
     provider_reference,
     validate_provider_manifest,
@@ -71,10 +66,6 @@ PROGRESS_PHASES = {
     "understanding", "planning", "reproducing", "testing", "implementing",
     "verifying", "reviewing", "closing",
 }
-LEGACY_V6_CONTROLLERS = {
-    ("0.10.0", "843047313fb0c0c7b068e4a7033fe51a7ffec62aaf4234aaf86893c48144a485"),
-}
-
 
 def require_string(value, name):
     if not isinstance(value, str) or not value.strip():
@@ -99,322 +90,24 @@ def normalize_open_issues(value):
     raise ValueError("handoff.open_issues must be a string or a list of strings")
 
 
-def legacy_execution_control():
-    return {
-        "routing": {
-            "schema_version": 1,
-            "status": "legacy_unavailable",
-            "assessment_count": 0,
-            "route": None,
-            "review_tier": None,
-            "profile_fingerprint": None,
-        },
-        "review": {
-            "protocol_version": 3,
-            "repair_budget_remaining": 1,
-            "re_review_budget_remaining": 1,
-            "integration_budget_remaining": 0,
-            "rounds": [],
-        },
-    }
-
-
-def upgrade_review(review):
-    if not isinstance(review, dict) or review.get("protocol_version") != 2:
-        return review
-    source = review.get("source_fingerprint")
-    requests = []
-    for request in review.get("requests", []):
-        requests.append({
-            **request,
-            "reviewer_ref": "legacy-reviewer",
-            "mode": "shared",
-            "independent": False,
-            "finding_fingerprints": [],
-        })
-    return {
-        "protocol_version": 3,
-        "repair_budget_remaining": review.get("repair_budget_remaining"),
-        "re_review_budget_remaining": review.get("re_review_budget_remaining"),
-        "integration_budget_remaining": review.get("integration_budget_remaining"),
-        "rounds": ([{"source_fingerprint": source, "requests": requests}] if source else []),
-    }
-
-
-def upgrade_execution_control(state):
-    control = state.get("execution_control")
-    if isinstance(control, dict) and "review" in control:
-        control["review"] = upgrade_review(control["review"])
-
-
-def upgrade_evidence_levels(state):
-    host_sync = state.get("host_sync")
-    if isinstance(host_sync, dict):
-        host_sync.setdefault("evidence_level", "controller_attested")
-    for worker in state.get("workers", []):
-        progress = worker.get("progress") if isinstance(worker, dict) else None
-        if isinstance(progress, dict):
-            progress.setdefault(
-                "evidence_level",
-                "host_observed" if progress.get("event") == "heartbeat"
-                else "controller_attested",
-            )
-    receipt = state.get("worker_tree_receipt")
-    if isinstance(receipt, dict) and receipt.get("schema_version") == 1:
-        receipt["schema_version"] = 2
-        receipt["evidence_level"] = (
-            "host_observed" if receipt.get("mode") == "tree_query"
-            else "controller_attested"
-        )
-    if isinstance(receipt, dict) and receipt.get("schema_version") == 2:
-        receipt.setdefault("observation_fingerprint", None)
-
-
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") == 10:
-        state = copy.deepcopy(value)
-        upgrade_evidence_levels(state)
-        handoff = state.get("handoff")
-        if isinstance(handoff, dict) and "open_issues" in handoff:
-            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
-        return state
-    if value.get("schema_version") == 9:
-        if value.get("workers"):
-            raise ValueError("legacy worker state requires manual recovery")
-        state = copy.deepcopy(value)
-        state["schema_version"] = 10
-        upgrade_execution_control(state)
-        for worker in state.get("workers", []):
-            worker.setdefault("parent_ref", None)
-            worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
-            worker.setdefault("depth", 1)
-            worker.setdefault("may_dispatch", False)
-        state.setdefault("worker_tree_receipt", None)
-        state.setdefault("runtime_binding", None)
-        state.setdefault("host_sync", {
-            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
-        })
-        state.setdefault("source_receipt", None)
-        upgrade_evidence_levels(state)
-        handoff = state.get("handoff")
-        if isinstance(handoff, dict) and "open_issues" in handoff:
-            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
-        return state
-    if value.get("schema_version") in {7, 8}:
-        if value.get("workers"):
-            raise ValueError("legacy worker state requires manual recovery")
-        state = copy.deepcopy(value)
-        state["schema_version"] = 10
-        state.setdefault("workers", [])
-        state.setdefault("worker_tree_receipt", None)
-        state.setdefault("runtime_binding", None)
-        state.setdefault("host_sync", {
-            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
-        })
-        state.setdefault("source_receipt", None)
-        state.setdefault("source_fingerprint", None)
-        state.setdefault("execution_control", legacy_execution_control())
-        upgrade_execution_control(state)
-        upgrade_evidence_levels(state)
-        handoff = state.get("handoff")
-        if isinstance(handoff, dict) and "open_issues" in handoff:
-            handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
-        return state
-    if value.get("schema_version") not in {5, 6}:
-        raise ValueError("unsupported schema_version")
-    state = copy.deepcopy(value)
-    source_schema = state["schema_version"]
-    if source_schema == 6:
-        controller = state.get("controller")
-        identity = (
-            controller.get("version"), controller.get("fingerprint")
-        ) if isinstance(controller, dict) and set(controller) == {"version", "fingerprint"} else None
-        if identity not in LEGACY_V6_CONTROLLERS:
-            raise ValueError("legacy controller is unavailable or incompatible")
-    engine = state.pop("engine", None)
-    if not isinstance(engine, dict):
-        raise ValueError("legacy engine is invalid")
-    if isinstance(engine, dict) and engine.get("name") == "pdlc-v1":
-        root = engine.get("pdlc_root")
-        task_kind = engine.get("task_kind")
-        if source_schema == 5 and engine.get("pdlc_fingerprint") != legacy_pdlc_fingerprint(root, task_kind):
-            raise ValueError("legacy frozen PDLC capability is unavailable or changed")
-        if source_schema == 5:
-            engine.update(pdlc_metadata(root, task_kind, engine.get("provider_manifest")))
-    state.update(
-        schema_version=10,
-        controller=controller_identity(),
-        provider_binding=legacy_provider_binding(engine),
-        workers=state.get("workers", []),
-        worker_tree_receipt=None,
-        runtime_binding=state.get("runtime_binding"),
-        host_sync=state.get("host_sync", {
-            "mode": "legacy_unavailable", "acknowledged_fingerprint": None
-        }),
-        source_fingerprint=state.get("source_fingerprint"),
-        source_receipt=state.get("source_receipt"),
-        execution_control=state.get("execution_control", legacy_execution_control()),
-    )
-    upgrade_execution_control(state)
-    for worker in state["workers"]:
-        worker.setdefault("progress", None)
-        worker.setdefault("parent_ref", None)
-        worker.setdefault("task_id", state.get("task_id", state.get("task_key")))
-        worker.setdefault("depth", 1)
-        worker.setdefault("may_dispatch", False)
-    if state["workers"]:
-        raise ValueError("legacy worker state requires manual recovery")
-    upgrade_evidence_levels(state)
-    handoff = state.get("handoff")
-    if isinstance(handoff, dict) and "open_issues" in handoff:
-        handoff["open_issues"] = normalize_open_issues(handoff["open_issues"])
-    return state
-
-
-def legacy_provider_binding(engine):
-    name = validate_engine(engine)
-    task_kind = engine.get("task_kind", "feature")
-    if name == "pdlc-v1":
-        root = require_string(engine.get("pdlc_root"), "engine.pdlc_root")
-        task_kind = engine.get("task_kind")
-        metadata = pdlc_metadata(root, task_kind, engine.get("provider_manifest"))
-        workflow = provider_reference(
-            "pdlc-v1",
-            task_kind,
-            version=metadata["provider_version"],
-            manifest=metadata["provider_manifest"],
-            manifest_fingerprint=metadata["provider_fingerprint"],
-            root=str(Path(root).expanduser().resolve()),
-            source_fingerprint=metadata["provider_source_fingerprint"],
-        )
-        stages = {}
-    else:
-        workflow = provider_reference("native-v1", task_kind)
-        stages = {}
-        if name != "native-v1":
-            path = require_string(engine.get("tdd_skill_path"), "engine.tdd_skill_path")
-            stages["tdd"] = provider_reference(
-                name,
-                task_kind,
-                source_path=str(Path(path).expanduser().resolve()),
-                source_fingerprint=engine.get("tdd_skill_fingerprint"),
-            )
-    binding = {
-        "controller": "converge",
-        "workflow_provider": workflow,
-        "stage_providers": stages,
-    }
-    return {
-        "selection": engine.get("selection"),
-        "reason": engine.get("reason"),
-        "task_kind": task_kind,
-        "binding": binding,
-        "binding_fingerprint": canonical_fingerprint(binding),
-    }
-
-
-def validate_engine(value):
-    engine = require_mapping(value, "engine")
-    name = engine.get("name")
-    if name not in load_provider_registry():
-        raise ValueError("engine.name is invalid")
-    if engine.get("selection") not in ENGINE_SELECTIONS:
-        raise ValueError("engine.selection must be auto or explicit")
-    require_string(engine.get("reason"), "engine.reason")
-    if name == "pdlc-v1":
-        root = require_string(engine.get("pdlc_root"), "engine.pdlc_root")
-        if not Path(root).is_absolute():
-            raise ValueError("engine.pdlc_root must be absolute")
-        require_string(engine.get("feature_id"), "engine.feature_id")
-        task_kind = engine.get("task_kind")
-        if task_kind not in TASK_KINDS:
-            raise ValueError("engine.task_kind must be feature, fix, or refactor")
-        fingerprint = require_string(engine.get("pdlc_fingerprint"), "engine.pdlc_fingerprint")
-        compatible, problem = compatible_root(root, task_kind, engine.get("provider_manifest"))
-        if not compatible:
-            raise ValueError(f"frozen PDLC capability is unavailable or changed: {problem or root}")
-        metadata = pdlc_metadata(compatible, task_kind, engine.get("provider_manifest"))
-        for field, expected in metadata.items():
-            if engine.get(field) != expected:
-                raise ValueError(f"frozen PDLC provider {field} is unavailable or changed")
-        if fingerprint not in {
-            pdlc_fingerprint(compatible, task_kind, engine.get("provider_manifest")),
-            legacy_pdlc_fingerprint(compatible, task_kind),
-        }:
-            raise ValueError("frozen PDLC capability is unavailable or changed")
-    else:
-        if any(
-            field in engine
-            for field in ("pdlc_root", "feature_id", "task_kind", "pdlc_fingerprint")
-        ):
-            raise ValueError("TDD engine must not carry PDLC state")
-        if name == "native-v1":
-            if "tdd_skill_path" in engine or "tdd_skill_fingerprint" in engine:
-                raise ValueError("native engine must not carry a third-party TDD skill")
-        else:
-            path = require_string(engine.get("tdd_skill_path"), "engine.tdd_skill_path")
-            if not Path(path).is_absolute():
-                raise ValueError("engine.tdd_skill_path must be absolute")
-            fingerprint = require_string(
-                engine.get("tdd_skill_fingerprint"), "engine.tdd_skill_fingerprint"
-            )
-            if not compatible_tdd_provider(name, path, fingerprint):
-                raise ValueError("frozen third-party TDD skill is unavailable or changed")
-    return name
+    if value.get("schema_version") != 10:
+        raise ValueError("schema_version must be 10")
+    if "engine" in value:
+        raise ValueError("legacy engine state is unsupported")
+    return value
 
 
 def validate_provider_reference(reference, expected_role, task_kind):
     reference = require_mapping(reference, "provider reference")
-    if "contract_fingerprint" in reference:
-        provider_id = validate_complete_provider_reference(reference, task_kind, expected_role)
-        manifest_path = Path(reference["manifest"])
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        validate_provider_manifest(manifest, manifest_path)
-        if task_kind not in manifest["capabilities"]["task_kinds"]:
-            raise ValueError("provider does not support the frozen task kind")
-        return provider_id
-    allowed = {
-        "id", "version", "role", "manifest", "manifest_fingerprint",
-        "source_path", "source_fingerprint", "root",
-    }
-    if set(reference) - allowed:
-        raise ValueError("provider reference contains unsupported fields")
-    provider_id = require_string(reference.get("id"), "provider reference.id")
-    if provider_id not in load_provider_registry():
-        raise ValueError("provider reference.id is unknown")
-    if reference.get("role") != expected_role:
-        raise ValueError("provider reference.role is invalid")
-    require_string(reference.get("version"), "provider reference.version")
-    manifest_path = Path(require_string(reference.get("manifest"), "provider reference.manifest"))
-    if not manifest_path.is_absolute() or file_fingerprint(manifest_path) != reference.get(
-        "manifest_fingerprint"
-    ):
-        raise ValueError("frozen provider manifest is unavailable or changed")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("frozen provider manifest is unavailable or changed") from error
+    provider_id = validate_complete_provider_reference(reference, task_kind, expected_role)
+    manifest_path = Path(reference["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     validate_provider_manifest(manifest, manifest_path)
-    if (
-        manifest["provider"]["id"] != provider_id
-        or manifest["provider"]["version"] != reference["version"]
-        or manifest["provider"]["role"] != reference["role"]
-    ):
-        raise ValueError("frozen provider identity changed")
     if task_kind not in manifest["capabilities"]["task_kinds"]:
         raise ValueError("provider does not support the frozen task kind")
-    source_path = reference.get("source_path")
-    if source_path is not None:
-        path = Path(require_string(source_path, "provider reference.source_path"))
-        if not path.is_absolute() or file_fingerprint(path) != reference.get("source_fingerprint"):
-            raise ValueError("frozen provider source is unavailable or changed")
-    if expected_role == "workflow" and provider_id != "native-v1":
-        root = require_string(reference.get("root"), "provider reference.root")
-        metadata = pdlc_metadata(root, task_kind, str(manifest_path))
-        if metadata["provider_source_fingerprint"] != reference.get("source_fingerprint"):
-            raise ValueError("frozen provider source is unavailable or changed")
     return provider_id
 
 
@@ -466,35 +159,20 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
     if set(value) != {"routing", "review"}:
         raise ValueError("execution_control fields are invalid")
     routing = require_mapping(value["routing"], "execution_control.routing")
-    legacy_routing_fields = {
+    routing_fields = {
         "schema_version", "status", "assessment_count", "route", "review_tier",
-        "profile_fingerprint",
+        "profile_fingerprint", "profile", "allowed_paths", "integration_required",
     }
-    frozen_routing_fields = {
-        *legacy_routing_fields, "profile", "allowed_paths", "integration_required",
-    }
-    if set(routing) not in {frozenset(legacy_routing_fields), frozenset(frozen_routing_fields)}:
+    if set(routing) != routing_fields:
         raise ValueError("execution_control.routing fields are invalid")
     count = routing["assessment_count"]
     if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 2:
         raise ValueError("routing assessment_count must be from 0 to 2")
-    if routing["schema_version"] == 2:
-        if routing["status"] != "frozen" or set(routing) != frozen_routing_fields:
-            raise ValueError("routing v2 must contain one frozen decision")
-        expected = freeze_routing(
-            routing.get("profile"), routing.get("allowed_paths"), count
-        )
-        if routing != expected:
-            raise ValueError("routing does not match the canonical task profile")
-    elif routing["schema_version"] != 1:
-        raise ValueError("execution_control.routing schema_version is invalid")
-    elif routing["status"] == "frozen":
-        if count not in {1, 2} or routing["route"] not in ROUTES \
-                or routing["review_tier"] not in REVIEW_TIERS:
-            raise ValueError("routing must contain one frozen decision")
-        require_sha256(routing["profile_fingerprint"], "routing.profile_fingerprint")
-    elif routing != legacy_execution_control()["routing"]:
-        raise ValueError("routing status is invalid")
+    if routing["schema_version"] != 2 or routing["status"] != "frozen":
+        raise ValueError("routing schema_version must be 2 and frozen")
+    expected = freeze_routing(routing["profile"], routing["allowed_paths"], count)
+    if routing != expected:
+        raise ValueError("routing does not match the canonical task profile")
 
     review = require_mapping(value["review"], "execution_control.review")
     if set(review) != {
@@ -519,20 +197,16 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
         if not isinstance(round_value["requests"], list):
             raise ValueError("review requests must be a list")
         for request in round_value["requests"]:
-            legacy_request_fields = {
+            request_fields = {
                 "axis", "phase", "source_fingerprint", "status", "reviewer_ref",
-                "mode", "independent", "finding_fingerprints",
+                "mode", "independent", "finding_fingerprints", "task_id", "request_fingerprint",
             }
-            bound_request_fields = {*legacy_request_fields, "task_id", "request_fingerprint"}
-            if not isinstance(request, dict) or set(request) not in {
-                frozenset(legacy_request_fields), frozenset(bound_request_fields)
-            }:
+            if not isinstance(request, dict) or set(request) != request_fields:
                 raise ValueError("review request fields are invalid")
-            if "request_fingerprint" in request:
-                require_sha256(request["request_fingerprint"], "review request fingerprint")
-                require_string(request["task_id"], "review request task_id")
-                if task_key is not None and request["task_id"] != task_key:
-                    raise ValueError("review request task_id must match the current task")
+            require_sha256(request["request_fingerprint"], "review request fingerprint")
+            require_string(request["task_id"], "review request task_id")
+            if task_key is not None and request["task_id"] != task_key:
+                raise ValueError("review request task_id must match the current task")
             if request["axis"] not in {"spec", "quality", "integration"} \
                     or request["phase"] not in {"initial", "re_review", "closure"} \
                     or request["status"] not in {"pass", "findings", "blocked"} \
@@ -562,13 +236,12 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
         request for round_value in rounds for request in round_value["requests"]
         if request["axis"] == "integration"
     ]
-    if routing["schema_version"] == 2:
-        if routing["integration_required"]:
-            expected_budget = 0 if integration_requests else 1
-            if review["integration_budget_remaining"] != expected_budget:
-                raise ValueError("integration review budget does not match the frozen task profile")
-        elif review["integration_budget_remaining"] or integration_requests:
-            raise ValueError("integration review is not allowed by the frozen task profile")
+    if routing["integration_required"]:
+        expected_budget = 0 if integration_requests else 1
+        if review["integration_budget_remaining"] != expected_budget:
+            raise ValueError("integration review budget does not match the frozen task profile")
+    elif review["integration_budget_remaining"] or integration_requests:
+        raise ValueError("integration review is not allowed by the frozen task profile")
     return routing, review
 
 

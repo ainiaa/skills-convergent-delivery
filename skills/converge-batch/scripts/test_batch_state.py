@@ -450,58 +450,13 @@ class BatchStateTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "worker lifecycle.*running"):
                     batch_state.validate_state(state)
 
-    def test_应该_当旧状态已有活动worker时_要求人工恢复而不伪造生命周期(self):
-        for schema_version in (1, 2):
+    def test_legacy_batch_schemas_are_rejected(self):
+        for schema_version in (1, 2, 3):
             with self.subTest(schema_version=schema_version):
                 legacy = candidate(self.workspace)
                 legacy["schema_version"] = schema_version
-                legacy["batches"][0].update(
-                    status="running", dispatch_id="dispatch-B1", worker_ref="thread-1"
-                )
-                for batch in legacy["batches"]:
-                    for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
-                        batch.pop(field)
-                    if schema_version == 1:
-                        batch.pop("task_id")
-                        batch.pop("recovery_count")
-                        for field in ("planned_task", "plan_id", "task_id"):
-                            batch["capsule"].pop(field)
-                batch_state.validate_state(legacy)
-
-                upgraded = candidate(self.workspace, revision=1)
-                upgraded["batches"][0].update(status="running", dispatch_id="dispatch-B1")
-                register_worker(upgraded, 0, "thread-1")
-
-                batch_state.validate_state(upgraded)
-                with self.assertRaisesRegex(ValueError, "manual recovery"):
-                    batch_state.validate_transition(legacy, upgraded)
-
-    def test_应该_当v1或v2未启动状态迁移时_允许无worker引用(self):
-        for schema_version in (1, 2):
-            for status in ("pending", "dispatching"):
-                with self.subTest(schema_version=schema_version, status=status):
-                    legacy = candidate(self.workspace)
-                    legacy["schema_version"] = schema_version
-                    legacy["batches"][0]["status"] = status
-                    if status == "dispatching":
-                        legacy["batches"][0]["dispatch_id"] = "dispatch-B1"
-                    for batch in legacy["batches"]:
-                        for field in ("worker_role", "worker_owner_run_id", "worker_status", "delegate_run_id"):
-                            batch.pop(field)
-                        if schema_version == 1:
-                            batch.pop("task_id")
-                            batch.pop("recovery_count")
-                            for field in ("planned_task", "plan_id", "task_id"):
-                                batch["capsule"].pop(field)
+                with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
                     batch_state.validate_state(legacy)
-
-                    upgraded = candidate(self.workspace, revision=1)
-                    upgraded["batches"][0]["status"] = status
-                    if status == "dispatching":
-                        upgraded["batches"][0]["dispatch_id"] = "dispatch-B1"
-
-                    batch_state.validate_state(upgraded)
-                    batch_state.validate_transition(legacy, upgraded)
 
     def test_rejects_stale_revision_plan_drift_and_illegal_jump(self):
         state = candidate(self.workspace)
@@ -721,33 +676,6 @@ class BatchStateTest(unittest.TestCase):
 
         batch_state.validate_state(value)
 
-    def test_应该_当恢复真实旧v1状态时_迁移到新Schema并继续(self):
-        legacy = candidate(self.workspace)
-        legacy["schema_version"] = 1
-        for batch in legacy["batches"]:
-            batch.pop("task_id")
-            batch.pop("recovery_count")
-            batch.pop("worker_role")
-            batch.pop("worker_owner_run_id")
-            batch.pop("worker_status")
-            batch.pop("delegate_run_id")
-            for field in ("planned_task", "plan_id", "task_id"):
-                batch["capsule"].pop(field)
-        batch_state.validate_state(legacy)
-        with self.assertRaisesRegex(ValueError, "schema_version 4"):
-            batch_state.write_state(self.root / "new-state", legacy, -1)
-        path = batch_state.state_path(
-            self.root, legacy["repo_id"], legacy["plan"]["plan_id"], legacy["run_id"]
-        )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(legacy), encoding="utf-8")
-        upgraded = candidate(self.workspace, revision=1)
-        upgraded["schema_version"] = 4
-
-        written = self.write(upgraded, 0)
-
-        self.assertEqual(4, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
-
     def test_应该_当恢复次数倒退或超过一次时_拒绝状态更新(self):
         state = candidate(self.workspace)
         self.write(state, -1)
@@ -772,34 +700,13 @@ class BatchStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "recovery_count"):
             self.write(state, 3)
 
-    def test_应该_当旧状态没有恢复计数时_按零次恢复兼容读取(self):
+    def test_missing_current_recovery_count_is_rejected(self):
         state = candidate(self.workspace)
         for batch in state["batches"]:
             batch.pop("recovery_count")
 
-        path = self.write(state, -1)
-
-        self.assertTrue(path.exists())
-
-    def test_应该_当恢复v2状态时_只添加worker生命周期并迁移到v3(self):
-        legacy = candidate(self.workspace)
-        legacy["schema_version"] = 2
-        for batch in legacy["batches"]:
-            batch.pop("worker_role")
-            batch.pop("worker_owner_run_id")
-            batch.pop("worker_status")
-            batch.pop("delegate_run_id")
-        batch_state.validate_state(legacy)
-        path = batch_state.state_path(
-            self.root, legacy["repo_id"], legacy["plan"]["plan_id"], legacy["run_id"]
-        )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(legacy), encoding="utf-8")
-        upgraded = candidate(self.workspace, revision=1)
-
-        written = self.write(upgraded, 0)
-
-        self.assertEqual(4, json.loads(written.read_text(encoding="utf-8"))["schema_version"])
+        with self.assertRaisesRegex(ValueError, "recovery_count"):
+            batch_state.validate_state(state)
 
 
 if __name__ == "__main__":

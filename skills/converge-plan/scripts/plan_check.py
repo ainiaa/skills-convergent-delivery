@@ -152,46 +152,6 @@ def binding_fingerprint(workflow_provider, stage_providers):
     ).hexdigest()
 
 
-def upgrade_plan(plan):
-    if not isinstance(plan, dict) or plan.get("schema_version") not in {1, 2, 3}:
-        return plan
-    upgraded = json.loads(json.dumps(plan))
-    if upgraded["schema_version"] == 1:
-        engine = upgraded.pop("engine", None)
-        if engine not in WORKFLOW_PROVIDERS | STAGE_PROVIDERS:
-            raise ValueError("legacy engine is invalid")
-        workflow = engine if engine in WORKFLOW_PROVIDERS else "native-v1"
-        stages = {"tdd": engine} if engine in STAGE_PROVIDERS else {}
-        fingerprint = binding_fingerprint(workflow, stages)
-        for task in upgraded.get("tasks", []):
-            if isinstance(task, dict):
-                task["provider_binding"] = {
-                    "controller": "converge",
-                    "workflow_provider": workflow,
-                    "stage_providers": stages,
-                    "binding_fingerprint": fingerprint,
-                }
-                task.setdefault("provider_run", {"scope": "task", "recursive_planning": False})
-        upgraded["schema_version"] = 2
-
-    if upgraded["schema_version"] == 2:
-        tasks = upgraded.get("tasks")
-        if upgraded.get("context") == "long" and isinstance(tasks, list) and len(tasks) == 1:
-            raise ValueError(
-                "granularity_block reason=legacy_long_single_task; action=upgrade to schema v5 "
-                "with one outcome and explicit baseline or split into vertical_slice tasks"
-            )
-        upgraded["checkpoint"] = (
-            "cross_session" if isinstance(tasks, list) and len(tasks) > 1 else "same_session"
-        )
-        for task in upgraded.get("tasks", []):
-            if isinstance(task, dict):
-                task["task_kind"] = "vertical_slice"
-                task["outcomes"] = [task.get("goal")]
-    upgraded["schema_version"] = 4
-    return upgraded
-
-
 def validate_provider_binding(value, name):
     if not isinstance(value, dict) or set(value) != {
         "controller", "workflow_provider", "stage_providers", "binding_fingerprint"
@@ -221,12 +181,9 @@ def validate_provider_run(value, name):
     return value
 
 
-def validate_decisions(value, schema_version):
+def validate_decisions(value):
     if not isinstance(value, list):
         raise ValueError("decisions must be a list")
-    if schema_version < 5:
-        require_strings(value, "decisions")
-        return value
     seen = set()
     fields = {"id", "status", "question", "resolution", "source"}
     for index, decision in enumerate(value):
@@ -249,11 +206,10 @@ def validate_decisions(value, schema_version):
 
 
 def validate_plan(plan):
-    plan = upgrade_plan(plan)
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if plan.get("schema_version") not in {4, 5}:
-        raise ValueError("schema_version must be 4 or 5")
+    if plan.get("schema_version") != 5:
+        raise ValueError("schema_version must be 5")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
     validate_planner(plan.get("planner"))
@@ -261,13 +217,13 @@ def validate_plan(plan):
     if context not in {"short", "long"}:
         raise ValueError("context must be short or long")
     validate_baseline(plan.get("baseline"))
-    if plan["schema_version"] == 5 and "source" not in plan["baseline"]:
+    if "source" not in plan["baseline"]:
         raise ValueError("Plan v5 requires a Source Receipt v2 baseline")
     checkpoint = plan.get("checkpoint")
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
     require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
-    validate_decisions(plan.get("decisions"), plan["schema_version"])
+    validate_decisions(plan.get("decisions"))
 
     raw_tasks = plan.get("tasks")
     if not isinstance(raw_tasks, list) or not raw_tasks:
@@ -391,21 +347,17 @@ def source_delta(before, after):
 def audit(envelope, workspace):
     if not isinstance(envelope, dict):
         raise ValueError("audit input must be an object")
-    plan = upgrade_plan(envelope.get("plan"))
+    plan = envelope.get("plan")
     validate_plan(plan)
     source = workspace_source(workspace, plan["baseline"]["commit"])
     results = envelope.get("task_results")
     if not isinstance(results, dict):
         raise ValueError("task_results must be an object")
-    if plan["schema_version"] == 5:
-        baseline_source = plan["baseline"]["source"]
-        changed_paths = [
-            clean_git_path(path, "changed_paths") for path in source_delta(baseline_source, source)
-        ]
-        cursor = baseline_source
-    else:
-        changed_paths = [clean_git_path(path, "changed_paths") for path in source["changed_paths"]]
-        cursor = None
+    baseline_source = plan["baseline"]["source"]
+    changed_paths = [
+        clean_git_path(path, "changed_paths") for path in source_delta(baseline_source, source)
+    ]
+    cursor = baseline_source
 
     statuses = {}
     task_scope_drift = {}

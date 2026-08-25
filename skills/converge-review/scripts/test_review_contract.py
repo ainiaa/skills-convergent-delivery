@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_next import validate_execution_control
+from task_profile import freeze_routing
 from review_contract import normalize_result
 
 
@@ -68,7 +69,7 @@ class ReviewContractTest(unittest.TestCase):
         self.assertEqual("task-123", json.loads(result.stdout)["task_id"])
         self.assertEqual(64, len(json.loads(result.stdout)["request_fingerprint"]))
 
-    def test_v2_result_normalizes_to_the_internal_v3_record(self):
+    def test_legacy_result_schema_is_rejected(self):
         source = "a" * 64
         result = {
             "protocol_version": 2,
@@ -90,23 +91,8 @@ class ReviewContractTest(unittest.TestCase):
             "blocked_reason": None,
         }
 
-        request = review_request(source=source)
-        record = normalize_result(result, reviewer_ref="reviewer-1", request=request)
-
-        self.assertEqual("shared", record["mode"])
-        self.assertEqual("findings", record["status"])
-        self.assertEqual(64, len(record["finding_fingerprints"][0]))
-        validate_execution_control({
-            "routing": {
-                "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "inline", "review_tier": "normal", "profile_fingerprint": "b" * 64,
-            },
-            "review": {
-                "protocol_version": 3, "repair_budget_remaining": 1,
-                "re_review_budget_remaining": 1, "integration_budget_remaining": 0,
-                "rounds": [{"source_fingerprint": source, "requests": [record]}],
-            },
-        }, source)
+        with self.assertRaisesRegex(ValueError, "protocol_version must be 3"):
+            normalize_result(result, reviewer_ref="reviewer-1", request=review_request(source=source))
 
     def test_blocked_result_cannot_claim_findings(self):
         with self.assertRaisesRegex(ValueError, "blocked"):

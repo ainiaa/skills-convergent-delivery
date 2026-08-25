@@ -468,19 +468,6 @@ def pdlc_fingerprint(root, task_kind, manifest=None):
         return None
 
 
-def legacy_pdlc_fingerprint(root, task_kind):
-    root_path = Path(root).expanduser().resolve()
-    required = (*REQUIRED_PDLC_SKILLS, f"pdlc-{task_kind}")
-    digest = hashlib.sha256()
-    for skill_name in required:
-        digest.update(skill_name.encode("utf-8"))
-        fingerprint = file_fingerprint(skill_path(root_path, skill_name))
-        if not fingerprint:
-            return None
-        digest.update(fingerprint.encode("ascii"))
-    return digest.hexdigest()
-
-
 def workflow_manifests(task_kind, explicit_manifest=None):
     if explicit_manifest:
         path = Path(explicit_manifest).expanduser().resolve()

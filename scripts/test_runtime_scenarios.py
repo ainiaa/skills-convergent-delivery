@@ -11,7 +11,7 @@ from delivery_state import validate_transition
 from provider_contract import canonical_fingerprint
 from run_contract import action
 from runtime_adapter import cleanup_receipt, negotiate
-from task_profile import classify
+from task_profile import classify, freeze_routing
 
 
 def profile(**overrides):
@@ -43,12 +43,12 @@ def blocked_worker_state():
         "scope_fingerprint": "scope-runtime", "controller": controller_identity(),
         "source_fingerprint": "a" * 64,
         "source_receipt": None,
-        "host_sync": {"mode": "legacy_unavailable", "acknowledged_fingerprint": None},
+        "host_sync": {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        },
         "execution_control": {
-            "routing": {
-                "schema_version": 1, "status": "frozen", "assessment_count": 1,
-                "route": "planned", "review_tier": "normal", "profile_fingerprint": "b" * 64,
-            },
+            "routing": freeze_routing(profile(scope="cross-module"), ["."]),
             "review": {
                 "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,

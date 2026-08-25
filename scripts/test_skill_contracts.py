@@ -252,7 +252,7 @@ class SkillContractTest(unittest.TestCase):
         )
         for marker in ("只读", "不得修改", "source_fingerprint", "independent"):
             self.assertIn(marker, skill + contract)
-        for marker in ("intent", "blind", "finding", "closure"):
+        for marker in ("shared", "blind", "finding", "closure"):
             self.assertIn(marker, contract)
 
     def test_batch_skill_is_scheduler_only_and_has_full_contract(self):

@@ -107,7 +107,7 @@ while [[ $# -gt 0 ]]; do
     --target) TARGET="${2:-}"; shift 2 ;;
     --source) SOURCE_OVERRIDE="${2:-}"; shift 2 ;;
     --uninstall) ACTION="uninstall"; shift ;;
-    --upgrade) ACTION="upgrade"; shift ;;
+    --upgrade) ACTION="upgrade"; FORCE=1; shift ;;
     --version) ACTION="version"; shift ;;
     --doctor) ACTION="doctor"; shift ;;
     --offline) OFFLINE=1; shift ;;
@@ -418,6 +418,7 @@ install_skill() {
   local temporary="${target}.tmp.$$"
   rm -f "$temporary"
   ln -s "$source" "$temporary"
+  [[ -L "$target" ]] && rm "$target"
   mv -f "$temporary" "$target"
   echo "${runtime}: installed ${skill} → $target"
 }

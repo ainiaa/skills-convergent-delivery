@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from delivery_engine import file_fingerprint, legacy_pdlc_fingerprint, provider_reference
+from delivery_engine import controller_identity, file_fingerprint, provider_reference
 from delivery_next import (
     upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
 )
@@ -16,6 +16,7 @@ from evidence_contract import run_evidence, workspace_source
 from runner_contract import freeze_launch
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
+from provider_contract import canonical_fingerprint
 from worker_profile import fingerprint as worker_profile_fingerprint
 
 
@@ -46,8 +47,13 @@ def routing(profile=None, allowed_paths=None):
 
 
 def state(**overrides):
+    binding = {
+        "controller": "converge",
+        "workflow_provider": provider_reference("native-v1", "feature"),
+        "stage_providers": {},
+    }
     value = {
-        "schema_version": 5,
+        "schema_version": 10,
         "run_id": "run-20260818-120000",
         "workspace": str(ROOT),
         "baseline": {"commit": HEAD, "diff_fingerprint": "base-diff"},
@@ -57,15 +63,16 @@ def state(**overrides):
         "execution_control": {
             "routing": routing(),
             "review": {
-                "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
+                "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
-                "integration_budget_remaining": 0, "requests": [],
+                "integration_budget_remaining": 0,
+                "rounds": [{"source_fingerprint": SOURCE["source_fingerprint"], "requests": []}],
             },
         },
-        "engine": {
-            "name": "native-v1",
-            "selection": "auto",
-            "reason": "PDLC is unavailable",
+        "controller": controller_identity(),
+        "provider_binding": {
+            "selection": "auto", "reason": "PDLC is unavailable", "task_kind": "feature",
+            "binding": binding, "binding_fingerprint": canonical_fingerprint(binding),
         },
         "repo_id": "/repo/common.git",
         "task_key": "task-123",
@@ -92,8 +99,15 @@ def state(**overrides):
         "handoff": {
             "goal": "Fix the requested behavior",
             "last_verification": "targeted test passed",
-            "open_issues": "none",
+            "open_issues": [],
             "next_action": "Run final verification",
+        },
+        "workers": [],
+        "worker_tree_receipt": None,
+        "runtime_binding": None,
+        "host_sync": {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
         },
     }
     value.update(overrides)
@@ -272,58 +286,12 @@ class DeliveryNextTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "runner launch"):
                 validate_state(payload, SimpleNamespace())
 
-    def test_v6_migration_rejects_an_unknown_frozen_controller(self):
-        payload = state(
-            schema_version=6,
-            controller={"version": "forged", "fingerprint": "0" * 64},
-        )
-
-        with self.assertRaisesRegex(ValueError, "legacy controller"):
-            upgrade_state(payload)
-
-    def test_v6_migration_accepts_the_published_0_10_controller(self):
-        payload = state(
-            schema_version=6,
-            controller={
-                "version": "0.10.0",
-                "fingerprint": "843047313fb0c0c7b068e4a7033fe51a7ffec62aaf4234aaf86893c48144a485",
-            },
-        )
-
-        self.assertEqual(10, upgrade_state(payload)["schema_version"])
-
-    def test_v8_state_with_workers_requires_manual_recovery(self):
-        payload = upgrade_state(state())
-        payload["schema_version"] = 8
-        payload["workers"] = [{
-            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
-            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
-        }]
-
-        with self.assertRaisesRegex(ValueError, "manual recovery"):
-            upgrade_state(payload)
-
-    def test_v9_state_with_workers_requires_manual_recovery(self):
-        payload = upgrade_state(state())
-        payload["schema_version"] = 9
-        payload["workers"] = [{
-            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
-            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
-        }]
-
-        with self.assertRaisesRegex(ValueError, "manual recovery"):
-            upgrade_state(payload)
-
-    def test_v8_state_without_workers_migrates_without_inventing_host_facts(self):
-        payload = upgrade_state(state())
-        payload["schema_version"] = 8
-
-        migrated = upgrade_state(payload)
-
-        self.assertEqual(10, migrated["schema_version"])
-        self.assertEqual([], migrated["workers"])
+    def test_legacy_single_state_schemas_are_rejected(self):
+        for schema_version in range(5, 10):
+            with self.subTest(schema_version=schema_version):
+                payload = state(schema_version=schema_version)
+                with self.assertRaisesRegex(ValueError, "schema_version must be 10"):
+                    upgrade_state(payload)
 
     def test_frozen_provider_reference_rejects_manifest_identity_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -507,7 +475,10 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_native_host_plan_must_be_acknowledged_before_business_action(self):
         payload = upgrade_state(state())
-        payload["host_sync"] = {"mode": "native", "acknowledged_fingerprint": None}
+        payload["host_sync"] = {
+            "mode": "native", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        }
 
         result = self.run_helper(
             payload, run_id=payload["run_id"], writer_id=payload["writer_id"],
@@ -826,6 +797,7 @@ class DeliveryNextTest(unittest.TestCase):
                         "source_fingerprint": old_source, "status": "findings",
                         "reviewer_ref": "reviewer-a", "mode": "shared",
                         "independent": False, "finding_fingerprints": ["3" * 64],
+                        "task_id": "task-123", "request_fingerprint": "4" * 64,
                     }],
                 },
                 {
@@ -835,6 +807,7 @@ class DeliveryNextTest(unittest.TestCase):
                         "source_fingerprint": current_source, "status": "pass",
                         "reviewer_ref": "reviewer-a", "mode": "shared",
                         "independent": False, "finding_fingerprints": [],
+                        "task_id": "task-123", "request_fingerprint": "5" * 64,
                     }],
                 },
             ],
@@ -930,57 +903,7 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
 
-    def test_active_pdlc_task_only_delegates_to_the_pdlc_runner(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = self.current(
-                state(current_stage="pdlc-run", engine=self.pdlc_engine(directory))
-            )
-
-        self.assertEqual("pdlc-run\n", result.stdout)
-        self.assertEqual(0, result.returncode)
-
-    def test_pdlc_task_rejects_a_native_stage(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = self.current(
-                state(engine=self.pdlc_engine(directory))
-            )
-
-        self.assertEqual("blocked\n", result.stdout)
-        self.assertNotEqual(0, result.returncode)
-
-    def test_pdlc_task_rejects_a_changed_frozen_skill(self):
-        with tempfile.TemporaryDirectory() as directory:
-            engine = self.pdlc_engine(directory)
-            Path(engine["pdlc_root"], "skills", "pdlc-review", "SKILL.md").write_text(
-                "changed\n", encoding="utf-8"
-            )
-            result = self.current(state(current_stage="pdlc-run", engine=engine))
-
-        self.assertEqual("blocked\n", result.stdout)
-        self.assertNotEqual(0, result.returncode)
-
-    def test_adapted_tdd_task_uses_native_stages_with_a_frozen_skill_path(self):
-        with tempfile.TemporaryDirectory() as directory:
-            engine, _ = self.generic_tdd_engine(directory)
-            result = self.current(
-                state(engine=engine)
-            )
-
-        self.assertEqual("verify-final\n", result.stdout)
-        self.assertEqual(0, result.returncode)
-
-    def test_third_party_tdd_task_rejects_missing_or_changed_frozen_skill(self):
-        with tempfile.TemporaryDirectory() as directory:
-            engine, path = self.generic_tdd_engine(directory)
-            path.write_text("Run a test first, then use the red and green cycle. Changed.\n", encoding="utf-8")
-            result = self.current(
-                state(engine=engine)
-            )
-
-        self.assertEqual("blocked\n", result.stdout)
-        self.assertNotEqual(0, result.returncode)
-
-    def test_native_task_rejects_embedded_pdlc_state(self):
+    def test_legacy_engine_state_is_rejected(self):
         result = self.current(
             state(
                 engine={
@@ -988,21 +911,6 @@ class DeliveryNextTest(unittest.TestCase):
                     "selection": "auto",
                     "reason": "PDLC is unavailable",
                     "pdlc_root": "/tools/pdlc-skills",
-                }
-            )
-        )
-
-        self.assertEqual("blocked\n", result.stdout)
-        self.assertNotEqual(0, result.returncode)
-
-    def test_native_task_rejects_a_third_party_tdd_fingerprint(self):
-        result = self.current(
-            state(
-                engine={
-                    "name": "native-v1",
-                    "selection": "auto",
-                    "reason": "PDLC is unavailable",
-                    "tdd_skill_fingerprint": "should-not-be-here",
                 }
             )
         )

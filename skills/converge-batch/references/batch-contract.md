@@ -31,7 +31,7 @@ Schema v4 capsule 必须携带完整 Provider Binding，包括 manifest、task c
 
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 保持 v4，完成回执使用 Receipt v4：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个新 Batch 持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。reader 可读取旧 Schema v1-v3；无 worker 状态可在显式补齐缺失事实后迁移，已有 worker 时必须人工恢复，helper 不补写 delegate 或猜测宿主终态。
+Batch Protocol 保持 v1，持久化 state Schema 只接受 v4，完成回执使用 Receipt v4：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个 Batch 必须持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。旧 Schema v1-v3 直接拒绝。
 
 状态文件和 scheduler lease 都以 `repo_id + plan_id` 唯一定位；run takeover 只在同一状态文件转移 owner，不创建第二份状态。lease 默认两小时并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管。
 

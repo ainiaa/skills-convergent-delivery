@@ -1,14 +1,17 @@
 import json
+import copy
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from delivery_engine import controller_identity, provider_reference
 from delivery_next import upgrade_state
 from evidence_contract import run_evidence, workspace_source
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
+from provider_contract import canonical_fingerprint
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,8 +34,13 @@ def routing():
 
 
 def state(status="complete"):
+    binding = {
+        "controller": "converge",
+        "workflow_provider": provider_reference("native-v1", "feature"),
+        "stage_providers": {},
+    }
     result = {
-        "schema_version": 5,
+        "schema_version": 10,
         "run_id": "run-1",
         "repo_id": str(ROOT / ".git"),
         "task_key": "task-1",
@@ -46,12 +54,17 @@ def state(status="complete"):
         "execution_control": {
             "routing": routing(),
             "review": {
-                "protocol_version": 2, "source_fingerprint": SOURCE["source_fingerprint"],
+                "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
-                "integration_budget_remaining": 0, "requests": [],
+                "integration_budget_remaining": 0,
+                "rounds": [{"source_fingerprint": SOURCE["source_fingerprint"], "requests": []}],
             },
         },
-        "engine": {"name": "native-v1", "selection": "auto", "reason": "fallback"},
+        "controller": controller_identity(),
+        "provider_binding": {
+            "selection": "auto", "reason": "fallback", "task_kind": "feature",
+            "binding": binding, "binding_fingerprint": canonical_fingerprint(binding),
+        },
         "current_stage": "verify-final",
         "requires_stability_round": False,
         "status": status,
@@ -67,7 +80,7 @@ def state(status="complete"):
                     "result": "pass",
                     "freshness": "fresh",
                     "source_fingerprint": SOURCE["source_fingerprint"],
-                    "evidence_receipts": [EVIDENCE],
+                    "evidence_receipts": [copy.deepcopy(EVIDENCE)],
                 }
             ],
             "report_history": {
@@ -79,15 +92,20 @@ def state(status="complete"):
         "handoff": {
             "goal": "harden converge runtime",
             "last_verification": "all checks passed",
-            "open_issues": "无",
+            "open_issues": [],
             "next_action": "无需行动",
+        },
+        "workers": [], "worker_tree_receipt": None, "runtime_binding": None,
+        "host_sync": {
+            "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
         },
     }
     if status == "blocked":
         result["blocked_code"] = "environment"
         result["blocked_reason"] = "runtime unavailable"
         result["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
-        result["handoff"]["open_issues"] = "runtime unavailable"
+        result["handoff"]["open_issues"] = ["runtime unavailable"]
     return upgrade_state(result)
 
 
@@ -278,16 +296,15 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("Evidence Receipt", result.stderr)
 
-    def test_legacy_no_issue_text_is_not_reported_as_pending(self):
+    def test_legacy_open_issue_text_is_rejected(self):
         for value in ("No remaining scoped findings", "0"):
             with self.subTest(value=value):
                 payload = state()
                 payload["handoff"]["open_issues"] = value
 
-                report = json.loads(self.run_report(payload).stdout)
-
-                self.assertEqual("ready", report["outcome"])
-                self.assertEqual(0, report["pending_items"])
+                result = self.run_report(payload)
+                self.assertEqual(2, result.returncode)
+                self.assertIn("open_issues", result.stderr)
 
     def test_structured_open_issues_preserve_the_exact_item_count(self):
         payload = state()

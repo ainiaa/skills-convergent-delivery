@@ -23,7 +23,7 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_review, upgrade_state, validate_state
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
 from delivery_progress import plan_projection_fingerprint
 
 
@@ -142,12 +142,8 @@ def validate_transition(previous, candidate):
     if previous.get("runtime_binding") is not None \
             and candidate.get("runtime_binding") != previous.get("runtime_binding"):
         raise ValueError("runtime_binding is immutable once workers are enabled")
-    legacy_sync = {
-        "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
-        "evidence_level": "controller_attested",
-    }
-    old_sync = {**legacy_sync, **previous.get("host_sync", {})}
-    new_sync = {**legacy_sync, **candidate.get("host_sync", {})}
+    old_sync = previous["host_sync"]
+    new_sync = candidate["host_sync"]
     old_report = previous["ledger"].get("report_history")
     new_report = candidate["ledger"].get("report_history")
     report_changed = new_report != old_report
@@ -201,8 +197,8 @@ def validate_transition(previous, candidate):
         raise ValueError("requires_stability_round must not regress")
     if candidate["execution_control"]["routing"] != previous["execution_control"]["routing"]:
         raise ValueError("frozen routing is immutable")
-    old_review = upgrade_review(previous["execution_control"]["review"])
-    new_review = upgrade_review(candidate["execution_control"]["review"])
+    old_review = previous["execution_control"]["review"]
+    new_review = candidate["execution_control"]["review"]
     if old_review["protocol_version"] != new_review["protocol_version"]:
         raise ValueError("review protocol is immutable")
     for field in (
@@ -344,8 +340,6 @@ def write(arguments):
     if arguments.input != "-":
         raise ValueError("write only accepts --input - from stdin")
     raw_candidate = json.load(sys.stdin)
-    # Every persisted completion is a new write, even when the caller submits a
-    # legacy payload. Read compatibility must not weaken the v10 completion gate.
     arguments.strict_evidence = True
     candidate = upgrade_state(raw_candidate)
     validate_candidate(candidate, arguments)
@@ -361,7 +355,6 @@ def write(arguments):
             stored = None
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
-                migrating_legacy = stored.get("schema_version") in {5, 6, 7, 8, 9}
                 current = upgrade_state(stored)
                 validate_candidate(current, arguments)
                 current_revision = current["revision"]
@@ -370,13 +363,7 @@ def write(arguments):
             if candidate["revision"] != current_revision + 1:
                 raise ValueError("candidate revision must be the next revision")
             if managed_path.exists():
-                if migrating_legacy:
-                    expected = dict(current)
-                    expected["revision"] = candidate["revision"]
-                    if candidate != expected:
-                        raise ValueError("legacy migration may only add schema v10 fields")
-                else:
-                    validate_transition(current, candidate)
+                validate_transition(current, candidate)
             write_private(managed_path, candidate)
             try:
                 renew_locked_leases(paths)

@@ -55,13 +55,11 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.assertIn("`independent=true` 和全新上下文", self.contract)
         self.assertIn("源码变化后旧结果立即 stale", self.contract)
 
-    def test_legacy_intent_blind_and_closure_requests_remain_readable(self):
-        self.assertIn("protocol_version=2", self.contract)
-        self.assertIn("protocol_version=1", self.contract)
-        self.assertIn("intent", self.contract)
-        self.assertIn("blind", self.contract)
+    def test_only_v3_requests_and_results_are_accepted(self):
+        self.assertIn("只接受 `protocol_version=3`", self.contract)
+        self.assertIn("旧请求和结果直接拒绝", self.contract)
+        self.assertNotIn("protocol_version=2", self.contract)
         self.assertIn("closure", self.contract)
-        self.assertIn("不得推断 axis", self.contract)
 
 
 if __name__ == "__main__":

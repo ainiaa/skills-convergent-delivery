@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 快速开发阶段移除历史 Schema 读取/迁移：Single State 仅 v10、Runtime Binding 仅 v4、Plan 仅 v5、Batch State 仅 v4、Review 仅 Protocol v3，旧输入直接拒绝；安装器的 `--upgrade` 自动替换受管同名符号链接（不删除目录），并修正 lease 示例中的 Git common-dir 语义。
 - 压缩根 `converge/SKILL.md` 至 2.7KB 内：入口仅保留范围、验证、Provider、路由、租约、审查与终态决策，条件协议下沉到既有 references；Claude Code 现在以当前会话真实的 `Agent` 与 task list 能力协商，任一缺失即确定性回退手工交接，不按安装或版本猜测。
 - Codex Desktop 与 Claude Code 的原生 worker 工具现在作为可信本地宿主：automatic `controller_attested` binding 可登记、查询与清场当前会话 worker；仍要求稳定 `worker_ref`、推进前查询和派发不确定不重派。`checkpoint=cross_session` 继续要求 `host_observed` bridge，Codex CLI 仍仅是外部 leaf runner。
 - 补齐 0.21 runner 与控制面边界：Codex leaf 忽略可变用户配置/规则、超时后回收子进程；外部 runner 拒绝空响应 ID，prompt 指纹必须是合法 SHA-256。

@@ -144,7 +144,7 @@ python3 scripts/delivery_progress.py status < state.json
 
 ## 4. Ledger 与阶段
 
-`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。当前 Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v2：由 `evidence_contract.py run` 使用 argv（不经 shell）真实执行，保存退出码、stdout/stderr 摘要、runner/receipt 指纹和完整 Source Receipt v2。只有 `exit_code=0/evidence_level=observed` 且 source 等于顶层 `source_receipt` 才通过。旧 Schema 和 Evidence v1 只读兼容不能作为新完成态写入。`execution_control` 是路由和审查的唯一真源，保存 canonical routing、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
+`ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v2：由 `evidence_contract.py run` 使用 argv（不经 shell）真实执行，保存退出码、stdout/stderr 摘要、runner/receipt 指纹和完整 Source Receipt v2。只有 `exit_code=0/evidence_level=observed` 且 source 等于顶层 `source_receipt` 才通过。旧 Schema 和 Evidence v1 直接拒绝。`execution_control` 是路由和审查的唯一真源，保存 canonical routing、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
 
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；

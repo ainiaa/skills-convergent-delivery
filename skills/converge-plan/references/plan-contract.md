@@ -50,7 +50,7 @@
 
 任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；Provider Binding 摘要必须与 workflow/stage ID 的规范 JSON 一致。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
-旧 v1-v4 继续按兼容协议读取；新 v5 计划必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。新计划不得再写 `engine` 或旧 schema。
+只接受 v5 计划；必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 
@@ -75,7 +75,7 @@ wave 标识理论上可并行的候选；当前共享工作区仍顺序执行，
 
 ## 4. 决策记录
 
-Plan v5 的 `decisions` 只接受字段精确的已决记录：`id/status/question/resolution/source`，其中 `status` 必须为 `resolved`，`source` 只能是 `user|code|docs|reversible-default`。可逆技术选择和有明确默认的局部选择自动记录；业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。未决问题不能写成普通字符串或伪装成已决记录，`plan_check.py validate` 会以 `decision_required` 拒绝进入执行。旧 v1-v4 计划的字符串 decisions 只作为只读兼容输入。
+Plan v5 的 `decisions` 只接受字段精确的已决记录：`id/status/question/resolution/source`，其中 `status` 必须为 `resolved`，`source` 只能是 `user|code|docs|reversible-default`。可逆技术选择和有明确默认的局部选择自动记录；业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。未决问题不能写成普通字符串或伪装成已决记录，`plan_check.py validate` 会以 `decision_required` 拒绝进入执行。
 
 ## 5. 完成审计
 
