@@ -42,10 +42,12 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_state.py
   scripts/delivery_task_key.py
   scripts/evidence_contract.py
+  scripts/fast_path.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
   scripts/test_trigger_evals.py
+  scripts/test_fast_path.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   skills/converge-plan/SKILL.md

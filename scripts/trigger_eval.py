@@ -25,10 +25,27 @@ def validate_selector(selector):
     resolved = [Path(item).expanduser().resolve() for item in artifacts]
     if len(resolved) != len(set(resolved)) or any(not item.is_file() for item in resolved):
         raise ValueError("selector artifact is unavailable or duplicated")
+    command_files = {
+        Path(item).expanduser().resolve()
+        for item in command
+        if Path(item).expanduser().is_file()
+    }
+    if not set(resolved) & command_files:
+        raise ValueError("selector artifact must identify a selector command file")
     return command, [
         {"path": str(item), "sha256": hashlib.sha256(item.read_bytes()).hexdigest()}
         for item in resolved
     ]
+
+
+def release_gate(result):
+    """Local subprocess evidence cannot attest that it used the host selector."""
+    return {
+        "eligible": False,
+        "status": "uncovered",
+        "reason": "a real host selector receipt is unavailable to this offline runner",
+        "selector_fingerprint": result["selector_fingerprint"],
+    }
 
 
 def run_evals(dataset, selector, timeout=60):
@@ -127,6 +144,8 @@ def run_evals(dataset, selector, timeout=60):
         "error_count": error_count,
         "confusion_matrix": confusion,
         "cases": results,
+        "evidence_level": "local_observed",
+        "release_status": "uncovered",
     }
 
 
@@ -135,12 +154,17 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--selector", required=True, help="JSON {argv,artifacts}; prompt is appended")
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--release", action="store_true", help="require release-grade host evidence")
     arguments = parser.parse_args()
     try:
         with open(arguments.dataset, encoding="utf-8") as file:
             dataset = json.load(file)
         result = run_evals(dataset, json.loads(arguments.selector), arguments.timeout)
+        if arguments.release:
+            result["release_gate"] = release_gate(result)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        if arguments.release:
+            return 2
         return 0 if result["exact_matches"] == result["executed_cases"] else 1
     except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
         print(f"trigger evaluation blocked: {error}", file=sys.stderr)

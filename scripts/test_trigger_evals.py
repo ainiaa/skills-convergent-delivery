@@ -2,6 +2,7 @@
 """Validate the Suite trigger and role-isolation evaluation dataset."""
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from trigger_eval import run_evals
+from trigger_eval import release_gate, run_evals
 SKILLS = {"converge", "converge-plan", "converge-review", "converge-batch", "converge-eval"}
 
 
@@ -76,9 +77,11 @@ class TriggerEvalTest(unittest.TestCase):
         self.assertEqual(64, len(result["selector_fingerprint"]))
         self.assertEqual(64, len(result["runner_fingerprint"]))
         self.assertNotEqual(original_fingerprint, changed["selector_fingerprint"])
+        self.assertEqual("uncovered", result["release_status"])
+        self.assertFalse(release_gate(result)["eligible"])
 
     def test_runner_rejects_malformed_dataset_before_execution(self):
-        selector = {"argv": [sys.executable, "-c", "raise SystemExit(99)"], "artifacts": [str(__file__)]}
+        selector = {"argv": [sys.executable, str(__file__)], "artifacts": [str(__file__)]}
         with self.assertRaisesRegex(ValueError, "dataset"):
             run_evals([], selector)
         with self.assertRaisesRegex(ValueError, "case"):
@@ -126,6 +129,47 @@ class TriggerEvalTest(unittest.TestCase):
                 dataset,
                 {"argv": [sys.executable, "-c", "print('{}')"], "artifacts": ["/missing-selector"]},
             )
+
+    def test_runner_rejects_an_artifact_unrelated_to_the_selector_command(self):
+        dataset = {
+            "schema_version": 1,
+            "suite": "converge",
+            "evals": [{"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False}],
+        }
+        with self.assertRaisesRegex(ValueError, "artifact.*command"):
+            run_evals(
+                dataset,
+                {"argv": [sys.executable, "-c", "print('{}')"], "artifacts": [str(__file__)]},
+            )
+
+    def test_release_mode_blocks_even_a_perfect_local_selector(self):
+        dataset = {
+            "schema_version": 1,
+            "suite": "converge",
+            "evals": [{"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            selector_source = directory / "selector.py"
+            selector_source.write_text(
+                "import json\nprint(json.dumps({'selected_skill': None}))\n", encoding="utf-8"
+            )
+            dataset_source = directory / "evals.json"
+            dataset_source.write_text(json.dumps(dataset), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/trigger_eval.py"), "--release",
+                    "--dataset", str(dataset_source),
+                    "--selector", json.dumps({
+                        "argv": [sys.executable, str(selector_source)],
+                        "artifacts": [str(selector_source)],
+                    }),
+                ],
+                text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("uncovered", json.loads(result.stdout)["release_gate"]["status"])
 
 
 if __name__ == "__main__":

@@ -41,7 +41,7 @@ control 与 candidate 必须运行相同场景、输入、判定器和样本预�
 
 确定性场景默认一个 fresh-context sample；只有修改路由、循环、worker 清场等关键模型决策，或首次结果不稳定时，才使用契约规定的三个 fresh workers。关键决策必须对每个 required known acceptance 和已选 history scenario 分别获得三个不同 `worker_ref`；无关 exploration 不能用来凑数。每个 Sample Receipt 必须绑定 scenario/class、control/candidate 来源、同一 judge 指纹、worker ref、原始 evidence source 与双侧结果，并由 canonical receipt 指纹防止篡改。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。
 
-candidate 只有在已知验收不回归、历史逃逸不复现，且差分证据未显示稳定性下降时才可通过。exploration 单独统计且不阻断 gating 完成；失败仍必须原样报告，不能改写成已知回归。未覆盖范围始终保留。Skill 触发/角色隔离另用冻结快照中的 `scripts/trigger_eval.py` 实际调用 selector 并报告 confusion matrix 与 F1；`test_trigger_evals.py` 的数据形状检查不能替代该运行。
+candidate 只有在已知验收不回归、历史逃逸不复现，且差分证据未显示稳定性下降时才可通过。exploration 单独统计且不阻断 gating 完成；失败仍必须原样报告，不能改写成已知回归。未覆盖范围始终保留。Skill 触发/角色隔离另用冻结快照中的 `scripts/trigger_eval.py` 实际调用 selector 并报告 confusion matrix 与 F1；它的本地结果不能作为 release，`--release` 在真实宿主 bridge 缺席时必须为 `uncovered`；`test_trigger_evals.py` 的数据形状检查不能替代该运行。
 
 ## 有限修订
 

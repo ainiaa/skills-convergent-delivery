@@ -16,6 +16,10 @@ python3 scripts/runtime_adapter.py negotiate --profile codex
 
 只有 `mode=automatic` 且 Binding 已由具体宿主桥接冻结为 `host_observed` 时才能自动派发；automatic 至少要求稳定 `dispatch + query`。`negotiate` 只产生 `controller_attested` Binding，不能登记 active worker；只有具体宿主桥接器用原始 capability observation 调用 `bind_observed`，才可能得到可派发的 `host_observed` Binding。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用：父控制器必须执行 `watchdog_action` 返回且绑定精确 `task_id + worker_ref` 的 `query|wait|interrupt|block`。`terminal-only` 禁止自动探测、中断和恢复；没有 wait capability 时 action 退回 query。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
 
+## Bridge release gate
+
+`bind_observed()` 是 bridge 的内部入口，不是把 JSON 从普通 stdin 传入就能取得的来源声明。一个可发布 bridge 必须在真实宿主中完成一次：读取 capability observation → 冻结 binding → dispatch → query 同一 `worker_ref` 至终态 → tree query 产生原始 cleanup observation → 由 helper 验证为 `host_observed` receipt。测试必须保存宿主 query id、时间、binding/tree receipt 指纹及失败输出；没有该实测回执时，本文件所有 automatic 描述均为 `uncovered`，只能手工交接。
+
 1. 先将 Batch 状态写为 `dispatching` 并固定 `dispatch_id`。
 2. 创建调用携带当前 capsule并显式要求执行者使用 `$converge`；按 Batch state 原子保存 worker lifecycle 和 `recovery_count=0` 后进入 `running`。
 3. 只接受匹配 `batch_id/dispatch_id` 的结构化 receipt；receipt 与 worker 宿主终态必须分别验证。

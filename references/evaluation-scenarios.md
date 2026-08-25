@@ -5,6 +5,8 @@
 | 场景 | 输入特征 | 预期行为 |
 |---|---|---|
 | 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划、验收 Converge 规则 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`、`converge-eval`；角色不互相吞并。 |
+| fast path 白名单 | 单个普通文档文件，`risk_flags=[]`，已有确定性检查，无运行时语义和风险 | `fast_path.py` 绑定实际检查与 Source Receipt 后才签发；不加载 Provider/画像/worker/state。 |
+| fast path 拒绝 | `SKILL.md`、运行时/风险路径、多文件、依赖、迁移、测试语义、未知验证或任一风险 | 不得以“改动很小”走 fast path；进入完整画像、TDD 与相应 review。 |
 | 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
 | PDLC 委托屏障 | PDLC 可用且任务复杂 | 按独立业务切片形成有限 Provider Run；每个 run 完整委托 PDLC，主上下文不生成 PDLC 内部产物。 |
 | 递归规划 | Batch capsule 已有 `planned_task=true` | 子执行者只完成冻结 task，不再次调用 planner 或派发自身。 |
@@ -28,6 +30,7 @@
 | 局部高风险 | 单模块、单步骤、局部验证的金额、SQL/Mapper 或事务修复，业务含义已明确 | 保持 `inline`，但推导 `review_tier=high`；必须执行高风险验证与独立盲审，不因没有计划或 worker 而降级。 |
 | 命令回执伪造 | 调用者填写不存在命令和 `exit_code=0` | 只接受 `evidence_contract.py run` 实际执行 argv 后生成的 observed Evidence Receipt v2；伪造回执不能完成。 |
 | 真实触发评测 | trigger 数据集结构合法，但需要验证实际 selector 行为 | `trigger_eval.py` 在执行前完整校验所有 case，逐条执行 selector，报告混淆矩阵和 F1，并绑定 dataset/selector/runner 指纹；只检查 JSON 形状不算行为验收。 |
+| 宿主 selector release | 对 Suite 入口变更进行发布级触发验收 | 当前离线 `trigger_eval.py --release` 固定阻断并标为 `uncovered`；它可测本地 selector 的质量，但不能证明 selector 来自真实宿主。真实宿主 receipt 未接入前，不得以模拟 selector 通过替代。 |
 | 通用 TDD 不自动触发 | PDLC 和已适配 TDD 不可用，但只存在关键词相似的通用 TDD Skill | 选择 `native-v1`；不得扫描并自动执行通用 Skill。 |
 | 内置 TDD 降级 | 没有兼容 PDLC 或已适配 TDD Skill | 选择 `native-v1`，报告中写明降级原因；原生流程仍可完整交付。 |
 | 引擎恢复 | 已冻结的 PDLC 或第三方 TDD 任务恢复时能力消失，或 native 任务恢复时发现外部能力 | 前两者 `blocked_environment`；后者继续 native；不得静默切换或混用状态机。 |
@@ -63,6 +66,7 @@
 | 历史孤儿 | UI 显示旧 Working worker，但没有 ref 或当前 API 不可见 | 报告能力边界并建议用户/UI 处理；Skill 不宣称发现、查询或清理成功。 |
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
 | 离线 Skill 优化 | 用户明确授权改善 Converge，且已有重复 defect 证据 | 冻结 control、judge 和 held-out；每轮只改一个假设；奇数 independent paired samples 多数决且 hard acceptance 全过才建议晋升；无改善即停，不自动写 Skill 或 commit。 |
+| 效率基准 | 比较同一模型/宿主上的 control 与 candidate Skill | 每个固定场景记录激活输入 bytes/token、工具调用、fresh context、用户阻塞轮、完成/逃逸结果；安全与验收通过率不下降才可用更低开销候选替换 control。 |
 | 父 Git 累计可见性 | Codex 单步角标只显示当前动作，工作区含多任务累计 diff | 父控制器直接读取 Git，展示已跟踪、未跟踪、增删行和二进制累计；脏基线注明不能归因于本任务。 |
 | 分层评估报告 | 已知和历史场景通过，探索仍有 finding 或存在未覆盖面 | 分别报告 `known_acceptance`、`history`、`exploration`、`uncovered`；不得写“未发现任何问题”。 |
 | 技术术语噪音 | 默认交付回执 | 说明结果、关键改动、验证覆盖、待处理，并保留用户可懂的交付轮数/问题数；不展示 `complete`、P0/P1/P2、lease、基线或命令。 |

@@ -28,5 +28,6 @@
 | [grill-with-docs](https://www.skills.sh/mattpocock/skills/grill-with-docs) / [Wayfinder](https://www.skills.sh/mattpocock/skills/wayfinder) | 只在业务、公共契约或不可逆决定未闭合时先形成一个决策；不默认生成文档或 issue | “业务歧义”场景输出 `blocked_decision`；已消歧的局部高风险任务保持 `inline`，避免为澄清引入固定 token/文件成本 |
 | [handoff](https://www.skills.sh/mattpocock/skills/handoff) / [Ralph](https://github.com/iannuttall/ralph) | 使用已有 plan/diff/receipt 的指针与“无新证据即停止”；不新增 handoff ledger、循环状态或后台 agent | Single State、Source Receipt 和有限 repair budget 已为唯一真源；“根因无进展”“清场屏障”场景覆盖停止与交接 |
 | 宿主 bridge / [Darwin Skill](https://github.com/alchaincyf/darwin-skill) / [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) | active worker 必须先有 `host_observed` Binding；将来的显式离线优化才采用单变量、成对比较、held-out gate 与人工晋升 | `test_runtime_adapter.py` 拒绝 controller-attested 伪造 host receipt；`test_delivery_next.py` 拒绝其登记 active worker。`self-improving.md` 的未来门禁要求冻结 control、held-out、奇数独立成对样本和 hard acceptance；当前没有自动写入路径 |
+| [gstack domain skills](https://github.com/garrytan/gstack/blob/main/docs/domain-skills.md) | 不采用运行时沉淀/自动晋升；仅保留“隔离 → 重复有效使用 → 显式全局晋升”的未来研究约束 | Converge 的当前任务不需要跨项目记忆；新增 JSONL 和记忆状态会违反 Single State，未来若授权记忆须先通过隔离和 prompt-injection 审计 |
 
 最终收敛路径：先按拓扑而非风险决定 `inline/planned/delegated/batch`；风险独立提高验证与 review；无真实宿主桥接时只手工交接；触发评测必须运行真实 selector；自进化只在用户显式授权的离线实验中进行。新增机制必须先证明减少真实失败或总 token，不能只增加协议。

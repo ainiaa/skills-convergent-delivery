@@ -28,6 +28,12 @@ metadata:
 
 仅文档、格式或不改变运行时行为的配置可以使用确定性检查替代行为测试；其他行为变更必须有回归测试。
 
+### 最小 fast path
+
+仅文档或纯格式、**不改变运行时行为**、没有业务/公共契约/权限/发布取舍、`risk_flags=[]`、范围局部且已有确定性检查时，可走 fast path：用 `fast_path.py` 签发检查绑定的 eligibility receipt，再获取 writer lease 并核对 Git diff 后交付。它跳过 Provider Binding、task profile、state、snapshot 或 worker。
+
+fast path 不得用于代码逻辑、运行时配置、依赖升级、迁移、测试语义变化或未知验证；任何新风险、范围漂移或检查未知，立即回到完整路径。
+
 ## 3. 解析并冻结 Provider Binding
 
 写入前运行：
@@ -69,7 +75,7 @@ Plan Contract v5 校验结果为 `current` 时在当前上下文执行；`fresh`
 
 ## 5. 并发与恢复
 
-任何代码或持久化状态写入前获取 writer lease。同一 worktree 只有一个 writer；同一任务不能在另一个 worktree 重复执行；不同任务可在独立 worktree 并行。lease 默认两小时，每阶段续期，过期后不自动抢占。所有终态路径在 worker 清场后使用获取时返回的同一身份释放；简单路径的精确命令为：
+所有写入路径先获取 writer lease；同一 worktree 只允许一个 writer，lease 过期不自动抢占。所有终态路径以获取时相同身份释放：
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release \
@@ -78,36 +84,20 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release \
   --run-id "<run-id>" --writer-id "<writer-id>"
 ```
 
-只有输出 `{"status":"released"}` 才算释放成功；持久任务以 `controller_snapshot.py run` 包裹同一 helper 与参数，并额外传入实际 `--state-root`。
-
-跨服务、公共契约、预计跨会话、使用 worker 或用户要求恢复时，读取 [状态 Schema](references/state-schema.md)，先用 live `controller_snapshot.py create` 在控制状态根冻结启动快照。后续不直接执行 `$CONVERGE_CONTROLLER_DIR/scripts/`：统一通过 live `controller_snapshot.py run --descriptor <snapshot-or-state-json> --script <frozen-helper> -- <args>`，先验证完整快照再 `exec` 冻结的 `delivery_task_key.py`、`delivery_lease.py`、`runtime_adapter.py`、`delivery_state.py`、`delivery_progress.py`、`delivery_report.py`、`trigger_eval.py`、`delivery_next.py` 或精确的 `skills/converge-eval/scripts/eval_contract.py`。父代理是正式状态的唯一 writer；worker 只发 objective milestone，父代理直接调用宿主 query，并用 `delivery_progress.py observe` 生成 heartbeat。正式状态只接受 stdin 完整候选、活动 owner 和单调 revision；冷恢复先用 `delivery_state.py list|doctor --workspace <absolute-worktree>` 发现并诊断正式状态，不猜 repo/task/run。不得把 `/tmp` 文件当真源。
+只有输出 `{"status":"released"}` 才算释放成功。跨服务、公共契约、跨会话、worker 或恢复才读取 [状态 Schema](references/state-schema.md)：创建 Controller Snapshot，经 trusted runner 执行冻结 helper，父 controller 是唯一 writer，冷恢复只用 `delivery_state.py list|doctor`。完整命令、来源闭包、heartbeat 和状态转换不进入简单任务上下文。
 
 ## 6. 审查路由
 
-低风险 task 使用主执行者自检和新鲜验证，不创建 reviewer。普通 task 使用一个 fresh reviewer，按两个有序单轴请求先审 `spec`、再审 `quality` 并分别保存结论；高风险使用一个 blind reviewer并保持相同顺序。只有多任务或跨服务计划才在全部 task 通过后增加一次 integration review。
-
-一轮 finding 按根因合并，最多一次 repair 和一次定向 re-review；对应预算必须与 repair fingerprint、re-review/closure 请求和 integration 请求在同一合法转换中精确消耗。重复 finding、源码指纹未变化、无客观进展或复核后仍有 defect 时立即 blocked，不重新开放式扫描。宿主无法提供全新上下文时，自审只能作为 suggestion；普通/高风险任务保持 blocked，`independent=false` 不能满足完成门禁。
-
-风险触发器：金额、时间/时区、SQL/Mapper、迁移、事务、锁/并发、幂等、公共 DTO/API、权限、敏感日志、跨服务或发布契约。
-
-reviewer 只发现问题。主执行者只修复“有证据、属于 owned diff、在授权范围、无业务取舍且可验证”的问题。修复后只关闭原 finding，不重新开放式扫描；额外风险审查不能重置 mandatory axes 的预算。
+低风险 task 自检并产生新鲜验证；普通风险由一个 fresh reviewer 完成有序 `spec → quality` review；高风险使用一个 blind reviewer。多任务或跨服务计划才做一次 integration review，且每轴最多一次 repair 和一次定向 re-review。reviewer 只发现问题；主执行者仅修复有证据、属于 owned diff、无业务取舍且可验证的 finding。请求、独立性、预算与 blocked 条件只在 [审查编排](references/review-orchestration.md) 定义；宿主无法提供 fresh reviewer 时普通/高风险不得降级为完成。
 
 ## 7. 有限收敛
 
-- 同一问题指纹在同一阶段最多自动修复一次；复现或没有客观进展时停止。
-- 每批修复必须带来回归测试红转绿、客观检查消除问题，或严重度降低且未扩大范围。
-- 不得通过删测试、降低阈值、跳过检查或扩大范围制造绿灯。
-- 最后一次生产代码修改后必须重新产生新鲜验证证据；审查结论也绑定源码指纹，无关生产代码变化后变为陈旧。
-- 实现循环、风险复核循环和条件式集成审查循环的职责与终止条件只在 [执行控制](references/execution-control.md) 定义；根 Converge 只编排和核验证据，不复制 Provider 的 PDLC/TDD 内部阶段。
+- 同一 finding 每阶段最多自动修复一次；复现、源码未变或没有客观进展时停止。
+- 不得删测试、降阈值、跳过检查或扩大范围制造绿灯；最后生产改动后重新验证。
+- 实现、风险复核和 integration 循环的预算与清场只在 [执行控制](references/execution-control.md) 定义。
 
 ## 8. 计划审计、终态和回执
 
-有 Plan Contract 时，结束前必须用 `converge-plan/scripts/plan_check.py audit --workspace <worktree> --input - --require-complete` 对账计划任务、逐任务源码增量和新鲜证据；退出码非 0，或存在 `PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、`task_scope_drift`、`scope_drift` 时不能宣称完成。
+有 Plan Contract 时必须以 `converge-plan/scripts/plan_check.py audit --workspace <worktree> --input - --require-complete` 对账；`PARTIAL`、`NOT_DONE`、未经确认的 `CHANGED`、任何 scope drift 或非零退出码都不能完成。所有验收通过 `evidence_contract.py run --workspace ... --baseline ... -- <argv>` 实际执行并绑定当前源码。终态先由 `delivery_report.py` 生成，再按 [交付回执](references/reporting.md) 输出，并保留“交付轮数 / 修复问题数 / 待处理项”；发布、push、merge、删除和外发始终另行授权。
 
-只允许：可交付、需关注、需用户决定、环境/无进展阻塞。所有验收项必须由 `evidence_contract.py run --workspace ... --baseline ... -- <argv>` 实际执行并生成 observed Evidence Receipt v2；最后源码仍位于冻结 `allowed_paths` 且没有新增未声明风险时，才能宣称完成。
-
-持久任务终态写入后，运行 `delivery_report.py --state <derived-state-path> --format text`；无需恢复的简单任务可将同结构的已验证结果传给 `delivery_report.py --input - --format text`，不创建 state 或 snapshot，但写工作区时仍获取轻量 writer lease。以确定性结果为事实底稿，再按 [交付回执](references/reporting.md) 输出面向用户的 summary，保留“交付轮数 / 修复问题数 / 待处理项”。父控制器从 Git 读取并展示整个工作区累计文件数与增删行；Codex 单步角标只表示当前工具动作，不能冒充任务总量或覆盖父 Git 真值。仅 `blocked/decision` 或用户明确要求技术细节时使用 `--detail` 展示 diagnostic；正常回执不倾倒内部状态。
-
-发布、推送、合并、删除或其他外发/破坏性动作始终需要用户明确授权。
-
-修改本 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证；不能由修改它的同一上下文自行宣称行为验证通过。默认只派发一个 evaluator，在隔离临时工作区顺序执行相关有限场景，并在汇总前确认该 evaluator 已进入宿主终态且本轮 active worker 数为 0。最终评估覆盖必须分别报告 `known_acceptance`、`history`、`exploration` 和 `uncovered`；指定场景通过只证明相应覆盖，保留未知边界，不得写“未发现任何问题”。Controller Protocol v12 会阻止旧快照继续执行控制 helper（仅允许其释放自身 lease），因此安全规则不会被旧快照绕过。
+修改 Suite 后使用 `converge-eval` 和 [压力场景](references/evaluation-scenarios.md) 做独立前向验证，分别报告 `known_acceptance`、`history`、`exploration`、`uncovered`，不得写“未发现任何问题”。

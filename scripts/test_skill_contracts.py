@@ -71,12 +71,15 @@ class SkillContractTest(unittest.TestCase):
             "references/evaluation-catalog.json",
             "references/review-orchestration.md",
             "evals/evals.json",
+            "scripts/fast_path.py",
+            "scripts/test_fast_path.py",
             "scripts/test_trigger_evals.py",
         ):
             self.assertIn(path, installer)
         self.assertIn("converge-eval", checks)
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
         self.assertIn("scripts/test_trigger_evals.py", checks)
+        self.assertIn("scripts/test_fast_path.py", checks)
         self.assertIn(
             "skills/converge-review/scripts/test_review_axes_contract.py", checks
         )
@@ -175,6 +178,20 @@ class SkillContractTest(unittest.TestCase):
         self.assertNotIn("简单任务直接显示五阶段计划", skill + control)
         self.assertIn("仅当路由不是 `inline`", skill)
         self.assertNotIn("\n读取 [计划执行与无响应保护]", skill)
+
+    def test_fast_path_is_narrow_and_root_keeps_conditional_details_out_of_activation(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "fast path",
+            "仅文档或纯格式",
+            "不改变运行时行为",
+            "risk_flags=[]",
+            "Provider Binding、task profile、state、snapshot 或 worker",
+        ):
+            self.assertIn(marker, skill + routing)
+        self.assertLess(len(skill.encode("utf-8")), 11200)
 
     def test_writer_lease_has_an_exact_terminal_release_recipe(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

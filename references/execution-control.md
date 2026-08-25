@@ -3,6 +3,7 @@
 ## 1. 计划先行，但不制造大计划
 
 - 范围局部、单步骤、验证局部且业务已消歧的任务：一个 task，立即进入 TDD/实现。
+- 仅文档或纯格式且满足 [任务路由](task-routing.md) fast path 白名单的任务：在路由前完成确定性检查，不创建 Provider、state 或 worker。
 - 跨模块、跨层、依赖步骤、未知验证或预计超过一个短执行段：先调用 `converge-plan`。
 - 风险只提高 review/verification；局部高风险任务保持 `inline`，不得以计划替代高风险验证或独立盲审。
 - 已携带 `planned_task=true`：只执行 capsule 中冻结的任务，禁止再次规划或递归派发。

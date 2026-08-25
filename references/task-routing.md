@@ -21,3 +21,9 @@
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
 
 因此，一个范围局部、单步骤、验证局部的金额或 SQL 修复仍是 `inline`，但其 `review_tier=high`，必须完成对应的高风险验证和独立盲审；风险不因节省拓扑开销而被降级。业务含义、公共兼容或不可逆取舍未闭合时，`uncertainty` 必须提高或转为 `blocked_decision`，不能借 `inline` 默认决定。
+
+## fast path
+
+fast path 在 task profile 之前结束：仅文档或纯格式变更，必须不改变运行时行为、无业务/公共契约/权限/发布取舍、`risk_flags=[]`、范围局部，且已有可实际执行的确定性检查。调用 `fast_path.py --workspace <path> --baseline <commit> --risk-flags '[]' -- <check argv>`：它只接受一个普通文档文件、实际成功且绑定当前 source 的 Evidence Receipt；`SKILL.md`、风险路径、运行时路径、多文件与无回执一律拒绝。receipt 签发后再冻结范围/脏基线、获取 writer lease 并核对 Git diff；不创建 Provider Binding、task profile、state、snapshot 或 worker。
+
+代码逻辑、运行时配置、依赖升级、迁移、测试语义变化、未知验证、任一风险或范围漂移都不符合 fast path，立即按完整画像路由。fast path 不是低风险业务变更的别名，不能跳过 TDD、验收或 blind review。
