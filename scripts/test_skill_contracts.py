@@ -59,7 +59,7 @@ class SkillContractTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
-        self.assertEqual("0.20.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("0.21.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
             "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,
@@ -73,6 +73,10 @@ class SkillContractTest(unittest.TestCase):
             "evals/evals.json",
             "scripts/fast_path.py",
             "scripts/test_fast_path.py",
+            "scripts/runner_registry.py",
+            "scripts/codex_exec_runner.py",
+            "scripts/openai_compatible_runner.py",
+            "references/worker-runners.md",
             "scripts/test_trigger_evals.py",
         ):
             self.assertIn(path, installer)
@@ -80,6 +84,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
         self.assertIn("scripts/test_trigger_evals.py", checks)
         self.assertIn("scripts/test_fast_path.py", checks)
+        self.assertIn("scripts/test_runner_registry.py", checks)
         self.assertIn(
             "skills/converge-review/scripts/test_review_axes_contract.py", checks
         )
@@ -185,9 +190,10 @@ class SkillContractTest(unittest.TestCase):
 
         for marker in (
             "fast path",
-            "仅文档或纯格式",
+            "普通文档的单文件纯格式改动",
             "不改变运行时行为",
             "risk_flags=[]",
+            "--ignore-all-space",
             "Provider Binding、task profile、state、snapshot 或 worker",
         ):
             self.assertIn(marker, skill + routing)

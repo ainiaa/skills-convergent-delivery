@@ -30,9 +30,9 @@ metadata:
 
 ### 最小 fast path
 
-仅文档或纯格式、**不改变运行时行为**、没有业务/公共契约/权限/发布取舍、`risk_flags=[]`、范围局部且已有确定性检查时，可走 fast path：用 `fast_path.py` 签发检查绑定的 eligibility receipt，再获取 writer lease 并核对 Git diff 后交付。它跳过 Provider Binding、task profile、state、snapshot 或 worker。
+仅普通文档纯格式、无运行时或业务取舍、`risk_flags=[]`、范围局部且有确定性检查时，可走 fast path：先获取有效 writer lease，再由 `fast_path.py` 验证空白 diff、执行检查并签发 receipt。它跳过 Provider Binding、task profile、state、snapshot 或 worker。
 
-fast path 不得用于代码逻辑、运行时配置、依赖升级、迁移、测试语义变化或未知验证；任何新风险、范围漂移或检查未知，立即回到完整路径。
+fast path 不得用于文档内容语义、代码逻辑、运行时配置、依赖升级、迁移、测试语义变化或未知验证；任何新风险、范围漂移、租约失效或检查未知，立即回到完整路径。
 
 ## 3. 解析并冻结 Provider Binding
 

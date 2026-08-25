@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- 0.21：fast-path 现在必须持有当前 run 的有效双租约，且仅为单文件普通文档的空白格式 diff 签发 receipt；Controller Snapshot 同时冻结 fast-path 与新 runner helper。
+- 新增冻结的 Worker Profile v1 与薄 Runner Registry：Codex CLI 可精确绑定 model/reasoning effort/sandbox，DeepSeek、GLM 等 OpenAI-compatible endpoint 初始仅可作无 shell、无工作区写入的结构化 leaf。真实进程或 HTTPS egress 均需调用方显式允许；runner receipt 不冒充宿主 `host_observed`。
+
 - 控制面一次性硬化：Runtime Binding 升级为 v4，普通 capability 协商只能得到 `controller_attested`；只有绑定完整原始宿主观察的 `bind_observed` 才可启用可观测 watchdog。当前 Codex 的 wait timeout 保持 `terminal-only`，不会因调用方声明能力或重复超时自动中断未完成子任务；中断前保留可恢复的 partial handoff。
 - Runtime Action Contract 新增带精确 task/worker 身份的 `wait` 与 `interrupt`，无 wait 能力时确定性退回 query，避免生成无法执行的 watchdog 建议。Controller Protocol 升级为 v12，旧快照仅可释放自身 lease，不能绕过新的控制规则。
 - Plan v5 拒绝 `TBD`、`unknown`、待定等伪 resolution；trigger eval 的 selector 指纹改为绑定 argv 与实际 artifact 内容。Eval Sample Receipt 升级为 v4，证据文件必须位于 candidate 仓库外并明确为 `evaluator_attested`，worker registry 的顺序不再影响评测结果。

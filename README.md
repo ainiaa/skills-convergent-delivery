@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.20.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前开发版本：[0.21.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 为什么会有它
 
@@ -30,7 +30,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；仅绑定真实 host query 原始观察的清场回执可标记 `host_observed`，普通参数永远是 `controller_attested`。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果通过冻结请求绑定 task、验收、范围、baseline、源码和 reviewer，再由可执行 `review_contract.py normalize` 转成内部 Review v3 记录；代码变化后旧结论自动失效。
-- `converge-eval` 只接受 Sample Receipt v4：control/candidate 必须解析为 Git commit/tree；judge、catalog、evaluator 与 Single State validator 来自修改前冻结的 Controller Snapshot；worker 绑定默认 managed state root 中的正式 Single State v10、evaluator role 与 host-observed 终态 tree receipt，不建立第二套 registry；touched paths 必须是 allowed scope 内不含反斜杠或 `..` 的仓库相对路径。evidence artifact 必须是候选仓库外的绝对 JSON 文件，并明确为 `evaluator_attested`，不能伪称宿主直接签名。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。Controller Protocol v12 会阻止旧快照继续执行控制 helper，仅保留释放其自身 lease 的清场兼容。
+- `converge-eval` 只接受 Sample Receipt v4：control/candidate 必须解析为 Git commit/tree；judge、catalog、evaluator 与 Single State validator 来自修改前冻结的 Controller Snapshot；worker 绑定默认 managed state root 中的正式 Single State v10、evaluator role 与 host-observed 终态 tree receipt，不建立第二套 registry；touched paths 必须是 allowed scope 内不含反斜杠或 `..` 的仓库相对路径。evidence artifact 必须是候选仓库外的绝对 JSON 文件，并明确为 `evaluator_attested`，不能伪称宿主直接签名。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。Controller Protocol v13 会阻止旧快照继续执行控制 helper，仅保留释放其自身 lease 的清场兼容。
 - `scripts/trigger_eval.py` 会先完整校验数据集，再把每条 prompt 交给外部 selector 命令，报告精确匹配、错误数、混淆矩阵、precision/recall/F1，并绑定 dataset、selector 与 runner 指纹；artifact 必须对应 selector 命令文件。它只产生本地观察，`--release` 会固定以 `uncovered` 阻断，直到真实宿主 bridge 能签发 receipt。`test_trigger_evals.py` 只负责离线验证 runner 与数据契约。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
@@ -38,6 +38,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - Codex 原生计划与 Converge 使用同一组稳定任务：简单任务直接更新宿主计划，持久任务通过确定性 Plan Projection/确认指纹同步，确认动作不会触发自循环。
 - `converge-eval` 将最终覆盖分为 `known_acceptance`、`history`、`exploration` 和 `uncovered`，指定场景通过不等于未知范围为零。
 - 单任务 Schema v10 分离包版本、Controller Snapshot 与 Provider Binding，并持久化路由、Review v3 源码轮次、计划同步确认、worker 最新进度和同 revision 清场回执。Batch state Schema v4 / Receipt v4 使用唯一 plan 状态、正式 delegate state、Source Receipt v2 与 Git 前序链。
+- 复杂任务可冻结每个 leaf 的 model、reasoning effort、权限和预算。`codex-exec-v1` 可按 profile 启动受 sandbox 约束的 Codex CLI；DeepSeek、GLM 等 OpenAI-compatible endpoint 初始仅可作无 shell、无工作区写入的 research/review leaf，且必须显式冻结 provider 的 effort wire-field 映射。两者都需显式真实执行授权，runner receipt 不冒充宿主 `host_observed`。
 - 默认报告只输出面向用户的 summary；异常或显式 `--detail` 才附 Provider、阶段、worker 与检查诊断。
 
 ## Install
@@ -246,6 +247,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
 - [执行控制与无响应保护](references/execution-control.md)
 - [Batch Protocol](skills/converge-batch/references/batch-contract.md)
 - [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)
+- [Worker Runner](references/worker-runners.md)
 - [Review Protocol](skills/converge-review/references/review-contract.md)
 - [Evaluation Contract](skills/converge-eval/references/evaluation-contract.json)
 
@@ -261,6 +263,7 @@ Converge Suite 没有复制上游完整流程；它吸收公开实践后，用�
 
 - [kanfu-panda/pdlc-skills](https://github.com/kanfu-panda/pdlc-skills)：完整 PDLC 阶段、质量闸门、状态推进和循环控制。
 - [obra/superpowers](https://github.com/obra/superpowers)：系统化调试、TDD、完成前验证、fresh-context review 和 Skill 压力测试。
+- [obra/external-subagents](https://github.com/obra/external-subagents)：Codex CLI 外部 leaf 的可恢复 launch/receipt 边界；本 Suite 仅采用其“外部 runner 不伪装宿主 worker”的原则，不复制其 state engine。
 - [GitHub Spec Kit](https://github.com/github/spec-kit)：Spec → Plan → Tasks → Implement 的追溯结构。
 - [gstack](https://github.com/garrytan/gstack)：计划就绪检查、决策记录和 plan-vs-diff 完成审计。
 - [mattpocock/skills](https://github.com/mattpocock/skills)：公共行为 seam、垂直切片和避免测试实现细节。

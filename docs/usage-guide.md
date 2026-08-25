@@ -60,7 +60,7 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。
+单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。异模型 leaf 使用 [Worker Runner](../references/worker-runners.md) 的冻结 profile；其 receipt 不是宿主 tree evidence，必须由 controller 复核。
 
 Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v4 / Receipt v4。路径仅由 repo 与 `plan_id` 推导；run takeover 在同一文件转移 owner。Receipt 从派生的正式 delegate state 读取真源并校验完整 Provider Binding、Source Receipt v2 与 Git 前序链，不接受内嵌自证状态。
 

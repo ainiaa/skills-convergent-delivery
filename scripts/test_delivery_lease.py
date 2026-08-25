@@ -7,6 +7,8 @@ import threading
 import unittest
 from pathlib import Path
 
+import delivery_lease
+
 
 SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
@@ -133,6 +135,29 @@ class DeliveryLeaseTest(unittest.TestCase):
             self.assertEqual("renewed", json.loads(renewed.stdout)["status"])
             for record in root.rglob("*.json"):
                 self.assertEqual(0o600, record.stat().st_mode & 0o777)
+
+    def test_active_attestation_requires_current_owner_and_unexpired_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            acquired = self.run_lease(
+                root, "acquire", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+            paths = delivery_lease.lease_paths(root, "/repo/common.git", "/repo/a", "payment")
+            proof = delivery_lease.active_lease_attestation(
+                paths, "/repo/common.git", "/repo/a", "payment", "run-1", "writer-1"
+            )
+            self.assertEqual("run-1", proof["run_id"])
+
+            for path in paths.values():
+                record = json.loads(path.read_text(encoding="utf-8"))
+                record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                path.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "expired"):
+                delivery_lease.active_lease_attestation(
+                    paths, "/repo/common.git", "/repo/a", "payment", "run-1", "writer-1"
+                )
 
     def test_release_by_another_writer_preserves_the_lease(self):
         with tempfile.TemporaryDirectory() as directory:

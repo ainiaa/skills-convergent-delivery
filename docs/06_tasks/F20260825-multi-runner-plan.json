@@ -1,0 +1,177 @@
+{
+  "schema_version": 5,
+  "plan_id": "plan-converge-multi-runner-20260825",
+  "requirement_fingerprint": "4ad9fee5002bf63eed88f9bc52d8d50d9a7341e5d37143d47d8f6b4bbd7db457",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "11e029817628aee908fac264221f738d77745348",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "11e029817628aee908fac264221f738d77745348",
+      "commit_id": "11e029817628aee908fac264221f738d77745348",
+      "tree_hash": "24df0d1bb8bcd63374a622453e310b8a1fd091b4",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "e784f2c2e9362dc601e38fab849594ea3646a2c6714bd4b61dd7b561ae453f80"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "wide_refactor",
+      "outcomes": [
+        "Fast path 只能在有效 writer lease 内为纯格式文档改动签发 receipt"
+      ],
+      "goal": "关闭 fast-path 的内容语义与租约竞态绕过，并冻结其实现。",
+      "owned_paths": [
+        "scripts/fast_path.py",
+        "scripts/delivery_lease.py",
+        "scripts/controller_snapshot.py",
+        "scripts/test_fast_path.py",
+        "scripts/test_delivery_lease.py",
+        "scripts/test_controller_snapshot.py",
+        "SKILL.md",
+        "references/task-routing.md",
+        "references/evaluation-scenarios.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "先写回归测试并在共享租约校验处收紧 fast-path 签发条件"
+      ],
+      "acceptance": [
+        "非纯格式的文档内容改动、失效或非拥有者 lease 都不能得到 eligible receipt",
+        "fast_path.py 被 Controller Snapshot 冻结",
+        "正常的单文件纯格式文档改动仍可得到绑定检查与源码的 local receipt"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_fast_path.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_delivery_lease.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_controller_snapshot.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "控制器可冻结并验证每个 worker 的模型、思考等级、权限和预算画像"
+      ],
+      "goal": "以单一 Worker Profile v1 替代隐式模型选择，保持 native host receipt 的语义不变。",
+      "owned_paths": [
+        "scripts/worker_profile.py",
+        "scripts/test_worker_profile.py",
+        "references/worker-runners.md",
+        "references/state-schema.md",
+        "SKILL.md"
+      ],
+      "depends_on": ["T1"],
+      "steps": [
+        "先写画像校验测试并实现冻结的 Worker Profile v1 契约"
+      ],
+      "acceptance": [
+        "worker 不能自行声明或提升 model、reasoning effort、权限、预算或写入能力",
+        "profile 同时记录 requested 与 effective 值，未知能力或不支持的组合明确阻止",
+        "native host 证据与 runner-managed 证据不共用或混淆 evidence_level"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_worker_profile.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": [
+        "薄 runner registry 能以明确边界启动 Codex CLI 或只读 OpenAI-compatible worker"
+      ],
+      "goal": "提供不复制控制面状态的 runner capability、receipt 和 dry-run 合约。",
+      "owned_paths": [
+        "scripts/runner_registry.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/openai_compatible_runner.py",
+        "scripts/test_runner_registry.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_openai_compatible_runner.py",
+        "references/worker-runners.md",
+        "references/state-schema.md",
+        "SKILL.md",
+        "CHANGELOG.md"
+      ],
+      "depends_on": ["T2"],
+      "steps": [
+        "先写 capability 与 dry-run receipt 测试并实现两个受限 runner adapter"
+      ],
+      "acceptance": [
+        "registry 只解析固定 runner capability，不创建第二套任务图、记忆或状态真源",
+        "codex-exec 命令精确绑定 profile 的 model 与 effort，真实启动必须显式允许",
+        "OpenAI-compatible runner 默认只读、无 shell/workspace 写入、无密钥落盘，且真实请求必须显式允许",
+        "两个 runner 都生成可验证且不冒充 host-native 的 receipt"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_runner_registry.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_codex_exec_runner.py",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_openai_compatible_runner.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "controller": "converge",
+        "workflow_provider": "native-v1",
+        "stage_providers": {},
+        "binding_fingerprint": "f3e7af88d90aa375cdc82ecb7c938ff8f80e1c4b6bbb92c73992a2c3de874a43"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "已知 fast-path 问题均由先失败后通过的行为测试覆盖",
+    "Worker Profile 与 runner registry 可表达异模型、异思考等级和权限边界，且不伪造宿主集成",
+    "全量检查通过，验证期间不发生真实模型/API 请求、外发或第二套状态真源"
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "多代理实现使用通用框架还是薄 registry？",
+      "resolution": "使用薄 runner registry：复用 Converge 状态、租约和有限循环，不新增任务图、记忆或 broker。",
+      "source": "user"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "非 ChatGPT 模型初始拥有何种权限？",
+      "resolution": "DeepSeek、GLM 等 OpenAI-compatible provider 初始仅可作结构化只读研究或审查，不能执行 shell 或写工作区。",
+      "source": "user"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "本轮验证是否发起真实模型调用？",
+      "resolution": "不发起；仅验证命令/请求构造和 mock receipt。生产 smoke test 需另行显式授权。",
+      "source": "user"
+    }
+  ]
+}

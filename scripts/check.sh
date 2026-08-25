@@ -52,6 +52,10 @@ python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
 python3 scripts/test_fast_path.py
+python3 scripts/test_worker_profile.py
+python3 scripts/test_runner_registry.py
+python3 scripts/test_codex_exec_runner.py
+python3 scripts/test_openai_compatible_runner.py
 python3 scripts/test_trigger_evals.py
 python3 skills/converge-plan/scripts/test_plan_check.py
 python3 skills/converge-review/scripts/test_review_axes_contract.py

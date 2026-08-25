@@ -1,4 +1,4 @@
-# Converge 0.20 控制面一次性硬化记录
+# Converge 0.21 控制面与多模型 runner 加固记录
 
 本轮只处理已复现且会影响完成可信度或子任务效率的控制面缺口；不增加后台守护进程、持久队列、第二状态库或自动自改循环。
 
@@ -12,5 +12,8 @@
 | 评测证据可在 candidate tree 内伪造、registry 顺序敏感 | Sample v4 强制候选仓库外的 absolute evaluator-attested artifact；registry 比较使用集合 | `skills/converge-eval/scripts/test_eval_kernel.py` | 不宣称 evidence 是 host-signed：当前宿主没有可验证的 evaluator-output artifact API |
 | 老快照继续执行旧安全规则 | Controller Protocol v12 阻止旧快照执行，唯一兼容动作是释放自身 lease | `scripts/test_controller_snapshot.py` | 不热修已冻结脚本：会破坏快照可审计性 |
 | 简单任务加载无关控制细节 | 根入口仅在非 inline/worker/recovery 路径读取 execution-control | `scripts/test_skill_contracts.py` | 不拆出新入口 skill，现有渐进披露已足够 |
+| fast path 可为语义文档或无租约路径签发 receipt | `fast_path.py` 在 check 前后均验证当前 run 的 workspace/task lease，并要求唯一普通文档的 `git diff --ignore-all-space` 为空 | `scripts/test_fast_path.py`、`scripts/test_delivery_lease.py`：非 owner、过期 lease 与语义内容都被拒绝 | 不维护文档路径白名单：纯格式 Git 判定更小且不把 README/API 文档误当低风险 |
+| 不同 worker 可能临时变更模型、effort 或权限 | Worker Profile v1 冻结 requested/effective model、effort、权限与有限预算；静态 registry 只暴露 Codex CLI 和只读 OpenAI-compatible 两种 runner | `scripts/test_worker_profile.py`、`scripts/test_runner_registry.py` | 不引入通用 agent framework、broker 或第二状态：控制器已有计划、lease 和完成门禁 |
+| 外部 CLI/API leaf 容易伪装成宿主 subagent | Codex launch 和 OpenAI-compatible HTTPS request 默认仅计划，真实执行要显式 opt-in；receipt 明确标为 `runner`，不进入 `runtime_binding`/`host_observed` | `scripts/test_codex_exec_runner.py`、`scripts/test_openai_compatible_runner.py` | 不伪造 Codex Desktop host bridge：宿主未公开 selector/tree receipt 前，runner 结果仍由 controller 复核 |
 
-外部取舍：Agent Skills 的 discovery → activation → execution 三段渐进披露支持按需读取 references；SkillHone 的“整 skill 文件夹、隔离评测、held-out gate”支持本轮将脚本、契约和文档作为同一候选改动，但其 Forgejo/持续优化服务超出当前任务。参考：[Agent Skills](https://github.com/agentskills/agentskills/blob/main/docs/home.mdx)、[SkillHone](https://github.com/Tencent/SkillHone)。
+外部取舍：Agent Skills 的 discovery → activation → execution 三段渐进披露支持按需读取 references；SkillHone 的“整 skill 文件夹、隔离评测、held-out gate”支持本轮将脚本、契约和文档作为同一候选改动，但其 Forgejo/持续优化服务超出当前任务。`external-subagents` 验证了用 `codex exec --json` 驱动外部 leaf 的可行性，但其独立 metadata/state 不进入本项目。模型参数以官方接口为准：OpenAI 的 [model/effort 指南](https://developers.openai.com/api/docs/guides/latest-model)、[DeepSeek API](https://api-docs.deepseek.com/api/create-chat-completion/) 与 [GLM 5.2 / OpenAI-compatible 指南](https://docs.bigmodel.cn/cn/guide/develop/others)。参考：[Agent Skills](https://github.com/agentskills/agentskills/blob/main/docs/home.mdx)、[SkillHone](https://github.com/Tencent/SkillHone)、[external-subagents](https://github.com/obra/external-subagents)。

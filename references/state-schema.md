@@ -19,9 +19,9 @@
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
     "package_version": "0.20.0",
-    "protocol_version": 12,
+    "protocol_version": 13,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.20.0", "protocol_version": 12, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.21.0", "protocol_version": 13, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -61,6 +61,8 @@
 Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
 `host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
+
+异模型 worker 采用 [Worker Runner](worker-runners.md) 的冻结 profile。它的 `runner` receipt 不属于本节 `runtime_binding`、`workers[]` 或 `worker_tree_receipt`：这些字段只接受真实宿主 bridge 的原始观察。没有宿主 selector/tree receipt 时，runner 结果只能作为待主 controller 复核的外部工作产物，不能把 `runner` 标成 `host_observed` 或用来直接完成状态。
 
 ## 2. Provider Binding
 

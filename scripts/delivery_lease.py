@@ -114,6 +114,42 @@ def same_owner(record, run_id, writer_id):
     return record.get("run_id") == run_id and record.get("writer_id") == writer_id
 
 
+def active_lease_attestation(paths, repo, workspace, task_key, run_id, writer_id):
+    """Return a stable proof that both leases are currently owned and active."""
+    expected = {
+        "repo_id": repo,
+        "workspace": workspace,
+        "task_key": task_key,
+        "run_id": run_id,
+        "writer_id": writer_id,
+    }
+    records = {}
+    with ExitStack() as stack:
+        for path in sorted(paths.values(), key=str):
+            stack.enter_context(lock_record(path))
+        for kind, path in paths.items():
+            if not path.exists():
+                raise ValueError("writer lease is missing")
+            record = read_record(path)
+            if record.get("kind") != kind or any(
+                record.get(field) != value for field, value in expected.items()
+            ):
+                raise ValueError("writer lease is not owned by this run")
+            if is_expired(record):
+                raise ValueError("writer lease is expired")
+            records[kind] = record
+    value = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "writer_id": writer_id,
+        "lease_expires_at": min(record["lease_expires_at"] for record in records.values()),
+    }
+    value["lease_fingerprint"] = hashlib.sha256(
+        json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return value
+
+
 def make_record(kind, repo, workspace, task_key, run_id, writer_id, ttl_seconds):
     timestamp = now()
     return {
