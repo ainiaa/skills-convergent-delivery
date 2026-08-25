@@ -18,10 +18,10 @@
   "source_fingerprint": "<current Source Receipt fingerprint>",
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
-    "package_version": "0.20.0",
+    "package_version": "0.0.21",
     "protocol_version": 13,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.21.0", "protocol_version": 13, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.0.21", "protocol_version": 13, "protocol_fingerprint": "<sha256>", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",

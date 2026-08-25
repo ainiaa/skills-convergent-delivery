@@ -4,14 +4,15 @@
 
 ## [Unreleased]
 
+- 版本号改用 `0.0.x` 节奏：当前版本由 `0.21.0` 调整为 `0.0.21`，后续快速迭代递增末位。
 - 新增可选多模型协作：默认 Sol high 设计、Luna max 实现、Terra xhigh 审计与一次定向修复/复审；仅用户明确要求时才插入 Terra xhigh 设计复核。新增冻结 Profile、命名配置集合与单次角色覆盖，配置按显式参数、项目、用户级、内置默认依次解析；用户级默认文件位于 `~/.convergent-delivery/multi-model.json`。GLM-5.2 保留为可配置的外部只读审计选项，审计文本只即时交回控制器，正式回执不保存 prompt、密钥或内容。
 - 修复 PDLC Provider 仅被选中却未被实际激活的断点：新增确定性 `freeze-binding`，Plan 与 Batch 仅接受含入口/closure 来源的完整冻结 Binding；native、自动回退与 PDLC 均可据此显式调用对应 Skill，`pdlc-run` 不能替代调用，入口不可用时确定性阻塞。
 - 快速开发阶段移除历史 Schema 读取/迁移：Single State 仅 v10、Runtime Binding 仅 v4、Plan 仅 v5、Batch State 仅 v4、Review 仅 Protocol v3，旧输入直接拒绝；安装器的 `--upgrade` 自动替换受管同名符号链接（不删除目录），并修正 lease 示例中的 Git common-dir 语义。
 - 压缩根 `converge/SKILL.md` 至 2.7KB 内：入口仅保留范围、验证、Provider、路由、租约、审查与终态决策，条件协议下沉到既有 references；Claude Code 现在以当前会话真实的 `Agent` 与 task list 能力协商，任一缺失即确定性回退手工交接，不按安装或版本猜测。
 - Codex Desktop 与 Claude Code 的原生 worker 工具现在作为可信本地宿主：automatic `controller_attested` binding 可登记、查询与清场当前会话 worker；仍要求稳定 `worker_ref`、推进前查询和派发不确定不重派。`checkpoint=cross_session` 继续要求 `host_observed` bridge，Codex CLI 仍仅是外部 leaf runner。
-- 补齐 0.21 runner 与控制面边界：Codex leaf 忽略可变用户配置/规则、超时后回收子进程；外部 runner 拒绝空响应 ID，prompt 指纹必须是合法 SHA-256。
+- 补齐 0.0.21 runner 与控制面边界：Codex leaf 忽略可变用户配置/规则、超时后回收子进程；外部 runner 拒绝空响应 ID，prompt 指纹必须是合法 SHA-256。
 - Controller Snapshot 现冻结 Worker Runner 协议；Single State ledger 限定允许字段并记录 runner launch/result 的 append-only 完成门禁。停用的 generic fast path 删除遗留资格校验，仅保留确定性阻断；补充输出预算按 UTF-8 字节计量的兼容说明与回归测试。
-- 0.21：通用 fast path 已停用；Git 空白 diff 不能证明 Markdown 等文档无语义变化，所有改动回到完整验证路径。Controller Snapshot 同时冻结 fast-path 与 runner helper。
+- 0.0.21：通用 fast path 已停用；Git 空白 diff 不能证明 Markdown 等文档无语义变化，所有改动回到完整验证路径。Controller Snapshot 同时冻结 fast-path 与 runner helper。
 - 新增冻结的 Worker Profile v1 与薄 Runner Registry：Codex CLI 可精确绑定 model/reasoning effort/sandbox；OpenAI-compatible runner 当前仅开放已验证的 Zhipu 无 shell、无工作区写入 leaf。真实进程或 HTTPS egress 均需调用方显式允许；runner receipt 不冒充宿主 `host_observed`。
 - 修复 runner 执行边界：Codex 在执行前复核 sandbox、独立 worktree 与二进制身份，并在 stdin 异常时回收进程；外部请求固定 provider 凭据变量和 effort mapping，缺失凭据返回终态未知回执；畸形 receipt 不再能够通过完成门禁。
 
