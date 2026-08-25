@@ -36,6 +36,7 @@ automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生
 
 ## Claude Code
 
+- 开始前确认当前会话实际暴露 `Agent` 与可查询的 task list；任一不可用时向 `negotiate --profile claude-code` 报 `dispatch=false` 或 `query=false`，按手工交接处理。不得根据 Claude Code 的安装或版本猜测能力。
 - 当前会话可直接使用 `Agent` 创建前台或后台 subagent；以返回的 agent id 为 `worker_ref`，通过 task list 查询运行/完成状态。前台任务等待结果，后台任务只在宿主通知完成或 task list 显示终态后推进。
 - 普通 subagent 限当前会话：恢复当前 run 时先查询同一 ref；若当前宿主已不能查询，转手工交接，不重新派发。Agent Teams 是实验能力，不作为默认 Batch 依赖。
 

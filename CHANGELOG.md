@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 压缩根 `converge/SKILL.md` 至 2.7KB 内：入口仅保留范围、验证、Provider、路由、租约、审查与终态决策，条件协议下沉到既有 references；Claude Code 现在以当前会话真实的 `Agent` 与 task list 能力协商，任一缺失即确定性回退手工交接，不按安装或版本猜测。
 - Codex Desktop 与 Claude Code 的原生 worker 工具现在作为可信本地宿主：automatic `controller_attested` binding 可登记、查询与清场当前会话 worker；仍要求稳定 `worker_ref`、推进前查询和派发不确定不重派。`checkpoint=cross_session` 继续要求 `host_observed` bridge，Codex CLI 仍仅是外部 leaf runner。
 - 补齐 0.21 runner 与控制面边界：Codex leaf 忽略可变用户配置/规则、超时后回收子进程；外部 runner 拒绝空响应 ID，prompt 指纹必须是合法 SHA-256。
 - Controller Snapshot 现冻结 Worker Runner 协议；Single State ledger 限定允许字段并记录 runner launch/result 的 append-only 完成门禁。停用的 generic fast path 删除遗留资格校验，仅保留确定性阻断；补充输出预算按 UTF-8 字节计量的兼容说明与回归测试。

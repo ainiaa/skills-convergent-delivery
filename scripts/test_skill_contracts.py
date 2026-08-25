@@ -167,10 +167,11 @@ class SkillContractTest(unittest.TestCase):
 
     def test_root_skill_plans_bounded_provider_runs_without_splitting_pdlc_internals(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
         self.assertIn("converge-plan", text)
         self.assertIn("planned_task=true", text)
         self.assertIn("独立可验收的业务切片", text)
-        self.assertIn("PDLC task 内部仍整体委托", text)
+        self.assertIn("完整 PDLC v1", tdd)
         self.assertIn("execution-control.md", text)
 
     def test_simple_inline_path_skips_generic_discovery_and_host_plan_ui(self):
@@ -195,7 +196,15 @@ class SkillContractTest(unittest.TestCase):
             "完整路径",
         ):
             self.assertIn(marker, skill + routing)
-        self.assertLess(len(skill.encode("utf-8")), 11200)
+        for reference in (
+            "references/task-routing.md",
+            "references/execution-control.md",
+            "references/state-schema.md",
+            "references/tdd-providers.md",
+            "references/reporting.md",
+        ):
+            self.assertIn(reference, skill)
+        self.assertLess(len(skill.encode("utf-8")), 2700)
 
     def test_writer_lease_has_an_exact_terminal_release_recipe(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -292,6 +301,14 @@ class SkillContractTest(unittest.TestCase):
         for marker in ("不是 `SKILL.md` 自带", "宿主", "不能声称", "手工恢复"):
             self.assertIn(marker, control)
         self.assertIn("execution-control.md", runtime)
+
+    def test_claude_automatic_mode_requires_observed_session_capabilities(self):
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+
+        for marker in ("当前会话", "Agent", "task list", "query=false", "手工交接"):
+            self.assertIn(marker, runtime)
 
     def test_worker_lifecycle_is_registered_owned_and_cleaned_before_exit(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")

@@ -20,14 +20,15 @@ class ReviewAxesContractTest(unittest.TestCase):
         self.root_skill = ROOT_SKILL.read_text(encoding="utf-8")
 
     def test_root_controller_routes_review_by_risk(self):
+        self.assertIn("[审查编排](references/review-orchestration.md)", self.root_skill)
         for marker in (
-            "低风险 task",
-            "一个 fresh reviewer",
-            "高风险使用一个 blind reviewer",
+            "低风险任务",
+            "fresh reviewer",
+            "高风险任务使用一个 blind reviewer",
             "多任务或跨服务计划",
-            "最多一次 repair 和一次定向 re-review",
+            "一次 repair 和一次定向 re-review",
         ):
-            self.assertIn(marker, self.root_skill)
+            self.assertIn(marker, self.orchestration)
 
     def test_task_review_keeps_spec_before_quality_and_results_separate(self):
         self.assertIn("Review Protocol v3", self.contract)
