@@ -14,7 +14,19 @@
 | [OpenAI Agents Python code-change-verification](https://github.com/openai/openai-agents-python/blob/main/.agents/skills/code-change-verification/SKILL.md) | 单一 wrapper、fail-fast、命令真实退出码 | `test_evidence_contract.py` 覆盖不存在命令、argv 无 shell 执行和篡改回执 |
 | [Harness engineering](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/harness-engineering/SKILL.md) / [Evaluation](https://github.com/guanyang/open-agent-hub/blob/main/skills/evaluation/SKILL.md) | 冻结来源、判定器与证据 provenance | Eval v3 绑定 Git tree、judge bytes、worker observation 与 touched paths |
 | [Harness Protocol](https://github.com/harnessprotocol/harness-protocol/blob/main/protocol/profile-schema.md) | 不采用新的通用 profile 协议 | 现有 Task Profile 已足够；只新增 canonical receipt，避免第二套状态和转换层 |
-| [自进化参考备忘](self-improving.md) | 仅保留研究与未来门禁设计，不启用运行时 | 汇总 SkillHone、Skill Distillation、AutoSkill、Skill RSI、self-improving-agent 与 Skill SE Kit；当前不增加自动自改循环、后台 hook 或第二套状态真源 |
+| [自进化参考备忘](self-improving.md) | 仅保留研究与未来门禁设计，不启用运行时 | 补充 Darwin 的成对同 judge 比较与 SkillOpt 的 held-out 晋升；当前不增加自动自改循环、后台 hook、自动 commit/revert 或第二套状态真源 |
 | [OpenAI Codex compaction issue](https://github.com/openai/codex/issues/32169) | 不新增 conversation snapshot 日志 | Single State + Source/Controller Snapshot 已覆盖恢复真源；新增对话日志会形成第二真相 |
 
 保留的边界：不新增依赖、DAG、消息总线、签名服务或后台守护进程。同一系统用户仍可直接篡改本地文件；本轮目标是让正常控制路径不能靠自由文本、任意 SHA 或未执行命令误完成，不宣称提供对本机恶意用户的密码学防护。
+
+## 2026-08-25 Skill 优化复核
+
+| 参考 | 采用 / 不采用 | 原因与对应行为测试 |
+|---|---|---|
+| [OpenAI Build skills](https://developers.openai.com/codex/skills/) / [Agent Skills specification](https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx) | 保持“发现 → 激活 → 按需 reference”的渐进披露；不增加入口 Skill | 全量 `SKILL.md` 会在激活时进入上下文，复杂细节只在需要时读 reference；`test_skill_contracts.py` 与“触发隔离”压力场景覆盖入口边界 |
+| [Superpowers writing/testing skills](https://github.com/obra/superpowers/tree/main/skills/writing-skills) | 采用带真实压力与反合理化的独立前向评测；不复制完整 workflow | `converge-eval` 的 frozen control/candidate、history 和 exploration 已是承载面；“真实触发评测”“局部高风险”场景必须由独立 evaluator 执行 |
+| [grill-with-docs](https://www.skills.sh/mattpocock/skills/grill-with-docs) / [Wayfinder](https://www.skills.sh/mattpocock/skills/wayfinder) | 只在业务、公共契约或不可逆决定未闭合时先形成一个决策；不默认生成文档或 issue | “业务歧义”场景输出 `blocked_decision`；已消歧的局部高风险任务保持 `inline`，避免为澄清引入固定 token/文件成本 |
+| [handoff](https://www.skills.sh/mattpocock/skills/handoff) / [Ralph](https://github.com/iannuttall/ralph) | 使用已有 plan/diff/receipt 的指针与“无新证据即停止”；不新增 handoff ledger、循环状态或后台 agent | Single State、Source Receipt 和有限 repair budget 已为唯一真源；“根因无进展”“清场屏障”场景覆盖停止与交接 |
+| 宿主 bridge / [Darwin Skill](https://github.com/alchaincyf/darwin-skill) / [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) | active worker 必须先有 `host_observed` Binding；将来的显式离线优化才采用单变量、成对比较、held-out gate 与人工晋升 | `test_runtime_adapter.py` 拒绝 controller-attested 伪造 host receipt；`test_delivery_next.py` 拒绝其登记 active worker。`self-improving.md` 的未来门禁要求冻结 control、held-out、奇数独立成对样本和 hard acceptance；当前没有自动写入路径 |
+
+最终收敛路径：先按拓扑而非风险决定 `inline/planned/delegated/batch`；风险独立提高验证与 review；无真实宿主桥接时只手工交接；触发评测必须运行真实 selector；自进化只在用户显式授权的离线实验中进行。新增机制必须先证明减少真实失败或总 token，不能只增加协议。

@@ -17,7 +17,7 @@ from eval_contract import evaluate
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 from delivery_next import upgrade_state  # noqa: E402
-from runtime_adapter import cleanup_receipt, negotiate  # noqa: E402
+from runtime_adapter import bind_observed, cleanup_receipt  # noqa: E402
 from test_delivery_state import state as legacy_state  # noqa: E402
 
 ARTIFACTS = tempfile.TemporaryDirectory()
@@ -81,12 +81,10 @@ def secure(request):
     request["judge_source"] = str(JUDGE_SOURCE)
     state = upgrade_state(legacy_state())
     state["workspace"] = str(ROOT)
-    state["runtime_binding"] = negotiate(
-        "codex", {
-            "dispatch": True, "query": True, "wait": True, "interrupt": True,
-            "tree_query": True, "restrict_dispatch": False,
-        },
-    )
+    state["runtime_binding"] = bind_observed("codex", {
+        "query_id": "host-capabilities-eval", "observed_at": "2026-08-24T00:00:00Z",
+        "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+    })
     state["workers"] = [{
             "ref": ref,
             "parent_ref": None,

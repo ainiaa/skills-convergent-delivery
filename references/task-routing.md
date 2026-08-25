@@ -6,7 +6,7 @@
 - 最多评估两次：需求输入后的 `provisional` 画像只给出推荐路径且固定返回 `planned`，不得派发；快速范围探查后的 `frozen` 画像才可产生最终执行路径。
 - `cross_session=true` 才进入 `batch`。
 - 只有存在可委托任务、上下文隔离有明确收益且任务之间不互相依赖时才进入 `delegated`。
-- 跨模块、跨服务、依赖步骤、未知根因、非局部验证或风险信号至少进入 `planned`。
+- 跨模块、跨服务、依赖步骤、未知根因、非局部验证或多个可委托切片至少进入 `planned`。
 - 高风险只提高 review/verification 强度，不单独触发代理。
 - 路由冻结后只能因新证据升级；不得反复降级、重新规划或用路由扩大授权。
 
@@ -19,3 +19,5 @@
 将画像通过 stdin 传给 `python3 scripts/task_profile.py` 可查看分类；正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths)` 生成 Routing Receipt v2。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
 
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
+
+因此，一个范围局部、单步骤、验证局部的金额或 SQL 修复仍是 `inline`，但其 `review_tier=high`，必须完成对应的高风险验证和独立盲审；风险不因节省拓扑开销而被降级。业务含义、公共兼容或不可逆取舍未闭合时，`uncertainty` 必须提高或转为 `blocked_decision`，不能借 `inline` 默认决定。

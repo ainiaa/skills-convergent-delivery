@@ -764,6 +764,9 @@ def validate_state(state, arguments):
     tree_receipt = state.get("worker_tree_receipt")
     if workers and runtime_binding is None:
         raise ValueError("workers require a frozen runtime binding")
+    if workers and state.get("status") != "blocked" \
+            and runtime_binding["evidence_level"] != "host_observed":
+        raise ValueError("active workers require a host-observed runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",

@@ -37,7 +37,7 @@ class TaskProfileTest(unittest.TestCase):
 
     def test_risk_changes_review_tier_not_execution_topology(self):
         result = classify(profile(risk_flags=["money"]))
-        self.assertEqual(result["route"], "planned")
+        self.assertEqual(result["route"], "inline")
         self.assertEqual(result["review_tier"], "high")
 
     def test_delegation_requires_explicit_context_benefit(self):

@@ -13,7 +13,7 @@ from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
 from delivery_state import validate_transition
-from runtime_adapter import cleanup_receipt, negotiate
+from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -76,10 +76,10 @@ def state(revision=0, writer_id="writer-1"):
 
 class DeliveryStateTest(unittest.TestCase):
     def runtime_binding(self):
-        return negotiate(
-            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
-                      "tree_query": True, "restrict_dispatch": False}
-        )
+        return bind_observed("codex", {
+            "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
+            "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+        })
 
     def test_shared_state_path_is_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:

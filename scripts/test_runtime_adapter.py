@@ -61,10 +61,10 @@ class RuntimeAdapterTest(unittest.TestCase):
             )
 
     def test_cleanup_receipt_only_becomes_host_observed_with_bound_host_observation(self):
-        binding = runtime_adapter.negotiate(
-            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
-                      "tree_query": True, "restrict_dispatch": False}
-        )
+        binding = runtime_adapter.bind_observed("codex", {
+            "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",
+            "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+        })
 
         observation = {
             "query_id": "query-123",
@@ -84,6 +84,20 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertEqual(64, len(receipt["observation_fingerprint"]))
         self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
         self.assertEqual(3, receipt["observed_revision"])
+
+    def test_controller_attested_binding_cannot_claim_a_host_observed_cleanup(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+
+        with self.assertRaisesRegex(ValueError, "host-observed runtime binding"):
+            runtime_adapter.cleanup_receipt(
+                binding, 1, [], [], [], "2026-08-21T00:00:00Z",
+                host_observation={
+                    "query_id": "query-123", "observed_at": "2026-08-21T00:00:00Z",
+                    "registered_refs": [], "active_refs": [], "unexpected_refs": [],
+                },
+            )
 
     def test_cleanup_receipt_rejects_a_forged_runtime_binding(self):
         binding = runtime_adapter.negotiate(

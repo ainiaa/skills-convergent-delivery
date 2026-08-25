@@ -2,8 +2,9 @@
 
 ## 1. 计划先行，但不制造大计划
 
-- 简单、低风险、单文件任务：一个 task，立即进入 TDD/实现。
-- 跨文件、跨层、高风险或预计超过一个短执行段：先调用 `converge-plan`。
+- 范围局部、单步骤、验证局部且业务已消歧的任务：一个 task，立即进入 TDD/实现。
+- 跨模块、跨层、依赖步骤、未知验证或预计超过一个短执行段：先调用 `converge-plan`。
+- 风险只提高 review/verification；局部高风险任务保持 `inline`，不得以计划替代高风险验证或独立盲审。
 - 已携带 `planned_task=true`：只执行 capsule 中冻结的任务，禁止再次规划或递归派发。
 - `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run，保存派发引用后由全新上下文执行该 task 的完整 PDLC；不得把 PDLC 内部阶段再次拆解。复杂计划可以包含多个业务切片级 Provider Run。
 - Plan Contract v5 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。Git 汇总和范围审计始终使用计划冻结的 Source Receipt v2 baseline，而不是变化中的 `HEAD`。
@@ -22,7 +23,7 @@ Batch scheduler 派发的是新的 `controller-delegate` run，而不是单任�
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。第一次登记 worker 时同时冻结 Runtime Binding；清场回执必须由适配器按该 Binding 生成，不能由控制器自由选择能力模式。只传 refs 和时间生成的是 `controller_attested`；只有适配器同时收到与这些字段一致的原始 host tree-query observation，绑定其 fingerprint 后才是 `host_observed`。带 worker 的 complete 必须使用后者；前者只可记录 blocked 清场。发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。首次登记 active worker 时必须冻结 `host_observed` Runtime Binding；没有具体宿主桥接时只输出手工交接 capsule，不得派发后再等待完成。清场回执必须由适配器按同一 Binding 生成，不能由控制器自由选择能力模式。`controller_attested` Binding 只可记录既有 worker 的 blocked 清场，不能签发 `host_observed` tree receipt；只有适配器同时收到与 refs/时间一致的原始 host tree-query observation，且 Binding 已由桥接观察冻结，才是 `host_observed`。发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。milestone 是 `controller_attested`，父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成的 heartbeat 是 `host_observed`；两者都不是 helper 直接校验的 `verified` 业务证据。约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 

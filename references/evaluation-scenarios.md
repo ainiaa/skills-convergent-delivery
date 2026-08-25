@@ -16,6 +16,7 @@
 | 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
 | 模型无响应 | `observed` Binding 下既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
 | 终态等待超时 | `terminal-only` Binding 连续 wait timeout，未收到终态 | 保持 working/unknown，不累计无进展、不消耗恢复预算、不自动 interrupt；继续有界等待或交给用户决定。 |
+| 宿主桥接缺失 | 只有 controller-attested capability 或无可验证的 tree observation | 不自动派发可完成 worker；输出 capsule 手工交接或环境阻塞，不能将参数伪装成 `host_observed`。 |
 | 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
 | 计划完成审计 | receipt 声称完成，但证据陈旧或存在计划外 diff | 标记 `PARTIAL`/`scope_drift`，不得宣称完成。 |
 | PDLC 优先 | 可用、完整的 PDLC v1；用户只要求闭环交付 | 选择 `pdlc-v1`；先建立/恢复 PDLC feature 状态；不得自行写 native TDD 或重复 review；最终报告引用 PDLC 命令证据。 |
@@ -23,7 +24,8 @@
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |
 | 伪造已适配来源 | 同名或相似措辞的 Superpowers/Matt TDD 文件，内容并非已登记版本 | 不得当作已适配引擎；只可经通用预检选择或回退内置流程。 |
 | 通用 TDD 显式选择 | 用户指定 `generic-tdd-v1` 和唯一 `--tdd-skill <exact-SKILL.md>`，且该文件通过预检 | 只选择并冻结该路径；缺少精确路径或路径不兼容时阻塞，不猜选。 |
-| 路由与范围漂移 | 调用者填 low/inline，但冻结画像为跨服务/高风险；或实际 diff 出现范围外 SQL/权限文件 | helper 重算 canonical routing，并按 changed paths 阻止降级、scope drift 或未声明风险完成。 |
+| 路由与范围漂移 | 调用者填 low/inline，但冻结画像为跨服务；或实际 diff 出现范围外 SQL/权限文件 | helper 重算 canonical routing，并按 changed paths 阻止降级、scope drift 或未声明风险完成。 |
+| 局部高风险 | 单模块、单步骤、局部验证的金额、SQL/Mapper 或事务修复，业务含义已明确 | 保持 `inline`，但推导 `review_tier=high`；必须执行高风险验证与独立盲审，不因没有计划或 worker 而降级。 |
 | 命令回执伪造 | 调用者填写不存在命令和 `exit_code=0` | 只接受 `evidence_contract.py run` 实际执行 argv 后生成的 observed Evidence Receipt v2；伪造回执不能完成。 |
 | 真实触发评测 | trigger 数据集结构合法，但需要验证实际 selector 行为 | `trigger_eval.py` 在执行前完整校验所有 case，逐条执行 selector，报告混淆矩阵和 F1，并绑定 dataset/selector/runner 指纹；只检查 JSON 形状不算行为验收。 |
 | 通用 TDD 不自动触发 | PDLC 和已适配 TDD 不可用，但只存在关键词相似的通用 TDD Skill | 选择 `native-v1`；不得扫描并自动执行通用 Skill。 |
@@ -60,6 +62,7 @@
 | 清场屏障 | 正常、异常、用户中断、no_progress 或验证失败退出 | 执行等价 `finally`，只处理本轮 worker；本轮 active worker 数为 0 后才允许完成。 |
 | 历史孤儿 | UI 显示旧 Working worker，但没有 ref 或当前 API 不可见 | 报告能力边界并建议用户/UI 处理；Skill 不宣称发现、查询或清理成功。 |
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
+| 离线 Skill 优化 | 用户明确授权改善 Converge，且已有重复 defect 证据 | 冻结 control、judge 和 held-out；每轮只改一个假设；奇数 independent paired samples 多数决且 hard acceptance 全过才建议晋升；无改善即停，不自动写 Skill 或 commit。 |
 | 父 Git 累计可见性 | Codex 单步角标只显示当前动作，工作区含多任务累计 diff | 父控制器直接读取 Git，展示已跟踪、未跟踪、增删行和二进制累计；脏基线注明不能归因于本任务。 |
 | 分层评估报告 | 已知和历史场景通过，探索仍有 finding 或存在未覆盖面 | 分别报告 `known_acceptance`、`history`、`exploration`、`uncovered`；不得写“未发现任何问题”。 |
 | 技术术语噪音 | 默认交付回执 | 说明结果、关键改动、验证覆盖、待处理，并保留用户可懂的交付轮数/问题数；不展示 `complete`、P0/P1/P2、lease、基线或命令。 |

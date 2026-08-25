@@ -162,7 +162,7 @@ worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](re
 
 调度器不读业务代码、不 review、不替任务决定技术方案。每批使用最小 context capsule；Batch Protocol v1 只承接跨会话 checkpoint 并逐项执行。派发结果不确定时查询原任务，不重复创建任务。
 
-Codex 保存 task/thread id；Claude Code 只在能获取可恢复 Task/subagent 引用时自动派发；单上下文始终手工交接。三者都先以 `runtime_adapter.py` 协商本会话实际能力，详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+Codex、Claude Code 都只有在具体宿主桥接能提供 `host_observed` capability/tree observation，且可获取可恢复 Task/subagent 引用时才自动派发；单上下文始终手工交接。三者都先以 `runtime_adapter.py` 协商本会话实际能力，详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
 Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。普通 worker 永远是叶子；Batch 只派发新的 `controller-delegate` run，新 run 完成自己的子树清场后才能回传 receipt。
 
@@ -242,6 +242,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
 - [单任务状态 Schema](references/state-schema.md)
 - [Plan Contract](skills/converge-plan/references/plan-contract.md)
 - [自进化参考备忘](docs/02_design/architecture/self-improving.md)
+- [外部机制与最终优化复核](docs/02_design/architecture/F20260824-converge-truth-reference-review.md)
 - [执行控制与无响应保护](references/execution-control.md)
 - [Batch Protocol](skills/converge-batch/references/batch-contract.md)
 - [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)

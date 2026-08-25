@@ -1,7 +1,7 @@
 # Converge 自进化参考备忘
 
 > 状态：研究保留，当前不启用  
-> 复核日期：2026-08-24
+> 复核日期：2026-08-25
 
 本文只保存未来可能使用的机制与边界，不属于当前 Converge 运行协议。任何现有 Skill、helper、状态机或 hook 都不得因为本文自动学习、自动修改仓库或扩大写权。
 
@@ -28,6 +28,8 @@
 | [self-improving-agent](https://github.com/zhaono1/agent-playbook/blob/main/skills/self-improving-agent/SKILL.md) | capture-first；晋升审批；置信度、应用次数和退休机制 | 全局 hooks、多层 memory、每次完成或报错自动触发 |
 | [Skill SE Kit](https://github.com/d-wwei/skill-se-kit) | governed proposal；`ADD / MERGE / SUPERSEDE / DISCARD`；快照后再变更 | manifest、skill bank、experience、audit、snapshots 五套持久目录 |
 | [OpenAI/DeerFlow skill-creator](https://github.com/bytedance/deer-flow/blob/main/skills/public/skill-creator/SKILL.md) | baseline 对照、多样本、blind comparison、train/held-out 分离、无进展停止 | 浏览器 viewer 与特定 CLI 运行时耦合 |
+| [Darwin Skill](https://github.com/alchaincyf/darwin-skill) | 每轮只验证一个变更假设；同一 judge 成对比较 control/candidate；奇数独立样本多数表决；保留 keep/revert 证据 | 自动 commit/revert、`results.tsv` 第二真源、连续自修改循环和可被措辞游戏的通用九维打分 |
+| [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) | 一个可训练的 Skill 文档作为候选面；严格 held-out gate；只在通过后晋升 | nightly/sleep 自进化和运行时自动优化；当前没有足够已归类轨迹证明其成本收益 |
 
 安装量只用于发现，不作为采用依据。采用前仍需检查原始 `SKILL.md`、脚本、测试和宿主能力。
 
@@ -42,7 +44,9 @@ verified defect / repeated correction
   → human authorization
   → freeze old Controller Snapshot and held-out evaluator
   → change one hypothesis on the smallest skill-folder surface
-  → public regression + isolated held-out transfer tests
+  → fixed public regression + isolated held-out transfer tests
+  → each sample compares control/candidate with the same blind judge; use an odd sample count and majority decision
+  → all hard acceptance gates pass; aggregate rubric is triage only
   → promote winner or record dead end
 ```
 
@@ -62,6 +66,8 @@ verified defect / repeated correction
 - 普通流程经验：至少两个成功轨迹和一次重复失败，或同类问题出现三次；单次样本只记录，不晋升。
 - 每个泛化必须由轨迹之间真实变化支持，不从一个样本发明参数化规则。
 - 必须至少在两个未见实例上成功，并报告相对 control 的正确率、稳定性、轮数或 token 变化。
+- 成对比较的同一 judge 只消除标尺漂移，不代表独立性；必须使用奇数个 fresh、相互独立的 judge/sample 对，并保存每对原始双侧结果。
+- candidate 或本轮修改后的 Skill 不得读取、修改或重生成 held-out、judge、catalog；训练场景也不能从 candidate 工作树读取。
 - 先 `IMPROVE/MERGE` 已有 Skill；只有触发边界确实不同且 negative-trigger 测试不重叠时才 `CREATE`。
 - 连续一次候选没有改善冻结指标即停止；同一假设不得换 judge 后重试。
 - 长期不命中、与新协议重复或降低 held-out 表现的规则应 `SUPERSEDE/DISCARD`，避免协议只增不减。

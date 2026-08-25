@@ -7,7 +7,7 @@ from pathlib import Path
 
 from delivery_next import upgrade_state
 from evidence_contract import run_evidence, workspace_source
-from runtime_adapter import cleanup_receipt, negotiate
+from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 
 
@@ -219,9 +219,10 @@ class DeliveryReportTest(unittest.TestCase):
             "status": "completed",
             "progress": None,
         }]
-        payload["runtime_binding"] = negotiate(
-            "codex", {"dispatch": True, "query": True, "tree_query": True}
-        )
+        payload["runtime_binding"] = bind_observed("codex", {
+            "query_id": "capabilities-detail", "observed_at": "2026-08-21T00:00:00Z",
+            "profile": "codex", "capabilities": ["dispatch", "query", "tree_query"],
+        })
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], [],
             "2026-08-21T00:00:00Z",

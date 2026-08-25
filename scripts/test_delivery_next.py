@@ -13,7 +13,7 @@ from delivery_next import (
     upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
-from runtime_adapter import cleanup_receipt, negotiate
+from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 
 
@@ -99,10 +99,10 @@ def state(**overrides):
 
 
 def runtime_binding():
-    return negotiate(
-        "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
-                  "tree_query": True, "restrict_dispatch": False}
-    )
+    return bind_observed("codex", {
+        "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
+        "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+    })
 
 
 def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
@@ -553,6 +553,20 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("task", result.stderr)
+
+    def test_active_worker_requires_a_host_observed_runtime_binding(self):
+        payload = upgrade_state(state())
+        payload["runtime_binding"] = negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True}
+        )
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "host-observed runtime binding"):
+            validate_state(payload, SimpleNamespace())
 
     def test_state_requires_a_frozen_route_and_persisted_assessment_count(self):
         payload = upgrade_state(state())

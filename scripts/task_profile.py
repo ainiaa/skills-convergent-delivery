@@ -78,7 +78,6 @@ def classify(value):
         or value["coupling"] != "single"
         or value["uncertainty"] != "low"
         or value["verification"] != "local"
-        or risks
         or tasks > 1
     ):
         recommended_route = "planned"
@@ -88,8 +87,6 @@ def classify(value):
         ):
             if value[field] != simple:
                 reasons.append(f"{field}:{value[field]}")
-        if risks:
-            reasons.extend(f"risk:{risk}" for risk in risks)
         if tasks > 1:
             reasons.append("multiple_delegable_tasks")
     else:

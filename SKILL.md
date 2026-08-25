@@ -59,7 +59,7 @@ Converge 始终是 controller。resolver 返回 workflow provider 和可选 stag
 
 仅当路由不是 `inline`、需要 worker/跨会话恢复，或用户明确要求并发与无响应处理时，读取 [计划执行与无响应保护](references/execution-control.md)。简单 `inline` 只遵循本入口的范围、TDD、验证、租约和终态规则，不加载 worker/watchdog 细节。
 
-其他任务在实现前冻结执行边界：简单 `inline` 只保存一个内联执行条目，不调用 `converge-plan`；复杂、跨层、高风险或长上下文任务显式调用 `converge-plan`。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。宿主确实支持可恢复新上下文时登记 `worker_ref` 后委托，否则输出同一 capsule 手工交接并暂停。
+其他任务在实现前冻结执行边界：简单 `inline` 只保存一个内联执行条目，不调用 `converge-plan`；复杂、跨层、未知验证或长上下文任务显式调用 `converge-plan`。高风险但局部且已消歧的 task 可保持 `inline`，但不得降低 high-tier 验证与盲审。计划按独立可验收的业务切片拆分，每个 task 冻结自己的 Provider Binding；PDLC task 内部仍整体委托，不把其 requirements/design/tdd/implementation/review 重复拆开。只有宿主的具体桥接能产出 `host_observed` capability/tree observation 时，才登记 `worker_ref` 后自动委托；否则输出同一 capsule 手工交接并暂停，不伪造自动完成。
 
 Plan Contract v5 校验结果为 `current` 时在当前上下文执行；`fresh` 时交给一个可恢复的新上下文。计划冻结 Source Receipt v2 基线；`checkpoint=same_session` 的多任务在同一会话、同一工作区顺序执行，每个 task 保存 `source_before/source_after` 并只认领 `owned_paths` 内增量，不要求 commit；只有 `checkpoint=cross_session` 才以 `batch` 交给 `converge-batch`，并在 checkpoint 前请求一次本地 commit 授权。内置 Batch Protocol v1 按顺序执行；宿主不能可靠保存/查询 worker 时手工交接，不伪造并行。
 

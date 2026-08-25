@@ -272,6 +272,8 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
     mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
     observation_fingerprint = None
     if host_observation is not None:
+        if binding["evidence_level"] != "host_observed":
+            raise ValueError("host observation requires a host-observed runtime binding")
         expected_fields = {
             "query_id", "observed_at", "registered_refs", "active_refs", "unexpected_refs"
         }
