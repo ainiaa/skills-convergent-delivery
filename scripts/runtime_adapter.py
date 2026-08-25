@@ -211,6 +211,19 @@ def can_auto_watchdog(binding):
     return watchdog_mode(binding) == "observed"
 
 
+def allows_worker_lifecycle(binding):
+    """Allow native Codex Desktop workers without inventing a separate bridge protocol."""
+    binding = validate_binding(binding)
+    return (
+        binding["evidence_level"] == "host_observed"
+        or (
+            binding["profile"] == "codex"
+            and binding["mode"] == "automatic"
+            and binding["evidence_level"] == "controller_attested"
+        )
+    )
+
+
 def watchdog_action(binding, *, task_id, worker_ref, wait_timed_out, activity_observed,
                     process_running, soft_probe_complete, user_stop=False):
     """Choose the only safe watchdog action for one working worker."""

@@ -18,7 +18,7 @@
 | 并行候选识别 | 两个无依赖任务路径不重叠 | 生成同一 wave；内置 Batch Protocol v1 仍顺序执行，不伪造尚未具备的多 worktree/receipt 并行能力。 |
 | 模型无响应 | `observed` Binding 下既无工具/状态/diff/回执，也无运行进程 | 约 90 秒软探测、180 秒硬中断；只恢复原任务一次，仍无进展则停止。 |
 | 终态等待超时 | `terminal-only` Binding 连续 wait timeout，未收到终态 | 保持 working/unknown，不累计无进展、不消耗恢复预算、不自动 interrupt；继续有界等待或交给用户决定。 |
-| 宿主桥接缺失 | 只有 controller-attested capability 或无可验证的 tree observation | 不自动派发可完成 worker；输出 capsule 手工交接或环境阻塞，不能将参数伪装成 `host_observed`。 |
+| 宿主桥接缺失 | 非 Codex Desktop 宿主只有 controller-attested capability，或任一宿主缺少稳定创建/查询引用 | 不自动派发可完成 worker；输出 capsule 手工交接或环境阻塞，不将参数伪装成 `host_observed`。 |
 | 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
 | 计划完成审计 | receipt 声称完成，但证据陈旧或存在计划外 diff | 标记 `PARTIAL`/`scope_drift`，不得宣称完成。 |
 | PDLC 优先 | 可用、完整的 PDLC v1；用户只要求闭环交付 | 选择 `pdlc-v1`；先建立/恢复 PDLC feature 状态；不得自行写 native TDD 或重复 review；最终报告引用 PDLC 命令证据。 |

@@ -26,6 +26,7 @@ from provider_contract import validate_reference as validate_complete_provider_r
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
 from runtime_adapter import (
+    allows_worker_lifecycle,
     validate_binding as validate_runtime_binding,
     validate_cleanup_barrier,
 )
@@ -766,8 +767,8 @@ def validate_state(state, arguments):
     if workers and runtime_binding is None:
         raise ValueError("workers require a frozen runtime binding")
     if workers and state.get("status") != "blocked" \
-            and runtime_binding["evidence_level"] != "host_observed":
-        raise ValueError("active workers require a host-observed runtime binding")
+            and not allows_worker_lifecycle(runtime_binding):
+        raise ValueError("active workers require a trusted Codex Desktop or host-observed runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
@@ -967,8 +968,10 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a fresh worker tree receipt")
         if tree_receipt is not None:
             validate_cleanup_barrier(tree_receipt, revision, worker_refs)
-            if tree_receipt["evidence_level"] != "host_observed":
-                raise ValueError("complete worker cleanup must be host-observed")
+            if not allows_worker_lifecycle(runtime_binding):
+                raise ValueError(
+                    "complete worker cleanup requires trusted Codex Desktop or host-observed runtime"
+                )
         if not acceptance or not all(
             item["result"] == "pass"
             and item["freshness"] == "fresh"

@@ -24,7 +24,7 @@ Batch scheduler 派发的是新的 `controller-delegate` run，而不是单任�
 
 owner 只查询、等待或中断 registry 中 `owner_run_id` 等于当前 run 的精确 `worker_ref`；不得通过全局列表猜测归属，也不得操作用户、其他任务或旧 run 的 worker。宿主终态规范化为 `completed|interrupted|blocked`，自然语言回执、消息已送达或结果文件出现都不是宿主终态。
 
-单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。首次登记 active worker 时必须冻结 `host_observed` Runtime Binding；没有具体宿主桥接时只输出手工交接 capsule，不得派发后再等待完成。清场回执必须由适配器按同一 Binding 生成，不能由控制器自由选择能力模式。`controller_attested` Binding 只可记录既有 worker 的 blocked 清场，不能签发 `host_observed` tree receipt；只有适配器同时收到与 refs/时间一致的原始 host tree-query observation，且 Binding 已由桥接观察冻结，才是 `host_observed`。发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。
+单任务 registry 持久化在 [状态 Schema](state-schema.md) 的 `workers`；Batch 的相同字段留在 Batch state。当前 Codex Desktop 把本会话原生 create/query/wait/interrupt 工具视为可信本地宿主：能力协商得到的 automatic `controller_attested` Binding 可登记 active worker，并可用同一 Binding 的清场回执完成；控制器仍必须登记返回的稳定 ref、推进前查询该 ref、派发不确定时不重派。其他宿主首次登记 active worker 仍必须冻结 `host_observed` Runtime Binding；没有稳定创建与查询能力时只输出手工交接 capsule。清场回执必须由适配器按同一 Binding 生成；`host_observed` 只在适配器收到与 refs/时间一致的原始 host tree-query observation 时使用。发现 registry 外后代时把精确 ref 写入 `unexpected_refs` 并阻塞，不伪装成合法叶子。
 
 worker 只在阶段切换、客观产物产生及长命令前后发送 objective milestone；父代理登记可信时间并只保存最新快照。milestone 是 `controller_attested`，父代理根据 Runtime Adapter 对精确 ref 的宿主 query 生成的 heartbeat 是 `host_observed`；两者都不是 helper 直接校验的 `verified` 业务证据。约 60 秒内给用户一次去重状态；heartbeat 只能证明仍存活，不能重置无进展判断或冒充新里程碑。进度不参与完成判定，不显示虚假百分比或 ETA。
 

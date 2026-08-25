@@ -107,6 +107,13 @@ def runtime_binding():
     })
 
 
+def desktop_binding():
+    return negotiate(
+        "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
+                  "tree_query": True, "restrict_dispatch": False}
+    )
+
+
 def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
                             integration_budget=0, integration_status=None,
                             integration_reviewer="reviewer-a"):
@@ -580,10 +587,21 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("task", result.stderr)
 
-    def test_active_worker_requires_a_host_observed_runtime_binding(self):
+    def test_active_worker_allows_a_trusted_codex_desktop_binding(self):
+        payload = upgrade_state(state())
+        payload["runtime_binding"] = desktop_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
+
+    def test_active_worker_rejects_non_codex_controller_attestation(self):
         payload = upgrade_state(state())
         payload["runtime_binding"] = negotiate(
-            "codex", {"dispatch": True, "query": True, "tree_query": True}
+            "claude-code", {"dispatch": True, "query": True, "tree_query": True}
         )
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
@@ -591,7 +609,7 @@ class DeliveryNextTest(unittest.TestCase):
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
-        with self.assertRaisesRegex(ValueError, "host-observed runtime binding"):
+        with self.assertRaisesRegex(ValueError, "trusted Codex Desktop"):
             validate_state(payload, SimpleNamespace())
 
     def test_state_requires_a_frozen_route_and_persisted_assessment_count(self):
@@ -692,15 +710,15 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("unexpected", result.stderr)
 
-    def test_complete_with_workers_rejects_controller_attested_cleanup(self):
+    def test_complete_with_workers_allows_trusted_codex_desktop_cleanup(self):
         payload = reviewed_complete_state()
+        payload["runtime_binding"] = desktop_binding()
         refs = [worker["ref"] for worker in payload["workers"]]
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z"
         )
 
-        with self.assertRaisesRegex(ValueError, "host-observed"):
-            validate_state(payload, SimpleNamespace())
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
     def test_high_risk_complete_requires_current_spec_and_quality_reviews(self):
         payload = state(status="complete", current_stage="verify-final")
