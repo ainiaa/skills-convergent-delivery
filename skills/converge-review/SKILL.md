@@ -11,6 +11,8 @@ metadata:
 
 ## 输入
 
+先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_REVIEW_SKILL_DIR`；adapter 必须从这里解析，不能使用被审项目的相对 `scripts/` 路径。
+
 开始前读取 [Review Protocol v3](references/review-contract.md)。至少需要：模式、审查轴、阶段、验收项、允许范围、基线和当前 `source_fingerprint`。没有足够材料时只报告缺口，不自行补设计。
 
 - `shared`：可读取被冻结的需求和设计决策，检查实现是否符合意图。
@@ -35,4 +37,4 @@ metadata:
 
 ## 输出
 
-用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。公开结果先通过 `python3 scripts/review_contract.py normalize --input - --reviewer-ref <ref> --request '<canonical-request-json>'` 对照冻结请求，生成包含 `task_id/request_fingerprint` 的内部记录；不得由模型手工改写后直接写入状态。旧协议直接拒绝。
+用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。公开结果先通过 `python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --input - --reviewer-ref <ref> --request '<canonical-request-json>'` 对照冻结请求，生成包含 `task_id/request_fingerprint` 的内部记录；不得由模型手工改写后直接写入状态。旧协议直接拒绝。

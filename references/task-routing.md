@@ -10,13 +10,13 @@
 - 高风险只提高 review/verification 强度，不单独触发代理。
 - 路由冻结后只能因新证据升级；不得反复降级、重新规划或用路由扩大授权。
 
-风险枚举与根 Skill 的审查触发器一致：金额/支付、时间/时区、SQL/Mapper、数据库迁移、事务、并发、幂等、公共 API、安全/权限、敏感日志、跨服务、发布契约及不可逆操作。
+风险枚举与根 Skill 的审查触发器一致：金额/支付、时间/时区、SQL/Mapper、数据库迁移、事务、并发、幂等、公共 API、安全/权限、敏感日志、跨服务、发布契约及不可逆操作。`risk_flags` 是控制器在冻结前按需求、调用链和行为语义作出的**语义风险声明**：即使文件名普通，也必须列出金额、权限、公共兼容等受影响语义；不能等路径扫描猜中。路径标记只能作为风险下限：实际 changed paths 命中标记而未声明时完成门禁阻塞；未命中不构成低风险证明。语义无法确认时提高 `uncertainty` 或转为决策阻塞。
 
 ```json
 {"schema_version":2,"assessment_phase":"frozen","scope":"local","coupling":"single","uncertainty":"low","verification":"local","risk_flags":[],"cross_session":false,"delegable_tasks":0,"context_isolation_benefit":false}
 ```
 
-将画像通过 stdin 传给 `python3 scripts/task_profile.py` 可查看分类；正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths)` 生成 Routing Receipt v2。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
+将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 可查看分类；正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths)` 生成 Routing Receipt v2。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
 
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
 

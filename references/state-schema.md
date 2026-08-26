@@ -58,7 +58,7 @@
 
 `source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v2 由 `task_profile.freeze_routing` 唯一生成：完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。旧 Routing v1 只读兼容，不能写入新 complete。
 
-Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
+Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；旧历史记录可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
 `host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
 
@@ -125,19 +125,19 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
 }
 ```
 
-首次登记 active worker 时必须同时冻结 `host_observed` Runtime Binding。`negotiate` 的 Binding 一律是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`；它不能登记 active worker 或开启自动 watchdog。`bind()` 没有 host-observed 参数，只有具体宿主桥接器将完整原始能力观察交给 `bind_observed` 后才可能构造 `host_observed` Binding；Schema v4 同时保存该 observation 与 fingerprint，并要求 capability 列表与 observation 精确一致。profile 上限拒绝 caller 伪造不存在的能力，当前 Codex 不允许 activity/process/resume。之后 Binding 不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式、Binding 已是 `host_observed` 且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。只传 caller 参数或使用 `restrict_dispatch` 均为 `controller_attested`，只能支撑 blocked 清场，不能支撑带 worker 的 complete。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致（顺序不具有语义）；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
+首次登记 active worker 时，跨会话或非可信宿主必须冻结 `host_observed` Runtime Binding。`negotiate` 的 Binding 一律是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`；当前会话的可信本地宿主（Codex Desktop、Claude Code）在具备 automatic 能力时，可用该 Binding 自动派发、登记和清场，但仍只能是 `terminal-only`，不能开启自动 watchdog 或恢复。`bind()` 没有 host-observed 参数，只有具体宿主桥接器将完整原始能力观察交给 `bind_observed` 后才可能构造 `host_observed` Binding；Schema v4 同时保存该 observation 与 fingerprint，并要求 capability 列表与 observation 精确一致。profile 上限拒绝 caller 伪造不存在的能力，当前 Codex 不允许 activity/process/resume。之后 Binding 不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式、Binding 已是 `host_observed` 且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。可信本地当前会话的 `controller_attested` 清场回执可支撑 complete；跨会话、其他宿主和 evaluator 仍要求 `host_observed`。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致（顺序不具有语义）；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
 
 生成和展示：
 
 ```bash
-python3 scripts/delivery_progress.py event --worker-ref <ref> --event milestone \
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" event --worker-ref <ref> --event milestone \
   --phase implementing --milestone "目标测试通过" --activity "完成最小实现" \
   --evidence "26 tests passed" --next-action "运行状态迁移测试" < state.json
 
-python3 scripts/delivery_progress.py observe --worker-ref <ref> \
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" observe --worker-ref <ref> \
   --host-status working --evidence "host query: process active" < state.json
 
-python3 scripts/delivery_progress.py status < state.json
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 ```
 
 父代理负责按不超过约 60 秒的可见节奏向用户转述最新快照；去重指纹同时包含 worker 宿主 lifecycle，working→completed/blocked/interrupted 不得被相同进度文本隐藏。长测试或工具仍在运行时不编造百分比或 ETA。
@@ -168,12 +168,12 @@ Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-r
 4. 在正式目录创建 `0600` 临时文件，`fsync` 后原子替换。
 
 ```bash
-python3 scripts/delivery_state.py path --repo <repo> --task-key <task> --run-id <run>
-python3 scripts/delivery_state.py list --workspace <absolute-worktree>
-python3 scripts/delivery_state.py doctor --workspace <absolute-worktree>
-python3 scripts/delivery_state.py write --input - --repo-id <repo> --task-key <task> \
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" path --repo <repo> --task-key <task> --run-id <run>
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" list --workspace <absolute-worktree>
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" doctor --workspace <absolute-worktree>
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" write --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
-python3 scripts/delivery_next.py --state <derived-path> --run-id <run> \
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --run-id <run> \
   --writer-id <writer> --revision <revision>
 ```
 

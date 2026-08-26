@@ -256,6 +256,71 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("converge-batch", text)
         self.assertIn('"$CONVERGE_SKILL_DIR/scripts/delivery_engine.py"', text)
 
+    def test_documented_helpers_resolve_from_the_selected_skill(self):
+        root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        eval_skill = (ROOT / "skills/converge-eval/SKILL.md").read_text(encoding="utf-8")
+        review_skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
+        review_contract = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
+            encoding="utf-8"
+        )
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
+        reporting = (ROOT / "references/reporting.md").read_text(encoding="utf-8")
+        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
+        state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("记为 `CONVERGE_SKILL_DIR`", root_skill)
+        self.assertIn("记为 `CONVERGE_EVAL_SKILL_DIR`", eval_skill)
+        self.assertIn("记为 `CONVERGE_REVIEW_SKILL_DIR`", review_skill)
+        self.assertIn('"$CONVERGE_EVAL_SKILL_DIR/../../scripts/controller_snapshot.py"', eval_skill)
+        self.assertIn('"$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py"', review_skill)
+        self.assertIn('"$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py"', review_contract)
+        self.assertIn('"$CONVERGE_SKILL_DIR/scripts/task_profile.py"', routing)
+        self.assertIn('"$CONVERGE_SKILL_DIR/scripts/delivery_report.py"', reporting)
+        self.assertIn('"$CONVERGE_SKILL_DIR/scripts/delivery_state.py"', state)
+        self.assertIn('"$CONVERGE_BATCH_SKILL_DIR/../../scripts/runtime_adapter.py"', runtime)
+
+    def test_state_schema_matches_trusted_local_runtime_completion_policy(self):
+        state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("当前会话的可信本地宿主", state)
+        self.assertIn("controller_attested", state)
+        self.assertIn("可自动派发和清场", runtime)
+        self.assertNotIn("只能支撑 blocked 清场，不能支撑带 worker 的 complete", state)
+
+    def test_risk_and_metric_references_keep_inference_and_observation_honest(self):
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
+        reporting = (ROOT / "references/reporting.md").read_text(encoding="utf-8")
+        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("语义风险声明", routing)
+        self.assertIn("路径标记只能作为风险下限", routing)
+        self.assertIn("已签名 runner 回执", reporting)
+        self.assertIn("不可用", reporting)
+        self.assertIn("语义风险未声明", scenarios)
+        self.assertIn("指标缺失", scenarios)
+        self.assertIn("不伪造", runtime)
+
+    def test_review_independence_means_a_fresh_context_from_the_implementer(self):
+        protocol = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
+            encoding="utf-8"
+        )
+        orchestration = (ROOT / "references/review-orchestration.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("`independent=true` 和全新上下文", protocol)
+        self.assertIn("而不是为 spec 与 quality 各派一个 reviewer", protocol)
+        self.assertIn("同一个已登记", orchestration)
+
     def test_activation_is_discoverable_but_never_edits_user_configuration(self):
         skill, header = frontmatter(ROOT / "SKILL.md")
         activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")

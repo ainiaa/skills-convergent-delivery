@@ -779,6 +779,45 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("high" if routing["review_tier"] == "high" else "low", routing["review_tier"])
         self.assertEqual(2, len(review["rounds"]))
 
+    def test_review_round_accepts_matching_structured_finding_records(self):
+        control = state()["execution_control"]
+        source = control["review"]["rounds"][0]["source_fingerprint"]
+        control["review"]["rounds"][0]["requests"] = [{
+            "axis": "spec", "phase": "initial", "source_fingerprint": source,
+            "status": "findings", "reviewer_ref": "reviewer-a", "mode": "shared",
+            "independent": False, "finding_fingerprints": ["b" * 64],
+            "finding_records": [{
+                "fingerprint": "b" * 64, "evidence": "test.py:10 fails",
+                "impact": "the acceptance can falsely pass",
+                "root_cause": "the source receipt is missing", "scope": "current",
+                "classification": "defect",
+            }],
+            "task_id": "task-123", "request_fingerprint": "c" * 64,
+        }]
+
+        _, review = validate_execution_control(control, source, "task-123")
+
+        self.assertEqual("the acceptance can falsely pass", review["rounds"][0]["requests"][0]["finding_records"][0]["impact"])
+
+    def test_review_round_rejects_mismatched_structured_finding_records(self):
+        control = state()["execution_control"]
+        source = control["review"]["rounds"][0]["source_fingerprint"]
+        control["review"]["rounds"][0]["requests"] = [{
+            "axis": "spec", "phase": "initial", "source_fingerprint": source,
+            "status": "findings", "reviewer_ref": "reviewer-a", "mode": "shared",
+            "independent": False, "finding_fingerprints": ["b" * 64],
+            "finding_records": [{
+                "fingerprint": "d" * 64, "evidence": "test.py:10 fails",
+                "impact": "the acceptance can falsely pass",
+                "root_cause": "the source receipt is missing", "scope": "current",
+                "classification": "defect",
+            }],
+            "task_id": "task-123", "request_fingerprint": "c" * 64,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "finding_records do not match"):
+            validate_execution_control(control, source, "task-123")
+
     def test_blocked_with_active_worker_requires_fresh_cleanup_receipt(self):
         worker = {
             "ref": "worker-1", "parent_ref": None, "task_id": "task-123",

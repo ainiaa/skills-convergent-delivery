@@ -27,6 +27,7 @@
 | 伪造已适配来源 | 同名或相似措辞的 Superpowers/Matt TDD 文件，内容并非已登记版本 | 不得当作已适配引擎；只可经通用预检选择或回退内置流程。 |
 | 通用 TDD 显式选择 | 用户指定 `generic-tdd-v1` 和唯一 `--tdd-skill <exact-SKILL.md>`，且该文件通过预检 | 只选择并冻结该路径；缺少精确路径或路径不兼容时阻塞，不猜选。 |
 | 路由与范围漂移 | 调用者填 low/inline，但冻结画像为跨服务；或实际 diff 出现范围外 SQL/权限文件 | helper 重算 canonical routing，并按 changed paths 阻止降级、scope drift 或未声明风险完成。 |
+| 语义风险未声明 | 金额、权限或公共兼容语义位于普通文件名，路径标记未命中 | 控制器在冻结画像的 `risk_flags` 显式声明；不确定时升级 `uncertainty` 或决策阻塞，不能将未命中路径当作低风险证据。 |
 | 局部高风险 | 单模块、单步骤、局部验证的金额、SQL/Mapper 或事务修复，业务含义已明确 | 保持 `inline`，但推导 `review_tier=high`；必须执行高风险验证与独立盲审，不因没有计划或 worker 而降级。 |
 | 命令回执伪造 | 调用者填写不存在命令和 `exit_code=0` | 只接受 `evidence_contract.py run` 实际执行 argv 后生成的 observed Evidence Receipt v2；伪造回执不能完成。 |
 | 真实触发评测 | trigger 数据集结构合法，但需要验证实际 selector 行为 | `trigger_eval.py` 在执行前完整校验所有 case，逐条执行 selector，报告混淆矩阵和 F1，并绑定 dataset/selector/runner 指纹；只检查 JSON 形状不算行为验收。 |
@@ -51,6 +52,7 @@
 | 意图评审去重 | `pdlc-v1` 已完成同一源码指纹的需求/设计评审 | 不再运行同类 `shared` reviewer；高风险时只补 fresh-context `blind` reviewer。 |
 | 盲审独立性 | reviewer 继承了实现者完整对话或设计理由 | 必须标记 `independent=false`，不得宣称完成独立盲审。 |
 | 审查失效 | reviewer 完成后生产源码变化 | 原结论标记 stale；closure 只复核原 finding，影响面扩大时最多再做一次风险审查。 |
+| Review 恢复 | finding 后中断或定向复核 | 当前不可变 Review round 保留与 fingerprint 一致的有界 evidence、impact、root cause 和分类；不得另写平行 finding 台账，也不得从旧 fingerprint 猜造详情。 |
 | Batch 预检缺口 | 计划缺少验收、依赖接口或最终验收 | 一次性报告全部缺口并阻塞；不得开始 Batch 1 或自行补技术方案。 |
 | Batch 重复派发 | 派发后连接中断，无法确认是否已创建执行任务 | 保留原 `dispatch_id` 并阻塞；不得再次创建同一 Batch。 |
 | Batch 回执伪装 | batch/dispatch 不匹配，tree 与 verified tree 不一致，或证据陈旧 | 拒绝完成当前 Batch，不派发下一批。 |
@@ -67,6 +69,7 @@
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
 | 离线 Skill 优化 | 用户明确授权改善 Converge，且已有重复 defect 证据 | 冻结 control、judge 和 held-out；每轮只改一个假设；奇数 independent paired samples 多数决且 hard acceptance 全过才建议晋升；无改善即停，不自动写 Skill 或 commit。 |
 | 效率基准 | 比较同一模型/宿主上的 control 与 candidate Skill | 每个固定场景记录激活输入 bytes/token、工具调用、fresh context、用户阻塞轮、完成/逃逸结果；安全与验收通过率不下降才可用更低开销候选替换 control。 |
+| 指标缺失 | 当前宿主没有提供签名 usage、工具调用或用户阻塞计数 | 回执只汇总签名 runner receipt 中明确给出的 `total_tokens`，其余显示 unavailable；不得由日志、等待或估算补造。 |
 | 父 Git 累计可见性 | Codex 单步角标只显示当前动作，工作区含多任务累计 diff | 父控制器直接读取 Git，展示已跟踪、未跟踪、增删行和二进制累计；脏基线注明不能归因于本任务。 |
 | 分层评估报告 | 已知和历史场景通过，探索仍有 finding 或存在未覆盖面 | 分别报告 `known_acceptance`、`history`、`exploration`、`uncovered`；不得写“未发现任何问题”。 |
 | 技术术语噪音 | 默认交付回执 | 说明结果、关键改动、验证覆盖、待处理，并保留用户可懂的交付轮数/问题数；不展示 `complete`、P0/P1/P2、lease、基线或命令。 |

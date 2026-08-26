@@ -12,6 +12,8 @@ from evidence_contract import run_evidence, workspace_source
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
+from runner_contract import fingerprint as runner_fingerprint, freeze_launch
+from worker_profile import fingerprint as worker_profile_fingerprint
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -110,6 +112,36 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
+    def test_json_reports_only_usage_present_in_signed_runner_receipts(self):
+        payload = state()
+        profile = {
+            "schema_version": 1, "worker_id": "research-1", "role": "research",
+            "runner_id": "openai-compatible-v1",
+            "requested": {"model": "glm-5.2", "reasoning_effort": "low"},
+            "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "low"},
+            "permissions": {"workspace": "read", "shell": False, "network": "egress"},
+            "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 1000},
+        }
+        profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
+        launch = freeze_launch(profile, "review", {"api_key_env": "GLM_API_KEY"})
+        result = {
+            "schema_version": 1, "runner_id": "openai-compatible-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": "request-1", "response_model": "glm-5.2",
+            "usage": {"total_tokens": 12}, "response_fingerprint": "a" * 64,
+        }
+        result["receipt_fingerprint"] = runner_fingerprint(result)
+        payload["ledger"].update(runner_launches=[launch], runner_results=[result])
+
+        report = json.loads(self.run_report(payload, "json").stdout)
+
+        self.assertEqual(
+            {"status": "available", "value": 12, "source": "signed_runner_receipts"},
+            report["execution_metrics"]["total_tokens"],
+        )
+        self.assertEqual("unavailable", report["execution_metrics"]["tool_calls"]["status"])
+        self.assertEqual("unavailable", report["execution_metrics"]["user_blocks"]["status"])
+
     def test_final_report_uses_parent_git_summary_and_dirty_baseline_note(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

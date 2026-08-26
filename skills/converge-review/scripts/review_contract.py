@@ -29,17 +29,29 @@ def _sha256(value, name):
     return value
 
 
-def _finding_fingerprint(finding):
+def _finding_record(finding):
     if not isinstance(finding, dict):
         raise ValueError("findings[] must be an object")
-    value = _string(finding.get("fingerprint"), "findings[].fingerprint")
-    for field in ("evidence", "impact", "root_cause"):
-        _string(finding.get(field), f"findings[].{field}")
-    if finding.get("scope") not in {"current", "pre-existing", "out-of-scope", "task-local"}:
+    fields = {
+        "fingerprint", "evidence", "impact", "root_cause", "scope", "classification",
+    }
+    if set(finding) != fields:
+        raise ValueError("findings[] fields are invalid")
+    record = {
+        "fingerprint": _sha256(finding.get("fingerprint"), "findings[].fingerprint"),
+        "evidence": _string(finding.get("evidence"), "findings[].evidence"),
+        "impact": _string(finding.get("impact"), "findings[].impact"),
+        "root_cause": _string(finding.get("root_cause"), "findings[].root_cause"),
+        "scope": finding.get("scope"),
+        "classification": finding.get("classification"),
+    }
+    if any(len(record[field]) > 500 for field in ("evidence", "impact", "root_cause")):
+        raise ValueError("findings[] text must be at most 500 characters")
+    if record["scope"] not in {"current", "pre-existing", "out-of-scope", "task-local"}:
         raise ValueError("findings[].scope is invalid")
-    if finding.get("classification") not in {"defect", "suggestion"}:
+    if record["classification"] not in {"defect", "suggestion"}:
         raise ValueError("findings[].classification is invalid")
-    return _sha256(value, "findings[].fingerprint")
+    return record
 
 
 def _strings(value, name, *, non_empty=False):
@@ -116,7 +128,8 @@ def normalize_result(value, reviewer_ref, request):
         raise ValueError("findings must be a list")
     if status != "findings" and findings:
         raise ValueError(f"{status} result cannot contain findings")
-    fingerprints = [_finding_fingerprint(finding) for finding in findings]
+    records = [_finding_record(finding) for finding in findings]
+    fingerprints = [record["fingerprint"] for record in records]
     if len(fingerprints) != len(set(fingerprints)):
         raise ValueError("finding fingerprints must be unique")
     if status == "findings" and not fingerprints:
@@ -135,6 +148,7 @@ def normalize_result(value, reviewer_ref, request):
         "mode": mode,
         "independent": independent,
         "finding_fingerprints": fingerprints,
+        "finding_records": records,
     }
 
 

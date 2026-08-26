@@ -22,4 +22,4 @@
 
 ## 诊断
 
-隐式触发最终由宿主决定，Skill 无法强制。未触发时先显式使用 `$converge`，再运行 `bash install.sh --doctor --target codex --offline` 检查入口、版本、必需 Provider manifest 和本地解析结果；不要通过安装器自动改写项目或全局 `AGENTS.md`。
+隐式触发最终由宿主决定，Skill 无法强制。未触发时先显式使用 `$converge`，再运行 `bash "$CONVERGE_SKILL_DIR/install.sh" --doctor --target codex --offline` 检查入口、版本、必需 Provider manifest 和本地解析结果；不要通过安装器自动改写项目或全局 `AGENTS.md`。

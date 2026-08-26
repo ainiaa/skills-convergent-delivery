@@ -17,3 +17,13 @@
 | 外部 CLI/API leaf 容易伪装成宿主 subagent | Codex launch 和 OpenAI-compatible HTTPS request 默认仅计划，真实执行要显式 opt-in；receipt 明确标为 `runner`，不进入 `runtime_binding`/`host_observed` | `scripts/test_codex_exec_runner.py`、`scripts/test_openai_compatible_runner.py` | 不伪造 Codex Desktop host bridge：宿主未公开 selector/tree receipt 前，runner 结果仍由 controller 复核 |
 
 外部取舍：Agent Skills 的 discovery → activation → execution 三段渐进披露支持按需读取 references；SkillHone 的“整 skill 文件夹、隔离评测、held-out gate”支持本轮将脚本、契约和文档作为同一候选改动，但其 Forgejo/持续优化服务超出当前任务。`external-subagents` 验证了用 `codex exec --json` 驱动外部 leaf 的可行性，但其独立 metadata/state 不进入本项目。模型参数以官方接口为准：OpenAI 的 [model/effort 指南](https://developers.openai.com/api/docs/guides/latest-model)、[DeepSeek API](https://api-docs.deepseek.com/api/create-chat-completion/) 与 [GLM 5.2 / OpenAI-compatible 指南](https://docs.bigmodel.cn/cn/guide/develop/others)。参考：[Agent Skills](https://github.com/agentskills/agentskills/blob/main/docs/home.mdx)、[SkillHone](https://github.com/Tencent/SkillHone)、[external-subagents](https://github.com/obra/external-subagents)。
+
+## 2026-08-26 Review 可恢复性与指标边界
+
+| 参考能力 | 采用 / 不采用 | 原因与对应行为测试 |
+|---|---|---|
+| [Skill Creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [Superpowers writing skills](https://github.com/obra/superpowers-skills/blob/main/skills/meta/writing-skills/SKILL.md) | 采用“先失败测试、最小可观察契约”的更新方式 | `test_review_contract.py` 先证明 finding 正在丢失，再验证 adapter 保留有界 `finding_records`；`test_delivery_next.py` 验证状态 round 只接受与 fingerprint 一致的记录。 |
+| Review 恢复 | 在现有 Review v3 request 内保存有界结构化 finding；不采用独立 finding ledger | 当前 round 已不可变且有 append-only transition；新增可写台账会制造第二真相。`test_delivery_next.py` 同时覆盖匹配接受和篡改拒绝。 |
+| Review 独立性 | `independent` 指 fresh reviewer 独立于实现者；spec 通过后可复用同一 reviewer 处理 blind quality，不采用每轴额外 worker | Protocol 的“全新上下文”排除实现理由和完整实现会话，不要求两轴各建上下文；现有状态机绑定有序单轴请求。`test_delivery_next.py` 覆盖同 reviewer 的有效状态，`test_review_axes_contract.py` 锁定 fresh-context 表述。 |
+| 语义风险 | 将 `risk_flags` 明确为冻结前的语义风险声明，路径扫描只作下限；不增加“自动语义扫描器” | 通用文本/代码扫描无法可靠判定金额、权限或兼容性语义，反而可能虚假降级；`test_task_profile.py` 保持任一已声明风险进入 high review，`test_skill_contracts.py` 锁定该边界说明。 |
+| [Harness Protocol](https://github.com/harnessprotocol/harness-protocol/blob/main/protocol/profile-schema.md) / 宿主 metrics | 只汇总已签名 runner 回执内的 `usage.total_tokens`；工具调用、用户阻塞及宿主未公开指标显式为 unavailable，不采用估算或模拟 bridge | `test_delivery_report.py` 验证 token 只来自签名 receipt；`test_runtime_adapter.py` 与 bridge 缺失压力场景继续拒绝伪造 `host_observed`。 |

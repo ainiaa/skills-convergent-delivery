@@ -69,6 +69,29 @@ class ReviewContractTest(unittest.TestCase):
         self.assertEqual("task-123", json.loads(result.stdout)["task_id"])
         self.assertEqual(64, len(json.loads(result.stdout)["request_fingerprint"]))
 
+    def test_normalize_result_keeps_bounded_structured_findings_for_recovery(self):
+        result = normalize_result({
+            "protocol_version": 3,
+            "mode": "shared",
+            "axis": "spec",
+            "phase": "initial",
+            "source_fingerprint": "a" * 64,
+            "independent": False,
+            "status": "findings",
+            "findings": [{
+                "fingerprint": "b" * 64,
+                "evidence": "scripts/example.py:10 fails the acceptance check",
+                "impact": "completion would report a false pass",
+                "root_cause": "the acceptance receipt is not source-bound",
+                "scope": "current",
+                "classification": "defect",
+            }],
+            "blocked_reason": None,
+        }, reviewer_ref="reviewer-1", request=review_request())
+
+        self.assertEqual(["b" * 64], result["finding_fingerprints"])
+        self.assertEqual("completion would report a false pass", result["finding_records"][0]["impact"])
+
     def test_legacy_result_schema_is_rejected(self):
         source = "a" * 64
         result = {

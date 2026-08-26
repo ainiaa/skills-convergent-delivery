@@ -164,6 +164,35 @@ def require_sha256(value, name, *, optional=False):
     return value
 
 
+def validate_finding_records(value, fingerprints):
+    if value is None:
+        return
+    fields = {
+        "fingerprint", "evidence", "impact", "root_cause", "scope", "classification",
+    }
+    if not isinstance(value, list) or len(value) != len(fingerprints):
+        raise ValueError("review finding_records are invalid")
+    records = []
+    for record in value:
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError("review finding_records are invalid")
+        normalized = {
+            "fingerprint": require_sha256(record.get("fingerprint"), "review finding record"),
+            "evidence": require_string(record.get("evidence"), "review finding evidence"),
+            "impact": require_string(record.get("impact"), "review finding impact"),
+            "root_cause": require_string(record.get("root_cause"), "review finding root cause"),
+            "scope": record.get("scope"),
+            "classification": record.get("classification"),
+        }
+        if any(len(normalized[field]) > 500 for field in ("evidence", "impact", "root_cause")) \
+                or normalized["scope"] not in {"current", "pre-existing", "out-of-scope", "task-local"} \
+                or normalized["classification"] not in {"defect", "suggestion"}:
+            raise ValueError("review finding_records are invalid")
+        records.append(normalized)
+    if [record["fingerprint"] for record in records] != fingerprints:
+        raise ValueError("review finding_records do not match fingerprints")
+
+
 def _path_contains(owner, changed):
     return owner == "." or changed == owner or changed.startswith(owner + "/")
 
@@ -215,7 +244,8 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
                 "axis", "phase", "source_fingerprint", "status", "reviewer_ref",
                 "mode", "independent", "finding_fingerprints", "task_id", "request_fingerprint",
             }
-            if not isinstance(request, dict) or set(request) != request_fields:
+            if not isinstance(request, dict) or not request_fields <= set(request) \
+                    or set(request) - request_fields not in (set(), {"finding_records"}):
                 raise ValueError("review request fields are invalid")
             require_sha256(request["request_fingerprint"], "review request fingerprint")
             require_string(request["task_id"], "review request task_id")
@@ -242,6 +272,7 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
                 raise ValueError("review finding_fingerprints are invalid")
             if request["status"] == "findings" and not findings:
                 raise ValueError("review findings require finding fingerprints")
+            validate_finding_records(request.get("finding_records"), findings)
             if require_sha256(request["source_fingerprint"], "review request source") != round_source:
                 raise ValueError("review request source must match its round")
     if rounds and rounds[-1]["source_fingerprint"] != source_fingerprint:

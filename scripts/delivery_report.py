@@ -22,6 +22,29 @@ TITLES = {
 }
 
 
+def execution_metrics(state):
+    token_values = []
+    for result in state["ledger"].get("runner_results", []):
+        usage = result.get("usage")
+        total = usage.get("total_tokens") if isinstance(usage, dict) else None
+        if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
+            token_values.append(total)
+    total_tokens = (
+        {"status": "available", "value": sum(token_values), "source": "signed_runner_receipts"}
+        if token_values else
+        {"status": "unavailable", "reason": "no_signed_total_token_usage"}
+    )
+    unavailable = {
+        "status": "unavailable",
+        "reason": "current_host_does_not_expose_signed_usage",
+    }
+    return {
+        "total_tokens": total_tokens,
+        "tool_calls": dict(unavailable),
+        "user_blocks": dict(unavailable),
+    }
+
+
 def build_report(state):
     validate_state(state, SimpleNamespace(strict_evidence=True))
     state = upgrade_state(state)
@@ -106,6 +129,7 @@ def build_report(state):
         "open_issues": open_issues,
         "next_action": state["handoff"]["next_action"],
         "workspace_changes": workspace_changes,
+        "execution_metrics": execution_metrics(state),
     }
     identity = {
         key: report[key]
@@ -114,6 +138,7 @@ def build_report(state):
             "verification_evidence_levels", "attested_check_count",
             "verification_note_level", "completed_rounds", "repaired_issues",
             "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
+            "execution_metrics",
         )
     }
     fingerprint = hashlib.sha256(

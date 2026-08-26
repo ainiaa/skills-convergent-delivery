@@ -2,7 +2,7 @@
 
 此文件定义 `converge` 的最终回复。它只决定如何表达已记录的事实，**不会触发新的检查、Agent、状态写入或修复轮次**。完整证据仍保存在 ledger、PDLC 产物和命令输出中。
 
-终态先使用 `scripts/delivery_report.py` 以严格完成门禁验证 Schema v10；旧 Schema、Evidence v1、`controller_attested` 验收或未绑定清场不能渲染为 ready。报告只把 fresh/pass 且具有 observed Evidence Receipt v2 的 acceptance 计入“已验证”；普通 pass check 仍显示为控制器记录，但不混入验证范围。新状态以 `handoff.open_issues: []` 保存逐项问题；报告分别展示“未通过验收数”和“其他待处理数”。Git 工作区不可读时最多输出 `attention`。
+终态先使用 `python3 "$CONVERGE_SKILL_DIR/scripts/delivery_report.py"` 以严格完成门禁验证 Schema v10；旧 Schema、Evidence v1、`controller_attested` 验收或未绑定清场不能渲染为 ready。报告只把 fresh/pass 且具有 observed Evidence Receipt v2 的 acceptance 计入“已验证”；普通 pass check 仍显示为控制器记录，但不混入验证范围。新状态以 `handoff.open_issues: []` 保存逐项问题；报告分别展示“未通过验收数”和“其他待处理数”。Git 工作区不可读时最多输出 `attention`。
 
 ## 先选用户状态
 
@@ -46,6 +46,7 @@
 - “已验证范围”只能由结构化 `ledger.acceptance` 的 fresh/pass observed Evidence Receipt v2，以及未来同等级的结构化 check receipt 派生；当前无 receipt 的 pass check 明示为控制器记录且不计入。不得把 `handoff.last_verification` 自由文本渲染为“已验证”。
 - 独立只读检查由 `converge-review` 按自己的结果格式输出，不复用交付完成文案。
 - 同一任务再次检查时只报告相对上一份回执的变化：新增发现、已解决项、状态变化；没有变化时使用短回执明确“无新增变化”。`delivery_report.py` 返回 `next_report_history`，控制器必须用独立 revision 写入 ledger；不得与阶段推进、验收变更或计划确认混写。
+- JSON 回执的 `execution_metrics` 只汇总已签名 runner 回执中明确给出的 `usage.total_tokens`；当前宿主未提供签名用量时，token、工具调用和用户阻塞均标为“不可用”。不得由提示词长度、日志行数、等待次数或模型估算补造指标。
 
 ## 需要用户决定时
 
