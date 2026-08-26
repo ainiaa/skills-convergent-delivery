@@ -78,6 +78,12 @@ def _non_empty_string(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def _requires_role_result(launch):
+    profile = launch["profile"]
+    return profile["role"] in {"scout", "reviewer"} \
+        and profile["permissions"]["workspace"] != "write" and not profile["permissions"]["shell"]
+
+
 def runner_results_complete(launches, results):
     """Validate runner receipts and report whether every frozen launch completed."""
     if not isinstance(launches, list) or not isinstance(results, list):
@@ -118,9 +124,17 @@ def runner_results_complete(launches, results):
                 required |= {"response_id", "response_model", "usage", "response_fingerprint"}
             else:
                 required |= {"error_type"}
+        role_result = result.get("role_result")
+        if role_result is not None:
+            required |= {"role_result"}
         if set(result) != required or result.get("schema_version") != 1 \
                 or result.get("status") not in statuses:
             raise ValueError("runner result fields are invalid")
+        if role_result is not None:
+            if not _requires_role_result(frozen_launch):
+                raise ValueError("runner result role result is invalid for this launch")
+            from role_result import validate_role_result
+            validate_role_result(role_result, frozen_launch)
         if runner_id in LOCAL_PROCESS_RUNNERS and (
             not _sha256(result["stdout_fingerprint"])
             or not _sha256(result["stderr_fingerprint"])
@@ -157,3 +171,34 @@ def runner_results_complete(launches, results):
     return bool(frozen) and set(frozen) == seen and all(
         result["status"] == "completed" for result in results
     )
+
+
+def bind_role_result(launch, receipt, role_result):
+    """Bind one validated read-only conclusion into the same immutable receipt."""
+    launch = validate_launch(launch)
+    if not _requires_role_result(launch):
+        raise ValueError("runner role result requires a read-only scout or reviewer launch")
+    runner_results_complete([launch], [receipt])
+    if receipt["status"] != "completed":
+        raise ValueError("runner role result requires a completed receipt")
+    from role_result import validate_role_result
+    role_result = validate_role_result(role_result, launch)
+    value = {
+        **{key: item for key, item in receipt.items() if key != "receipt_fingerprint"},
+        "role_result": role_result,
+    }
+    return {**value, "receipt_fingerprint": fingerprint(value)}
+
+
+def role_results_complete(launches, results):
+    """Whether every completed read-only launch has a valid, bound result contract."""
+    if not runner_results_complete(launches, results):
+        return False
+    results_by_launch = {result["launch_fingerprint"]: result for result in results}
+    for launch in launches:
+        launch = validate_launch(launch)
+        if _requires_role_result(launch):
+            role_result = results_by_launch[launch["launch_fingerprint"]].get("role_result")
+            if not isinstance(role_result, dict) or role_result.get("status") != "available":
+                return False
+    return True

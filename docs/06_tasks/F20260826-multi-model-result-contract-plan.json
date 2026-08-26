@@ -1,0 +1,203 @@
+{
+  "schema_version": 5,
+  "plan_id": "plan-converge-multi-model-result-contract-20260826",
+  "requirement_fingerprint": "9dfd7eafbd0de43a5a232972f815945fa9d741f91bf305ba5e39e16960233c96",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "40d319e966921e3c6256a5bfc4381f64d4c3358d",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "40d319e966921e3c6256a5bfc4381f64d4c3358d",
+      "commit_id": "40d319e966921e3c6256a5bfc4381f64d4c3358d",
+      "tree_hash": "2f5fe5def1d55ae4913de92ec783b535faab5af0",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "707366b5107f94eea02129d6700f4ec240b3cd6032465c5310af96ca24195727"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": ["每次多模型角色调用都只能产生与冻结 launch 绑定的受限结构化结果，且模型原文不进入结果契约或持久状态"],
+      "goal": "定义并验证跨 runner 一致的角色结果契约和解析边界。",
+      "owned_paths": [
+        "scripts/role_result.py",
+        "scripts/runner_launch.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/test_role_result.py",
+        "scripts/test_runner_launch.py",
+        "scripts/test_runner_lifecycle.py",
+        "references/multi-model.md",
+        "references/worker-runners.md"
+      ],
+      "depends_on": [],
+      "steps": ["先写跨 Codex、Claude 与 OpenAI-compatible 输出的正常、空输出、非法 JSON、错误角色和原文泄漏回归测试"],
+      "acceptance": [
+        "仅 scout 和 reviewer 可返回受限结果；implementer 不被误当作只读证据生产者",
+        "结果包含冻结 launch 指纹、固定角色、受限 findings/evidence/next action 和可验证指纹，不能保存 prompt 或原始模型文本",
+        "缺失或不合规输出显式标为 unavailable/invalid，不能由成功 exit code 推断有效结论",
+        "Codex 与 Claude 通过同一解析与校验路径，非多模型调用不会触发该逻辑"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_role_result.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runner_launch.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runner_lifecycle.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "task_kind": "feature",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": false},
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [{"kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md", "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"}]
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "7cabe48590f4a2826f67021204e70693f2267d73fb78e7f20b3adbfe861a7359"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": ["完成的 runner receipt 与其结构化角色结果以同一控制器状态转换持久化，并可在中断后安全交接"],
+      "goal": "把合规结果接入现有 ledger，而不创建第二状态真源或保存模型 transcript。",
+      "owned_paths": [
+        "scripts/delivery_next.py",
+        "scripts/delivery_state.py",
+        "scripts/runner_contract.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/test_delivery_next.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_runner_contract.py",
+        "scripts/test_runner_lifecycle.py",
+        "references/state-schema.md",
+        "references/multi-model.md"
+      ],
+      "depends_on": ["T1"],
+      "steps": ["先写状态迁移和恢复测试，再将 receipt 与已校验的结构化结果做原子追加"],
+      "acceptance": [
+        "每个成功完成的只读角色 launch 至多关联一个结构化结果，且两者冻结指纹、角色和顺序一致",
+        "在 receipt 已持久化而结构化结果未写入的旧状态上恢复会明确阻塞交接，不会重派或凭 exit code 继续",
+        "结构化结果可用于后续 evidence/review 输入，但自身不能推进验收、完成态或写入权限",
+        "既有非多模型 ledger 和状态升级保持兼容"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runner_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_delivery_next.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_delivery_state.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runner_lifecycle.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {"controller": "converge", "workflow_provider": {"id": "native-v1", "version": "1", "role": "workflow", "task_kind": "feature", "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json", "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee", "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery", "contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": false}, "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822", "sources": [{"kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md", "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"}]}, "stage_providers": {}},
+        "binding_fingerprint": "7cabe48590f4a2826f67021204e70693f2267d73fb78e7f20b3adbfe861a7359"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": ["控制器能为明确独立的 scout/reviewer 创建有上限的只读 fan-out 并以确定性 fan-in 交回结构化结论"],
+      "goal": "增加可验证的有限并行候选，不扩大为对等 Agent 团队。",
+      "owned_paths": [
+        "scripts/role_dispatch.py",
+        "scripts/role_fanout.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/delivery_state.py",
+        "scripts/test_role_dispatch.py",
+        "scripts/test_role_fanout.py",
+        "scripts/test_runner_lifecycle.py",
+        "scripts/test_delivery_state.py",
+        "references/multi-model.md",
+        "references/worker-runners.md",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "depends_on": ["T2"],
+      "steps": ["先写只读权限、最多三个互异任务、先持久化全部 launch、稳定排序汇总和失败阻塞的测试"],
+      "acceptance": [
+        "fan-out 仅接受 controller 生成的 scout/reviewer dispatch，所有 profile 都是 read-only，禁止 implementer 和任何 workspace-write profile",
+        "控制器在启动副作用前持久化所有 launch；单个未知或无合规结果的分支不会被自动重派且会阻塞 fan-in",
+        "fan-in 只按冻结 task id 稳定汇总结构化结果，不传递 peer 消息、完整会话或原始文本",
+        "默认单角色路径与非多模型流程行为不变"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_role_dispatch.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_role_fanout.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runner_lifecycle.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {"scope": "task", "recursive_planning": false},
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {"controller": "converge", "workflow_provider": {"id": "native-v1", "version": "1", "role": "workflow", "task_kind": "feature", "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json", "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee", "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery", "contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": false}, "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822", "sources": [{"kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md", "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"}]}, "stage_providers": {}},
+        "binding_fingerprint": "7cabe48590f4a2826f67021204e70693f2267d73fb78e7f20b3adbfe861a7359"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "多模型文本不能越过结构化结果契约成为状态或验收事实",
+    "结构化结果、receipt 与恢复状态保持一一可核对且无原文落盘",
+    "fan-out 仅适用于受限只读独立任务，单写入者和默认顺序路径不变",
+    "全量检查通过，验证期间不发起真实模型/API 请求或外发操作"
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "多模型协作结果是否保留原始模型文本或完整会话？",
+      "resolution": "否；仅保留与 launch 绑定、受限且已校验的结构化结论，原文只在当前调用内短暂存在。",
+      "source": "user"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "是否引入 Claude Teams 式成员互聊、任务自领取或嵌套团队？",
+      "resolution": "否；仅由 controller 派发和汇总，worker 不能自行派发，避免增加第二状态真源和清场责任。",
+      "source": "user"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "fan-out 是否允许写工作区或自动重派失败分支？",
+      "resolution": "否；仅 scout/reviewer 的只读、明确独立任务可并发，未知或失败分支阻塞交接，不能自动重派。",
+      "source": "user"
+    },
+    {
+      "id": "D4",
+      "status": "resolved",
+      "question": "本轮验证是否发起真实模型调用？",
+      "resolution": "不发起；仅验证契约、命令构造、状态转换和 mock runner 行为。",
+      "source": "user"
+    }
+  ]
+}

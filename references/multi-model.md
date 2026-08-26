@@ -29,9 +29,13 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 ## 受限 CLI 派发边界
 
-对 `mode=agent`，`scripts/role_dispatch.py` 一律返回 `executor=external_runner`，并携带完整冻结 profile。controller 使用 `scripts/runner_lifecycle.py` 执行单次闭环：先把 launch 原子追加到当前 run 的 ledger，再在 lease 外启动 CLI，最后原子追加 result；launch 已记录而 result 缺失时恢复必须交接或阻塞，不能重派。lifecycle 的 stdout 同时返回一个**仅当前调用有效**的 `output`：`available` 时有受限长度的最终模型文本，`unavailable` 时不得以成功 exit code 猜测内容。账本只写 `result` receipt，绝不写 `output`、prompt、密钥或审查原文。controller 必须先将 `output` 转为既有结构化 evidence/review 输入并核验，不能因模型文本自行推进验收或状态。Codex 的 `codex_exec_runner.py` 与 Claude 的 `claude_exec_runner.py` 都由冻结的 profile 驱动受限 CLI：显式传入 model、reasoning effort 和工作区边界，且不依赖父会话模型、不创建宿主原生子代理，也不伪造宿主任务树或完成回执。
+对 `mode=agent`，`scripts/role_dispatch.py` 一律返回 `executor=external_runner`，并携带完整冻结 profile。controller 使用 `scripts/runner_lifecycle.py` 执行单次闭环：先把 launch 原子追加到当前 run 的 ledger，再在 lease 外启动 CLI，最后把 receipt 与已校验的 `role_result` 作为**同一条** `runner_results` 记录原子追加；launch 已记录而 result 缺失时恢复必须交接或阻塞，不能重派。runner 的低层 `output` 仅在当前调用内短暂存在；lifecycle 对只读的 scout/reviewer 把它按固定 JSON 契约转换为带 launch 指纹的 `role_result`，不返回原文。空输出、非 JSON 或字段不合规都会显式标为 `unavailable`/`invalid`，不能由成功 exit code 猜测内容；implementer 也不会被误当作只读结论生产者。账本绝不写 `output`、prompt、密钥或审查原文；已完成的只读 receipt 若缺少绑定的 `role_result`，恢复会阻止下一次 dispatch 并要求交接，不能补猜或自动重派。后续 controller 必须核验 `role_result` 后才可将其转换为既有 structured evidence/review 输入，且其本身不能推进验收或状态。Codex 的 `codex_exec_runner.py` 与 Claude 的 `claude_exec_runner.py` 都由冻结的 profile 驱动受限 CLI：显式传入 model、reasoning effort 和工作区边界，且不依赖父会话模型、不创建宿主原生子代理，也不伪造宿主任务树或完成回执。
 
 当前 Codex CLI 没有可验证的轮次上限参数：不把 `max_turns` 伪称为 Codex CLI 已强制的限制；Codex 仅强制 timeout 与输出字节上限。Claude CLI 接收冻结的 `--max-turns`。`max_turns` 仍保留在统一 profile 中供 controller 规划和跨 runner 比较，但 Codex 上的超时才是实际的有限执行边界。
+
+## 受控只读 fan-out
+
+默认仍是单一下一动作。只有 controller 已证明任务彼此独立时，才可调用 `role_dispatch.plan_read_only_fanout` 或 `role_dispatch.py --fanout <tasks.json>` 创建 1–3 个固定 task id 的 scout/reviewer dispatch；任何可写 workspace 或可用 shell 的 profile 都会被拒绝。`runner_lifecycle.run_fanout` 与 `runner_lifecycle.py --fanout` 消费该冻结 dispatch 和 task-id→prompt 的 JSON 输入：先以一次原子状态更新追加**全部** launch，再并发执行，随后按冻结 task id 顺序追加 receipt 并调用 `role_fanout.fan_in` 汇总。任一 branch 没有 `completed` receipt 或没有 `available` 的结构化结果，fan-in 失败并保持交接阻塞；不会自动重派，也不会把原文、peer 消息或完整会话传给其他 worker。该入口不改动 `role_flow.py` 的默认单角色路径，也不允许并行 implementer 或并行写工作区。
 
 本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob`。Codex 以 sandbox 强制边界，Claude 使用 `--bare --strict-mcp-config --input-format text`、冻结工具与 `acceptEdits`，不把它表述为 OS sandbox。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
 

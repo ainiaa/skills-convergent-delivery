@@ -149,7 +149,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 - `completed_rounds`：0–2；
 - append-only `repair_fingerprints` 与 `checks`；
 - 当前 `acceptance` 及被替换事实的 `acceptance_history`；
-- append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果才能写入 `complete`；
+- append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
 `host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。
@@ -172,6 +172,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" path --repo <repo> --tas
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" list --workspace <absolute-worktree>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" doctor --workspace <absolute-worktree>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" write --input - --repo-id <repo> --task-key <task> \
+  --run-id <run> --writer-id <writer> --expected-revision <revision>
+python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" append-runner-launches --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --run-id <run> \
   --writer-id <writer> --revision <revision>

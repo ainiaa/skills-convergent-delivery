@@ -26,7 +26,7 @@ from delivery_progress import plan_projection_fingerprint
 from evidence_contract import (
     valid_evidence_receipts, validate_source_receipt, workspace_source,
 )
-from runner_contract import runner_results_complete
+from runner_contract import role_results_complete, runner_results_complete
 from task_profile import freeze_routing, infer_path_risks
 
 
@@ -626,6 +626,7 @@ def validate_state(state, arguments):
     runner_launches = ledger.get("runner_launches", [])
     runner_results = ledger.get("runner_results", [])
     runner_complete = runner_results_complete(runner_launches, runner_results)
+    runner_role_results_complete = role_results_complete(runner_launches, runner_results)
     report_history = ledger.get("report_history")
     if report_history is not None:
         if not isinstance(report_history, dict) or set(report_history) != {
@@ -725,6 +726,8 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a passing Evidence Receipt for every acceptance")
         if runner_launches and not runner_complete:
             raise ValueError("complete state requires every frozen runner launch to complete")
+        if runner_launches and not runner_role_results_complete:
+            raise ValueError("complete state requires every completed read-only runner launch to have a structured role result")
         expected_final = "verify-final" if workflow_provider == "native-v1" else "pdlc-run"
         if stage != expected_final:
             raise ValueError("complete state must follow final verification")

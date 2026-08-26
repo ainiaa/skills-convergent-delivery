@@ -12,7 +12,8 @@ from evidence_contract import run_evidence, workspace_source
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
-from runner_contract import fingerprint as runner_fingerprint, freeze_launch
+from role_result import result_from_output
+from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from worker_profile import fingerprint as worker_profile_fingerprint
 
 
@@ -131,6 +132,10 @@ class DeliveryReportTest(unittest.TestCase):
             "usage": {"total_tokens": 12}, "response_fingerprint": "a" * 64,
         }
         result["receipt_fingerprint"] = runner_fingerprint(result)
+        result = bind_role_result(launch, result, result_from_output(launch, {
+            "status": "available",
+            "content": '{"findings":[{"summary":"usage reported","evidence":["provider receipt"]}],"next_action":"continue"}',
+        }))
         payload["ledger"].update(runner_launches=[launch], runner_results=[result])
 
         report = json.loads(self.run_report(payload, "json").stdout)

@@ -3,12 +3,16 @@
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
 import delivery_state
 from delivery_next import upgrade_state
-from runner_launch import execute_dispatch_launch, plan_dispatch_launch
+from role_result import result_from_output
+from runner_launch import execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch
+from runner_contract import bind_role_result
+from role_fanout import fan_in, tasks_for_fanout
 
 
 def _arguments(arguments, revision):
@@ -34,6 +38,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    prompt = prompt_for_dispatch(dispatch, prompt)
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
@@ -47,12 +52,65 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
             or not isinstance(execution["output"], dict):
         raise ValueError("runner execution result is invalid")
-    receipt = execution["receipt"]
+    receipt, role_result = _completed_execution(launch, execution)
     revision = append(_arguments(arguments, revision), "runner_results", receipt)
     return {
         "status": receipt["status"], "launch": launch, "result": receipt,
-        "output": execution["output"], "revision": revision,
+        "role_result": role_result, "revision": revision,
     }
+
+
+def _completed_execution(launch, execution):
+    if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
+            or not isinstance(execution["output"], dict):
+        raise ValueError("runner execution result is invalid")
+    receipt = execution["receipt"]
+    role_result = result_from_output(launch, execution["output"])
+    if receipt.get("status") == "completed" and role_result["role"] in {"scout", "reviewer"}:
+        receipt = bind_role_result(launch, receipt, role_result)
+    return receipt, role_result
+
+
+def run_fanout(arguments, dispatch, prompts, *, load=load_current,
+               append_launches=delivery_state.append_runner_records,
+               append=delivery_state.append_runner_record, execute=execute_dispatch_launch):
+    """Persist all bounded read-only launches before concurrently executing and merging them."""
+    if arguments.allow_execute is not True:
+        raise ValueError("runner lifecycle requires explicit --allow-execute")
+    tasks = tasks_for_fanout(dispatch)
+    if not isinstance(prompts, dict) or set(prompts) != {task["task_id"] for task in tasks}:
+        raise ValueError("fan-out prompts must match the frozen task ids")
+    state = load(arguments)
+    prepared = []
+    for task in tasks:
+        prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]])
+        launch = plan_dispatch_launch(
+            task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
+            claude_bin=arguments.claude_bin,
+        )
+        prepared.append({"task_id": task["task_id"], "launch": launch, "prompt": prompt})
+    if any(item["launch"]["runner_id"] == "openai-compatible-v1" for item in prepared) \
+            and arguments.allow_network is not True:
+        raise ValueError("external runner lifecycle requires explicit --allow-network")
+    revision = append_launches(
+        _arguments(arguments, state["revision"]), "runner_launches",
+        [item["launch"] for item in prepared],
+    )
+    with ThreadPoolExecutor(max_workers=len(prepared)) as executor:
+        futures = [
+            executor.submit(
+                execute, item["launch"], item["prompt"], allow_execute=True,
+                allow_network=arguments.allow_network,
+            )
+            for item in prepared
+        ]
+        executions = [future.result() for future in futures]
+    completed = []
+    for item, execution in zip(prepared, executions):
+        receipt, role_result = _completed_execution(item["launch"], execution)
+        revision = append(_arguments(arguments, revision), "runner_results", receipt)
+        completed.append({"task_id": item["task_id"], "role_result": role_result})
+    return {"status": "completed", "fan_in": fan_in(dispatch, completed), "revision": revision}
 
 
 def main():
@@ -69,9 +127,15 @@ def main():
     parser.add_argument("--claude-bin", default="claude")
     parser.add_argument("--allow-execute", action="store_true")
     parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument("--fanout", action="store_true")
     arguments = parser.parse_args()
     try:
-        result = run_dispatch(arguments, json.load(arguments.dispatch), arguments.input.read())
+        dispatch = json.load(arguments.dispatch)
+        prompt = arguments.input.read()
+        result = (
+            run_fanout(arguments, dispatch, json.loads(prompt))
+            if arguments.fanout else run_dispatch(arguments, dispatch, prompt)
+        )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:

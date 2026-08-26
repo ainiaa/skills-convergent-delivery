@@ -12,6 +12,7 @@ from codex_exec_runner import command_for_launch as codex_command_for_launch
 from codex_exec_runner import execute_launch as execute_codex_launch
 from codex_exec_runner import plan_launch as plan_codex_launch
 from openai_compatible_runner import PROVIDERS, execute_request, plan_request
+from role_result import prompt_for_role
 from runner_contract import validate_launch
 from runner_registry import validate_runner_profile
 
@@ -31,6 +32,11 @@ def _profile(dispatch):
             or dispatch.get("profile_fingerprint") != profile["profile_fingerprint"]:
         raise ValueError("external runner dispatch profile fingerprint is invalid")
     return profile
+
+
+def prompt_for_dispatch(dispatch, prompt):
+    """Apply the read-only result contract after validating the frozen dispatch."""
+    return prompt_for_role(_profile(dispatch)["role"], prompt)
 
 
 def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude"):

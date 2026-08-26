@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 多模型协作改为结构化、可恢复的结果闭环：只读 scout/reviewer 只能返回与冻结 launch 绑定的受限 JSON 结论，原始模型文本不再经 lifecycle 返回或进入 ledger；完成 receipt 与结论同条原子记录，缺少结论的历史 receipt 会交接阻塞而非重派。新增 controller-owned、最多三个任务的只读 fan-out/fan-in：全部 launch 先原子持久化，再并发执行并按 task id 稳定汇总；禁止 writer、peer 消息、共享任务队列与自动重试，默认单角色和非多模型路径不变。
+- 修复 fan-out 两个完成性缺口：`invalid`/`unavailable` 的只读角色结果不再满足完成门槛，必须交接阻塞；`role_dispatch.py --fanout` 与 `runner_lifecycle.py --fanout` 现为明确、可测试的 CLI 接线，不再只停留在 Python helper。
 - README 将新手快速开始前置：安装、刷新、首个可复制提示词与五个 Skill 的选择表在能力总览之前；补充多模型的显式触发、默认角色分工、示例与证据边界，完整运行时示例和维护说明仍保留在后文链接。
 - 补强 Skill 运行与审查闭环：文档 helper 统一从对应 Skill 根目录解析；Review v3 在不可变 round 内保留有界 `finding_records` 以支持恢复和定向复核，当前 round 的 finding 不再允许省略 records、历史 round 保持只读兼容；风险画像明确要求语义声明、路径标记仅作下限；交付 JSON 仅汇总指纹校验 runner receipt 的 `total_tokens`，不冒充远端签名，宿主未公开的工具调用和用户阻塞明确标为 unavailable。同步校准可信本地当前会话的清场规则、Review 的 fresh-context 语义及其契约回归测试。
 - 明确模型事实门禁：模型自述、自然语言回执或计划文本不能替代已执行命令、结构化证据、Git/状态机结果或宿主终态；同时不把恶意篡改防护扩展为签名服务、后台守护或第二状态。

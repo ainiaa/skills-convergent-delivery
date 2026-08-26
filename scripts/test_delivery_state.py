@@ -13,6 +13,8 @@ from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
 from delivery_state import validate_transition
+from role_result import result_from_output
+from runner_contract import bind_role_result
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
@@ -330,7 +332,7 @@ class DeliveryStateTest(unittest.TestCase):
             env=self.environment(state_home),
         )
 
-    def local_launch(self, workspace):
+    def local_launch(self, workspace, prompt="Collect evidence"):
         profile = {
             "schema_version": 1, "worker_id": "scout-1", "role": "scout",
             "runner_id": "codex-exec-v1",
@@ -340,19 +342,25 @@ class DeliveryStateTest(unittest.TestCase):
             "budget": {"max_turns": 1, "timeout_seconds": 60, "max_output_chars": 1000},
         }
         profile["profile_fingerprint"] = profile_fingerprint(profile)
-        return freeze_launch(profile, "Collect evidence", {
+        return freeze_launch(profile, prompt, {
             "codex_bin": "/usr/bin/codex", "binary_fingerprint": "a" * 64,
             "sandbox": "read-only", "workspace": workspace,
         })
 
-    def local_result(self, launch):
+    def local_result(self, launch, *, with_role_result=True):
         result = {
             "schema_version": 1, "runner_id": "codex-exec-v1",
             "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
             "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
             "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "medium",
         }
-        return {**result, "receipt_fingerprint": runner_fingerprint(result)}
+        receipt = {**result, "receipt_fingerprint": runner_fingerprint(result)}
+        if not with_role_result:
+            return receipt
+        return bind_role_result(launch, receipt, result_from_output(launch, {
+            "status": "available",
+            "content": '{"findings":[{"summary":"focused result","evidence":["test"]}],"next_action":"continue"}',
+        }))
 
     def test_write_requires_current_lease_and_monotonic_revision(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -413,6 +421,80 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertNotEqual(0, retried.returncode)
             self.assertIn("unknown", retried.stderr)
+
+    def test_read_only_fanout_launches_are_persisted_together_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launches = [
+                self.local_launch(initial["workspace"], prompt="First isolated scout"),
+                self.local_launch(initial["workspace"], prompt="Second isolated scout"),
+            ]
+
+            persisted = self.append_runner(
+                root, state_home, "append-runner-launches", launches, 0,
+            )
+
+            self.assertEqual(0, persisted.returncode, persisted.stderr)
+            recorded = json.loads(self.state_path(state_home).read_text(encoding="utf-8"))
+            self.assertEqual(1, recorded["revision"])
+            self.assertEqual(launches, recorded["ledger"]["runner_launches"])
+
+    def test_completed_legacy_read_only_receipt_without_a_result_blocks_another_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+            self.assertEqual(
+                0, self.append_runner(root, state_home, "append-runner-launch", launch, 0).returncode,
+            )
+            self.assertEqual(
+                0,
+                self.append_runner(
+                    root, state_home, "append-runner-result", self.local_result(launch, with_role_result=False), 1,
+                ).returncode,
+            )
+
+            blocked = self.append_runner(
+                root, state_home, "append-runner-launch",
+                self.local_launch(initial["workspace"], prompt="A different bounded request"), 2,
+            )
+
+            self.assertNotEqual(0, blocked.returncode)
+            self.assertIn("structured role result", blocked.stderr)
+
+    def test_invalid_read_only_result_blocks_another_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+            self.assertEqual(
+                0, self.append_runner(root, state_home, "append-runner-launch", launch, 0).returncode,
+            )
+            receipt = self.local_result(launch, with_role_result=False)
+            invalid = bind_role_result(launch, receipt, result_from_output(launch, {
+                "status": "available", "content": "not json",
+            }))
+            self.assertEqual(
+                0, self.append_runner(root, state_home, "append-runner-result", invalid, 1).returncode,
+            )
+
+            blocked = self.append_runner(
+                root, state_home, "append-runner-launch",
+                self.local_launch(initial["workspace"], prompt="Different request"), 2,
+            )
+
+            self.assertNotEqual(0, blocked.returncode)
+            self.assertIn("structured role result", blocked.stderr)
 
     def test_current_state_write_preserves_the_canonical_binding_and_worker_registry(self):
         with tempfile.TemporaryDirectory() as directory:

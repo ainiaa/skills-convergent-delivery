@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Tests for the host-neutral fixed-role dispatch plan."""
 
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from multi_model import resolve
 from role_dispatch import plan_dispatch
+
+
+ROLE_DISPATCH = Path(__file__).with_name("role_dispatch.py")
 
 
 def state(**overrides):
@@ -85,6 +91,22 @@ class RoleDispatchTest(unittest.TestCase):
                 routing="frozen", route="planned", evidence="missing",
                 context_isolation_benefit=True,
             ))
+
+    def test_cli_exposes_the_explicit_read_only_fanout_plan(self):
+        tasks = Path(self.temporary.name) / "fanout.json"
+        tasks.write_text(json.dumps([
+            {"task_id": "b", "role": "reviewer"}, {"task_id": "a", "role": "scout"},
+        ]), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(ROLE_DISPATCH), "--workspace", self.temporary.name, "--fanout", str(tasks)],
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual("external_runner_fanout", plan["executor"])
+        self.assertEqual(["a", "b"], [item["task_id"] for item in plan["tasks"]])
 
 
 if __name__ == "__main__":

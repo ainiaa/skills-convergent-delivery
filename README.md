@@ -41,7 +41,7 @@
 使用 $converge 使用多模型配合开发修复支付重试问题：先按角色动态选择下一步，实施用 Luna high，遇到语义冲突再交 Sol high；运行相关测试，不要发布。
 ```
 
-可以在同一句话指定角色，或说“使用 `<profile>` 配置”。角色不等于常驻 Agent：只有上下文隔离或独立审查确有收益时才创建 Agent；同一工作区只有一个写入者。Codex 与 Claude 均从同一冻结 profile 派发，并以“持久化 launch → 执行 → 持久化 result”闭环；二者只读限制的实现不同，Claude CLI permission 不是 OS sandbox。inline/tool 与非多模型路径不会创建 runner 生命周期。多模型结论不能替代真实测试、源码证据或发布授权；宿主无法真实指定或查询 worker 时会交接，不伪造派发。配置模板、优先级和外部只读审计见 [多模型协作](references/multi-model.md)。
+可以在同一句话指定角色，或说“使用 `<profile>` 配置”。角色不等于常驻 Agent：只有上下文隔离或独立审查确有收益时才创建 Agent；同一工作区只有一个写入者。Codex 与 Claude 均从同一冻结 profile 派发，并以“持久化 launch → 执行 → 持久化 result”闭环；只读 scout/reviewer 的输出必须是受限 JSON 结论，原文不会落入状态。明确独立的只读任务可由 controller 受控 fan-out（最多三个）后确定性汇总；它不允许并行写入、成员互聊或自动重试。二者只读限制的实现不同，Claude CLI permission 不是 OS sandbox。inline/tool 与非多模型路径不会创建 runner 生命周期。多模型结论不能替代真实测试、源码证据或发布授权；宿主无法真实指定或查询 worker 时会交接，不伪造派发。配置模板、优先级和外部只读审计见 [多模型协作](references/multi-model.md)。
 
 ## 为什么会有它
 

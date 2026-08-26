@@ -3,7 +3,11 @@
 
 import unittest
 
-from runner_contract import fingerprint as contract_fingerprint, freeze_launch, runner_results_complete, validate_launch
+from role_result import result_from_output
+from runner_contract import (
+    bind_role_result, fingerprint as contract_fingerprint, freeze_launch, role_results_complete,
+    runner_results_complete, validate_launch,
+)
 from worker_profile import fingerprint
 
 
@@ -104,6 +108,48 @@ class RunnerContractTest(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "model"):
             runner_results_complete([launch], [result])
+
+    def test_completed_read_only_receipt_requires_a_bound_structured_result_for_reuse(self):
+        launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
+        receipt = {
+            "schema_version": 1, "runner_id": "openai-compatible-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": "request-1", "response_model": "glm-5.2", "usage": None,
+            "response_fingerprint": "a" * 64,
+        }
+        receipt["receipt_fingerprint"] = contract_fingerprint(receipt)
+        role_result = result_from_output(launch, {
+            "status": "available",
+            "content": '{"findings":[{"summary":"missing check","evidence":["test"]}],"next_action":"verify"}',
+        })
+
+        self.assertFalse(role_results_complete([launch], [receipt]))
+        completed = bind_role_result(launch, receipt, role_result)
+        self.assertTrue(role_results_complete([launch], [completed]))
+        self.assertNotIn("content", str(completed))
+
+        completed["role_result"]["role"] = "reviewer"
+        completed["receipt_fingerprint"] = contract_fingerprint({
+            key: item for key, item in completed.items() if key != "receipt_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "role result"):
+            runner_results_complete([launch], [completed])
+
+    def test_invalid_or_unavailable_read_only_result_is_not_complete_for_future_dispatch(self):
+        launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
+        receipt = {
+            "schema_version": 1, "runner_id": "openai-compatible-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": "request-1", "response_model": "glm-5.2", "usage": None,
+            "response_fingerprint": "a" * 64,
+        }
+        receipt["receipt_fingerprint"] = contract_fingerprint(receipt)
+
+        for output in ({"status": "unavailable"}, {"status": "available", "content": "not json"}):
+            with self.subTest(output=output):
+                completed = bind_role_result(launch, receipt, result_from_output(launch, output))
+                self.assertTrue(runner_results_complete([launch], [completed]))
+                self.assertFalse(role_results_complete([launch], [completed]))
 
     def test_rejects_malformed_completed_or_unknown_receipt_fields(self):
         launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
