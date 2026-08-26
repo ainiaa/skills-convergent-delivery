@@ -271,7 +271,7 @@ class DeliveryNextTest(unittest.TestCase):
             self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
             profile = {
-                "schema_version": 1, "worker_id": "research-1", "role": "research",
+                "schema_version": 1, "worker_id": "scout-1", "role": "scout",
                 "runner_id": "openai-compatible-v1",
                 "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
                 "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},

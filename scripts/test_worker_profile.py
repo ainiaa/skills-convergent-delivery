@@ -9,8 +9,8 @@ from worker_profile import fingerprint, validate_worker_profile
 def profile(**overrides):
     value = {
         "schema_version": 1,
-        "worker_id": "research-1",
-        "role": "research",
+        "worker_id": "scout-1",
+        "role": "scout",
         "runner_id": "openai-compatible-v1",
         "requested": {"model": "deepseek-chat", "reasoning_effort": "high"},
         "effective": {"provider": "deepseek", "model": "deepseek-chat", "reasoning_effort": "high"},
@@ -47,6 +47,20 @@ class WorkerProfileTest(unittest.TestCase):
         }), validate_worker_profile(profile(permissions={
             "workspace": "read", "shell": True, "network": "egress"
         })))
+
+    def test_recognizes_the_fixed_roles_and_only_implementers_may_write(self):
+        for role in (
+            "router", "scout", "specifier", "implementer", "verifier", "reviewer", "adjudicator",
+        ):
+            with self.subTest(role=role):
+                permissions = {"workspace": "write" if role == "implementer" else "read", "shell": True, "network": "egress"}
+                self.assertEqual(
+                    profile(worker_id=f"{role}-1", role=role, permissions=permissions),
+                    validate_worker_profile(profile(worker_id=f"{role}-1", role=role, permissions=permissions)),
+                )
+
+        with self.assertRaisesRegex(ValueError, "role"):
+            validate_worker_profile(profile(role="research"))
 
 
 if __name__ == "__main__":

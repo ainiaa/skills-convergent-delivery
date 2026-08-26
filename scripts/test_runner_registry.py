@@ -10,8 +10,8 @@ from worker_profile import fingerprint
 def profile(runner_id="codex-exec-v1", **overrides):
     value = {
         "schema_version": 1,
-        "worker_id": "implementation-1",
-        "role": "implementation",
+        "worker_id": "implementer-1",
+        "role": "implementer",
         "runner_id": runner_id,
         "requested": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
         "effective": {"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
@@ -35,7 +35,7 @@ class RunnerRegistryTest(unittest.TestCase):
     def test_validates_runner_specific_permissions_and_model_identity(self):
         self.assertEqual(profile(), validate_runner_profile(profile()))
         external = profile(
-            "openai-compatible-v1", role="research",
+            "openai-compatible-v1", role="scout",
             requested={"model": "glm-5.2", "reasoning_effort": "high"},
             effective={"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
             permissions={"workspace": "read", "shell": False, "network": "egress"},
@@ -43,7 +43,7 @@ class RunnerRegistryTest(unittest.TestCase):
         self.assertEqual(external, validate_runner_profile(external))
 
         no_egress = profile(
-            "openai-compatible-v1", role="research",
+            "openai-compatible-v1", role="scout",
             requested={"model": "glm-5.2", "reasoning_effort": "high"},
             effective={"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
             permissions={"workspace": "read", "shell": False, "network": "none"},
@@ -58,6 +58,16 @@ class RunnerRegistryTest(unittest.TestCase):
         wrong = profile(effective={"provider": "deepseek", "model": "deepseek-chat", "reasoning_effort": "high"})
         with self.assertRaisesRegex(ValueError, "codex"):
             validate_runner_profile(wrong)
+
+    def test_rejects_roles_outside_each_runner_boundary(self):
+        with self.assertRaisesRegex(ValueError, "role"):
+            validate_runner_profile(profile(role="verifier", permissions={
+                "workspace": "read", "shell": True, "network": "egress"
+            }))
+        with self.assertRaisesRegex(ValueError, "role"):
+            validate_runner_profile(profile("openai-compatible-v1", role="adjudicator", permissions={
+                "workspace": "read", "shell": False, "network": "egress"
+            }))
 
 
 if __name__ == "__main__":

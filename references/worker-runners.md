@@ -15,8 +15,8 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 ```json
 {
   "schema_version": 1,
-  "worker_id": "research-1",
-  "role": "research",
+  "worker_id": "scout-1",
+  "role": "scout",
   "runner_id": "openai-compatible-v1",
   "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
   "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
@@ -28,9 +28,9 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 
 `requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是 controller 的有限派发预算；`max_output_chars` 兼容既有 Profile v1 名称，但 adapter 按 UTF-8 输出字节上限执行。adapter 强制 timeout，不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
 
-- `implementation` 可使用 `codex-exec-v1` 的 isolated-worktree 写权限；`reviewer`、`research` 永远不可写。
+- 七个固定角色为 `router`、`scout`、`specifier`、`implementer`、`verifier`、`reviewer` 与 `adjudicator`。只有 `implementer` 可使用 `codex-exec-v1` 的 isolated-worktree 写权限；其他角色永远不可写。
 - `codex-exec-v1` 只接受 `effective.provider=openai`、`shell=true`，且 requested/effective 的 model 与 effort 必须完全相同；Codex CLI 不能单独禁用 shell 时不接受 `shell=false` profile。计划冻结 CLI 可执行文件的绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传给 `codex exec ... -`，不进入命令参数。
-- `openai-compatible-v1` 仅接受 `reviewer|research`、`workspace=none|read`、`shell=false`。当前仅支持已验证的 Zhipu origin、`GLM_API_KEY` 与注册的 effort mapping；请求没有 tools、shell 或工作区写入能力。未验证 provider 不发送猜测的 wire 字段。
+- `openai-compatible-v1` 仅接受 `reviewer|scout`、`workspace=none|read`、`shell=false`。当前仅支持已验证的 Zhipu origin、`GLM_API_KEY` 与注册的 effort mapping；请求没有 tools、shell 或工作区写入能力。未验证 provider 不发送猜测的 wire 字段。
 
 ## 真实执行与密钥
 
@@ -44,4 +44,4 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 
 `codex-exec-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。二者当前是受限叶子执行器，不是 Codex Desktop 原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
 
-多模型模式默认使用 Codex reviewer；仅配置 `audit=glm-5.2/high` 时，GLM 审计才把响应文本即时返回给当前调用者。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。
+多模型模式默认使用 Codex reviewer；仅配置 `reviewer=glm-5.2/high` 时，GLM 审计才把响应文本即时返回给当前调用者。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。

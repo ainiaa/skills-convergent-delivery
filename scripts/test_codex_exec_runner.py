@@ -15,7 +15,7 @@ def profile(**overrides):
     value = {
         "schema_version": 1,
         "worker_id": "implementation-1",
-        "role": "implementation",
+        "role": "implementer",
         "runner_id": "codex-exec-v1",
         "requested": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
         "effective": {"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},

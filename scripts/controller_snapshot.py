@@ -32,6 +32,7 @@ CONTROLLER_FILES = (
     "scripts/codex_exec_runner.py",
     "scripts/openai_compatible_runner.py",
     "scripts/multi_model.py",
+    "scripts/role_flow.py",
     "scripts/provider_contract.py",
     "scripts/run_contract.py",
     "scripts/task_profile.py",

@@ -5,7 +5,9 @@ import hashlib
 import json
 
 
-ROLES = {"implementation", "reviewer", "research"}
+ROLES = {
+    "router", "scout", "specifier", "implementer", "verifier", "reviewer", "adjudicator",
+}
 EFFORTS = {"low", "medium", "high", "xhigh", "ultra", "max"}
 WORKSPACE_ACCESS = {"none", "read", "write"}
 NETWORK_ACCESS = {"none", "egress"}
@@ -54,7 +56,7 @@ def validate_worker_profile(value):
     if permissions["workspace"] not in WORKSPACE_ACCESS or not isinstance(permissions["shell"], bool) \
             or permissions["network"] not in NETWORK_ACCESS:
         raise ValueError("worker profile permissions are invalid")
-    if value["role"] in {"reviewer", "research"} and permissions["workspace"] == "write":
+    if value["role"] != "implementer" and permissions["workspace"] == "write":
         raise ValueError(f"worker profile {value['role']} cannot write the workspace")
     budget = value.get("budget")
     if not isinstance(budget, dict) or set(budget) != {

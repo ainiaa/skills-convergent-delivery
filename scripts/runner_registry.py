@@ -7,7 +7,9 @@ from worker_profile import validate_worker_profile
 RUNNERS = {
     "codex-exec-v1": {
         "kind": "local_process",
-        "roles": {"implementation", "reviewer", "research"},
+        "roles": {
+            "router", "scout", "specifier", "implementer", "reviewer", "adjudicator",
+        },
         "providers": {"openai"},
         "workspace": {"read", "write"},
         "shell": {True},
@@ -15,7 +17,7 @@ RUNNERS = {
     },
     "openai-compatible-v1": {
         "kind": "network_request",
-        "roles": {"reviewer", "research"},
+        "roles": {"scout", "reviewer"},
         "providers": {"zhipu"},
         "workspace": {"none", "read"},
         "shell": {False},

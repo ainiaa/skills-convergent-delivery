@@ -14,7 +14,7 @@ def profile(**overrides):
     value = {
         "schema_version": 1,
         "worker_id": "research-1",
-        "role": "research",
+        "role": "scout",
         "runner_id": "openai-compatible-v1",
         "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
         "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},

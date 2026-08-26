@@ -119,6 +119,16 @@ class SkillContractTest(unittest.TestCase):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertLess(text.index("planned_task=true"), text.index("task_profile.py"))
 
+    def test_multi_model_contract_has_fixed_roles_and_dynamic_flow(self):
+        model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
+        runners = (ROOT / "references/worker-runners.md").read_text(encoding="utf-8")
+        for role in ("router", "scout", "specifier", "implementer", "verifier", "reviewer", "adjudicator"):
+            self.assertIn(role, model)
+        self.assertIn("每次只选择一个下一角色", model)
+        self.assertIn("可选运行实例", model)
+        self.assertIn("只有 `implementer`", runners)
+        self.assertIn("工具", model)
+
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
         for loop in ("实现循环", "风险复核循环", "全局集成审查循环"):

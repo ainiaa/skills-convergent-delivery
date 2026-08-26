@@ -11,45 +11,57 @@ from unittest.mock import patch
 from multi_model import audit_request, resolve
 
 
-def delivery_profile(*, design="gpt-5.6-sol", implementation="gpt-5.6-luna", audit="gpt-5.6-terra"):
+def delivery_profile(*, router="gpt-5.6-terra", reviewer="gpt-5.6-terra"):
     return {
-        "design": {"model": design, "reasoning_effort": "high"},
-        "design_review": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-        "implementation": {"model": implementation, "reasoning_effort": "max"},
-        "audit": {"model": audit, "reasoning_effort": "high" if audit == "glm-5.2" else "xhigh"},
+        "router": {"model": router, "reasoning_effort": "medium"},
+        "scout": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+        "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        "reviewer": {"model": reviewer, "reasoning_effort": "high" if reviewer == "glm-5.2" else "high"},
+        "adjudicator": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
     }
 
 
 def config(*, default="default", profiles=None):
-    return {"schema_version": 3, "default_profile": default, "profiles": profiles or {"default": delivery_profile()}}
+    return {"schema_version": 4, "default_profile": default, "profiles": profiles or {"default": delivery_profile()}}
 
 
 class MultiModelTest(unittest.TestCase):
-    def test_default_profile_is_the_requested_sol_luna_terra_sequence(self):
+    def test_default_profile_assigns_each_model_backed_role(self):
         with tempfile.TemporaryDirectory() as directory:
             value = resolve(None, workspace=Path(directory) / "repo", home=Path(directory) / "home")
         self.assertEqual("default", value["profile_name"])
-        self.assertEqual("gpt-5.6-sol", value["design"]["effective"]["model"])
-        self.assertEqual("gpt-5.6-terra", value["design_review"]["effective"]["model"])
-        self.assertEqual("gpt-5.6-luna", value["implementation"]["effective"]["model"])
-        self.assertEqual("max", value["implementation"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-5.6-terra", value["audit"]["effective"]["model"])
-        self.assertEqual("codex-exec-v1", value["audit"]["runner_id"])
+        self.assertEqual("gpt-5.6-terra", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual("medium", value["roles"]["scout"]["effective"]["reasoning_effort"])
+        self.assertEqual("high", value["roles"]["specifier"]["effective"]["reasoning_effort"])
+        self.assertEqual("gpt-5.6-luna", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("high", value["roles"]["implementer"]["effective"]["reasoning_effort"])
+        self.assertEqual("gpt-5.6-sol", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertNotIn("verifier", value["roles"])
 
     def test_selects_named_profile_and_allows_per_run_role_override(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "multi-model.json"
             path.write_text(json.dumps(config(profiles={
                 "default": delivery_profile(),
-                "fast": delivery_profile(design="gpt-5.6-terra", implementation="gpt-5.6-luna"),
+                "fast": delivery_profile(router="gpt-5.6-luna"),
             })), encoding="utf-8")
             value = resolve(path, profile_name="fast", role_overrides={
-                "audit": {"model": "glm-5.2", "reasoning_effort": "high"},
+                "reviewer": {"model": "glm-5.2", "reasoning_effort": "high"},
             })
         self.assertEqual("fast", value["profile_name"])
-        self.assertEqual("gpt-5.6-terra", value["design"]["effective"]["model"])
-        self.assertEqual("glm-5.2", value["audit"]["effective"]["model"])
-        self.assertEqual("openai-compatible-v1", value["audit"]["runner_id"])
+        self.assertEqual("gpt-5.6-luna", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual("glm-5.2", value["roles"]["reviewer"]["effective"]["model"])
+        self.assertEqual("openai-compatible-v1", value["roles"]["reviewer"]["runner_id"])
+
+    def test_rejects_the_previous_fixed_pipeline_profile_and_requires_v4(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi-model.json"
+            value = config()
+            value["schema_version"] = 3
+            path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "schema_version 4"):
+                resolve(path)
 
     def test_project_overrides_user_and_unknown_profile_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,24 +72,24 @@ class MultiModelTest(unittest.TestCase):
             project.mkdir(parents=True)
             user_path = home / ".convergent-delivery" / "multi-model.json"
             user_path.parent.mkdir()
-            user_path.write_text(json.dumps(config(profiles={"default": delivery_profile(design="gpt-5.6-luna")})), encoding="utf-8")
+            user_path.write_text(json.dumps(config(profiles={"default": delivery_profile(router="gpt-5.6-luna")})), encoding="utf-8")
             project_path = project / "multi-model.json"
-            project_path.write_text(json.dumps(config(profiles={"default": delivery_profile(design="gpt-5.6-terra")})), encoding="utf-8")
+            project_path.write_text(json.dumps(config(profiles={"default": delivery_profile(router="gpt-5.6-terra")})), encoding="utf-8")
             value = resolve(None, workspace=root / "repo", home=home)
             with self.assertRaisesRegex(ValueError, "profile"):
                 resolve(project_path, profile_name="missing")
         self.assertEqual(str(project_path.resolve()), value["config_source"])
-        self.assertEqual("gpt-5.6-terra", value["design"]["effective"]["model"])
+        self.assertEqual("gpt-5.6-terra", value["roles"]["router"]["effective"]["model"])
 
     def test_rejects_invalid_audit_and_never_stores_a_glm_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "multi-model.json"
-            path.write_text(json.dumps(config(profiles={"default": delivery_profile(audit="glm-5.2")})), encoding="utf-8")
+            path.write_text(json.dumps(config(profiles={"default": delivery_profile(reviewer="glm-5.2")})), encoding="utf-8")
             result = audit_request(resolve(path), "Audit this diff")
-            broken = config(profiles={"default": delivery_profile(audit="glm-5.2")})
-            broken["profiles"]["default"]["audit"]["reasoning_effort"] = "xhigh"
+            broken = config(profiles={"default": delivery_profile(reviewer="glm-5.2")})
+            broken["profiles"]["default"]["reviewer"]["reasoning_effort"] = "xhigh"
             path.write_text(json.dumps(broken), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "audit model"):
+            with self.assertRaisesRegex(ValueError, "reviewer model"):
                 resolve(path)
         self.assertEqual("planned", result["launch"]["status"])
         self.assertNotIn("Audit this diff", str(result))
@@ -85,7 +97,7 @@ class MultiModelTest(unittest.TestCase):
     def test_missing_glm_credential_returns_a_receipt_without_content(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "multi-model.json"
-            path.write_text(json.dumps(config(profiles={"default": delivery_profile(audit="glm-5.2")})), encoding="utf-8")
+            path.write_text(json.dumps(config(profiles={"default": delivery_profile(reviewer="glm-5.2")})), encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 result = audit_request(resolve(path), "Audit this diff", execute=True)
         self.assertEqual("missing_credential", result["receipt"]["error_type"])

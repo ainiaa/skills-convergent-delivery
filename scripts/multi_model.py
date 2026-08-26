@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve the optional fixed-order multi-model delivery profile."""
+"""Resolve optional model profiles for the fixed roles in a dynamic workflow."""
 
 import argparse
 import json
@@ -10,15 +10,19 @@ from openai_compatible_runner import execute_request, plan_request
 from worker_profile import fingerprint, validate_worker_profile
 
 
+MODEL_ROLES = ("router", "scout", "specifier", "implementer", "reviewer", "adjudicator")
+ROLES = set(MODEL_ROLES)
 DEFAULT_CONFIG = {
-    "schema_version": 3,
+    "schema_version": 4,
     "default_profile": "default",
     "profiles": {
         "default": {
-            "design": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
-            "design_review": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-            "implementation": {"model": "gpt-5.6-luna", "reasoning_effort": "max"},
-            "audit": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
+            "router": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+            "scout": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+            "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+            "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            "adjudicator": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
         },
     },
 }
@@ -26,7 +30,6 @@ OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CONFIG_FIELDS = {"schema_version", "default_profile", "profiles"}
 ROLE_FIELDS = {"model", "reasoning_effort"}
-ROLES = {"design", "design_review", "implementation", "audit"}
 
 
 def _profile(worker_id, role, runner_id, provider, model, effort, permissions, budget):
@@ -61,8 +64,10 @@ def _load(path):
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("multi-model config is unreadable") from error
-    if not isinstance(value, dict) or set(value) != CONFIG_FIELDS or value.get("schema_version") != 3:
+    if not isinstance(value, dict) or set(value) != CONFIG_FIELDS:
         raise ValueError("multi-model config fields are invalid")
+    if value.get("schema_version") != 4:
+        raise ValueError("multi-model config requires schema_version 4")
     profiles = value.get("profiles")
     default_profile = value.get("default_profile")
     if not isinstance(profiles, dict) or not profiles or not isinstance(default_profile, str) \
@@ -91,6 +96,8 @@ def _selected_profile(config, profile_name, role_overrides):
     if not isinstance(name, str) or name not in profiles:
         raise ValueError("multi-model profile is unavailable")
     profile = json.loads(json.dumps(profiles[name]))
+    if set(profile) != ROLES:
+        raise ValueError("multi-model profile roles are invalid")
     if not isinstance(role_overrides, dict) or set(role_overrides) - ROLES:
         raise ValueError("multi-model role overrides are invalid")
     for role, override in role_overrides.items():
@@ -100,80 +107,52 @@ def _selected_profile(config, profile_name, role_overrides):
     return name, profile
 
 
+def _role_profile(role, model, effort):
+    if role == "reviewer" and model == "glm-5.2":
+        if effort != "high":
+            raise ValueError("reviewer model glm-5.2 requires high reasoning effort")
+        return _profile(
+            "reviewer-1", role, "openai-compatible-v1", "zhipu", model, effort,
+            {"workspace": "read", "shell": False, "network": "egress"},
+            {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
+        )
+    if model not in OPENAI_MODELS:
+        raise ValueError(f"{role} model must be a GPT-5.6 Sol, Terra, or Luna model")
+    is_implementer = role == "implementer"
+    return _profile(
+        f"{role}-1", role, "codex-exec-v1", "openai", model, effort,
+        {"workspace": "write" if is_implementer else "read", "shell": True, "network": "egress"},
+        {"max_turns": 4 if is_implementer else 1, "timeout_seconds": 1800 if is_implementer else 600,
+         "max_output_chars": 48000 if is_implementer else 24000},
+    )
+
+
 def resolve(path=None, *, workspace=None, home=None, profile_name=None, role_overrides=None):
     selected_path = _config_path(path, workspace or Path.cwd(), home or Path.home())
     config = _load(selected_path)
     profile_name, selected = _selected_profile(config, profile_name, role_overrides or {})
-    design_model, design_effort = _role(selected, "design")
-    design_review_model, design_review_effort = _role(selected, "design_review")
-    implementation_model, implementation_effort = _role(selected, "implementation")
-    audit_model, audit_effort = _role(selected, "audit")
-    if design_model not in OPENAI_MODELS:
-        raise ValueError("design model must be a GPT-5.6 Sol, Terra, or Luna model")
-    if design_review_model not in OPENAI_MODELS:
-        raise ValueError("design review model must be a GPT-5.6 Sol, Terra, or Luna model")
-    if implementation_model not in OPENAI_MODELS:
-        raise ValueError("implementation model must be a GPT-5.6 Sol, Terra, or Luna model")
-    if audit_model == "glm-5.2" and audit_effort != "high":
-        raise ValueError("audit model glm-5.2 requires high reasoning effort")
-    if audit_model != "glm-5.2" and audit_model not in OPENAI_MODELS:
-        raise ValueError("audit model is unsupported")
+    roles = {role: _role_profile(role, *_role(selected, role)) for role in MODEL_ROLES}
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "config_source": str(selected_path) if selected_path is not None else "default",
         "profile_name": profile_name,
-        "sequence": ["design", "plan", "implementation", "audit", "repair", "re_audit"],
-        "design": _profile(
-            "design-1", "research", "codex-exec-v1", "openai", design_model, design_effort,
-            {"workspace": "read", "shell": True, "network": "egress"},
-            {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
-        ),
-        "design_review": _profile(
-            "design-review-1", "reviewer", "codex-exec-v1", "openai",
-            design_review_model, design_review_effort,
-            {"workspace": "read", "shell": True, "network": "egress"},
-            {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
-        ),
-        "implementation": _profile(
-            "implementation-1", "implementation", "codex-exec-v1", "openai",
-            implementation_model, implementation_effort,
-            {"workspace": "write", "shell": True, "network": "egress"},
-            {"max_turns": 4, "timeout_seconds": 1800, "max_output_chars": 48000},
-        ),
-        "audit": _audit_profile(audit_model, audit_effort),
+        "roles": roles,
+        "tool_roles": ["verifier"],
     }
 
 
-def _audit_profile(model, effort):
-    if model == "glm-5.2":
-        return _profile(
-            "audit-1", "reviewer", "openai-compatible-v1", "zhipu", model, effort,
-            {"workspace": "read", "shell": False, "network": "egress"},
-            {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
-        )
-    return _profile(
-        "audit-1", "reviewer", "codex-exec-v1", "openai", model, effort,
-        {"workspace": "read", "shell": True, "network": "egress"},
-        {"max_turns": 1, "timeout_seconds": 900, "max_output_chars": 24000},
-    )
-
-
 def audit_request(profiles, prompt, *, execute=False):
-    if not isinstance(profiles, dict) or not isinstance(profiles.get("audit"), dict):
-        raise ValueError("multi-model profiles are invalid")
-    if profiles["audit"].get("runner_id") != "openai-compatible-v1":
-        raise ValueError("external audit requests require a glm-5.2 audit profile")
+    reviewer = profiles.get("roles", {}).get("reviewer") if isinstance(profiles, dict) else None
+    if not isinstance(reviewer, dict) or reviewer.get("runner_id") != "openai-compatible-v1":
+        raise ValueError("external audit requests require a glm-5.2 reviewer profile")
     launch = plan_request(
-        profiles["audit"], prompt, base_url="https://open.bigmodel.cn/api/paas/v4",
+        reviewer, prompt, base_url="https://open.bigmodel.cn/api/paas/v4",
         api_key_env="GLM_API_KEY", effort_binding={"field": "thinking.type", "value": "enabled"},
     )
     if not execute:
         return {"launch": launch}
     result = execute_request(launch, prompt, allow_network=True, capture_content=True)
-    if isinstance(result, tuple):
-        receipt, content = result
-    else:
-        receipt, content = result, None
+    receipt, content = result if isinstance(result, tuple) else (result, None)
     return {"receipt": receipt, "content": content}
 
 
@@ -200,7 +179,7 @@ def main():
     resolve_parser.add_argument("--workspace", type=Path, default=Path.cwd())
     resolve_parser.add_argument("--profile")
     resolve_parser.add_argument("--role", action="append", default=[])
-    config_parser = subparsers.add_parser("config")
+    subparsers.add_parser("config")
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--config", type=Path)
     audit_parser.add_argument("--workspace", type=Path, default=Path.cwd())

@@ -349,7 +349,7 @@ class InstallTest(unittest.TestCase):
 
         for marker in (
             "## 多模型协作", "使用多模型配合开发", "默认不启用",
-            "Sol high", "Luna max", "Terra xhigh", "[多模型协作](references/multi-model.md)",
+            "固定角色", "Terra medium", "Luna high", "Sol high", "[多模型协作](references/multi-model.md)",
             "不能替代真实测试",
         ):
             self.assertIn(marker, readme)

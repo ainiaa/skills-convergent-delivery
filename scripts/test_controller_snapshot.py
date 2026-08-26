@@ -114,6 +114,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "scripts/delivery_next.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/fast_path.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_registry.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/role_flow.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/codex_exec_runner.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "providers/native-v1.json").is_file())
             self.assertTrue((Path(descriptor["root"]) / "SKILL.md").is_file())
@@ -123,6 +124,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "references/worker-runners.md").is_file())
             self.assertIn("scripts/fast_path.py", descriptor["files"])
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
+            self.assertIn("scripts/role_flow.py", descriptor["files"])
             for relative in REQUIRED_CONTROL_REFERENCES:
                 self.assertIn(relative, descriptor["files"])
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())

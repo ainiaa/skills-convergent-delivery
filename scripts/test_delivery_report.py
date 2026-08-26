@@ -115,7 +115,7 @@ class DeliveryReportTest(unittest.TestCase):
     def test_json_reports_only_usage_present_in_fingerprint_validated_runner_receipts(self):
         payload = state()
         profile = {
-            "schema_version": 1, "worker_id": "research-1", "role": "research",
+            "schema_version": 1, "worker_id": "scout-1", "role": "scout",
             "runner_id": "openai-compatible-v1",
             "requested": {"model": "glm-5.2", "reasoning_effort": "low"},
             "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "low"},
