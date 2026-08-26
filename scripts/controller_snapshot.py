@@ -28,8 +28,11 @@ CONTROLLER_FILES = (
     "scripts/fast_path.py",
     "scripts/worker_profile.py",
     "scripts/runner_registry.py",
+    "scripts/runner_launch.py",
+    "scripts/runner_lifecycle.py",
     "scripts/runner_contract.py",
     "scripts/codex_exec_runner.py",
+    "scripts/claude_exec_runner.py",
     "scripts/openai_compatible_runner.py",
     "scripts/multi_model.py",
     "scripts/role_flow.py",
@@ -75,7 +78,7 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 
 
 def provider_files(root):

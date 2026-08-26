@@ -16,6 +16,8 @@ from delivery_state import validate_transition
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
+from runner_contract import fingerprint as runner_fingerprint, freeze_launch
+from worker_profile import fingerprint as profile_fingerprint
 
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
@@ -318,6 +320,40 @@ class DeliveryStateTest(unittest.TestCase):
             env=self.environment(state_home),
         )
 
+    def append_runner(self, root, state_home, command, payload, expected_revision):
+        return subprocess.run(
+            [
+                sys.executable, str(STATE_SCRIPT), command, "--input", "-", "--lease-root", str(root),
+                "--run-id", "run-1", "--writer-id", "writer-1", "--repo-id", "/repo/common.git",
+                "--task-key", "task-payment", "--expected-revision", str(expected_revision),
+            ], input=json.dumps(payload), text=True, capture_output=True, check=False,
+            env=self.environment(state_home),
+        )
+
+    def local_launch(self, workspace):
+        profile = {
+            "schema_version": 1, "worker_id": "scout-1", "role": "scout",
+            "runner_id": "codex-exec-v1",
+            "requested": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+            "effective": {"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+            "permissions": {"workspace": "read", "shell": False, "network": "egress"},
+            "budget": {"max_turns": 1, "timeout_seconds": 60, "max_output_chars": 1000},
+        }
+        profile["profile_fingerprint"] = profile_fingerprint(profile)
+        return freeze_launch(profile, "Collect evidence", {
+            "codex_bin": "/usr/bin/codex", "binary_fingerprint": "a" * 64,
+            "sandbox": "read-only", "workspace": workspace,
+        })
+
+    def local_result(self, launch):
+        result = {
+            "schema_version": 1, "runner_id": "codex-exec-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+            "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+            "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "medium",
+        }
+        return {**result, "receipt_fingerprint": runner_fingerprint(result)}
+
     def test_write_requires_current_lease_and_monotonic_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -332,6 +368,51 @@ class DeliveryStateTest(unittest.TestCase):
             second = self.write(root, state_home, state(revision=1), 0)
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
+
+    def test_runner_records_append_atomically_and_bind_to_the_run_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+
+            planned = self.append_runner(root, state_home, "append-runner-launch", launch, 0)
+            self.assertEqual(0, planned.returncode, planned.stderr)
+            recorded = json.loads(self.state_path(state_home).read_text(encoding="utf-8"))
+            self.assertEqual([launch], recorded["ledger"]["runner_launches"])
+            self.assertEqual(1, recorded["revision"])
+
+            completed = self.append_runner(
+                root, state_home, "append-runner-result", self.local_result(launch), 1,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            recorded = json.loads(self.state_path(state_home).read_text(encoding="utf-8"))
+            self.assertEqual(1, len(recorded["ledger"]["runner_results"]))
+
+            wrong_workspace = self.local_launch("/repo/other-worktree")
+            rejected = self.append_runner(root, state_home, "append-runner-launch", wrong_workspace, 2)
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("workspace", rejected.stderr)
+
+    def test_persisted_runner_launch_without_a_result_cannot_be_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+            self.assertEqual(
+                0,
+                self.append_runner(root, state_home, "append-runner-launch", launch, 0).returncode,
+            )
+
+            retried = self.append_runner(root, state_home, "append-runner-launch", launch, 1)
+
+            self.assertNotEqual(0, retried.returncode)
+            self.assertIn("unknown", retried.stderr)
 
     def test_current_state_write_preserves_the_canonical_binding_and_worker_registry(self):
         with tempfile.TemporaryDirectory() as directory:

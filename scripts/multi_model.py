@@ -24,9 +24,18 @@ DEFAULT_CONFIG = {
             "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
             "adjudicator": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
         },
+        "claude-code": {
+            "router": {"model": "fable", "reasoning_effort": "medium"},
+            "scout": {"model": "fable", "reasoning_effort": "medium"},
+            "specifier": {"model": "sonnet", "reasoning_effort": "high"},
+            "implementer": {"model": "sonnet", "reasoning_effort": "high"},
+            "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
+            "adjudicator": {"model": "opus", "reasoning_effort": "xhigh"},
+        },
     },
 }
 OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+CLAUDE_ALIASES = {"fable", "sonnet", "opus"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CONFIG_FIELDS = {"schema_version", "default_profile", "profiles"}
 ROLE_FIELDS = {"model", "reasoning_effort"}
@@ -117,11 +126,19 @@ def _role_profile(role, model, effort):
             {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
         )
     if model not in OPENAI_MODELS:
-        raise ValueError(f"{role} model must be a GPT-5.6 Sol, Terra, or Luna model")
+        if model not in CLAUDE_ALIASES and not model.startswith("claude-"):
+            raise ValueError(f"{role} model must be a GPT-5.6 or Claude Code model")
+        is_implementer = role == "implementer"
+        return _profile(
+            f"{role}-1", role, "claude-code-v1", "anthropic", model, effort,
+            {"workspace": "write" if is_implementer else "read", "shell": is_implementer, "network": "egress"},
+            {"max_turns": 4 if is_implementer else 1, "timeout_seconds": 1800 if is_implementer else 600,
+             "max_output_chars": 48000 if is_implementer else 24000},
+        )
     is_implementer = role == "implementer"
     return _profile(
         f"{role}-1", role, "codex-exec-v1", "openai", model, effort,
-        {"workspace": "write" if is_implementer else "read", "shell": True, "network": "egress"},
+        {"workspace": "write" if is_implementer else "read", "shell": is_implementer, "network": "egress"},
         {"max_turns": 4 if is_implementer else 1, "timeout_seconds": 1800 if is_implementer else 600,
          "max_output_chars": 48000 if is_implementer else 24000},
     )

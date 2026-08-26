@@ -12,7 +12,17 @@ RUNNERS = {
         },
         "providers": {"openai"},
         "workspace": {"read", "write"},
-        "shell": {True},
+        "shell": {False, True},
+        "network": {"egress"},
+    },
+    "claude-code-v1": {
+        "kind": "local_process",
+        "roles": {
+            "router", "scout", "specifier", "implementer", "reviewer", "adjudicator",
+        },
+        "providers": {"anthropic"},
+        "workspace": {"read", "write"},
+        "shell": {False, True},
         "network": {"egress"},
     },
     "openai-compatible-v1": {
@@ -48,11 +58,11 @@ def validate_runner_profile(profile):
         raise ValueError("unknown worker runner")
     if profile["role"] not in runner["roles"]:
         raise ValueError("worker role is unsupported by this runner")
-    if profile["runner_id"] == "codex-exec-v1" and (
+    if profile["runner_id"] in {"codex-exec-v1", "claude-code-v1"} and (
         profile["requested"]["model"] != profile["effective"]["model"]
         or profile["requested"]["reasoning_effort"] != profile["effective"]["reasoning_effort"]
     ):
-        raise ValueError("codex runner forbids model or effort substitution")
+        raise ValueError(f"{profile['runner_id']} forbids model or effort substitution")
     if profile["effective"]["provider"] not in runner["providers"]:
         raise ValueError("worker provider is unsupported by this runner")
     permissions = profile["permissions"]

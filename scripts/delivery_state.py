@@ -2,6 +2,7 @@
 """Write converge state only for the active lease owner and next revision."""
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -25,6 +26,7 @@ from delivery_lease import (
 from datetime import timedelta
 from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
 from delivery_progress import plan_projection_fingerprint
+from runner_contract import LOCAL_PROCESS_RUNNERS, runner_results_complete, validate_launch
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "state"
@@ -378,6 +380,74 @@ def write(arguments):
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
 
+def _validate_runner_record(current, field, record):
+    ledger = current["ledger"]
+    launches = ledger.get("runner_launches", [])
+    results = ledger.get("runner_results", [])
+    if field == "runner_launches":
+        launch = validate_launch(record)
+        completed = {result.get("launch_fingerprint") for result in results}
+        if any(item["launch_fingerprint"] not in completed for item in launches):
+            raise ValueError("runner launch outcome is unknown; do not dispatch again")
+        if launch["launch_fingerprint"] in {item["launch_fingerprint"] for item in launches}:
+            raise ValueError("runner launch is duplicated")
+        if launch["runner_id"] in LOCAL_PROCESS_RUNNERS:
+            workspace = launch["configuration"].get("workspace")
+            if not isinstance(workspace, str) or Path(workspace).resolve() != Path(current["workspace"]).resolve():
+                raise ValueError("runner launch workspace must match the current run workspace")
+        return
+    if field != "runner_results" or not isinstance(record, dict):
+        raise ValueError("runner record is invalid")
+    launch_fingerprint = record.get("launch_fingerprint")
+    launch = next((item for item in launches if item.get("launch_fingerprint") == launch_fingerprint), None)
+    if launch is None:
+        raise ValueError("runner result has no frozen launch")
+    if launch_fingerprint in {item.get("launch_fingerprint") for item in results}:
+        raise ValueError("runner result is duplicated")
+    runner_results_complete([launch], [record])
+
+
+def append_runner_record(arguments, field, record):
+    arguments.strict_evidence = True
+    managed_path = state_path(
+        DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
+    )
+    if not managed_path.is_file():
+        raise ValueError("runner append requires an existing managed state")
+    current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
+    validate_candidate(current, arguments)
+    with active_lease(
+        current, arguments.lease_root, arguments.run_id, arguments.writer_id
+    ) as (paths, lease_records):
+        with lock_record(managed_path):
+            current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
+            validate_candidate(current, arguments)
+            if current["revision"] != arguments.expected_revision:
+                raise ValueError("expected revision does not match current state")
+            _validate_runner_record(current, field, record)
+            candidate = copy.deepcopy(current)
+            candidate["revision"] += 1
+            candidate["ledger"].setdefault(field, []).append(record)
+            validate_candidate(candidate, arguments)
+            validate_transition(current, candidate)
+            write_private(managed_path, candidate)
+            try:
+                renew_locked_leases(paths)
+            except Exception:
+                write_private(managed_path, current)
+                for path, lease_record in lease_records.items():
+                    replace_record(path, lease_record)
+                raise
+    return candidate["revision"]
+
+
+def append_runner(arguments, field):
+    if arguments.input != "-":
+        raise ValueError("runner append only accepts --input - from stdin")
+    revision = append_runner_record(arguments, field, json.load(sys.stdin))
+    print(json.dumps({"status": "written", "revision": revision}))
+
+
 def discover(workspace, diagnose=False):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
@@ -410,7 +480,9 @@ def discover(workspace, diagnose=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("path", "write", "list", "doctor"))
+    parser.add_argument("command", choices=(
+        "path", "write", "append-runner-launch", "append-runner-result", "list", "doctor",
+    ))
     parser.add_argument("--input")
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
     parser.add_argument("--repo")
@@ -449,7 +521,13 @@ def main():
             )
         if arguments.expected_revision is None:
             raise ValueError("write requires --expected-revision")
-        write(arguments)
+        if arguments.command == "write":
+            write(arguments)
+        else:
+            append_runner(
+                arguments,
+                "runner_launches" if arguments.command == "append-runner-launch" else "runner_results",
+            )
         return 0
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(f"state write blocked: {error}", file=sys.stderr)

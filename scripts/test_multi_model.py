@@ -54,6 +54,30 @@ class MultiModelTest(unittest.TestCase):
         self.assertEqual("glm-5.2", value["roles"]["reviewer"]["effective"]["model"])
         self.assertEqual("openai-compatible-v1", value["roles"]["reviewer"]["runner_id"])
 
+    def test_builtin_claude_code_profile_uses_claude_model_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = resolve(
+                None, workspace=Path(directory) / "repo", home=Path(directory) / "home",
+                profile_name="claude-code",
+            )
+        self.assertEqual("claude-code", value["profile_name"])
+        self.assertEqual("fable", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual("sonnet", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("opus", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertEqual("claude-code-v1", value["roles"]["reviewer"]["runner_id"])
+
+    def test_read_only_roles_do_not_receive_shell_access_for_either_cli_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            home = Path(directory) / "home"
+            codex = resolve(None, workspace=workspace, home=home)
+            claude = resolve(None, workspace=workspace, home=home, profile_name="claude-code")
+
+        for profiles in (codex, claude):
+            for role in ("router", "scout", "specifier", "reviewer", "adjudicator"):
+                self.assertFalse(profiles["roles"][role]["permissions"]["shell"])
+            self.assertTrue(profiles["roles"]["implementer"]["permissions"]["shell"])
+
     def test_rejects_the_previous_fixed_pipeline_profile_and_requires_v4(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "multi-model.json"

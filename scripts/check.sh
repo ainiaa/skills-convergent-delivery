@@ -55,6 +55,9 @@ python3 scripts/test_fast_path.py
 python3 scripts/test_worker_profile.py
 python3 scripts/test_runner_registry.py
 python3 scripts/test_codex_exec_runner.py
+python3 scripts/test_claude_exec_runner.py
+python3 scripts/test_runner_launch.py
+python3 scripts/test_runner_lifecycle.py
 python3 scripts/test_openai_compatible_runner.py
 python3 scripts/test_multi_model.py
 python3 scripts/test_role_flow.py

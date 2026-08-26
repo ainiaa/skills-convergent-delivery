@@ -41,19 +41,32 @@ class RoleDispatchTest(unittest.TestCase):
             context_isolation_benefit=True,
         ))
         self.assertEqual("scout", result["role"])
-        self.assertEqual("codex_subagent", result["executor"])
-        self.assertEqual("gpt-5.6-terra", result["spawn"]["model"])
-        self.assertEqual("medium", result["spawn"]["reasoning_effort"])
-        self.assertEqual("none", result["spawn"]["fork_turns"])
+        self.assertEqual("external_runner", result["executor"])
+        self.assertNotIn("spawn", result)
+        self.assertEqual(self.profiles["roles"]["scout"], result["profile"])
         self.assertEqual(self.profiles["roles"]["scout"]["profile_fingerprint"], result["profile_fingerprint"])
 
-    def test_implementer_plan_uses_luna_instead_of_inheriting_the_controller_model(self):
+    def test_implementer_plan_uses_an_external_runner_instead_of_inheriting_the_controller_model(self):
         result = plan_dispatch(self.profiles, state(
             routing="frozen", route="delegated", context_isolation_benefit=True,
         ))
         self.assertEqual("implementer", result["role"])
-        self.assertEqual("gpt-5.6-luna", result["spawn"]["model"])
-        self.assertEqual("high", result["spawn"]["reasoning_effort"])
+        self.assertEqual("external_runner", result["executor"])
+        self.assertNotIn("spawn", result)
+
+    def test_claude_code_agent_plan_uses_the_same_external_runner_boundary(self):
+        claude = resolve(
+            None, workspace=Path(self.temporary.name) / "repo", home=Path(self.temporary.name) / "home",
+            profile_name="claude-code",
+        )
+        result = plan_dispatch(claude, state(
+            routing="frozen", route="planned", evidence="missing",
+            context_isolation_benefit=True,
+        ))
+        self.assertEqual("external_runner", result["executor"])
+        self.assertEqual("claude-code-v1", result["runner_id"])
+        self.assertNotIn("spawn", result)
+        self.assertEqual(claude["roles"]["scout"], result["profile"])
 
     def test_serial_and_tool_roles_do_not_create_a_model_bound_subagent(self):
         serial = plan_dispatch(self.profiles, state(routing="frozen", route="inline"))

@@ -15,21 +15,11 @@ def _agent_plan(decision, profile):
     profile = validate_runner_profile(profile)
     result = {
         **decision,
+        "profile": profile,
         "profile_fingerprint": profile["profile_fingerprint"],
         "runner_id": profile["runner_id"],
     }
-    if profile["runner_id"] != "codex-exec-v1":
-        return {**result, "executor": "external_runner"}
-    effective = profile["effective"]
-    return {
-        **result,
-        "executor": "codex_subagent",
-        "spawn": {
-            "model": effective["model"],
-            "reasoning_effort": effective["reasoning_effort"],
-            "fork_turns": "none",
-        },
-    }
+    return {**result, "executor": "external_runner"}
 
 
 def plan_dispatch(profiles, flow_state):

@@ -2,6 +2,7 @@
 """Execute one frozen, ephemeral Codex CLI launch."""
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -89,11 +90,12 @@ def command_for_launch(launch, prompt):
 
 
 def _capture_bounded(process, limit):
-    """Drain both pipes while retaining only digests and a bounded byte count."""
+    """Drain both pipes while retaining digests and bounded stdout for this invocation."""
     lock = threading.Lock()
     total = [0]
     exceeded = threading.Event()
     digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
 
     def drain(name, stream):
         while True:
@@ -104,6 +106,8 @@ def _capture_bounded(process, limit):
             with lock:
                 total[0] += len(chunk)
                 over_limit = total[0] > limit
+                if not over_limit:
+                    captured[name].extend(chunk)
             if over_limit:
                 exceeded.set()
                 process.kill()
@@ -115,10 +119,55 @@ def _capture_bounded(process, limit):
     ]
     for thread in threads:
         thread.start()
-    return threads, exceeded, digests
+    return threads, exceeded, digests, captured
 
 
-def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen):
+def _start_prompt_writer(process, prompt):
+    """Write stdin without letting an unresponsive child bypass the process timeout."""
+    errors = []
+
+    def write():
+        try:
+            process.stdin.write(prompt.encode("utf-8"))
+            process.stdin.close()
+        except OSError as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=write, daemon=True)
+    thread.start()
+    return thread, errors
+
+
+def _text_content(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(
+            item.get("text", "") for item in value
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    return None
+
+
+def _response_from_jsonl(stdout):
+    """Extract the final assistant message from Codex's documented JSONL stream."""
+    response = None
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if not isinstance(item, dict) or item.get("type") not in {"agent_message", "assistant_message"}:
+            continue
+        content = _text_content(item.get("text", item.get("content")))
+        if isinstance(content, str) and content.strip():
+            response = content
+    return response
+
+
+def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
+                   capture_content=False):
     """Start only the exact frozen local process after explicit caller opt-in."""
     if allow_execute is not True:
         raise ValueError("real Codex execution requires explicit allow_execute=True")
@@ -126,24 +175,29 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     configuration = launch["configuration"]
     threads = []
     digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
     process = None
+    writer = None
+    write_errors = []
     error_type = None
     try:
         process = process_factory(
             command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        process.stdin.write(prompt.encode("utf-8"))
-        process.stdin.close()
-        threads, exceeded, digests = _capture_bounded(
+        threads, exceeded, digests, captured = _capture_bounded(
             process, launch["profile"]["budget"]["max_output_chars"]
         )
+        writer, write_errors = _start_prompt_writer(process, prompt)
         exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
         for thread in threads:
             thread.join()
+        writer.join()
         if exceeded.is_set():
             status, exit_code = "output_exceeded", 125
         else:
+            if write_errors:
+                raise write_errors[0]
             status = "completed" if exit_code == 0 else "failed"
         stdout_fingerprint = digests["stdout"].hexdigest()
         stderr_fingerprint = digests["stderr"].hexdigest()
@@ -151,6 +205,8 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         process.kill()
         for thread in threads:
             thread.join()
+        if writer is not None:
+            writer.join()
         process.wait()
         status, exit_code = "timed_out", 124
         stdout_fingerprint = digests["stdout"].hexdigest()
@@ -161,6 +217,8 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
             process.kill()
             for thread in threads:
                 thread.join()
+            if writer is not None:
+                writer.join()
             process.wait()
         status, exit_code = "unknown", 127
         stdout_fingerprint = digests["stdout"].hexdigest()
@@ -173,7 +231,13 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         "exit_code": exit_code,
         "stdout_fingerprint": stdout_fingerprint,
         "stderr_fingerprint": stderr_fingerprint,
+        "requested_model": launch["profile"]["effective"]["model"],
+        "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
     }
     if status == "unknown":
         value["error_type"] = error_type
-    return {**value, "receipt_fingerprint": fingerprint(value)}
+    receipt = {**value, "receipt_fingerprint": fingerprint(value)}
+    if capture_content:
+        content = _response_from_jsonl(bytes(captured["stdout"])) if status == "completed" else None
+        return receipt, content
+    return receipt

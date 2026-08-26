@@ -8,7 +8,7 @@ Controller 在启动前冻结一个 `Worker Profile v1`：`worker_id`、角色�
 
 `runtime_adapter.py` 仍只表示真实宿主任务树。runner receipt 使用 `evidence_source="runner"`，绝不能写成 `host_observed`、不能伪造 host ref，也不能单独满足现有 Schema v10 的 worker-complete 清场门槛。这样 Codex Desktop host bridge 未公开时，进程 runner 不会被误报为原生宿主集成。
 
-registry 是静态 capability 表，只含两个 adapter，不保存 task graph、队列、memory、状态副本或调度循环。正式状态、租约、计划和完成判定仍归 Converge controller；runner 的计划/执行 receipt 只能被状态引用或作为后续验证输入。
+registry 是静态 capability 表，只含三个 adapter，不保存 task graph、队列、memory、状态副本或调度循环。正式状态、租约、计划和完成判定仍归 Converge controller；runner 的计划/执行 receipt 只能被状态引用或作为后续验证输入。
 
 ## Profile
 
@@ -26,15 +26,15 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 }
 ```
 
-`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是 controller 的有限派发预算；`max_output_chars` 兼容既有 Profile v1 名称，但 adapter 按 UTF-8 输出字节上限执行。adapter 强制 timeout，不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
+`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是统一的 controller 规划预算：Claude CLI 以 `--max-turns` 强制它，当前 Codex CLI 不支持该参数，因而 Codex 只强制 timeout 与输出字节上限。`max_output_chars` 兼容既有 Profile v1 名称，但 adapter 按 UTF-8 输出字节上限执行；不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
 
-- 七个固定角色为 `router`、`scout`、`specifier`、`implementer`、`verifier`、`reviewer` 与 `adjudicator`。只有 `implementer` 可使用 `codex-exec-v1` 的 isolated-worktree 写权限；其他角色永远不可写。
-- `codex-exec-v1` 只接受 `effective.provider=openai`、`shell=true`，且 requested/effective 的 model 与 effort 必须完全相同；Codex CLI 不能单独禁用 shell 时不接受 `shell=false` profile。计划冻结 CLI 可执行文件的绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传给 `codex exec ... -`，不进入命令参数。
+- 七个固定角色为 `router`、`scout`、`specifier`、`implementer`、`verifier`、`reviewer` 与 `adjudicator`。只有 `implementer` 可使用独立 worktree 写入；其他角色的 `shell=false` 表示没有可写工作区的 shell 能力。Codex 的 read-only sandbox 仍可执行只读命令，Claude 则只启用 `Read,Grep,Glob`，不能把二者误称成同一种“完全没有 shell”。
+- `codex-exec-v1` 与 `claude-code-v1` 都是本地进程 runner，分别只接受 OpenAI 与 Anthropic 的 effective provider，且 requested/effective 的 model 与 effort 必须完全相同。计划冻结 CLI 绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传递，不进入命令参数。Codex 使用 sandbox；Claude 显式传入 `--bare --strict-mcp-config --model --effort --max-turns`、冻结工具与 permission mode。Claude 这是一层 CLI permission 边界，不是 OS sandbox。
 - `openai-compatible-v1` 仅接受 `reviewer|scout`、`workspace=none|read`、`shell=false`。当前仅支持已验证的 Zhipu origin、`GLM_API_KEY` 与注册的 effort mapping；请求没有 tools、shell 或工作区写入能力。未验证 provider 不发送猜测的 wire 字段。
 
 ## 真实执行与密钥
 
-两个 adapter 默认只产生 `status=planned` receipt。`codex_exec_runner.execute_launch(..., allow_execute=True)` 才会启动本地 Codex CLI；写权限只能指向独立 Git worktree，父 controller 仍要审查 diff 和运行独立验证。
+三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：它从 managed state 取得唯一 workspace，先以 `append-runner-launch` 持久化 launch，再执行，最后以 `append-runner-result` 持久化 receipt。runner 对当前 controller 额外返回 `output={status,content?}`：`content` 只在完成且成功提取最终模型文本时存在，受冻结输出预算限制，绝不写入 ledger；`unavailable` 不是可用协作结论。两个本地 runner 的 prompt 写入与 stdout/stderr drain 并发启动，随后立即进入冻结 timeout；子进程不读 stdin 时也会 kill/reap 并写入终态 receipt。输出上限是本地读取到超限后终止的保守边界，不宣称能限制远端在 pipe 中已经写出的字节。receipt 本身只含 exit code、stdout/stderr 摘要、requested model/effort 和有限 timeout/output budget；requested 字段只证明命令请求，并非远端模型观察。写权限只能指向独立 Git worktree，父 controller 仍要审查 diff 和运行独立验证。
 
 `openai_compatible_runner.execute_request(..., allow_network=True)` 才会发送 HTTPS 请求。它只从冻结的 `api_key_env` 环境变量读取 key；profile、计划和 receipt 都不保存 key 或 prompt。返回的 `model` 必须精确等于 frozen effective model，否则 adapter 阻断，避免 provider alias/回退被误当成功。
 
@@ -42,8 +42,8 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 
 ## 当前接线状态
 
-`codex-exec-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。二者当前是受限叶子执行器，不是 Codex Desktop 原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
+`codex-exec-v1` 与 `claude-code-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。三者当前都是受限叶子执行器，不是宿主原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
 
-`role_dispatch.py` 是两者与动态角色流之间的确定性派发计划器。对 Codex 原生子代理，它输出必须显式传入 host 的 `model`、`reasoning_effort` 与 `fork_turns="none"`；因此不会因遗漏参数而继承父代理的 Sol/Terra/Luna 模型。它只输出计划，仍不伪造宿主任务树或完成回执。
+`role_dispatch.py` 是 runner 与动态角色流之间的确定性派发计划器。它对所有 agent profile 都输出 `external_runner`，`runner_lifecycle.py` 消费该冻结 profile 并通过 `runner_launch.py` 构造 launch/本地命令或批准的 HTTPS request；因此不会继承父代理模型，也不会把计划冒充为宿主任务树或完成回执。
 
-多模型模式默认使用 Codex reviewer；仅配置 `reviewer=glm-5.2/high` 时，GLM 审计才把响应文本即时返回给当前调用者。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。
+所有 runner 都以相同的 `output` 语义把响应文本即时返回给当前调用者；它不是 receipt、持久状态或通过依据。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。

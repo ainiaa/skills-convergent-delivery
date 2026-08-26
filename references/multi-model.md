@@ -27,11 +27,17 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 验证失败先回到 `router` 重新选择下一步；出现无法由证据消除的语义冲突时才进入 `adjudicator`。TaskSpec、验收、写入范围和验证命令均已冻结时，模型不得自行扩大范围。验证通过且不需要审查时立即结束。
 
-## Codex 派发边界
+## 受限 CLI 派发边界
 
-对 `mode=agent`，先由 `scripts/role_dispatch.py` 将角色决策与冻结 profile 合成为派发计划。若其返回 `executor=codex_subagent`，控制器必须把 `spawn.model`、`spawn.reasoning_effort` 和 `spawn.fork_turns="none"` 原样传给 Codex 的子代理创建接口，并提供最小冻结任务 capsule。不得省略这些字段：Codex 的默认行为会继承父代理模型，因而 Sol controller 会错误地产生 Sol 子代理。
+对 `mode=agent`，`scripts/role_dispatch.py` 一律返回 `executor=external_runner`，并携带完整冻结 profile。controller 使用 `scripts/runner_lifecycle.py` 执行单次闭环：先把 launch 原子追加到当前 run 的 ledger，再在 lease 外启动 CLI，最后原子追加 result；launch 已记录而 result 缺失时恢复必须交接或阻塞，不能重派。lifecycle 的 stdout 同时返回一个**仅当前调用有效**的 `output`：`available` 时有受限长度的最终模型文本，`unavailable` 时不得以成功 exit code 猜测内容。账本只写 `result` receipt，绝不写 `output`、prompt、密钥或审查原文。controller 必须先将 `output` 转为既有结构化 evidence/review 输入并核验，不能因模型文本自行推进验收或状态。Codex 的 `codex_exec_runner.py` 与 Claude 的 `claude_exec_runner.py` 都由冻结的 profile 驱动受限 CLI：显式传入 model、reasoning effort 和工作区边界，且不依赖父会话模型、不创建宿主原生子代理，也不伪造宿主任务树或完成回执。
 
-`mode=serial` 明确复用当前 controller，不声称切换模型；`mode=tool` 只运行验证工具。返回 `executor=external_runner` 时按该冻结 runner 执行，而不是创建 Codex 子代理。宿主无法显式设定模型时，不得创建一个会继承父模型的子代理；可串行角色留在 controller，必须独立的审查则交接或阻塞。
+当前 Codex CLI 没有可验证的轮次上限参数：不把 `max_turns` 伪称为 Codex CLI 已强制的限制；Codex 仅强制 timeout 与输出字节上限。Claude CLI 接收冻结的 `--max-turns`。`max_turns` 仍保留在统一 profile 中供 controller 规划和跨 runner 比较，但 Codex 上的超时才是实际的有限执行边界。
+
+本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob`。Codex 以 sandbox 强制边界，Claude 使用 `--bare --strict-mcp-config --input-format text`、冻结工具与 `acceptEdits`，不把它表述为 OS sandbox。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
+
+本地 CLI receipt 的 `requested_model` 与 `requested_reasoning_effort` 只证明冻结命令的请求参数与退出/输出摘要；它不证明远端最终实际采用的模型或 effort。需要审计该事实时，必须有 provider 响应或宿主原生观察，不能由本地进程回执推断。
+
+`inline`、`serial` 与 `tool` 路径不创建 lifecycle、launch 或 runner ledger 记录；现有非多模型流程不经过该入口。未来只有宿主确实可证明精确模型选择、稳定 worker ref、查询和 workspace binding 时，才可作为同一契约的 native transport；当前不伪造该能力。
 
 ## 配置
 
@@ -58,6 +64,12 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" config
+```
+
+在 Claude Code 宿主中选择内置映射：
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve --profile claude-code
 ```
 
 仅支持 `schema_version: 4`。旧的 v3 固定流水线配置会明确失败；使用 `multi_model.py config` 输出新模板后直接替换即可。

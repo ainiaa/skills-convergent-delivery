@@ -7,6 +7,9 @@ import json
 from runner_registry import validate_runner_profile
 
 
+LOCAL_PROCESS_RUNNERS = {"codex-exec-v1", "claude-code-v1"}
+
+
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -97,10 +100,11 @@ def runner_results_complete(launches, results):
         expected = {key: item for key, item in result.items() if key != "receipt_fingerprint"}
         if result.get("receipt_fingerprint") != fingerprint(expected):
             raise ValueError("runner result fingerprint is invalid")
-        if runner_id == "codex-exec-v1":
+        if runner_id in LOCAL_PROCESS_RUNNERS:
             required = {
                 "schema_version", "runner_id", "launch_fingerprint", "status", "exit_code",
-                "stdout_fingerprint", "stderr_fingerprint", "receipt_fingerprint",
+                "stdout_fingerprint", "stderr_fingerprint", "requested_model",
+                "requested_reasoning_effort", "receipt_fingerprint",
             }
             statuses = {"completed", "failed", "timed_out", "output_exceeded", "unknown"}
             if result.get("status") == "unknown":
@@ -117,17 +121,23 @@ def runner_results_complete(launches, results):
         if set(result) != required or result.get("schema_version") != 1 \
                 or result.get("status") not in statuses:
             raise ValueError("runner result fields are invalid")
-        if runner_id == "codex-exec-v1" and (
+        if runner_id in LOCAL_PROCESS_RUNNERS and (
             not _sha256(result["stdout_fingerprint"])
             or not _sha256(result["stderr_fingerprint"])
             or (result["status"] == "unknown" and not _non_empty_string(result["error_type"]))
         ):
             raise ValueError("runner result fields are invalid")
-        if runner_id == "codex-exec-v1" and (
+        if runner_id in LOCAL_PROCESS_RUNNERS and (
             not isinstance(result["exit_code"], int) or isinstance(result["exit_code"], bool)
             or (result["status"] == "completed" and result["exit_code"] != 0)
         ):
             raise ValueError("Codex runner result exit code is invalid")
+        if runner_id in LOCAL_PROCESS_RUNNERS and (
+            result["requested_model"] != frozen_launch["profile"]["effective"]["model"]
+            or result["requested_reasoning_effort"]
+            != frozen_launch["profile"]["effective"]["reasoning_effort"]
+        ):
+            raise ValueError("local runner result requested model is invalid")
         if runner_id == "openai-compatible-v1" and result["status"] == "completed" and (
             not _non_empty_string(result["response_id"])
             or result["usage"] is not None and not isinstance(result["usage"], dict)

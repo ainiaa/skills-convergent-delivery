@@ -47,7 +47,10 @@ REQUIRED_SOURCE_FILES=(
   scripts/fast_path.py
   scripts/worker_profile.py
   scripts/runner_registry.py
+  scripts/runner_launch.py
+  scripts/runner_lifecycle.py
   scripts/codex_exec_runner.py
+  scripts/claude_exec_runner.py
   scripts/openai_compatible_runner.py
   scripts/multi_model.py
   scripts/provider_contract.py
@@ -55,6 +58,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/task_profile.py
   scripts/test_trigger_evals.py
   scripts/test_fast_path.py
+  scripts/test_runner_lifecycle.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   skills/converge-plan/SKILL.md

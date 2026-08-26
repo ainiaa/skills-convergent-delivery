@@ -3,6 +3,7 @@
 
 import io
 import shutil
+import threading
 import unittest
 from pathlib import Path
 
@@ -43,6 +44,7 @@ class CodexExecRunnerTest(unittest.TestCase):
         self.assertEqual("read-only", command[command.index("--sandbox") + 1])
         self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
         self.assertIn('model_reasoning_effort="high"', command)
+        self.assertNotIn("--max-turns", command)
         self.assertEqual("-", command[-1])
         self.assertEqual(str(Path("/tmp").resolve()), launch["configuration"]["workspace"])
         self.assertNotIn("Fix the isolated task", str(launch))
@@ -118,17 +120,48 @@ class CodexExecRunnerTest(unittest.TestCase):
             def kill(self):
                 self.returncode = 125
 
-        receipt = execute_launch(
+        execution = execute_launch(
             plan_launch(
                 profile(permissions={"workspace": "read", "shell": True, "network": "egress"},
                         budget={"max_turns": 2, "timeout_seconds": 180, "max_output_chars": 3}),
                 "Fix the isolated task", workspace="/tmp",
             ),
-            "Fix the isolated task", allow_execute=True, process_factory=lambda *_args, **_kwargs: Process(),
+            "Fix the isolated task", allow_execute=True, capture_content=True,
+            process_factory=lambda *_args, **_kwargs: Process(),
         )
 
+        receipt, content = execution
         self.assertEqual("output_exceeded", receipt["status"])
         self.assertEqual(125, receipt["exit_code"])
+        self.assertEqual("gpt-5.6-terra", receipt["requested_model"])
+        self.assertEqual("high", receipt["requested_reasoning_effort"])
+        self.assertIsNone(content)
+
+    def test_returns_the_final_jsonl_agent_message_only_in_the_ephemeral_output(self):
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO(
+                b'{"type":"item.completed","item":{"type":"agent_message","text":"First"}}\n'
+                b'{"type":"item.completed","item":{"type":"agent_message","text":"Final evidence"}}\n'
+            )
+            stderr = io.BytesIO()
+
+            def wait(self, timeout):
+                return 0
+
+            def kill(self):
+                pass
+
+        execution = execute_launch(
+            plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                        "Collect evidence", workspace="/tmp"),
+            "Collect evidence", allow_execute=True, capture_content=True,
+            process_factory=lambda *_args, **_kwargs: Process(),
+        )
+
+        receipt, content = execution
+        self.assertEqual("completed", receipt["status"])
+        self.assertEqual("Final evidence", content)
 
     def test_returns_a_receipt_when_process_start_fails(self):
         receipt = execute_launch(
@@ -157,6 +190,52 @@ class CodexExecRunnerTest(unittest.TestCase):
 
             def kill(self):
                 self.killed = True
+
+        process = Process()
+        receipt = execute_launch(
+            plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                        "Fix the isolated task", workspace="/tmp"),
+            "Fix the isolated task", allow_execute=True, process_factory=lambda *_args, **_kwargs: process,
+        )
+
+        self.assertEqual("timed_out", receipt["status"])
+        self.assertTrue(process.killed)
+        self.assertTrue(process.reaped)
+
+    def test_timeout_starts_while_the_prompt_writer_is_still_blocked(self):
+        class Input:
+            def __init__(self):
+                self.writing = threading.Event()
+                self.release = threading.Event()
+
+            def write(self, _value):
+                self.writing.set()
+                self.release.wait()
+
+            def close(self):
+                pass
+
+        class Process:
+            stdout = io.BytesIO()
+            stderr = io.BytesIO()
+            killed = False
+            reaped = False
+
+            def __init__(self):
+                self.stdin = Input()
+
+            def wait(self, timeout=None):
+                if timeout is not None:
+                    self.stdin.writing.wait(timeout)
+                    if self.stdin.release.is_set():
+                        raise AssertionError("prompt writing completed before timeout started")
+                    raise __import__("subprocess").TimeoutExpired("codex", timeout)
+                self.reaped = True
+                return 124
+
+            def kill(self):
+                self.killed = True
+                self.stdin.release.set()
 
         process = Process()
         receipt = execute_launch(

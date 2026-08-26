@@ -24,6 +24,31 @@ def profile(**overrides):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_claude_cli_receipt_uses_the_same_completion_shape_as_codex(self):
+        claude = profile(
+            runner_id="claude-code-v1",
+            requested={"model": "sonnet", "reasoning_effort": "high"},
+            effective={"provider": "anthropic", "model": "sonnet", "reasoning_effort": "high"},
+            permissions={"workspace": "read", "shell": False, "network": "egress"},
+        )
+        launch = freeze_launch(claude, "Review", {"claude_bin": "/usr/bin/claude"})
+        result = {
+            "schema_version": 1, "runner_id": "claude-code-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "exit_code": 0, "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+            "requested_model": "sonnet", "requested_reasoning_effort": "high",
+        }
+        result["receipt_fingerprint"] = contract_fingerprint(result)
+
+        self.assertTrue(runner_results_complete([launch], [result]))
+
+        result["requested_model"] = "opus"
+        result["receipt_fingerprint"] = contract_fingerprint({
+            key: item for key, item in result.items() if key != "receipt_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "requested model"):
+            runner_results_complete([launch], [result])
+
     def test_freezes_profile_configuration_and_prompt_fingerprint_without_storing_prompt(self):
         launch = freeze_launch(
             profile(), "Review this confidential change", {"api_key_env": "GLM_API_KEY"}
