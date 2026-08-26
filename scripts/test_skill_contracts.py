@@ -126,6 +126,8 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(role, model)
         self.assertIn("每次只选择一个下一角色", model)
         self.assertIn("可选运行实例", model)
+        self.assertIn("role_dispatch.py", model)
+        self.assertIn("继承父代理模型", model)
         self.assertIn("只有 `implementer`", runners)
         self.assertIn("工具", model)
 

@@ -44,4 +44,6 @@ registry 是静态 capability 表，只含两个 adapter，不保存 task graph�
 
 `codex-exec-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。二者当前是受限叶子执行器，不是 Codex Desktop 原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
 
+`role_dispatch.py` 是两者与动态角色流之间的确定性派发计划器。对 Codex 原生子代理，它输出必须显式传入 host 的 `model`、`reasoning_effort` 与 `fork_turns="none"`；因此不会因遗漏参数而继承父代理的 Sol/Terra/Luna 模型。它只输出计划，仍不伪造宿主任务树或完成回执。
+
 多模型模式默认使用 Codex reviewer；仅配置 `reviewer=glm-5.2/high` 时，GLM 审计才把响应文本即时返回给当前调用者。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥或审计内容。见 [多模型协作](multi-model.md)。

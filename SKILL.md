@@ -29,7 +29,7 @@ Provider Schema v2；pdlc-v1/native-v1；`engine` 由 binding 派生，不能成
 
 worker 用当前会话真实能力；跨会话需 `host_observed` bridge，缺能力手工交接，见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
 
-“使用多模型配合开发”时读 [多模型协作](references/multi-model.md)。
+多模型：读 [多模型协作](references/multi-model.md)，`agent` 用 `role_dispatch.py`。
 
 ## 终态
 

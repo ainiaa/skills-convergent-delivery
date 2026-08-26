@@ -27,6 +27,12 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 验证失败先回到 `router` 重新选择下一步；出现无法由证据消除的语义冲突时才进入 `adjudicator`。TaskSpec、验收、写入范围和验证命令均已冻结时，模型不得自行扩大范围。验证通过且不需要审查时立即结束。
 
+## Codex 派发边界
+
+对 `mode=agent`，先由 `scripts/role_dispatch.py` 将角色决策与冻结 profile 合成为派发计划。若其返回 `executor=codex_subagent`，控制器必须把 `spawn.model`、`spawn.reasoning_effort` 和 `spawn.fork_turns="none"` 原样传给 Codex 的子代理创建接口，并提供最小冻结任务 capsule。不得省略这些字段：Codex 的默认行为会继承父代理模型，因而 Sol controller 会错误地产生 Sol 子代理。
+
+`mode=serial` 明确复用当前 controller，不声称切换模型；`mode=tool` 只运行验证工具。返回 `executor=external_runner` 时按该冻结 runner 执行，而不是创建 Codex 子代理。宿主无法显式设定模型时，不得创建一个会继承父模型的子代理；可串行角色留在 controller，必须独立的审查则交接或阻塞。
+
 ## 配置
 
 配置支持命名 profile；默认选择 `default_profile`。`schema_version: 4` 必须为六个模型角色完整指定模型与推理等级：
