@@ -303,11 +303,17 @@ class SkillContractTest(unittest.TestCase):
 
         self.assertIn("语义风险声明", routing)
         self.assertIn("路径标记只能作为风险下限", routing)
-        self.assertIn("已签名 runner 回执", reporting)
+        self.assertIn("指纹校验的 runner 回执", reporting)
         self.assertIn("不可用", reporting)
         self.assertIn("语义风险未声明", scenarios)
         self.assertIn("指标缺失", scenarios)
         self.assertIn("不伪造", runtime)
+
+    def test_current_review_findings_require_records_but_old_rounds_remain_readable(self):
+        state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
+
+        self.assertIn("当前 round 的 finding", state)
+        self.assertIn("历史 round 可只保留 fingerprint", state)
 
     def test_review_independence_means_a_fresh_context_from_the_implementer(self):
         protocol = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
@@ -320,6 +326,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("`independent=true` 和全新上下文", protocol)
         self.assertIn("而不是为 spec 与 quality 各派一个 reviewer", protocol)
         self.assertIn("同一个已登记", orchestration)
+
+    def test_model_self_report_cannot_replace_real_execution_evidence(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+
+        self.assertIn("模型自述不放行", skill)
+        self.assertIn("不能只凭模型自述", control)
+        self.assertIn("不为恶意篡改", control)
 
     def test_activation_is_discoverable_but_never_edits_user_configuration(self):
         skill, header = frontmatter(ROOT / "SKILL.md")

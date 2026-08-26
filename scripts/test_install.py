@@ -333,6 +333,27 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("三个 Skill", changelog)
         self.assertNotIn("三个入口", changelog)
 
+    def test_readme_puts_newcomer_install_and_skill_choice_before_the_overview(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertLess(readme.index("## 3 步快速开始"), readme.index("## 为什么会有它"))
+        for marker in (
+            "bash install.sh --target all",
+            "重启或刷新", "不确定时，先用 `converge`",
+            "`converge-plan`", "`converge-review`", "`converge-batch`", "`converge-eval`",
+        ):
+            self.assertIn(marker, readme)
+
+    def test_readme_introduces_opt_in_multi_model_workflow_and_its_boundary(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "## 多模型协作", "使用多模型配合开发", "默认不启用",
+            "Sol high", "Luna max", "Terra xhigh", "[多模型协作](references/multi-model.md)",
+            "不能替代真实测试",
+        ):
+            self.assertIn(marker, readme)
+
     def test_public_project_documents_are_linked_from_readme(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

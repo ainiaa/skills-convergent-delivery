@@ -13,7 +13,7 @@ Converge 始终是 controller；规划、只读、跨会话分别用 `converge-p
 
 Skill 根目录记为 `CONVERGE_SKILL_DIR`。
 
-冻结验收、路径、基线和行为，只改本 task diff；不可逆选择问用户。验收须实检，`unknown` 失败，行为改动须回归；fast path 停用，走完整路径。
+冻结验收/路径/基线/行为，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown`失败；行为改动回归；fast path 停用，走完整路径。
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>

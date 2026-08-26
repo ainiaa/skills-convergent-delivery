@@ -30,9 +30,9 @@ def execution_metrics(state):
         if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             token_values.append(total)
     total_tokens = (
-        {"status": "available", "value": sum(token_values), "source": "signed_runner_receipts"}
+        {"status": "available", "value": sum(token_values), "source": "fingerprint_validated_runner_receipts"}
         if token_values else
-        {"status": "unavailable", "reason": "no_signed_total_token_usage"}
+        {"status": "unavailable", "reason": "no_fingerprint_validated_total_token_usage"}
     )
     unavailable = {
         "status": "unavailable",

@@ -272,6 +272,9 @@ def validate_execution_control(value, source_fingerprint, task_key=None):
                 raise ValueError("review finding_fingerprints are invalid")
             if request["status"] == "findings" and not findings:
                 raise ValueError("review findings require finding fingerprints")
+            if request["status"] == "findings" and round_source == source_fingerprint \
+                    and "finding_records" not in request:
+                raise ValueError("current review findings require finding_records")
             validate_finding_records(request.get("finding_records"), findings)
             if require_sha256(request["source_fingerprint"], "review request source") != round_source:
                 raise ValueError("review request source must match its round")

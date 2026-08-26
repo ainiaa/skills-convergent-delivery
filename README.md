@@ -4,6 +4,45 @@
 
 当前开发版本：[0.0.21](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
+## 3 步快速开始
+
+1. 安装整个 Suite：
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh \
+     | bash -s -- --target all
+   ```
+
+2. 重启或刷新 Codex / Claude Code 的 Skill 发现；看不到 Skill 时运行 `bash install.sh --doctor --target codex --offline` 排查。
+
+3. 复制下面的提示词开始一个任务（不确定时，先用 `converge`）：
+
+   ```text
+   使用 $converge 修复登录后跳转错误，运行相关测试并交付结果；不要发布或 push。
+   ```
+
+### 选哪个 Skill
+
+| 你想做什么 | 用哪个 | 最短提示 |
+|---|---|---|
+| 实现一个功能、修 Bug 或重构，并完成验证 | `converge` | `使用 $converge … 并验证。` |
+| 先拆复杂需求，只要计划、不改代码 | `converge-plan` | `使用 $converge-plan 拆成可验证任务，不修改代码。` |
+| 只检查当前改动，不修改代码 | `converge-review` | `使用 $converge-review 检查当前 diff，不修改代码。` |
+| 按已有的跨会话 Plan Contract 分批执行 | `converge-batch` | `使用 $converge-batch 执行 <plan>。` |
+| 修改或验收 Converge Suite 自身规则 | `converge-eval` | `使用 $converge-eval 验收这次规则变更。` |
+
+最终回执会说明：结果、关键改动、实际验证范围和待处理项；发布、push、merge 等外发操作仍需你单独授权。更多安装与故障排查见 [使用与维护指南](docs/usage-guide.md)，两个运行时的完整调用示例见下文“调用当前 Skill”。
+
+## 多模型协作
+
+默认不启用；只有明确说“使用多模型配合开发”时才启用。默认分工是 `Sol high` 设计、`Luna max` 实现并运行真实测试、`Terra xhigh` 只读审计；审计发现最多触发一次定向修复和复审。
+
+```text
+使用 $converge 使用多模型配合开发修复支付重试问题：设计用 Sol high、实现用 Luna max、审计用 Terra xhigh；运行相关测试，不要发布。
+```
+
+可以在同一句话指定角色，或说“使用 `<profile>` 配置”。多模型结论不能替代真实测试、源码证据或发布授权；宿主无法真实指定或查询 worker 时会交接，不伪造派发。配置模板、优先级和外部只读审计见 [多模型协作](references/multi-model.md)。
+
 ## 为什么会有它
 
 普通的“实现 → 检查 → 修复 → 再检查”很容易变成长对话：实现者既写代码又替自己解释，重复扫描消耗 token，用户还要不断追问“还有问题吗”。直接让一个 Agent 长时间执行大计划，又容易让上下文膨胀、范围漂移和验证变松。
@@ -85,12 +124,6 @@ bash install.sh --version --offline
 ```bash
 bash install.sh --doctor --target codex --offline
 ```
-
-## 3 步快速开始
-
-1. 安装：`bash install.sh --target all`。
-2. 单个任务说“使用 `$converge` 修复分页错误”；只要计划说“使用 `$converge-plan` 拆解这个需求”；已有长计划使用 `$converge-batch`。
-3. 根据最终回执确认结果、验证范围和待处理项。
 
 ## 调用当前 Skill
 

@@ -703,6 +703,14 @@ class DeliveryNextTest(unittest.TestCase):
         payload["execution_control"]["review"]["rounds"][0]["requests"][-1][
             "finding_fingerprints"
         ] = ["d" * 64]
+        payload["execution_control"]["review"]["rounds"][0]["requests"][-1][
+            "finding_records"
+        ] = [{
+            "fingerprint": "d" * 64, "evidence": "integration check failed",
+            "impact": "cross-service behavior is not verified",
+            "root_cause": "pending repair", "scope": "current",
+            "classification": "defect",
+        }]
 
         with self.assertRaisesRegex(ValueError, "integration review requires a current pass"):
             validate_state(payload, SimpleNamespace())
@@ -816,6 +824,19 @@ class DeliveryNextTest(unittest.TestCase):
         }]
 
         with self.assertRaisesRegex(ValueError, "finding_records do not match"):
+            validate_execution_control(control, source, "task-123")
+
+    def test_current_review_round_rejects_findings_without_structured_records(self):
+        control = state()["execution_control"]
+        source = control["review"]["rounds"][0]["source_fingerprint"]
+        control["review"]["rounds"][0]["requests"] = [{
+            "axis": "spec", "phase": "initial", "source_fingerprint": source,
+            "status": "findings", "reviewer_ref": "reviewer-a", "mode": "shared",
+            "independent": False, "finding_fingerprints": ["b" * 64],
+            "task_id": "task-123", "request_fingerprint": "c" * 64,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "current review findings require finding_records"):
             validate_execution_control(control, source, "task-123")
 
     def test_blocked_with_active_worker_requires_fresh_cleanup_receipt(self):

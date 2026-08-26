@@ -4,7 +4,9 @@
 
 ## [Unreleased]
 
-- 补强 Skill 运行与审查闭环：文档 helper 统一从对应 Skill 根目录解析；Review v3 在不可变 round 内保留有界 `finding_records` 以支持恢复和定向复核；风险画像明确要求语义声明、路径标记仅作下限；交付 JSON 仅汇总已签名 runner receipt 的真实 `total_tokens`，宿主未公开的工具调用和用户阻塞明确标为 unavailable。同步校准可信本地当前会话的清场规则、Review 的 fresh-context 语义及其契约回归测试。
+- README 将新手快速开始前置：安装、刷新、首个可复制提示词与五个 Skill 的选择表在能力总览之前；补充多模型的显式触发、默认角色分工、示例与证据边界，完整运行时示例和维护说明仍保留在后文链接。
+- 补强 Skill 运行与审查闭环：文档 helper 统一从对应 Skill 根目录解析；Review v3 在不可变 round 内保留有界 `finding_records` 以支持恢复和定向复核，当前 round 的 finding 不再允许省略 records、历史 round 保持只读兼容；风险画像明确要求语义声明、路径标记仅作下限；交付 JSON 仅汇总指纹校验 runner receipt 的 `total_tokens`，不冒充远端签名，宿主未公开的工具调用和用户阻塞明确标为 unavailable。同步校准可信本地当前会话的清场规则、Review 的 fresh-context 语义及其契约回归测试。
+- 明确模型事实门禁：模型自述、自然语言回执或计划文本不能替代已执行命令、结构化证据、Git/状态机结果或宿主终态；同时不把恶意篡改防护扩展为签名服务、后台守护或第二状态。
 - 版本号改用 `0.0.x` 节奏：当前版本由 `0.21.0` 调整为 `0.0.21`，后续快速迭代递增末位。
 - 新增可选多模型协作：默认 Sol high 设计、Luna max 实现、Terra xhigh 审计与一次定向修复/复审；仅用户明确要求时才插入 Terra xhigh 设计复核。新增冻结 Profile、命名配置集合与单次角色覆盖，配置按显式参数、项目、用户级、内置默认依次解析；用户级默认文件位于 `~/.convergent-delivery/multi-model.json`。GLM-5.2 保留为可配置的外部只读审计选项，审计文本只即时交回控制器，正式回执不保存 prompt、密钥或内容。
 - 修复 PDLC Provider 仅被选中却未被实际激活的断点：新增确定性 `freeze-binding`，Plan 与 Batch 仅接受含入口/closure 来源的完整冻结 Binding；native、自动回退与 PDLC 均可据此显式调用对应 Skill，`pdlc-run` 不能替代调用，入口不可用时确定性阻塞。

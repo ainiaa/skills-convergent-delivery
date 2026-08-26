@@ -112,7 +112,7 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
-    def test_json_reports_only_usage_present_in_signed_runner_receipts(self):
+    def test_json_reports_only_usage_present_in_fingerprint_validated_runner_receipts(self):
         payload = state()
         profile = {
             "schema_version": 1, "worker_id": "research-1", "role": "research",
@@ -136,7 +136,7 @@ class DeliveryReportTest(unittest.TestCase):
         report = json.loads(self.run_report(payload, "json").stdout)
 
         self.assertEqual(
-            {"status": "available", "value": 12, "source": "signed_runner_receipts"},
+            {"status": "available", "value": 12, "source": "fingerprint_validated_runner_receipts"},
             report["execution_metrics"]["total_tokens"],
         )
         self.assertEqual("unavailable", report["execution_metrics"]["tool_calls"]["status"])

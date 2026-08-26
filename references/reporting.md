@@ -46,7 +46,7 @@
 - “已验证范围”只能由结构化 `ledger.acceptance` 的 fresh/pass observed Evidence Receipt v2，以及未来同等级的结构化 check receipt 派生；当前无 receipt 的 pass check 明示为控制器记录且不计入。不得把 `handoff.last_verification` 自由文本渲染为“已验证”。
 - 独立只读检查由 `converge-review` 按自己的结果格式输出，不复用交付完成文案。
 - 同一任务再次检查时只报告相对上一份回执的变化：新增发现、已解决项、状态变化；没有变化时使用短回执明确“无新增变化”。`delivery_report.py` 返回 `next_report_history`，控制器必须用独立 revision 写入 ledger；不得与阶段推进、验收变更或计划确认混写。
-- JSON 回执的 `execution_metrics` 只汇总已签名 runner 回执中明确给出的 `usage.total_tokens`；当前宿主未提供签名用量时，token、工具调用和用户阻塞均标为“不可用”。不得由提示词长度、日志行数、等待次数或模型估算补造指标。
+- JSON 回执的 `execution_metrics` 只汇总指纹校验的 runner 回执中明确给出的 `usage.total_tokens`；它证明回执内容与冻结 runner 契约一致，不冒充远端密码学签名。当前宿主未提供可校验用量时，token、工具调用和用户阻塞均标为“不可用”。不得由提示词长度、日志行数、等待次数或模型估算补造指标。
 
 ## 需要用户决定时
 
