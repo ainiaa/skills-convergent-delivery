@@ -35,7 +35,7 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.arguments = SimpleNamespace(
             allow_execute=True, allow_network=False, codex_bin=shutil.which("codex"), claude_bin="claude",
             repo_id="/repo/common.git", task_key="task-1", run_id="run-1", writer_id="writer-1",
-            expected_revision=7, lease_root="/leases",
+            expected_revision=7, lease_root="/leases", review_request_fingerprint=None,
         )
 
     def tearDown(self):
@@ -140,6 +140,41 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         self.assertEqual([], appended)
 
+    def test_persists_the_review_request_fingerprint_on_a_real_reviewer_launch(self):
+        profiles = resolve(
+            None, workspace=self.workspace, home=self.workspace / "home",
+            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
+        )
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        self.arguments.allow_network = True
+        self.arguments.review_request_fingerprint = "a" * 64
+        recorded = []
+
+        def execute(launch, _prompt, **_kwargs):
+            value = {
+                "schema_version": 1, "runner_id": "openai-compatible-v1",
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "response_id": "review-1", "response_model": "glm-5.2", "usage": None,
+                "response_fingerprint": "b" * 64,
+            }
+            return {
+                "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+                "output": {"status": "available", "content": '{"findings":[],"next_action":"verify"}'},
+            }
+
+        run_dispatch(
+            self.arguments, dispatch, "Review", load=lambda _arguments: {
+                "revision": 7, "workspace": str(self.workspace),
+            }, append=lambda arguments, field, record: (
+                recorded.append((field, record)) or arguments.expected_revision + 1
+            ), execute=execute,
+        )
+
+        self.assertEqual("a" * 64, recorded[0][1]["configuration"]["review_request_fingerprint"])
+
     def test_fanout_persists_every_read_only_launch_before_any_execution_then_merges_by_task_id(self):
         records = []
         dispatch = plan_read_only_fanout(self.profiles, [
@@ -202,6 +237,25 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("existing managed state", result.stdout)
+
+    def test_cli_rejects_fanout_review_bindings_without_fanout(self):
+        dispatch_path = self.workspace / "dispatch.json"
+        prompt_path = self.workspace / "prompt.txt"
+        dispatch_path.write_text(json.dumps(plan_dispatch(self.profiles, flow_state())), encoding="utf-8")
+        prompt_path.write_text("Collect evidence", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable, str(RUNNER_LIFECYCLE), "--allow-execute",
+                "--dispatch", str(dispatch_path), "--input", str(prompt_path),
+                "--review-request-fingerprints", "{}",
+                "--repo-id", "/missing/repo", "--task-key", "missing-task", "--run-id", "missing-run",
+                "--writer-id", "writer", "--expected-revision", "0",
+            ], text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("require --fanout", result.stdout)
 
 
 if __name__ == "__main__":

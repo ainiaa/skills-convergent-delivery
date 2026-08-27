@@ -25,10 +25,11 @@ def decide(payload, lease_root=None):
     stage = validate_state(state, SimpleNamespace(strict_evidence=True))
     if stage in {"complete", "blocked"}:
         return allow(stage)
-    if lease_root is not None:
-        validate_active_lease(state, SimpleNamespace(
-            lease_root=lease_root, run_id=state["run_id"], writer_id=state["writer_id"],
-        ))
+    if lease_root is None:
+        return {"decision": "block", "reason": "autonomous continuation requires a lease root"}
+    validate_active_lease(state, SimpleNamespace(
+        lease_root=lease_root, run_id=state["run_id"], writer_id=state["writer_id"],
+    ))
     return {
         "decision": "block",
         "next_action": delivery_action(stage, state["task_key"], state.get("blocked_reason")),
@@ -38,13 +39,14 @@ def decide(payload, lease_root=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
+    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
     arguments = parser.parse_args()
     path = Path(arguments.state)
     if not path.exists():
         print(json.dumps(allow("inactive"), sort_keys=True))
         return 0
     try:
-        decision = decide(json.loads(path.read_text(encoding="utf-8")))
+        decision = decide(json.loads(path.read_text(encoding="utf-8")), lease_root=arguments.lease_root)
         print(json.dumps(decision, sort_keys=True))
         return 2 if decision["decision"] == "block" else 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

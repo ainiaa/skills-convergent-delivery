@@ -42,6 +42,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
+        review_request_fingerprint=getattr(arguments, "review_request_fingerprint", None),
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -71,7 +72,7 @@ def _completed_execution(launch, execution):
     return receipt, role_result
 
 
-def run_fanout(arguments, dispatch, prompts, *, load=load_current,
+def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, *, load=load_current,
                append_launches=delivery_state.append_runner_records,
                append=delivery_state.append_runner_record, execute=execute_dispatch_launch):
     """Persist all bounded read-only launches before concurrently executing and merging them."""
@@ -80,6 +81,11 @@ def run_fanout(arguments, dispatch, prompts, *, load=load_current,
     tasks = tasks_for_fanout(dispatch)
     if not isinstance(prompts, dict) or set(prompts) != {task["task_id"] for task in tasks}:
         raise ValueError("fan-out prompts must match the frozen task ids")
+    if review_request_fingerprints is not None and (
+            not isinstance(review_request_fingerprints, dict)
+            or not set(review_request_fingerprints) <= {task["task_id"] for task in tasks}
+    ):
+        raise ValueError("fan-out review request fingerprints are invalid")
     state = load(arguments)
     prepared = []
     for task in tasks:
@@ -87,6 +93,7 @@ def run_fanout(arguments, dispatch, prompts, *, load=load_current,
         launch = plan_dispatch_launch(
             task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
             claude_bin=arguments.claude_bin,
+            review_request_fingerprint=(review_request_fingerprints or {}).get(task["task_id"]),
         )
         prepared.append({"task_id": task["task_id"], "launch": launch, "prompt": prompt})
     if any(item["launch"]["runner_id"] == "openai-compatible-v1" for item in prepared) \
@@ -132,12 +139,22 @@ def main():
     parser.add_argument("--allow-execute", action="store_true")
     parser.add_argument("--allow-network", action="store_true")
     parser.add_argument("--fanout", action="store_true")
+    parser.add_argument("--review-request-fingerprint")
+    parser.add_argument("--review-request-fingerprints")
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)
         prompt = arguments.input.read()
+        if arguments.fanout and arguments.review_request_fingerprint is not None:
+            raise ValueError("single review request fingerprint is not valid for fan-out")
+        if not arguments.fanout and arguments.review_request_fingerprints is not None:
+            raise ValueError("fan-out review request fingerprints require --fanout")
+        review_request_fingerprints = (
+            json.loads(arguments.review_request_fingerprints)
+            if arguments.review_request_fingerprints is not None else None
+        )
         result = (
-            run_fanout(arguments, dispatch, json.loads(prompt))
+            run_fanout(arguments, dispatch, json.loads(prompt), review_request_fingerprints)
             if arguments.fanout else run_dispatch(arguments, dispatch, prompt)
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

@@ -10,7 +10,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from runner_contract import fingerprint, freeze_launch, validate_launch
+from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
 
 
 def _binary_identity(value):
@@ -36,7 +36,7 @@ def _is_isolated_worktree(workspace):
     return workspace.resolve() == top_level and git_dir != common_dir
 
 
-def plan_launch(profile, prompt, *, workspace, codex_bin="codex"):
+def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request_fingerprint=None):
     if not isinstance(codex_bin, str) or not codex_bin:
         raise ValueError("Codex binary is required")
     workspace = Path(workspace).expanduser().resolve()
@@ -46,12 +46,16 @@ def plan_launch(profile, prompt, *, workspace, codex_bin="codex"):
     if profile["permissions"]["workspace"] == "write" and not _is_isolated_worktree(workspace):
         raise ValueError("Codex write launch requires an isolated Git worktree")
     sandbox = "workspace-write" if profile["permissions"]["workspace"] == "write" else "read-only"
-    return freeze_launch(profile, prompt, {
+    configuration = {
         "codex_bin": binary,
         "binary_fingerprint": binary_fingerprint,
         "sandbox": sandbox,
         "workspace": str(workspace),
-    })
+    }
+    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    if fingerprint is not None:
+        configuration["review_request_fingerprint"] = fingerprint
+    return freeze_launch(profile, prompt, configuration)
 
 
 def command_for_launch(launch, prompt):
@@ -59,7 +63,10 @@ def command_for_launch(launch, prompt):
     if launch["runner_id"] != "codex-exec-v1":
         raise ValueError("launch does not select the Codex runner")
     configuration = launch["configuration"]
-    if set(configuration) != {"codex_bin", "binary_fingerprint", "sandbox", "workspace"} \
+    if not {"codex_bin", "binary_fingerprint", "sandbox", "workspace"} <= set(configuration) \
+            or set(configuration) - {
+                "codex_bin", "binary_fingerprint", "sandbox", "workspace", "review_request_fingerprint",
+            } \
             or configuration["sandbox"] not in {"read-only", "workspace-write"} \
             or not isinstance(configuration["codex_bin"], str) \
             or not configuration["codex_bin"] \
@@ -67,6 +74,7 @@ def command_for_launch(launch, prompt):
             or len(configuration["binary_fingerprint"]) != 64 \
             or not isinstance(configuration["workspace"], str):
         raise ValueError("Codex launch configuration is invalid")
+    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
     _binary, binary_fingerprint = _binary_identity(configuration["codex_bin"])
     if binary_fingerprint != configuration["binary_fingerprint"]:
         raise ValueError("Codex binary changed after launch was frozen")

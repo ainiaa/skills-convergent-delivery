@@ -239,6 +239,7 @@ class AutonomyHookTest(unittest.TestCase):
                     item["id"] for item in state["execution_control"]["autonomy"]["manifest"]["items"]
                 ],
                 "finding_fingerprints": ["a" * 64],
+                "evidence_receipt_fingerprint": "a" * 64,
             }]
             path.write_text(json.dumps(state), encoding="utf-8")
             executable = root / "codex"

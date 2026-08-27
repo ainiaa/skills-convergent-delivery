@@ -87,11 +87,26 @@ class RunnerLaunchTest(unittest.TestCase):
             evidence="sufficient", implementation="complete", verification="passed", review="pending",
         ))
 
-        launch = plan_dispatch_launch(dispatch, "Collect evidence", workspace="/tmp")
+        request_fingerprint = "a" * 64
+        launch = plan_dispatch_launch(
+            dispatch, "Collect evidence", workspace="/tmp",
+            review_request_fingerprint=request_fingerprint,
+        )
 
         self.assertEqual("openai-compatible-v1", launch["runner_id"])
+        self.assertEqual(request_fingerprint, launch["configuration"]["review_request_fingerprint"])
         with self.assertRaisesRegex(ValueError, "local command"):
             command_for_dispatch(launch, "Collect evidence")
+
+    def test_rejects_a_review_fingerprint_for_a_non_reviewer_dispatch(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        dispatch = plan_dispatch(profiles, state())
+
+        with self.assertRaisesRegex(ValueError, "review request"):
+            plan_dispatch_launch(
+                dispatch, "Collect evidence", workspace="/tmp",
+                review_request_fingerprint="a" * 64,
+            )
 
     def test_normalizes_glm_content_as_ephemeral_output(self):
         profiles = resolve(
@@ -101,7 +116,9 @@ class RunnerLaunchTest(unittest.TestCase):
         dispatch = plan_dispatch(profiles, state(
             evidence="sufficient", implementation="complete", verification="passed", review="pending",
         ))
-        launch = plan_dispatch_launch(dispatch, "Review", workspace="/tmp")
+        launch = plan_dispatch_launch(
+            dispatch, "Review", workspace="/tmp", review_request_fingerprint="a" * 64,
+        )
         value = {
             "schema_version": 1, "runner_id": "openai-compatible-v1",
             "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",

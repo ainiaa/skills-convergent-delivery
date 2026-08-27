@@ -46,6 +46,8 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 `role_dispatch.py` 是 runner 与动态角色流之间的确定性派发计划器。它对所有 agent profile 都输出 `external_runner`，`runner_lifecycle.py` 消费该冻结 profile 并通过 `runner_launch.py` 构造 launch/本地命令或批准的 HTTPS request；因此不会继承父代理模型，也不会把计划冒充为宿主任务树或完成回执。
 
+reviewer 执行某个冻结 Review v3 请求时，controller 必须在 lifecycle 的单 launch `--review-request-fingerprint` 或 fan-out `--review-request-fingerprints` 中传入该请求的 SHA-256。三个 runner 将它作为仅用于 ledger 绑定的冻结 configuration 字段保存，执行命令和 HTTPS body 均不消费它；非 reviewer 或非 SHA-256 值确定性拒绝。完成门禁只接受与同一 reviewer、同一 request fingerprint 绑定的可用 role result。
+
 所有 runner 都以相同的低层 `output` 语义把响应文本即时返回给当前调用者；它不是 receipt、持久状态或通过依据。`runner_lifecycle.py` 不向 controller 暴露该原文：只读 scout/reviewer 必须经 `role_result.py` 转为与 launch 绑定的受限 JSON 结论，其他角色或不合规输出只返回明确状态。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥、原文或审计 transcript。见 [多模型协作](multi-model.md)。
 
 当 controller 证明多个只读任务独立时，可使用 `role_fanout.py` 以最多三个 frozen launch 做 fan-out/fan-in。它仍复用同一 `runner_launches/runner_results` ledger：launch 组必须先原子写入，之后才能启动任何 runner；fan-in 只稳定汇总每项带指纹的 `role_result`，不形成消息总线、共享任务队列或第二状态机。

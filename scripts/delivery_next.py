@@ -467,9 +467,11 @@ def validate_autonomy(value, source_fingerprint, routing):
     for batch in batches:
         if not isinstance(batch, dict) or set(batch) != {
             "source_fingerprint", "phase", "status", "covered_manifest_ids", "finding_fingerprints",
+            "evidence_receipt_fingerprint",
         }:
             raise ValueError("autonomy audit batch fields are invalid")
         batch_source = require_sha256(batch["source_fingerprint"], "autonomy audit source")
+        require_sha256(batch["evidence_receipt_fingerprint"], "autonomy audit evidence receipt")
         if batch["phase"] not in AUTONOMY_BATCH_PHASES \
                 or batch["status"] not in AUTONOMY_BATCH_STATUSES:
             raise ValueError("autonomy audit batch is invalid")
@@ -504,14 +506,22 @@ def validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, c
     if not batches or batches[-1]["source_fingerprint"] != source_fingerprint \
             or batches[-1]["status"] != "pass":
         raise ValueError("autonomy requires a current passing audit")
-    if autonomy["action_attempts"] and autonomy["action_attempts"][-1]["status"] != "committed":
-        raise ValueError("autonomy requires its latest action to be committed")
+    if not autonomy["action_attempts"] or autonomy["action_attempts"][-1]["status"] != "committed":
+        raise ValueError("autonomy requires a committed action")
     if source_receipt is None or not any(
             item.get("stage") == "autonomy-audit" and item.get("result") == "pass"
             and valid_evidence_receipts(item.get("evidence_receipts"), source_receipt)
+            and any(
+                receipt["receipt_fingerprint"] == batches[-1]["evidence_receipt_fingerprint"]
+                and (
+                    autonomy["runtime"]["mode"] != "service"
+                    or receipt["argv"] == autonomy["runtime"]["audit_argv"]
+                )
+                for receipt in item["evidence_receipts"]
+            )
             for item in checks
     ):
-        raise ValueError("autonomy requires a current audit Evidence Receipt")
+        raise ValueError("autonomy requires a current bound audit Evidence Receipt")
 
 
 def validate_review_gate(routing, review, workers, task_key, runner_launches, runner_results,

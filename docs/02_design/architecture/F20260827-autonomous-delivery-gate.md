@@ -20,6 +20,8 @@
 
 初始全范围审计若发现问题，状态确定性进入 `autonomy-repair`，只允许一次修复和一次新的全范围复审。复审必须使用新的源码指纹；重复 finding、陈旧证据、范围/风险漂移、无效状态或预算耗尽都必须终止为 `blocked`。每次宿主 Stop Hook 只交付一个经过 `run_contract.py` 验证的 action，避免用长 prompt 重新规划整个任务。
 
+完成还必须有至少一个已 `committed` 的 action；空 action 历史不能完成。每个 audit batch 保存产生它的 Evidence Receipt 指纹，完成门禁要求同一回执对当前 Source Receipt 成功；service 额外要求该回执的 argv 与冻结 `audit_argv` 完全相同。Gate 在非终态没有 lease root 时只返回阻断原因，不返回可执行 action。
+
 ## 宿主边界
 
 Stop Hook 是显式、可撤销的 adapter，而非默认安装项。Codex 使用本机 `codex queue --thread` 将 gate 的下一动作投递到同一 task，同一 stage/action 不能由 metadata-only revision 重新投递；Claude Code 2.1.246+ 直接返回 `decision:block` 与下一动作，让宿主继续同一会话。`--autonomy` 先运行本机 preflight，预检失败拒绝注册；不得从 Claude Hook 另起 `--resume` 进程，因为宿主拒绝同时写入同一 transcript。native v11 无 finding 路径至多五次、一次 finding 修复至多七次连续 Stop continuation，均低于 Claude 的八次硬上限。普通验证仅在临时 HOME 测试配置合并、适配器输入输出、Codex queue 参数与 Claude 原生 block 决策；它不安装真实全局 Hook、不调用模型，也不宣称验证了宿主真实回调。目标宿主中的 live smoke 必须由用户另行选择。

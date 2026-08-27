@@ -9,7 +9,7 @@ from pathlib import Path
 from codex_exec_runner import (
     _binary_identity, _capture_bounded, _is_isolated_worktree, _start_prompt_writer, _terminate_process,
 )
-from runner_contract import fingerprint, freeze_launch, validate_launch
+from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
 
 
 def _tools(profile):
@@ -20,20 +20,24 @@ def _permission_mode(profile):
     return "acceptEdits" if profile["permissions"]["workspace"] == "write" else "plan"
 
 
-def plan_launch(profile, prompt, *, workspace, claude_bin="claude"):
+def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_request_fingerprint=None):
     workspace = Path(workspace).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("Claude workspace must be an existing directory")
     binary, binary_fingerprint = _binary_identity(claude_bin)
     if profile["permissions"]["workspace"] == "write" and not _is_isolated_worktree(workspace):
         raise ValueError("Claude write launch requires an isolated Git worktree")
-    return freeze_launch(profile, prompt, {
+    configuration = {
         "claude_bin": binary,
         "binary_fingerprint": binary_fingerprint,
         "permission_mode": _permission_mode(profile),
         "tools": _tools(profile),
         "workspace": str(workspace),
-    })
+    }
+    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    if fingerprint is not None:
+        configuration["review_request_fingerprint"] = fingerprint
+    return freeze_launch(profile, prompt, configuration)
 
 
 def command_for_launch(launch, prompt):
@@ -41,12 +45,17 @@ def command_for_launch(launch, prompt):
     if launch["runner_id"] != "claude-code-v1":
         raise ValueError("launch does not select the Claude runner")
     configuration = launch["configuration"]
-    if set(configuration) != {"claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace"} \
+    if not {"claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace"} <= set(configuration) \
+            or set(configuration) - {
+                "claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace",
+                "review_request_fingerprint",
+            } \
             or not isinstance(configuration["claude_bin"], str) or not configuration["claude_bin"] \
             or not isinstance(configuration["binary_fingerprint"], str) \
             or len(configuration["binary_fingerprint"]) != 64 \
             or not isinstance(configuration["workspace"], str):
         raise ValueError("Claude launch configuration is invalid")
+    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
     _binary, binary_fingerprint = _binary_identity(configuration["claude_bin"])
     if binary_fingerprint != configuration["binary_fingerprint"]:
         raise ValueError("Claude binary changed after launch was frozen")

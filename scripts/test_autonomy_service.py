@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import autonomy_service
@@ -17,6 +18,8 @@ from autonomy_begin import initial_state
 from autonomy_service import service_paths, service_runtime
 from delivery_lease import lease_paths
 from delivery_state import state_path
+from delivery_next import validate_state
+from evidence_contract import run_evidence
 from runner_contract import fingerprint, freeze_launch
 
 
@@ -268,7 +271,7 @@ class AutonomyServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_service_state(directory)
             state = json.loads(path.read_text(encoding="utf-8"))
-            action = autonomy_service.decide(state)["next_action"]
+            action = autonomy_service.decide(state, lease_root=lease_root)["next_action"]
             autonomy_service._append_intent(path, state_root, lease_root, action)
             autonomy_service._start(path, state_root, lease_root)
 
@@ -305,6 +308,10 @@ class AutonomyServiceTest(unittest.TestCase):
             self.assertEqual(
                 "autonomy-audit", current["ledger"]["checks"][-1]["stage"],
             )
+            self.assertEqual(
+                current["ledger"]["checks"][-1]["evidence_receipts"][0]["receipt_fingerprint"],
+                audit["evidence_receipt_fingerprint"],
+            )
 
     def test_final_service_action_blocks_when_the_independent_audit_fails(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -325,6 +332,28 @@ class AutonomyServiceTest(unittest.TestCase):
             check = current["ledger"]["checks"][-1]
             self.assertEqual(("autonomy-audit", "fail"), (check["stage"], check["result"]))
             self.assertEqual(result["audit"], check["evidence_receipts"][0])
+
+    def test_completion_rejects_a_service_audit_receipt_from_an_unfrozen_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                autonomy_service.run_once(path, state_root, lease_root)
+
+            current = json.loads(path.read_text(encoding="utf-8"))
+            unrelated = run_evidence(
+                current["workspace"], current["baseline"]["commit"], ["true"],
+            )
+            current["execution_control"]["autonomy"]["audit_batches"][-1][
+                "evidence_receipt_fingerprint"
+            ] = unrelated["receipt_fingerprint"]
+            current["ledger"]["checks"][-1]["evidence_receipts"] = [unrelated]
+
+            with self.assertRaisesRegex(ValueError, "bound audit Evidence Receipt"):
+                validate_state(current, SimpleNamespace(strict_evidence=True))
 
     def test_service_records_the_failed_verifier_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -379,6 +408,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 "source_fingerprint": source, "phase": "initial", "status": "findings",
                 "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
                 "finding_fingerprints": ["a" * 64],
+                "evidence_receipt_fingerprint": "a" * 64,
             }]
             path.write_text(json.dumps(state), encoding="utf-8")
 
@@ -404,6 +434,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 "source_fingerprint": source, "phase": "initial", "status": "findings",
                 "covered_manifest_ids": [item["id"] for item in state["execution_control"]["autonomy"]["manifest"]["items"]],
                 "finding_fingerprints": ["a" * 64],
+                "evidence_receipt_fingerprint": "a" * 64,
             }]
             path.write_text(json.dumps(state), encoding="utf-8")
 
@@ -462,7 +493,7 @@ class AutonomyServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_service_state(directory)
             state = json.loads(path.read_text(encoding="utf-8"))
-            action = autonomy_service.decide(state)["next_action"]
+            action = autonomy_service.decide(state, lease_root=lease_root)["next_action"]
             autonomy_service._append_intent(path, state_root, lease_root, action)
             started = autonomy_service._start(path, state_root, lease_root)
             profile = started["execution_control"]["autonomy"]["runtime"]["runner_profile"]

@@ -175,15 +175,17 @@ def _complete(state_path, state_root, lease_root, verification, audit):
         state["source_receipt"] = source_receipt
         state["source_fingerprint"] = source
         state["current_stage"] = "verify-final"
-        attempts = state.get("execution_control", {}).get("autonomy", {}).get("action_attempts", [])
-        if attempts:
+        autonomy = state.get("execution_control", {}).get("autonomy")
+        if autonomy is not None:
+            attempts = autonomy["action_attempts"]
+            if not attempts:
+                raise ValueError("autonomous completion requires a committed action")
             attempt = attempts[-1]
             attempt["status"] = "committed"
             attempt["commit"] = {
                 "source_fingerprint": source,
                 "verification_fingerprint": verification["receipt_fingerprint"],
             }
-        autonomy = state.get("execution_control", {}).get("autonomy")
         if autonomy is not None and not autonomy["audit_batches"]:
             autonomy["audit_batches"].append({
                 "source_fingerprint": source,
@@ -191,6 +193,7 @@ def _complete(state_path, state_root, lease_root, verification, audit):
                 "status": "pass",
                 "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
                 "finding_fingerprints": [],
+                "evidence_receipt_fingerprint": audit["receipt_fingerprint"],
             })
         elif autonomy is not None and len(autonomy["audit_batches"]) == 1 \
                 and autonomy["audit_batches"][0]["status"] == "findings" \
@@ -202,6 +205,7 @@ def _complete(state_path, state_root, lease_root, verification, audit):
                 "status": "pass",
                 "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
                 "finding_fingerprints": [],
+                "evidence_receipt_fingerprint": audit["receipt_fingerprint"],
             })
             autonomy["re_audit_budget_remaining"] = 0
         elif autonomy is not None:
@@ -308,6 +312,7 @@ def _record_audit_findings(state_path, state_root, lease_root, verification, aud
             "status": "findings",
             "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
             "finding_fingerprints": [audit["receipt_fingerprint"]],
+            "evidence_receipt_fingerprint": audit["receipt_fingerprint"],
         })
         attempt = _latest(state)
         attempt["status"] = "committed"

@@ -16,6 +16,7 @@ from delivery_next import (
 from evidence_contract import run_evidence, workspace_source
 from role_result import result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
+from run_contract import action
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
@@ -140,6 +141,29 @@ def autonomous_state(**overrides):
     return payload
 
 
+def committed_attempt():
+    action_value = action("verify", task_id="task-123", phase="verify-final")
+    return {
+        "attempt_id": "attempt-1",
+        "action": action_value,
+        "status": "committed",
+        "owner": "writer-123",
+        "time_policy": {
+            "startup_seconds": 10, "idle_seconds": 30,
+            "absolute_seconds": 120, "max_extensions": 0,
+        },
+        "events": [{
+            "kind": "started", "at": "2026-08-27T00:00:00Z",
+            "evidence_fingerprint": "a" * 64,
+        }],
+        "observation": {"outcome": "completed", "receipt_fingerprint": "b" * 64},
+        "commit": {
+            "source_fingerprint": SOURCE["source_fingerprint"],
+            "verification_fingerprint": "c" * 64,
+        },
+    }
+
+
 def runtime_binding():
     return bind_observed("codex", {
         "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
@@ -244,6 +268,7 @@ class DeliveryNextTest(unittest.TestCase):
             "audit_batches": [{
                 "source_fingerprint": "a" * 64, "phase": "initial", "status": "pass",
                 "covered_manifest_ids": ["requirement", "scope", "acceptance"], "finding_fingerprints": [],
+                "evidence_receipt_fingerprint": "b" * 64,
             }],
             "action_attempts": [{"status": "observed"}],
         }
@@ -261,8 +286,9 @@ class DeliveryNextTest(unittest.TestCase):
         payload["execution_control"]["autonomy"]["audit_batches"] = [{
             "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
             "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
-            "finding_fingerprints": [],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": EVIDENCE["receipt_fingerprint"],
         }]
+        payload["execution_control"]["autonomy"]["action_attempts"] = [committed_attempt()]
         payload["ledger"]["checks"].append({
             "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
             "evidence_receipts": [EVIDENCE],
@@ -274,8 +300,9 @@ class DeliveryNextTest(unittest.TestCase):
         payload["execution_control"]["autonomy"]["audit_batches"] = [{
             "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
             "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
-            "finding_fingerprints": [],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": EVIDENCE["receipt_fingerprint"],
         }]
+        payload["execution_control"]["autonomy"]["action_attempts"] = [committed_attempt()]
 
         with self.assertRaisesRegex(ValueError, "audit Evidence Receipt"):
             validate_state(payload, SimpleNamespace())
@@ -287,10 +314,41 @@ class DeliveryNextTest(unittest.TestCase):
         payload["execution_control"]["autonomy"]["audit_batches"] = [{
             "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
             "status": "pass", "covered_manifest_ids": ["requirement", "scope"],
-            "finding_fingerprints": [],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": EVIDENCE["receipt_fingerprint"],
         }]
 
         with self.assertRaisesRegex(ValueError, "coverage"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_autonomous_completion_rejects_an_empty_action_history(self):
+        payload = autonomous_state(status="complete", current_stage="verify-final", revision=3)
+        payload["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
+            "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": EVIDENCE["receipt_fingerprint"],
+        }]
+        payload["ledger"]["checks"].append({
+            "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
+            "evidence_receipts": [EVIDENCE],
+        })
+
+        with self.assertRaisesRegex(ValueError, "committed action"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_autonomous_completion_rejects_an_audit_receipt_not_bound_to_its_batch(self):
+        payload = autonomous_state(status="complete", current_stage="verify-final", revision=3)
+        payload["execution_control"]["autonomy"]["action_attempts"] = [committed_attempt()]
+        payload["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
+            "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": "d" * 64,
+        }]
+        payload["ledger"]["checks"].append({
+            "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
+            "evidence_receipts": [EVIDENCE],
+        })
+
+        with self.assertRaisesRegex(ValueError, "bound audit Evidence Receipt"):
             validate_state(payload, SimpleNamespace())
 
     def test_autonomous_manifest_cannot_omit_requirement_or_acceptance(self):

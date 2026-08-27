@@ -39,13 +39,20 @@ def prompt_for_dispatch(dispatch, prompt):
     return prompt_for_role(_profile(dispatch)["role"], prompt)
 
 
-def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude"):
+def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude",
+                         review_request_fingerprint=None):
     """Turn exactly one frozen external-runner dispatch into a prompt-free launch receipt."""
     profile = _profile(dispatch)
     if profile["runner_id"] == "codex-exec-v1":
-        return plan_codex_launch(profile, prompt, workspace=workspace, codex_bin=codex_bin)
+        return plan_codex_launch(
+            profile, prompt, workspace=workspace, codex_bin=codex_bin,
+            review_request_fingerprint=review_request_fingerprint,
+        )
     if profile["runner_id"] == "claude-code-v1":
-        return plan_claude_launch(profile, prompt, workspace=workspace, claude_bin=claude_bin)
+        return plan_claude_launch(
+            profile, prompt, workspace=workspace, claude_bin=claude_bin,
+            review_request_fingerprint=review_request_fingerprint,
+        )
     provider = PROVIDERS.get(profile["effective"]["provider"])
     if profile["runner_id"] != "openai-compatible-v1" or provider is None:
         raise ValueError("external runner dispatch selects an unsupported runner")
@@ -55,6 +62,7 @@ def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", clau
     return plan_request(
         profile, prompt, base_url=provider["origin"] + "/api/paas/v4",
         api_key_env=provider["api_key_env"], effort_binding=effort_binding,
+        review_request_fingerprint=review_request_fingerprint,
     )
 
 

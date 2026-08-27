@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from autonomy_gate import decide
-from test_delivery_next import EVIDENCE, SOURCE, autonomous_state
+from test_delivery_next import EVIDENCE, SOURCE, autonomous_state, committed_attempt
 
 
 SCRIPT = Path(__file__).with_name("autonomy_gate.py")
@@ -17,8 +17,9 @@ def completed_state():
     payload["execution_control"]["autonomy"]["audit_batches"] = [{
         "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
         "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
-        "finding_fingerprints": [],
+        "finding_fingerprints": [], "evidence_receipt_fingerprint": EVIDENCE["receipt_fingerprint"],
     }]
+    payload["execution_control"]["autonomy"]["action_attempts"] = [committed_attempt()]
     payload["ledger"]["checks"].append({
         "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
         "evidence_receipts": [EVIDENCE],
@@ -27,9 +28,12 @@ def completed_state():
 
 
 class AutonomyGateTest(unittest.TestCase):
-    def invoke(self, path):
+    def invoke(self, path, lease_root=None):
+        command = [sys.executable, str(SCRIPT), "--state", str(path)]
+        if lease_root is not None:
+            command.extend(["--lease-root", str(lease_root)])
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--state", str(path)],
+            command,
             text=True, capture_output=True, check=False,
         )
 
@@ -38,15 +42,14 @@ class AutonomyGateTest(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
-    def test_active_autonomous_state_blocks_stop_with_one_runtime_action(self):
+    def test_active_autonomous_state_without_a_lease_blocks_without_a_runtime_action(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.invoke(self.write(directory, autonomous_state()))
 
         self.assertEqual(2, result.returncode, result.stderr)
         decision = json.loads(result.stdout)
         self.assertEqual("block", decision["decision"])
-        self.assertEqual("verify", decision["next_action"]["action"])
-        self.assertEqual("verify-final", decision["next_action"]["phase"])
+        self.assertIn("lease", decision["reason"])
 
     def test_complete_and_blocked_are_the_only_autonomous_terminal_allows(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -86,20 +89,11 @@ class AutonomyGateTest(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertEqual(before, path.read_bytes())
 
-    def test_native_autonomous_path_needs_at_most_five_stop_continuations(self):
-        stages = (
-            "scope", "round-1-build", "round-1-semantic-review",
-            "verify-round-1", "round-2-risk-review",
-        )
-        actions = []
-        for stage in stages:
-            payload = autonomous_state(current_stage=stage, requires_stability_round=True)
-            actions.append(decide(payload)["next_action"]["action"])
+    def test_direct_gate_call_never_returns_an_action_without_a_lease_root(self):
+        decision = decide(autonomous_state())
 
-        self.assertEqual(
-            ["execute-inline", "execute-inline", "verify", "execute-inline", "verify"],
-            actions,
-        )
+        self.assertEqual("block", decision["decision"])
+        self.assertNotIn("next_action", decision)
 
 
 if __name__ == "__main__":

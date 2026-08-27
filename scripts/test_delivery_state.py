@@ -241,6 +241,7 @@ class DeliveryStateTest(unittest.TestCase):
         audited["execution_control"]["autonomy"]["audit_batches"] = [{
             "source_fingerprint": "a" * 64, "phase": "initial", "status": "findings",
             "covered_manifest_ids": ["requirement", "scope"], "finding_fingerprints": ["b" * 64],
+            "evidence_receipt_fingerprint": "c" * 64,
         }]
         validate_transition(previous, audited)
 

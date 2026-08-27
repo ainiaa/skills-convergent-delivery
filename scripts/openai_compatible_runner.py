@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from runner_contract import fingerprint, freeze_launch, validate_launch
+from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
 from runner_registry import validate_runner_profile
 
 
@@ -90,18 +90,23 @@ def _validate_provider_configuration(profile, api_key_env, effort_binding):
     return effort_binding
 
 
-def plan_request(profile, prompt, *, base_url, api_key_env, effort_binding=None):
+def plan_request(profile, prompt, *, base_url, api_key_env, effort_binding=None,
+                 review_request_fingerprint=None):
     profile = validate_runner_profile(profile)
     if not isinstance(api_key_env, str) or not api_key_env.strip():
         raise ValueError("OpenAI-compatible API key environment name is required")
     effort_binding = validate_effort_binding(effort_binding)
     url = _approved_url(profile, base_url)
     effort_binding = _validate_provider_configuration(profile, api_key_env, effort_binding)
-    return freeze_launch(profile, prompt, {
+    configuration = {
         "url": url,
         "api_key_env": api_key_env,
         "effort_binding": effort_binding,
-    })
+    }
+    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    if fingerprint is not None:
+        configuration["review_request_fingerprint"] = fingerprint
+    return freeze_launch(profile, prompt, configuration)
 
 
 def _response_bytes(response, limit):
@@ -149,10 +154,14 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
     if launch["runner_id"] != "openai-compatible-v1":
         raise ValueError("launch does not select the OpenAI-compatible runner")
     configuration = launch["configuration"]
-    if set(configuration) != {"url", "api_key_env", "effort_binding"} \
+    if not {"url", "api_key_env", "effort_binding"} <= set(configuration) \
+            or set(configuration) - {
+                "url", "api_key_env", "effort_binding", "review_request_fingerprint",
+            } \
             or not isinstance(configuration["url"], str) \
             or not isinstance(configuration["api_key_env"], str):
         raise ValueError("OpenAI-compatible launch configuration is invalid")
+    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
     _validate_approved_endpoint(launch["profile"], configuration["url"])
     effort_binding = validate_effort_binding(configuration["effort_binding"])
     _validate_provider_configuration(
