@@ -2,7 +2,7 @@
 
 ## Plan preflight
 
-Batch 仅用于 Plan Contract v5 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
+Batch 仅用于 Plan Contract v6 的 `checkpoint=cross_session`，因此初始化前必须取得本地 commit 授权。`checkpoint=same_session` 的多任务由根控制器在同一会话顺序执行，不要求 commit，也不得仅因任务数量进入本协议。
 
 计划必须包含有限有序 Batch、全局约束和 `final_acceptance`。每个 Batch 必须能形成下列 context capsule：
 

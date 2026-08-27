@@ -7,7 +7,7 @@
 | 宿主能力不能靠自由布尔值放行 | `negotiate` 与 `bind` 仅产出 `controller_attested`；只有 `bind_observed` 可接受 query id、时间、profile 与 canonical capabilities 的完整原始桥接观察；Schema v4 绑定原始 observation 和 fingerprint；Codex profile 静态禁止 activity/process/resume | `scripts/test_runtime_adapter.py`：全 true Codex 仍 terminal-only；generic bind 无法构造 host-observed | 不引入签名服务或 runtime daemon：本地同权进程不能获得密码学来源保证，冻结 controller + 原始桥接回执已关闭正常路径误放行 |
 | 超时建议未落到宿主调用 | watchdog 返回受 `run_contract.py` 校验的 `query|wait|interrupt|block`，始终绑定 task/worker；不支持 wait 时退回 query | `scripts/test_runtime_adapter.py`：terminal-only 只 wait/query，observed 才 interrupt | 不另建 scheduler：控制器已有唯一派发权和 worker registry |
 | 子任务被中断前丢失上下文 | observed soft probe 前固化已有 milestone/source/verification 为 partial handoff；它不代表完成，也不触发重派 | `references/execution-control.md` 与 runtime action 测试：无活动证据前不 interrupt | 不增加 worker partial-state 字段：现有 `progress`/handoff 已是同一状态真源，新增可写日志会制造双重事实 |
-| 计划将 TBD 误当已决 | Plan v5 拒绝标准占位 resolution | `skills/converge-plan/scripts/test_plan_check.py` | 不限制真实技术决策自由文本，只拒绝无决策标记 |
+| 计划将 TBD 误当已决 | Plan v6 拒绝标准占位 resolution | `skills/converge-plan/scripts/test_plan_check.py` | 不限制真实技术决策自由文本，只拒绝无决策标记 |
 | trigger eval 只指纹 argv | selector descriptor 绑定 argv 与实际 artifact 内容 sha256 | `scripts/test_trigger_evals.py`：修改 selector 文件会改变 fingerprint | 不加入多后端 eval harness，当前真实执行+F1 已覆盖目标 |
 | 评测证据可在 candidate tree 内伪造、registry 顺序敏感 | Sample v4 强制候选仓库外的 absolute evaluator-attested artifact；registry 比较使用集合 | `skills/converge-eval/scripts/test_eval_kernel.py` | 不宣称 evidence 是 host-signed：当前宿主没有可验证的 evaluator-output artifact API |
 | 老快照继续执行旧安全规则 | Controller Protocol v12 阻止旧快照执行，唯一兼容动作是释放自身 lease | `scripts/test_controller_snapshot.py` | 不热修已冻结脚本：会破坏快照可审计性 |
@@ -32,6 +32,6 @@
 
 | 参考能力 | 采用 / 不采用 | 原因与对应行为测试 |
 |---|---|---|
-| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用“完成声明必须由最后变更后的证据支撑” | 复用 Plan v5 `final_acceptance` 与 `plan_check.py audit --require-complete`，而不是把“测试全绿”当作全量完成；`test_skill_contracts.py` 和“全量收口请求”压力场景锁定该路径。 |
+| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用“完成声明必须由最后变更后的证据支撑” | Plan v6 将 `final_acceptance` 映射到强制 closure matrix，`plan_check.py audit --require-complete` 因 `uncovered` 确定性失败；而不是把“测试全绿”当作全量完成。 |
 | [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 采用失败契约测试和真实近似触发场景 | 先让 `test_universal_completion_claims_require_a_finite_closure_matrix` 失败，再加入入口规则、矩阵和压力场景；不把关键词断言误称为独立模型评测。 |
 | 独立 coverage 数据库、第二状态机、无限“再检查一次”循环 | 不采用 | Plan 已有任务、验收和审计真源；新增可写台账会产生双重事实，重复扫描也不能证明不存在未知 bug。矩阵限定输入/冻结/副作用/回执/恢复，并将无法覆盖处如实标为 `uncovered`。 |

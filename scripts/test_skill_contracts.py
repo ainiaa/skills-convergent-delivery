@@ -107,7 +107,7 @@ class SkillContractTest(unittest.TestCase):
         )
         combined = root_skill + readme + batch_skill + batch_contract
 
-        self.assertIn("Plan Contract v5", combined)
+        self.assertIn("Plan Contract v6", combined)
         self.assertIn("checkpoint=same_session", combined)
         self.assertIn("同会话顺序执行", combined)
         self.assertIn("不要求 commit", combined)

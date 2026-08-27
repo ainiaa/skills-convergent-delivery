@@ -121,7 +121,7 @@ def task(task_id, paths, depends_on=None, execution="auto", provider=None):
 
 def plan(tasks, context="short", planner=None, checkpoint="same_session"):
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "plan_id": "plan-example",
         "requirement_fingerprint": SHA,
         "planner": planner or {
@@ -133,6 +133,17 @@ def plan(tasks, context="short", planner=None, checkpoint="same_session"):
         "baseline": {"commit": PROJECT_HEAD, "source": PROJECT_SOURCE},
         "tasks": tasks,
         "final_acceptance": ["all checks pass"],
+        "closure_matrix": {
+            "schema_version": 1,
+            "chains": [{
+                "id": "main",
+                "description": "the planned control chain",
+                "coverage": {
+                    dimension: {"status": "covered", "acceptance": ["all checks pass"]}
+                    for dimension in ("input", "freeze", "effect", "receipt", "recovery")
+                },
+            }],
+        },
         "decisions": [],
         "checkpoint": checkpoint,
     }
@@ -239,6 +250,31 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual([], source["changed_paths"])
 
+    def test_closure_matrix_is_required_and_uncovered_blocks_complete_audit(self):
+        value = plan([task("T1", ["src"])])
+        missing = json.loads(json.dumps(value))
+        missing.pop("closure_matrix")
+        self.assertNotEqual(0, self.run_check("validate", missing).returncode)
+
+        value["closure_matrix"]["chains"][0]["coverage"]["recovery"] = {
+            "status": "uncovered", "reason": "recovery path has no executable evidence",
+        }
+        self.assertEqual(0, self.run_check("validate", value).returncode)
+        source = self.current_source(value)
+        value["baseline"] = {"commit": self.baseline, "source": source}
+        result = self.run_check("audit", {
+            "plan": value,
+            "task_results": {"T1": {
+                "status": "DONE", "fresh_pass": True,
+                "source_before": source, "source_after": source,
+                "evidence": [evidence_receipt(source)],
+            }},
+            "final_acceptance": final_evidence(source),
+        }, self.workspace, require_complete=True)
+
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["closure_complete"])
+
     def test_independent_tasks_share_a_wave_and_dependencies_form_the_next_wave(self):
         value = granular_plan(
             [
@@ -258,7 +294,7 @@ class PlanCheckTest(unittest.TestCase):
     def test_only_resolved_structured_decisions_can_enter_execution(self):
         resolved = granular_plan([task("T1", ["src"])])
         baseline_source = self.current_source(resolved)
-        resolved["schema_version"] = 5
+        resolved["schema_version"] = 6
         resolved["baseline"] = {"commit": self.baseline, "source": baseline_source}
         resolved["decisions"] = [{
             "id": "D1",
@@ -339,7 +375,7 @@ class PlanCheckTest(unittest.TestCase):
                 value["schema_version"] = schema_version
                 result = self.run_check("validate", value)
                 self.assertNotEqual(0, result.returncode)
-                self.assertIn("schema_version must be 5", result.stderr)
+                self.assertIn("schema_version must be 6", result.stderr)
 
     def test_unknown_plan_schema_fields_are_rejected(self):
         cases = (
@@ -637,11 +673,11 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["outside.txt"], json.loads(result.stdout)["scope_drift"])
 
-    def test_v5_ignores_preexisting_dirty_baseline_and_attributes_each_task_delta(self):
+    def test_v6_ignores_preexisting_dirty_baseline_and_attributes_each_task_delta(self):
         self.write_changes("preexisting.txt")
         base_plan = granular_plan([task("T1", ["src/a"]), task("T2", ["src/b"])])
         baseline_source = self.current_source(base_plan)
-        base_plan["schema_version"] = 5
+        base_plan["schema_version"] = 6
         base_plan["baseline"] = {"commit": self.baseline, "source": baseline_source}
 
         self.write_changes("src/a/owned.py", "src/b/wrong-owner.py")

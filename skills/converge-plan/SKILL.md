@@ -9,7 +9,7 @@ metadata:
 
 只负责把已授权需求变成可执行、可验证的有限计划。**不修改业务代码**、不做代码评审、不运行实现，也不拆解 PDLC 内部阶段。
 
-先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v5](references/plan-contract.md)。
+先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v6](references/plan-contract.md)。
 
 ## 1. 冻结输入
 
@@ -31,7 +31,7 @@ metadata:
 - 明确 `owned_paths`、`depends_on`、验收行为和真实验证命令。
 - 简单任务仍可只有一个 task，不为它增加虚构阶段。
 - 每个 task 先运行 `python3 "$CONVERGE_PLAN_SKILL_DIR/../../scripts/delivery_engine.py" freeze-binding --mode <auto|pdlc|native> --kind <feature|fix|refactor>`，原样写入输出的完整 Provider Binding，再声明 `provider_run={scope: task, recursive_planning: false}`。`pdlc-v1` 执行指令须从冻结 contract 解析 entrypoint 并显式激活对应 PDLC Skill；PDLC 仍完整负责一个 task 内部阶段，但一个计划可以包含多个边界独立、可分别验收的 PDLC-backed task。
-- Plan v5 的 `decisions` 只记录结构化已决事项；任何业务、公共契约、权限、发布或不可逆问题尚未解决时，不生成可执行计划。
+- Plan v6 的 `decisions` 只记录结构化已决事项；任何业务、公共契约、权限、发布或不可逆问题尚未解决时，不生成可执行计划。
 
 将完整 JSON 经 stdin 校验：
 

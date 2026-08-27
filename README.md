@@ -62,7 +62,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 核心能力：
 
 - 默认按 `workflow Provider → Superpowers TDD → Matt Pocock TDD → native-v1` 稳定解析；通用 TDD 仅允许用 `--provider generic-tdd-v1 --tdd-skill <exact-SKILL.md>` 唯一选择。完整 Binding 冻结 manifest、task contract、真实入口、closure 与来源摘要。
-- 复杂任务先形成 Plan Contract v5；每个 task 只有一个结果、明确范围、依赖、Source Receipt v2 基线和验证。
+- 复杂任务先形成 Plan Contract v6；每个 task 只有一个结果、明确范围、依赖、Source Receipt v2 基线、验证和完整收口矩阵。
 - PDLC 每个 task 只形成一个有限 Provider Run，完整委托需求、设计、TDD、实现和阶段评审；根 Converge 只控制范围与证据，不复制内部阶段。
 - PDLC 不存在时，原生流程仍提供根因定位、测试先行、语义审查和风险触发的稳定化检查。
 - `checkpoint=same_session` 的多任务在同一会话顺序执行且不要求 commit；只有 `checkpoint=cross_session` 才进入 Batch 并请求一次本地 commit 授权。
@@ -197,9 +197,9 @@ Codex 用 `queue --thread` 将 gate 的单一下一动作投递回同一 task；
 
 同一问题在同一阶段最多自动修一次；问题复现或没有客观进展时阻塞，不无限循环。高风险改动使用全新上下文的 `converge-review` 盲审；极高风险或用户明确要求时再增加意图审查。
 
-复杂任务由 `converge-plan` 生成 Plan Contract v5，按独立可验收的业务切片形成多个 task，并冻结 Source Receipt v2 基线。每个 task 冻结自己的 Provider Binding；PDLC 仍完整负责一个 task 内部流程。已派发任务先校验 `planned_task=true`、`plan_id`、`task_id` 和 binding，再跳过画像与重新规划。
+复杂任务由 `converge-plan` 生成 Plan Contract v6，按独立可验收的业务切片形成多个 task，并冻结 Source Receipt v2 基线。每个 task 冻结自己的 Provider Binding；PDLC 仍完整负责一个 task 内部流程。已派发任务先校验 `planned_task=true`、`plan_id`、`task_id` 和 binding，再跳过画像与重新规划。
 
-Plan v5 的 `checkpoint=same_session` 在同一工作区顺序执行，不要求 commit；每个 task 用 `source_before/source_after` 归属自身增量。只有显式 `checkpoint=cross_session` 才进入 Batch，并在 checkpoint 前请求本地 commit 授权。任务数量本身不产生 commit 权限。
+Plan v6 的 `checkpoint=same_session` 在同一工作区顺序执行，不要求 commit；每个 task 用 `source_before/source_after` 归属自身增量。只有显式 `checkpoint=cross_session` 才进入 Batch，并在 checkpoint 前请求本地 commit 授权。任务数量本身不产生 commit 权限。
 
 worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](references/execution-control.md) 维护。
 

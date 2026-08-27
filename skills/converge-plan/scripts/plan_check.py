@@ -23,7 +23,7 @@ TASK_KINDS = {"vertical_slice", "wide_refactor", "integration"}
 CHECKPOINTS = {"same_session", "cross_session"}
 PLAN_FIELDS = {
     "schema_version", "plan_id", "requirement_fingerprint", "planner", "context", "baseline",
-    "tasks", "final_acceptance", "decisions", "checkpoint",
+    "tasks", "final_acceptance", "closure_matrix", "decisions", "checkpoint",
 }
 PLANNER_FIELDS = {"name", "source_path", "source_fingerprint"}
 TASK_FIELDS = {
@@ -43,6 +43,7 @@ EXTERNAL_PLANNERS = {
     "superpowers-writing-plans-v1",
     "generic-plan-v1",
 }
+CLOSURE_DIMENSIONS = ("input", "freeze", "effect", "receipt", "recovery")
 
 
 def require_string(value, name):
@@ -170,13 +171,58 @@ def validate_decisions(value):
     return value
 
 
+def validate_closure_matrix(value, final_acceptance):
+    if not isinstance(value, dict) or set(value) != {"schema_version", "chains"} \
+            or value.get("schema_version") != 1:
+        raise ValueError("closure_matrix fields are invalid")
+    chains = value["chains"]
+    if not isinstance(chains, list) or not 1 <= len(chains) <= 16:
+        raise ValueError("closure_matrix.chains is invalid")
+    seen = set()
+    for index, chain in enumerate(chains):
+        if not isinstance(chain, dict) or set(chain) != {"id", "description", "coverage"}:
+            raise ValueError(f"closure_matrix.chains[{index}] fields are invalid")
+        chain_id = require_string(chain["id"], f"closure_matrix.chains[{index}].id")
+        if len(chain_id) > 100 or chain_id in seen:
+            raise ValueError("closure_matrix chain id is invalid")
+        seen.add(chain_id)
+        description = require_string(
+            chain["description"], f"closure_matrix.chains[{index}].description"
+        )
+        if len(description) > 500:
+            raise ValueError("closure_matrix chain description is invalid")
+        coverage = chain["coverage"]
+        if not isinstance(coverage, dict) or set(coverage) != set(CLOSURE_DIMENSIONS):
+            raise ValueError("closure_matrix coverage must include every dimension")
+        for dimension, cell in coverage.items():
+            if not isinstance(cell, dict) or cell.get("status") not in {
+                "covered", "not_applicable", "uncovered",
+            }:
+                raise ValueError("closure_matrix cell is invalid")
+            status = cell["status"]
+            fields = {"status", "acceptance"} if status == "covered" else \
+                {"status", "reason", "acceptance"} if status == "not_applicable" else \
+                {"status", "reason"}
+            if set(cell) != fields:
+                raise ValueError("closure_matrix cell fields are invalid")
+            if status == "uncovered":
+                require_string(cell["reason"], "closure_matrix uncovered reason")
+                continue
+            if status == "not_applicable":
+                require_string(cell["reason"], "closure_matrix not_applicable reason")
+            criteria = require_strings(cell["acceptance"], "closure_matrix acceptance", non_empty=True)
+            if any(criterion not in final_acceptance for criterion in criteria):
+                raise ValueError("closure_matrix acceptance must be a final_acceptance criterion")
+    return value
+
+
 def validate_plan(plan):
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
     if set(plan) != PLAN_FIELDS:
         raise ValueError("plan fields are invalid")
-    if plan.get("schema_version") != 5:
-        raise ValueError("schema_version must be 5")
+    if plan.get("schema_version") != 6:
+        raise ValueError("schema_version must be 6")
     require_string(plan.get("plan_id"), "plan_id")
     require_sha256(plan.get("requirement_fingerprint"), "requirement_fingerprint")
     validate_planner(plan.get("planner"))
@@ -185,11 +231,12 @@ def validate_plan(plan):
         raise ValueError("context must be short or long")
     validate_baseline(plan.get("baseline"))
     if "source" not in plan["baseline"]:
-        raise ValueError("Plan v5 requires a Source Receipt v2 baseline")
+        raise ValueError("Plan v6 requires a Source Receipt v2 baseline")
     checkpoint = plan.get("checkpoint")
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
-    require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
+    final_acceptance = require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
+    validate_closure_matrix(plan.get("closure_matrix"), final_acceptance)
     validate_decisions(plan.get("decisions"))
 
     raw_tasks = plan.get("tasks")
@@ -340,7 +387,7 @@ def audit(envelope, workspace):
         status = result["status"]
         if status == "DONE":
             evidence_source = source
-            if plan["schema_version"] == 5:
+            if plan["schema_version"] == 6:
                 before = result.get("source_before")
                 after = result.get("source_after")
                 if isinstance(before, dict):
@@ -379,6 +426,13 @@ def audit(envelope, workspace):
         ):
             passed_final.add(entry["criterion"])
     final_acceptance_pass = passed_final == expected_final
+    uncovered_closure = [
+        f"{chain['id']}:{dimension}"
+        for chain in plan["closure_matrix"]["chains"]
+        for dimension, cell in chain["coverage"].items()
+        if cell["status"] == "uncovered"
+    ]
+    closure_complete = not uncovered_closure
 
     owned_paths = [
         clean_path(path, "owned_paths") for task in plan["tasks"] for path in task["owned_paths"]
@@ -392,9 +446,12 @@ def audit(envelope, workspace):
             all(status == "DONE" for status in statuses.values())
             and not scope_drift
             and final_acceptance_pass
+            and closure_complete
             and source_chain_complete
         ),
         "final_acceptance": final_acceptance_pass,
+        "closure_complete": closure_complete,
+        "uncovered_closure": uncovered_closure,
         "scope_drift": scope_drift,
         "task_scope_drift": task_scope_drift,
         "source": source,

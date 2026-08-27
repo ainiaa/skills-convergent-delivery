@@ -79,7 +79,7 @@ Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent
 
 PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Converge 的跨窗口互斥和外层完成判定。Provider Schema v2 统一校验 PDLC、第三方 TDD 和 Native 的身份、能力、授权、输出及源码闭包。具体边界见 [TDD 提供者](../references/tdd-providers.md)。
 
-复杂任务先由 `converge-plan` 生成并校验 Plan Contract v5。任务按独立业务切片和 `owned_paths` 生成 wave，每个 task 冻结 Provider Binding 与 Source Receipt v2 baseline；计划结束后 audit 逐 task 核对 `source_before/source_after`、自身范围增量和实际 argv 执行产生的 observed Evidence Receipt v2。
+复杂任务先由 `converge-plan` 生成并校验 Plan Contract v6。任务按独立业务切片和 `owned_paths` 生成 wave，每个 task 冻结 Provider Binding 与 Source Receipt v2 baseline；计划结束后 audit 逐 task 核对 `source_before/source_after`、自身范围增量、完整收口矩阵和实际 argv 执行产生的 observed Evidence Receipt v2。
 
 子代理在阶段变化、客观产物产生和长命令前后发送 Progress Receipt；父代理只保存最新快照并负责用户可见更新。heartbeat 不计为新客观进展，进度展示不使用百分比或 ETA，也不替代验证证据。
 

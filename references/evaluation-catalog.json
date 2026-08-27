@@ -80,7 +80,7 @@
         "plan.validation"
       ],
       "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
-      "scenario": "A Plan v5 containing an open, malformed, or unstructured decision must block before execution instead of returning valid."
+      "scenario": "A Plan v6 containing an open, malformed, or unstructured decision must block before execution instead of returning valid."
     },
     {
       "id": "plan-incomplete-audit-zero-exit",

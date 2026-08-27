@@ -4,7 +4,8 @@
 
 ## [Unreleased]
 
-- 修复“局部全绿即全量完成”的收口缺口：用户要求“全部/所有/深度审查/彻底/不留遗漏”时，Converge 现在必须先冻结有限影响面矩阵，将输入、冻结、副作用、回执与恢复逐格映射到既有 task/final acceptance 的新鲜证据；未覆盖项明确为 `uncovered`，不得再宣称“全部完成”或“没有其他问题”。复用 Plan v5 completion audit，不新增第二状态机或无界复查循环。
+- 修复“局部全绿即全量完成”的收口缺口：用户要求“全部/所有/深度审查/彻底/不留遗漏”时，Converge 现在必须先冻结有限影响面矩阵，将输入、冻结、副作用、回执与恢复逐格映射到既有 task/final acceptance 的新鲜证据；未覆盖项明确为 `uncovered`，不得再宣称“全部完成”或“没有其他问题”。复用 Plan v6 completion audit，不新增第二状态机或无界复查循环。
+- 将收口矩阵升级为 Plan Contract v6 的强制结构，而非文字约定：所有计划必须逐链声明 input/freeze/effect/receipt/recovery，`covered`/`not_applicable` 均绑定既有 final acceptance，`uncovered` 使 `plan_check audit --require-complete` 确定性失败；v5 和更早计划直接拒绝。
 - 补齐外部 Review/runner 的同链路遗漏：Review request 现同时绑定当前 ledger acceptance 和 frozen allowed scope；blind review 不再拼入调用者的实现上下文；本地 runner 在持久化 launch 前先校验冻结命令，配置漂移不会留下不可重派的未知 launch。Review adapter 改从 `--request-file` 读取完整 request，并为外部输入增加有界限制。
 - 修复外部 Review 证据链和 Codex 配置漂移：每个 canonical Review v3 request 现完整冻结在对应 launch，模型输出先经 adapter 规范化为同一条 Review v3 record，再作为已绑定 reviewer role result 写入 receipt；完成门禁要求该 record 与当前 state request 完全相同，不能再由泛化 `findings/next_action` 代替。lifecycle 改从 `--review-request-file` / `--review-requests-file` 读取 request，避免验收与范围随命令行参数暴露。Codex leaf launch 额外冻结 `$CODEX_HOME/config.toml` 内容指纹，计划后配置改变会在启动前明确阻断。
 - 修复外部 Codex reviewer 的配置与完成闭环：leaf runner 恢复读取用户 `$CODEX_HOME/config.toml`，冻结 model/effort/sandbox 仍覆盖可变默认值；external reviewer 不再伪装为 host worker，而是以冻结 `profile.worker_id`、同一 request binding 与 completed role result 作为独立外部证据身份。runner lifecycle 现要求完整 canonical Review v3 request，调用既有 adapter 重算 fingerprint 并在外部调用前校验当前 task、baseline 与源码；fan-out reviewer 缺少请求或请求不匹配时不再写入 launch、不产生模型调用。
