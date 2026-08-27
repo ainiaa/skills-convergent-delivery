@@ -173,14 +173,16 @@ def validate_decisions(value):
 
 def validate_closure_matrix(value, final_acceptance):
     if not isinstance(value, dict) or set(value) != {"schema_version", "chains"} \
-            or value.get("schema_version") != 1:
+            or value.get("schema_version") != 2:
         raise ValueError("closure_matrix fields are invalid")
     chains = value["chains"]
     if not isinstance(chains, list) or not 1 <= len(chains) <= 16:
         raise ValueError("closure_matrix.chains is invalid")
     seen = set()
     for index, chain in enumerate(chains):
-        if not isinstance(chain, dict) or set(chain) != {"id", "description", "coverage"}:
+        if not isinstance(chain, dict) or set(chain) != {
+            "id", "description", "entrypoints", "callers", "coverage",
+        }:
             raise ValueError(f"closure_matrix.chains[{index}] fields are invalid")
         chain_id = require_string(chain["id"], f"closure_matrix.chains[{index}].id")
         if len(chain_id) > 100 or chain_id in seen:
@@ -191,6 +193,26 @@ def validate_closure_matrix(value, final_acceptance):
         )
         if len(description) > 500:
             raise ValueError("closure_matrix chain description is invalid")
+        entrypoints = chain["entrypoints"]
+        if not isinstance(entrypoints, list) or not 1 <= len(entrypoints) <= 16:
+            raise ValueError("closure_matrix entrypoints are invalid")
+        chain["entrypoints"] = [
+            clean_path(path, "closure_matrix entrypoint") for path in entrypoints
+        ]
+        if len(chain["entrypoints"]) != len(set(chain["entrypoints"])):
+            raise ValueError("closure_matrix entrypoints must be unique")
+        callers = chain["callers"]
+        if not isinstance(callers, list) or not 1 <= len(callers) <= 32:
+            raise ValueError("closure_matrix callers are invalid")
+        normalized_callers = []
+        for caller in callers:
+            if caller == "external":
+                normalized_callers.append(caller)
+            else:
+                normalized_callers.append(clean_path(caller, "closure_matrix caller"))
+        if len(normalized_callers) != len(set(normalized_callers)):
+            raise ValueError("closure_matrix callers must be unique")
+        chain["callers"] = normalized_callers
         coverage = chain["coverage"]
         if not isinstance(coverage, dict) or set(coverage) != set(CLOSURE_DIMENSIONS):
             raise ValueError("closure_matrix coverage must include every dimension")
@@ -236,7 +258,6 @@ def validate_plan(plan):
     if checkpoint not in CHECKPOINTS:
         raise ValueError("checkpoint must be same_session or cross_session")
     final_acceptance = require_strings(plan.get("final_acceptance"), "final_acceptance", non_empty=True)
-    validate_closure_matrix(plan.get("closure_matrix"), final_acceptance)
     validate_decisions(plan.get("decisions"))
 
     raw_tasks = plan.get("tasks")
@@ -296,6 +317,15 @@ def validate_plan(plan):
             ),
         }
         tasks.append(task)
+
+    closure_matrix = validate_closure_matrix(plan.get("closure_matrix"), final_acceptance)
+    matrix_entrypoints = [
+        path for chain in closure_matrix["chains"] for path in chain["entrypoints"]
+    ]
+    for task in tasks:
+        for owned_path in task["owned_paths"]:
+            if not any(paths_overlap(entrypoint, owned_path) for entrypoint in matrix_entrypoints):
+                raise ValueError("closure_matrix entrypoints must cover every owned_paths entry")
 
     for task in tasks:
         unknown = set(task["depends_on"]) - task_ids
@@ -432,7 +462,12 @@ def audit(envelope, workspace):
         for dimension, cell in chain["coverage"].items()
         if cell["status"] == "uncovered"
     ]
-    closure_complete = not uncovered_closure
+    matrix_scope_drift = [
+        path for path in changed_paths
+        if not any(path_contains(entrypoint, path) for chain in plan["closure_matrix"]["chains"]
+                   for entrypoint in chain["entrypoints"])
+    ]
+    closure_complete = not uncovered_closure and not matrix_scope_drift
 
     owned_paths = [
         clean_path(path, "owned_paths") for task in plan["tasks"] for path in task["owned_paths"]
@@ -452,6 +487,7 @@ def audit(envelope, workspace):
         "final_acceptance": final_acceptance_pass,
         "closure_complete": closure_complete,
         "uncovered_closure": uncovered_closure,
+        "closure_scope_drift": matrix_scope_drift,
         "scope_drift": scope_drift,
         "task_scope_drift": task_scope_drift,
         "source": source,

@@ -134,10 +134,12 @@ def plan(tasks, context="short", planner=None, checkpoint="same_session"):
         "tasks": tasks,
         "final_acceptance": ["all checks pass"],
         "closure_matrix": {
-            "schema_version": 1,
+            "schema_version": 2,
             "chains": [{
                 "id": "main",
                 "description": "the planned control chain",
+                "entrypoints": sorted({path for item in tasks for path in item["owned_paths"]}),
+                "callers": ["external"],
                 "coverage": {
                     dimension: {"status": "covered", "acceptance": ["all checks pass"]}
                     for dimension in ("input", "freeze", "effect", "receipt", "recovery")
@@ -274,6 +276,19 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertFalse(json.loads(result.stdout)["closure_complete"])
+
+    def test_closure_matrix_must_cover_every_owned_path_with_entrypoints_and_callers(self):
+        value = plan([task("T1", ["src/service", "tests/service"])])
+        value["closure_matrix"]["chains"][0]["entrypoints"] = ["src/service"]
+        value["closure_matrix"]["chains"][0]["callers"] = []
+        result = self.run_check("validate", value)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("callers", result.stderr)
+
+        value["closure_matrix"]["chains"][0]["callers"] = ["tests/service"]
+        result = self.run_check("validate", value)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("owned_paths", result.stderr)
 
     def test_independent_tasks_share_a_wave_and_dependencies_form_the_next_wave(self):
         value = granular_plan(
@@ -538,6 +553,8 @@ class PlanCheckTest(unittest.TestCase):
             {"T1": "PARTIAL", "T2": "PARTIAL", "T3": "CHANGED"}, output["tasks"]
         )
         self.assertEqual(["extra.txt"], output["scope_drift"])
+        self.assertEqual(["extra.txt"], output["closure_scope_drift"])
+        self.assertFalse(output["closure_complete"])
         self.assertFalse(output["complete"])
 
         gated = self.run_check(

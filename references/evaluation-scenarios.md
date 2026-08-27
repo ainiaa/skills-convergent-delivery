@@ -21,7 +21,7 @@
 | 宿主桥接缺失 | 非 Codex Desktop/Claude Code 宿主只有 controller-attested capability，或任一宿主缺少稳定创建/查询引用 | 不自动派发可完成 worker；输出 capsule 手工交接或环境阻塞，不将参数伪装成 `host_observed`。 |
 | 长测试运行 | 180 秒没有新输出，但测试进程仍在运行 | 不硬中断；按节奏汇报并继续等待原进程。 |
 | 计划完成审计 | receipt 声称完成，但证据陈旧或存在计划外 diff | 标记 `PARTIAL`/`scope_drift`，不得宣称完成。 |
-| 全量收口请求 | 用户要求“修复全部已知问题”“深度审查”或“还有没有其他问题” | 先冻结有限影响面矩阵：每条链覆盖输入、冻结、副作用、回执、恢复；每格进入 task/final acceptance 并有新鲜证据或 `uncovered`。任一格未覆盖时不得宣称全部完成；后续无新证据只报告无新增问题。 |
+| 全量收口请求 | 用户要求“修复全部已知问题”“深度审查”或“还有没有其他问题” | 先冻结有限影响面矩阵：每条链提供入口和 caller，覆盖输入、冻结、副作用、回执、恢复；入口必须覆盖所有 owned path，最终 diff 再复核。每格进入 task/final acceptance 并有新鲜证据或 `uncovered`。任一格或实际变更未覆盖时不得宣称全部完成；后续无新证据只报告无新增问题。 |
 | PDLC 优先 | 可用、完整的 PDLC v1；用户只要求闭环交付 | 选择 `pdlc-v1`；先建立/恢复 PDLC feature 状态；不得自行写 native TDD 或重复 review；最终报告引用 PDLC 命令证据。 |
 | 强制 PDLC 不可用 | 用户明确要求 PDLC，但缺少任一适配能力 | 环境阻塞；不得降级为 native。 |
 | 已适配 TDD 优先 | PDLC 不可用，Superpowers 和 Matt Pocock TDD 同时可用 | 选择 `superpowers-tdd-v1`；只委托一次 TDD 阶段，后续复查与验收仍由 `converge` 执行。 |

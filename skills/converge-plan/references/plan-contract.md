@@ -33,7 +33,7 @@
     }
   ],
   "final_acceptance": ["integrated observable behavior"],
-  "closure_matrix": {"schema_version": 1, "chains": [{"id": "main", "description": "affected control chain", "coverage": {"input": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "freeze": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "effect": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "receipt": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "recovery": {"status": "covered", "acceptance": ["integrated observable behavior"]}}}]},
+  "closure_matrix": {"schema_version": 2, "chains": [{"id": "main", "description": "affected control chain", "entrypoints": ["scripts/example.py"], "callers": ["external"], "coverage": {"input": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "freeze": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "effect": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "receipt": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "recovery": {"status": "covered", "acceptance": ["integrated observable behavior"]}}}]},
   "decisions": [{
     "id": "D1",
     "status": "resolved",
@@ -46,7 +46,7 @@
 
 任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；`workflow_provider` 与每个 stage 都必须是完整 Provider Reference v2（manifest、task contract、entrypoint 与 closure 来源），摘要 ID 一律拒绝。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
-只接受 v6 计划；必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix` 至少一条链，每条必须覆盖 `input/freeze/effect/receipt/recovery`；`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
+只接受 v6 计划；必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix.schema_version=2` 至少一条链，每条必须有非空的 workspace 内 `entrypoints` 和 `callers`（无仓库 caller 时明确写 `external`），并覆盖全部 task `owned_paths`；每条还必须覆盖 `input/freeze/effect/receipt/recovery`。`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 
@@ -143,7 +143,7 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit \
 }
 ```
 
-`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v6 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动；任一 `uncovered` closure cell 也使 audit 不完整。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v2 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。`--require-complete` 在输出审计 JSON 后以退出码 1 表示未完成；不带该参数只用于中途诊断，不能作为最终完成门禁。
+`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v6 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动；任一 `uncovered` closure cell 或最终 diff 不在任何 matrix entrypoint 下都使 audit 不完整，并分别输出 `uncovered_closure` / `closure_scope_drift`。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v2 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。`--require-complete` 在输出审计 JSON 后以退出码 1 表示未完成；不带该参数只用于中途诊断，不能作为最终完成门禁。
 
 状态语义：
 
