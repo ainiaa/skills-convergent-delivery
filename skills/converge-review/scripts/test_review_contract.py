@@ -4,6 +4,7 @@
 import sys
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_next import validate_execution_control
 from task_profile import freeze_routing
-from review_contract import normalize_result
+from review_contract import normalize_request, normalize_result
 
 
 def review_request(axis="spec", phase="initial", mode="shared", source="a" * 64):
@@ -35,39 +36,55 @@ def review_request(axis="spec", phase="initial", mode="shared", source="a" * 64)
 class ReviewContractTest(unittest.TestCase):
     def test_cli_normalizes_stdin_into_the_internal_record(self):
         source = "a" * 64
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("review_contract.py")),
-                "normalize",
-                "--input",
-                "-",
-                "--reviewer-ref",
-                "reviewer-1",
-                "--request",
-                json.dumps(review_request()),
-            ],
-            input=json.dumps({
-                "protocol_version": 3,
-                "mode": "shared",
-                "axis": "spec",
-                "phase": "initial",
-                "source_fingerprint": source,
-                "independent": False,
-                "status": "pass",
-                "findings": [],
-                "blocked_reason": None,
-            }),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            request_path = Path(temporary) / "request.json"
+            request_path.write_text(json.dumps(review_request()), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("review_contract.py")),
+                    "normalize",
+                    "--input",
+                    "-",
+                    "--reviewer-ref",
+                    "reviewer-1",
+                    "--request-file",
+                    str(request_path),
+                ],
+                input=json.dumps({
+                    "protocol_version": 3,
+                    "mode": "shared",
+                    "axis": "spec",
+                    "phase": "initial",
+                    "source_fingerprint": source,
+                    "independent": False,
+                    "status": "pass",
+                    "findings": [],
+                    "blocked_reason": None,
+                }),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("reviewer-1", json.loads(result.stdout)["reviewer_ref"])
         self.assertEqual("pass", json.loads(result.stdout)["status"])
         self.assertEqual("task-123", json.loads(result.stdout)["task_id"])
         self.assertEqual(64, len(json.loads(result.stdout)["request_fingerprint"]))
+
+    def test_request_bounds_reject_unbounded_external_input(self):
+        for field, value in (
+            ("task_id", "x" * 201),
+            ("acceptance", ["a"] * 33),
+            ("allowed_scope", ["scripts"] * 65),
+            ("prior_findings", ["finding"] * 17),
+        ):
+            with self.subTest(field=field):
+                request = review_request()
+                request[field] = value
+                with self.assertRaises(ValueError):
+                    normalize_request(request)
 
     def test_normalize_result_keeps_bounded_structured_findings_for_recovery(self):
         result = normalize_result({

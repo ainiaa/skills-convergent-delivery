@@ -27,7 +27,7 @@ from delivery_progress import plan_projection_fingerprint
 from evidence_contract import (
     valid_evidence_receipts, validate_source_receipt, workspace_source,
 )
-from runner_contract import role_results_complete, runner_results_complete
+from runner_contract import fingerprint as runner_fingerprint, role_results_complete, runner_results_complete
 from task_profile import freeze_routing, infer_path_risks
 
 
@@ -524,8 +524,34 @@ def validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, c
         raise ValueError("autonomy requires a current bound audit Evidence Receipt")
 
 
-def validate_review_gate(routing, review, workers, task_key, runner_launches, runner_results,
-                         runner_role_results_complete):
+def _external_request_matches_state(launch, review_record, *, task_key, baseline_commit,
+                                    source_fingerprint, acceptance, allowed_scope):
+    request = launch["configuration"].get("review_request")
+    expected_fields = {
+        "protocol_version", "task_id", "axis", "phase", "mode", "acceptance",
+        "allowed_scope", "baseline_commit", "source_fingerprint", "prior_findings",
+    }
+    return (
+        isinstance(request, dict)
+        and set(request) == expected_fields
+        and request["protocol_version"] == 3
+        and request["task_id"] == task_key
+        and request["axis"] == review_record["axis"]
+        and request["phase"] == review_record["phase"]
+        and request["mode"] == review_record["mode"]
+        and request["acceptance"] == acceptance
+        and request["allowed_scope"] == allowed_scope
+        and request["baseline_commit"] == baseline_commit
+        and request["source_fingerprint"] == source_fingerprint
+        and isinstance(request["prior_findings"], list)
+        and launch["configuration"].get("review_request_fingerprint")
+        == runner_fingerprint(request)
+        and review_record["request_fingerprint"] == runner_fingerprint(request)
+    )
+
+
+def validate_review_gate(routing, review, workers, task_key, baseline_commit, source_fingerprint,
+                         acceptance, runner_launches, runner_results, runner_role_results_complete):
     tier = routing["review_tier"]
     requests = review["rounds"][-1]["requests"] if review["rounds"] else []
     latest = {}
@@ -581,7 +607,12 @@ def validate_review_gate(routing, review, workers, task_key, runner_launches, ru
                 and launch["profile"]["worker_id"] == request["reviewer_ref"]
                 and launch["configuration"].get("review_request_fingerprint")
                 == request["request_fingerprint"]
-                and launch["configuration"].get("review_request") is not None
+                and _external_request_matches_state(
+                    launch, request, task_key=task_key, baseline_commit=baseline_commit,
+                    source_fingerprint=source_fingerprint,
+                    acceptance=[item["criterion"] for item in acceptance],
+                    allowed_scope=routing["allowed_paths"],
+                )
                 and results_by_launch.get(launch["launch_fingerprint"], {}).get("role_result", {}).get("status")
                 == "available"
                 and results_by_launch.get(launch["launch_fingerprint"], {}).get("role_result", {}).get("review_record")
@@ -963,7 +994,8 @@ def validate_state(state, arguments):
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
         validate_review_gate(
-            routing, review_control, workers, task_key, runner_launches, runner_results,
+            routing, review_control, workers, task_key, baseline["commit"], source_fingerprint,
+            acceptance, runner_launches, runner_results,
             runner_role_results_complete,
         )
         if autonomy is not None:

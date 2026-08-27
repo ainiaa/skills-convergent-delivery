@@ -27,3 +27,11 @@
 | Review 独立性 | `independent` 指 fresh reviewer 独立于实现者；spec 通过后可复用同一 reviewer 处理 blind quality，不采用每轴额外 worker | Protocol 的“全新上下文”排除实现理由和完整实现会话，不要求两轴各建上下文；现有状态机绑定有序单轴请求。`test_delivery_next.py` 覆盖同 reviewer 的有效状态，`test_review_axes_contract.py` 锁定 fresh-context 表述。 |
 | 语义风险 | 将 `risk_flags` 明确为冻结前的语义风险声明，路径扫描只作下限；不增加“自动语义扫描器” | 通用文本/代码扫描无法可靠判定金额、权限或兼容性语义，反而可能虚假降级；`test_task_profile.py` 保持任一已声明风险进入 high review，`test_skill_contracts.py` 锁定该边界说明。 |
 | [Harness Protocol](https://github.com/harnessprotocol/harness-protocol/blob/main/protocol/profile-schema.md) / 宿主 metrics | 只汇总已签名 runner 回执内的 `usage.total_tokens`；工具调用、用户阻塞及宿主未公开指标显式为 unavailable，不采用估算或模拟 bridge | `test_delivery_report.py` 验证 token 只来自签名 receipt；`test_runtime_adapter.py` 与 bridge 缺失压力场景继续拒绝伪造 `host_observed`。 |
+
+## 2026-08-28 全量收口声明
+
+| 参考能力 | 采用 / 不采用 | 原因与对应行为测试 |
+|---|---|---|
+| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用“完成声明必须由最后变更后的证据支撑” | 复用 Plan v5 `final_acceptance` 与 `plan_check.py audit --require-complete`，而不是把“测试全绿”当作全量完成；`test_skill_contracts.py` 和“全量收口请求”压力场景锁定该路径。 |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 采用失败契约测试和真实近似触发场景 | 先让 `test_universal_completion_claims_require_a_finite_closure_matrix` 失败，再加入入口规则、矩阵和压力场景；不把关键词断言误称为独立模型评测。 |
+| 独立 coverage 数据库、第二状态机、无限“再检查一次”循环 | 不采用 | Plan 已有任务、验收和审计真源；新增可写台账会产生双重事实，重复扫描也不能证明不存在未知 bug。矩阵限定输入/冻结/副作用/回执/恢复，并将无法覆盖处如实标为 `uncovered`。 |

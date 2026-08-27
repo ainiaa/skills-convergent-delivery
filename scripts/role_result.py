@@ -120,8 +120,8 @@ def prompt_for_review(prompt, request):
     """Ask a reviewer for the exact Review v3 result without retaining its request in argv."""
     if not isinstance(prompt, str) or not prompt.strip() or not isinstance(request, dict):
         raise ValueError("review result prompt and request are required")
-    return (
-        f"{prompt.rstrip()}\n\n"
+    context = "" if request.get("mode") == "blind" else f"{prompt.rstrip()}\n\n"
+    return context + (
         "Review the following frozen Review Protocol v3 request. Return only the Review v3 result JSON "
         "with protocol_version, mode, axis, phase, source_fingerprint, independent, status, findings, "
         "and blocked_reason when status is blocked.\n"

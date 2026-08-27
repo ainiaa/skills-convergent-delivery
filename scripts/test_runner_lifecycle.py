@@ -15,7 +15,7 @@ from multi_model import resolve
 from role_dispatch import plan_dispatch, plan_read_only_fanout
 from runner_contract import fingerprint
 from runner_lifecycle import _completed_execution, run_dispatch, run_fanout
-from runner_launch import plan_dispatch_launch
+from runner_launch import plan_dispatch_launch, prompt_for_dispatch
 
 
 RUNNER_LIFECYCLE = Path(__file__).with_name("runner_lifecycle.py")
@@ -56,6 +56,8 @@ def managed_state(workspace, *, revision=7):
     return {
         "revision": revision, "workspace": str(workspace), "task_key": "task-1",
         "source_fingerprint": "a" * 64, "baseline": {"commit": "b" * 40},
+        "execution_control": {"routing": {"allowed_paths": ["scripts"]}},
+        "ledger": {"acceptance": [{"criterion": "Review behavior"}]},
     }
 
 
@@ -285,6 +287,61 @@ class RunnerLifecycleTest(unittest.TestCase):
             run_dispatch(
                 self.arguments, dispatch, "Review", load=lambda _arguments: managed_state(self.workspace),
                 append=lambda *_arguments: appended.append(_arguments),
+            )
+
+        self.assertEqual([], appended)
+
+    def test_reviewer_rejects_acceptance_or_scope_outside_the_frozen_state(self):
+        profiles = resolve(
+            None, workspace=self.workspace, home=self.workspace / "home",
+            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
+        )
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        self.arguments.allow_network = True
+        for field, value in (("acceptance", ["Other behavior"]), ("allowed_scope", ["other"])):
+            with self.subTest(field=field):
+                request = review_request()
+                request[field] = value
+                self.arguments.review_request = request
+                appended = []
+                with self.assertRaisesRegex(ValueError, field):
+                    run_dispatch(
+                        self.arguments, dispatch, "Review",
+                        load=lambda _arguments: managed_state(self.workspace),
+                        append=lambda *_arguments: appended.append(_arguments),
+                    )
+                self.assertEqual([], appended)
+
+    def test_blind_reviewer_prompt_excludes_the_caller_context(self):
+        profiles = resolve(
+            None, workspace=self.workspace, home=self.workspace / "home",
+            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
+        )
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        prompt = prompt_for_dispatch(
+            dispatch,
+            "IMPLEMENTATION-RATIONALE", review_request(),
+        )
+
+        self.assertNotIn("IMPLEMENTATION-RATIONALE", prompt)
+        self.assertIn("Frozen request", prompt)
+
+    def test_preflight_failure_does_not_leave_a_persisted_unknown_launch(self):
+        appended = []
+        dispatch = plan_dispatch(self.profiles, flow_state())
+
+        with self.assertRaisesRegex(ValueError, "config changed"):
+            run_dispatch(
+                self.arguments, dispatch, "Collect evidence",
+                load=lambda _arguments: managed_state(self.workspace),
+                append=lambda *_arguments: appended.append(_arguments),
+                preflight=lambda _launch, _prompt: (_ for _ in ()).throw(ValueError("config changed")),
             )
 
         self.assertEqual([], appended)

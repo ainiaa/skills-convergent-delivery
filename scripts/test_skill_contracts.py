@@ -447,6 +447,17 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn("execution-control.md", path.read_text(encoding="utf-8"))
 
+    def test_universal_completion_claims_require_a_finite_closure_matrix(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        scenarios = (ROOT / "references/evaluation-scenarios.md").read_text(encoding="utf-8")
+
+        self.assertIn("全量收口", root)
+        for marker in ("输入", "冻结", "副作用", "回执", "恢复", "uncovered"):
+            self.assertIn(marker, control)
+        self.assertIn("全量收口请求", scenarios)
+        self.assertIn("不得宣称全部完成", scenarios)
+
 
 if __name__ == "__main__":
     unittest.main()

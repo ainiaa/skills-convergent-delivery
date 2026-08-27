@@ -86,6 +86,14 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 
+### 6.1 全量收口矩阵
+
+“修复全部已知问题”“还有没有其他问题”“深度审查”“彻底检查”“不留遗漏”以及“全部完成”都是全量收口请求，不是普通局部修复。开始修改前必须调用 `converge-plan`，以 CodeGraph/实际调用链冻结有限矩阵；已带 `planned_task=true` 的 capsule 也必须携带该矩阵，缺失即 `blocked`，不能借递归保护跳过。
+
+每一条受影响的数据或控制链都必须覆盖：`输入`（提示词、文件、CLI/API 和解析边界）、`冻结`（范围、验收、配置、源码身份）、`副作用`（写入/外部调用及其所有共享入口和 caller）、`回执`（结果、状态完成门禁）以及`恢复`（异常、并发、超时、重试和终态清场）。将每一格映射为 task acceptance 或 `final_acceptance`；每项必须有最后修改后的新鲜正/负向证据，或有可核查的 `not_applicable` 理由。`plan_check.py audit --require-complete` 继续作为唯一完成门禁。
+
+矩阵中未能审到、不能运行或证据不足的格必须显式写为 `uncovered`；它不阻止交付已验证的局部修复，但阻止“全部已修复”“没有其他问题”这类结论。它证明的是冻结范围内的收口，不声称能数学证明仓库不存在未知 bug；一次收口后没有新证据时，后续复查只报告“无新增问题”和现有 `uncovered`，不重新开始无界搜索。
+
 正常完成、异常、用户中断、`no_progress`、验证失败和其他返回路径都执行等价 `finally`：逐项查询当前 run registry，只以宿主 query/wait 的结果更新状态。收到结果但宿主仍显示 Working 时继续有界等待；只有 `observed` Binding 的宿主确认无活动且无进程后才可按 watchdog 中断，并再次查询到 `interrupted`。terminal-only timeout 继续视为 working/unknown，不得为清场强制终止。本轮存在 active worker 时不得宣称完成；无法查询或中断时返回 blocked，列出需 manual cleanup 的精确 `worker_ref`。
 
 若先进入 blocked 才完成宿主中断，状态保持 blocked，但允许后续 revision 仅把既有 worker 更新为宿主终态并刷新清场回执；其他任务事实全部冻结。这样清场结果可恢复、可审计，也不会把失败运行重新伪装为完成。

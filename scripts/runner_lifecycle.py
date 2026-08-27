@@ -11,7 +11,9 @@ from types import SimpleNamespace
 import delivery_state
 from delivery_next import upgrade_state
 from role_result import result_from_output, review_result
-from runner_launch import execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch
+from runner_launch import (
+    command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch,
+)
 from runner_contract import bind_role_result
 from role_fanout import fan_in, tasks_for_fanout
 
@@ -58,6 +60,15 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
         raise ValueError("review request source does not match the current run")
     if request["baseline_commit"] != state["baseline"]["commit"]:
         raise ValueError("review request baseline does not match the current run")
+    try:
+        expected_acceptance = [item["criterion"] for item in state["ledger"]["acceptance"]]
+        expected_scope = state["execution_control"]["routing"]["allowed_paths"]
+    except (KeyError, TypeError) as error:
+        raise ValueError("current state lacks frozen review acceptance or scope") from error
+    if request["acceptance"] != expected_acceptance:
+        raise ValueError("review request acceptance does not match the current run")
+    if request["allowed_scope"] != expected_scope:
+        raise ValueError("review request allowed_scope does not match the current run")
     fingerprint = request_fingerprint(request)
     if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
         raise ValueError("review request fingerprint does not match the frozen request")
@@ -84,7 +95,8 @@ def load_current(arguments):
 
 
 def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
-                 append=delivery_state.append_runner_record, execute=execute_dispatch_launch):
+                 append=delivery_state.append_runner_record, execute=execute_dispatch_launch,
+                 preflight=command_for_dispatch):
     """Persist launch before the side effect; never retry a persisted unknown launch."""
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
@@ -102,6 +114,8 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
+    if launch["runner_id"] != "openai-compatible-v1":
+        preflight(launch, prompt)
     revision = append(_arguments(arguments, state["revision"]), "runner_launches", launch)
     execution = execute(
         launch, prompt, allow_execute=True, allow_network=arguments.allow_network,
@@ -144,7 +158,8 @@ def _completed_execution(launch, execution, review_request=None):
 
 def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, review_requests=None, *, load=load_current,
                append_launches=delivery_state.append_runner_records,
-               append=delivery_state.append_runner_record, execute=execute_dispatch_launch):
+               append=delivery_state.append_runner_record, execute=execute_dispatch_launch,
+               preflight=command_for_dispatch):
     """Persist all bounded read-only launches before concurrently executing and merging them."""
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
@@ -174,6 +189,9 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     if any(item["launch"]["runner_id"] == "openai-compatible-v1" for item in prepared) \
             and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
+    for item in prepared:
+        if item["launch"]["runner_id"] != "openai-compatible-v1":
+            preflight(item["launch"], item["prompt"])
     revision = append_launches(
         _arguments(arguments, state["revision"]), "runner_launches",
         [item["launch"] for item in prepared],

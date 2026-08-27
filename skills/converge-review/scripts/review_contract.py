@@ -16,8 +16,8 @@ REQUEST_FIELDS = {
 }
 
 
-def _string(value, name):
-    if not isinstance(value, str) or not value.strip():
+def _string(value, name, limit=500):
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
         raise ValueError(f"{name} must be a non-empty string")
     return value.strip()
 
@@ -54,8 +54,8 @@ def _finding_record(finding):
     return record
 
 
-def _strings(value, name, *, non_empty=False):
-    if not isinstance(value, list) or (non_empty and not value):
+def _strings(value, name, *, non_empty=False, limit=32):
+    if not isinstance(value, list) or len(value) > limit or (non_empty and not value):
         raise ValueError(f"{name} must be a{' non-empty' if non_empty else ''} string list")
     return [_string(item, f"{name}[]") for item in value]
 
@@ -68,16 +68,16 @@ def normalize_request(value):
         raise ValueError("review request identity is invalid")
     request = {
         **value,
-        "task_id": _string(value.get("task_id"), "request.task_id"),
+        "task_id": _string(value.get("task_id"), "request.task_id", 200),
         "acceptance": _strings(value.get("acceptance"), "request.acceptance", non_empty=True),
         "allowed_scope": _strings(
-            value.get("allowed_scope"), "request.allowed_scope", non_empty=True
+            value.get("allowed_scope"), "request.allowed_scope", non_empty=True, limit=64
         ),
         "baseline_commit": _string(value.get("baseline_commit"), "request.baseline_commit"),
         "source_fingerprint": _sha256(
             value.get("source_fingerprint"), "request.source_fingerprint"
         ),
-        "prior_findings": _strings(value.get("prior_findings"), "request.prior_findings"),
+        "prior_findings": _strings(value.get("prior_findings"), "request.prior_findings", limit=16),
     }
     if len(request["baseline_commit"]) not in {40, 64} or any(
         character not in "0123456789abcdef" for character in request["baseline_commit"]
@@ -160,13 +160,13 @@ def main():
     parser.add_argument("command", choices=("normalize",))
     parser.add_argument("--input", required=True)
     parser.add_argument("--reviewer-ref", required=True)
-    parser.add_argument("--request", required=True)
+    parser.add_argument("--request-file", type=argparse.FileType("r"), required=True)
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("normalize only accepts --input - from stdin")
         result = normalize_result(
-            json.load(sys.stdin), arguments.reviewer_ref, json.loads(arguments.request)
+            json.load(sys.stdin), arguments.reviewer_ref, json.load(arguments.request_file)
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0

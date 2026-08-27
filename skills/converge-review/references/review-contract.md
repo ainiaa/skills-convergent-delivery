@@ -68,9 +68,9 @@ quality 与 integration 初审必须使用 `blind`、`independent=true` 和全�
 
 ```bash
 python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --input - --reviewer-ref <worker-ref> \
-  --request '<canonical-request-json>' < result.json
+  --request-file <canonical-request.json> < result.json
 ```
 
-只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。编排器必须为该 reviewer 的 frozen runner launch 配置完整 canonical request 和相同的 `review_request_fingerprint`，并将 adapter 生成的同一内部 Review v3 record 写入完成的可用 role result；外部 lifecycle 以该 request 重算摘要，且拒绝 task、baseline 或 source 不匹配的请求；状态 record 与 role result record 不完全相同则 pass 无效。旧请求和结果直接拒绝。
+结果只允许 stdin，request 只允许文件，退出码 0 的 JSON 才能追加到 Single State Review v3 round；不得把验收、范围或 findings 放进 argv。编排器必须为该 reviewer 的 frozen runner launch 配置完整 canonical request 和相同的 `review_request_fingerprint`，并将 adapter 生成的同一内部 Review v3 record 写入完成的可用 role result；外部 lifecycle 以该 request 重算摘要，且拒绝 task、baseline、source、当前 acceptance 或 frozen allowed scope 不匹配的请求；状态 record 与 role result record 不完全相同则 pass 无效。request 的 `task_id` 至多 200 字符，acceptance 至多 32 项、allowed_scope 至多 64 项、prior_findings 至多 16 项，列表文本均至多 500 字符。旧请求和结果直接拒绝。
 
 每个 `findings` 由 adapter 原样规范化为当前不可变 round 内的 `finding_records`：仅保存 fingerprint、evidence、impact、root_cause、scope、classification，三个说明字段各不超过 500 字符。它与 `finding_fingerprints` 顺序和身份完全一致，供定向复核、恢复和用户回执追溯；不另建可写台账，也不保存 prompt、完整对话或敏感原始产物。

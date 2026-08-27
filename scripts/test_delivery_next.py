@@ -240,7 +240,8 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
         request = {
             "protocol_version": 3, "task_id": payload["task_key"], "axis": record["axis"],
             "phase": record["phase"], "mode": record["mode"],
-            "acceptance": ["Requested behavior"], "allowed_scope": ["scripts"],
+            "acceptance": ["Requested behavior"],
+            "allowed_scope": payload["execution_control"]["routing"]["allowed_paths"],
             "baseline_commit": payload["baseline"]["commit"], "source_fingerprint": source,
             "prior_findings": [],
         }
@@ -492,6 +493,33 @@ class DeliveryNextTest(unittest.TestCase):
         result["launch_fingerprint"] = launch["launch_fingerprint"]
         result["role_result"]["launch_fingerprint"] = launch["launch_fingerprint"]
         role_result = result["role_result"]
+        role_result["result_fingerprint"] = runner_fingerprint({
+            key: value for key, value in role_result.items() if key != "result_fingerprint"
+        })
+        result["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in result.items() if key != "receipt_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "bound to its request"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_complete_review_pass_revalidates_external_request_scope_and_acceptance(self):
+        payload = reviewed_complete_state()
+        launch = payload["ledger"]["runner_launches"][0]
+        configuration = launch["configuration"]
+        request = {**configuration["review_request"], "acceptance": ["Different requirement"]}
+        request_fingerprint = runner_fingerprint(request)
+        configuration.update(review_request=request, review_request_fingerprint=request_fingerprint)
+        record = payload["execution_control"]["review"]["rounds"][0]["requests"][0]
+        record["request_fingerprint"] = request_fingerprint
+        launch["launch_fingerprint"] = runner_fingerprint({
+            key: value for key, value in launch.items() if key != "launch_fingerprint"
+        })
+        result = payload["ledger"]["runner_results"][0]
+        result["launch_fingerprint"] = launch["launch_fingerprint"]
+        role_result = result["role_result"]
+        role_result["launch_fingerprint"] = launch["launch_fingerprint"]
+        role_result["review_record"] = record
         role_result["result_fingerprint"] = runner_fingerprint({
             key: value for key, value in role_result.items() if key != "result_fingerprint"
         })
