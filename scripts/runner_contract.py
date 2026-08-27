@@ -78,12 +78,14 @@ def _non_empty_string(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def review_request_binding(profile, value):
-    """Validate optional review metadata without broadening a runner's authority."""
-    if value is None:
+def review_request_binding(profile, value, request=None):
+    """Validate frozen review metadata without broadening a runner's authority."""
+    if value is None and request is None:
         return None
-    if profile["role"] != "reviewer" or not _sha256(value):
+    if profile["role"] != "reviewer" or not _sha256(value) or not isinstance(request, dict):
         raise ValueError("runner review request fingerprint is invalid")
+    if fingerprint(request) != value:
+        raise ValueError("runner review request does not match its fingerprint")
     return value
 
 

@@ -116,6 +116,33 @@ def prompt_for_role(role, prompt):
     )
 
 
+def prompt_for_review(prompt, request):
+    """Ask a reviewer for the exact Review v3 result without retaining its request in argv."""
+    if not isinstance(prompt, str) or not prompt.strip() or not isinstance(request, dict):
+        raise ValueError("review result prompt and request are required")
+    return (
+        f"{prompt.rstrip()}\n\n"
+        "Review the following frozen Review Protocol v3 request. Return only the Review v3 result JSON "
+        "with protocol_version, mode, axis, phase, source_fingerprint, independent, status, findings, "
+        "and blocked_reason when status is blocked.\n"
+        f"Frozen request: {json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+    )
+
+
+def review_result(launch, record):
+    """Bind one canonical Review v3 record to a reviewer launch without raw model text."""
+    launch, role = _launch_role(launch)
+    if role != "reviewer" or not isinstance(record, dict):
+        raise ValueError("review role result requires a reviewer record")
+    return _fingerprinted({
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "launch_fingerprint": launch["launch_fingerprint"],
+        "role": role,
+        "status": "available",
+        "review_record": record,
+    })
+
+
 def result_from_output(launch, output):
     """Convert one ephemeral runner output into a result that contains no raw response."""
     launch, role = _launch_role(launch)
@@ -180,11 +207,21 @@ def validate_role_result(value, launch):
     if not isinstance(value, dict) or value.get("schema_version") not in {1, CURRENT_SCHEMA_VERSION}:
         raise ValueError("role result is invalid")
     status = value.get("status")
-    expected = _BASE_FIELDS | ({"findings", "next_action"} if status == "available" else {"reason"})
+    is_review_record = role == "reviewer" and isinstance(value, dict) and "review_record" in value
+    expected = _BASE_FIELDS | (
+        {"review_record"} if is_review_record else {"findings", "next_action"} if status == "available" else {"reason"}
+    )
     if set(value) != expected or value.get("launch_fingerprint") != launch["launch_fingerprint"] \
             or value.get("role") != role or status not in {"available", "unavailable", "invalid"}:
         raise ValueError("role result fields are invalid")
     if status == "available":
+        if is_review_record:
+            if not isinstance(value["review_record"], dict):
+                raise ValueError("review role result record is invalid")
+            expected_fingerprint = fingerprint({key: item for key, item in value.items() if key != "result_fingerprint"})
+            if value.get("result_fingerprint") != expected_fingerprint:
+                raise ValueError("role result fingerprint is invalid")
+            return value
         return validate_available_result(
             value, role=role, launch_fingerprint=launch["launch_fingerprint"],
         )

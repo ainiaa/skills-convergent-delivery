@@ -581,8 +581,11 @@ def validate_review_gate(routing, review, workers, task_key, runner_launches, ru
                 and launch["profile"]["worker_id"] == request["reviewer_ref"]
                 and launch["configuration"].get("review_request_fingerprint")
                 == request["request_fingerprint"]
+                and launch["configuration"].get("review_request") is not None
                 and results_by_launch.get(launch["launch_fingerprint"], {}).get("role_result", {}).get("status")
                 == "available"
+                and results_by_launch.get(launch["launch_fingerprint"], {}).get("role_result", {}).get("review_record")
+                == request
                 for launch in runner_launches
             ):
                 raise ValueError("review pass requires a completed reviewer result bound to its request")

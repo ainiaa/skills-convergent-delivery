@@ -59,6 +59,13 @@ class CodexExecRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             plan_launch(changed, "Fix the isolated task", workspace="/tmp")
 
+    def test_rejects_execution_when_the_inherited_user_config_changes(self):
+        read_profile = profile(permissions={"workspace": "read", "shell": True, "network": "egress"})
+        with mock.patch("codex_exec_runner._user_config_fingerprint", side_effect=["a" * 64, "b" * 64]):
+            launch = plan_launch(read_profile, "Fix the isolated task", workspace="/tmp")
+            with self.assertRaisesRegex(ValueError, "user config changed"):
+                command_for_launch(launch, "Fix the isolated task")
+
     def test_requires_explicit_permission_before_starting_a_real_process(self):
         with self.assertRaisesRegex(ValueError, "explicit"):
             execute_launch(

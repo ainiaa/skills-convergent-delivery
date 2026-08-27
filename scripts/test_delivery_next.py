@@ -14,7 +14,7 @@ from delivery_next import (
     validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
-from role_result import result_from_output
+from role_result import review_result, result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from run_contract import action
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
@@ -197,7 +197,7 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     base = {
         "phase": "initial", "source_fingerprint": source, "status": "pass",
         "reviewer_ref": reviewer_ref, "finding_fingerprints": [],
-        "task_id": payload["task_key"], "request_fingerprint": "e" * 64,
+        "finding_records": [], "task_id": payload["task_key"],
     }
     requests = [
         {**base, "axis": "spec", "mode": "blind" if integration_required else "shared",
@@ -236,7 +236,16 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     else:
         reviewer_refs = [reviewer_ref]
     launches, results = [], []
-    for index, reviewer_ref in enumerate(reviewer_refs):
+    for index, record in enumerate(requests):
+        request = {
+            "protocol_version": 3, "task_id": payload["task_key"], "axis": record["axis"],
+            "phase": record["phase"], "mode": record["mode"],
+            "acceptance": ["Requested behavior"], "allowed_scope": ["scripts"],
+            "baseline_commit": payload["baseline"]["commit"], "source_fingerprint": source,
+            "prior_findings": [],
+        }
+        record["request_fingerprint"] = runner_fingerprint(request)
+        reviewer_ref = record["reviewer_ref"]
         profile = {
             "schema_version": 1, "worker_id": reviewer_ref, "role": "reviewer",
             "runner_id": "openai-compatible-v1",
@@ -247,19 +256,18 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
         }
         profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
         launch = freeze_launch(profile, "Review", {
-            "api_key_env": "GLM_API_KEY", "review_request_fingerprint": "e" * 64,
+            "api_key_env": "GLM_API_KEY", "review_request_fingerprint": record["request_fingerprint"],
+            "review_request": request,
         })
         receipt = {
             "schema_version": 1, "runner_id": "openai-compatible-v1",
             "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
             "response_id": f"review-{index + 1}", "response_model": "glm-5.2", "usage": None,
-            "response_fingerprint": ("ab"[index]) * 64,
+            "response_fingerprint": chr(ord("a") + index) * 64,
         }
         receipt["receipt_fingerprint"] = runner_fingerprint(receipt)
         launches.append(launch)
-        results.append(bind_role_result(launch, receipt, result_from_output(launch, {
-            "status": "available", "content": '{"findings":[],"next_action":"verify"}',
-        })))
+        results.append(bind_role_result(launch, receipt, review_result(launch, record)))
     payload["ledger"].update(runner_launches=launches, runner_results=results)
     return payload
 
@@ -471,7 +479,11 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_complete_review_pass_requires_a_result_bound_to_its_frozen_request(self):
         payload = reviewed_complete_state()
-        payload["ledger"]["runner_launches"][0]["configuration"]["review_request_fingerprint"] = "a" * 64
+        configuration = payload["ledger"]["runner_launches"][0]["configuration"]
+        configuration["review_request"] = {
+            **configuration["review_request"], "acceptance": ["Different requirement"],
+        }
+        configuration["review_request_fingerprint"] = runner_fingerprint(configuration["review_request"])
         launch = payload["ledger"]["runner_launches"][0]
         launch["launch_fingerprint"] = runner_fingerprint({
             key: value for key, value in launch.items() if key != "launch_fingerprint"
@@ -924,6 +936,15 @@ class DeliveryNextTest(unittest.TestCase):
             "root_cause": "pending repair", "scope": "current",
             "classification": "defect",
         }]
+        result = payload["ledger"]["runner_results"][-1]
+        role_result = result["role_result"]
+        role_result["review_record"] = payload["execution_control"]["review"]["rounds"][0]["requests"][-1]
+        role_result["result_fingerprint"] = runner_fingerprint({
+            key: value for key, value in role_result.items() if key != "result_fingerprint"
+        })
+        result["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in result.items() if key != "receipt_fingerprint"
+        })
 
         with self.assertRaisesRegex(ValueError, "integration review requires a current pass"):
             validate_state(payload, SimpleNamespace())

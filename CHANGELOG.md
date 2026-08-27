@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 修复外部 Review 证据链和 Codex 配置漂移：每个 canonical Review v3 request 现完整冻结在对应 launch，模型输出先经 adapter 规范化为同一条 Review v3 record，再作为已绑定 reviewer role result 写入 receipt；完成门禁要求该 record 与当前 state request 完全相同，不能再由泛化 `findings/next_action` 代替。lifecycle 改从 `--review-request-file` / `--review-requests-file` 读取 request，避免验收与范围随命令行参数暴露。Codex leaf launch 额外冻结 `$CODEX_HOME/config.toml` 内容指纹，计划后配置改变会在启动前明确阻断。
 - 修复外部 Codex reviewer 的配置与完成闭环：leaf runner 恢复读取用户 `$CODEX_HOME/config.toml`，冻结 model/effort/sandbox 仍覆盖可变默认值；external reviewer 不再伪装为 host worker，而是以冻结 `profile.worker_id`、同一 request binding 与 completed role result 作为独立外部证据身份。runner lifecycle 现要求完整 canonical Review v3 request，调用既有 adapter 重算 fingerprint 并在外部调用前校验当前 task、baseline 与源码；fan-out reviewer 缺少请求或请求不匹配时不再写入 launch、不产生模型调用。
 - 修复 Review 与自治完成的剩余旁路：runner lifecycle 现可将冻结 `review_request_fingerprint` 贯通到 Codex、Claude 与 OpenAI-compatible launch，并拒绝非 reviewer 伪绑定；自治 complete 必须有 committed action，audit batch 与具体 Evidence Receipt 指纹绑定，service 同时校验冻结 `audit_argv`；没有 lease root 的 active Gate 不再返回可执行 continuation。
 - 加固自治 service 与 Review 完成门禁：同一 managed state 的 service 推进改为非阻塞互斥，竞争调用明确返回 `busy`；过期或非所属 lease 会在 Hook/Service 排队或执行前阻断，需人工恢复的 service state 只诊断一次后退出，不再无限重试。自治完成必须保存与当前源码绑定的 audit Evidence Receipt；Review pass 必须同时具备绑定同一 `review_request_fingerprint` 的已完成 reviewer role result。Review adapter 现保留 `blocked_reason`，并补齐上述回归测试与使用契约。

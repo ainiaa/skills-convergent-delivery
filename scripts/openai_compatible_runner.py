@@ -91,7 +91,7 @@ def _validate_provider_configuration(profile, api_key_env, effort_binding):
 
 
 def plan_request(profile, prompt, *, base_url, api_key_env, effort_binding=None,
-                 review_request_fingerprint=None):
+                 review_request_fingerprint=None, review_request=None):
     profile = validate_runner_profile(profile)
     if not isinstance(api_key_env, str) or not api_key_env.strip():
         raise ValueError("OpenAI-compatible API key environment name is required")
@@ -103,9 +103,10 @@ def plan_request(profile, prompt, *, base_url, api_key_env, effort_binding=None,
         "api_key_env": api_key_env,
         "effort_binding": effort_binding,
     }
-    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    fingerprint = review_request_binding(profile, review_request_fingerprint, review_request)
     if fingerprint is not None:
         configuration["review_request_fingerprint"] = fingerprint
+        configuration["review_request"] = review_request
     return freeze_launch(profile, prompt, configuration)
 
 
@@ -156,12 +157,15 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
     configuration = launch["configuration"]
     if not {"url", "api_key_env", "effort_binding"} <= set(configuration) \
             or set(configuration) - {
-                "url", "api_key_env", "effort_binding", "review_request_fingerprint",
+                "url", "api_key_env", "effort_binding", "review_request_fingerprint", "review_request",
             } \
             or not isinstance(configuration["url"], str) \
             or not isinstance(configuration["api_key_env"], str):
         raise ValueError("OpenAI-compatible launch configuration is invalid")
-    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
+    review_request_binding(
+        launch["profile"], configuration.get("review_request_fingerprint"),
+        configuration.get("review_request"),
+    )
     _validate_approved_endpoint(launch["profile"], configuration["url"])
     effort_binding = validate_effort_binding(configuration["effort_binding"])
     _validate_provider_configuration(

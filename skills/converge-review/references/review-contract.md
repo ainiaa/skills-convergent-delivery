@@ -71,6 +71,6 @@ python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --inpu
   --request '<canonical-request-json>' < result.json
 ```
 
-只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。编排器必须为该 reviewer 的 frozen runner launch 配置相同的 `review_request_fingerprint`，并写入完成的可用 role result；外部 lifecycle 以完整 canonical request 重算该摘要，且拒绝 task、baseline 或 source 不匹配的请求；否则 pass 无效。旧请求和结果直接拒绝。
+只允许 stdin，退出码 0 的 JSON 才能追加到 Single State Review v3 round。编排器必须为该 reviewer 的 frozen runner launch 配置完整 canonical request 和相同的 `review_request_fingerprint`，并将 adapter 生成的同一内部 Review v3 record 写入完成的可用 role result；外部 lifecycle 以该 request 重算摘要，且拒绝 task、baseline 或 source 不匹配的请求；状态 record 与 role result record 不完全相同则 pass 无效。旧请求和结果直接拒绝。
 
 每个 `findings` 由 adapter 原样规范化为当前不可变 round 内的 `finding_records`：仅保存 fingerprint、evidence、impact、root_cause、scope、classification，三个说明字段各不超过 500 字符。它与 `finding_fingerprints` 顺序和身份完全一致，供定向复核、恢复和用户回执追溯；不另建可写台账，也不保存 prompt、完整对话或敏感原始产物。

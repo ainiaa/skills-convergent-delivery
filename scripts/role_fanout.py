@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate deterministic controller-owned fan-in for bounded read-only tasks."""
 
-from role_result import validate_available_result
+from role_result import validate_available_result, validate_role_result
 from runner_contract import fingerprint, validate_launch
 from runner_registry import validate_runner_profile
 
@@ -63,6 +63,11 @@ def _available_result(value, role, launch):
     if not isinstance(value, dict) or value.get("launch_fingerprint") != launch["launch_fingerprint"]:
         raise ValueError("fan-in result does not match its frozen launch")
     try:
+        if role == "reviewer" and isinstance(value, dict) and "review_record" in value:
+            result = validate_role_result(value, launch)
+            if result["status"] != "available":
+                raise ValueError("reviewer result is unavailable")
+            return result
         return validate_available_result(
             value, role=role, launch_fingerprint=launch["launch_fingerprint"],
         )

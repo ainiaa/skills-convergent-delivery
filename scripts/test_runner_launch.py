@@ -36,6 +36,14 @@ def state(**overrides):
     return value
 
 
+def review_request():
+    return {
+        "protocol_version": 3, "task_id": "task-1", "axis": "quality", "phase": "initial",
+        "mode": "blind", "acceptance": ["Review behavior"], "allowed_scope": ["scripts"],
+        "baseline_commit": "b" * 40, "source_fingerprint": "a" * 64, "prior_findings": [],
+    }
+
+
 class RunnerLaunchTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -87,14 +95,17 @@ class RunnerLaunchTest(unittest.TestCase):
             evidence="sufficient", implementation="complete", verification="passed", review="pending",
         ))
 
-        request_fingerprint = "a" * 64
+        request = review_request()
+        request_fingerprint = fingerprint(request)
         launch = plan_dispatch_launch(
             dispatch, "Collect evidence", workspace="/tmp",
             review_request_fingerprint=request_fingerprint,
+            review_request=request,
         )
 
         self.assertEqual("openai-compatible-v1", launch["runner_id"])
         self.assertEqual(request_fingerprint, launch["configuration"]["review_request_fingerprint"])
+        self.assertEqual(request, launch["configuration"]["review_request"])
         with self.assertRaisesRegex(ValueError, "local command"):
             command_for_dispatch(launch, "Collect evidence")
 
@@ -116,8 +127,10 @@ class RunnerLaunchTest(unittest.TestCase):
         dispatch = plan_dispatch(profiles, state(
             evidence="sufficient", implementation="complete", verification="passed", review="pending",
         ))
+        request = review_request()
         launch = plan_dispatch_launch(
-            dispatch, "Review", workspace="/tmp", review_request_fingerprint="a" * 64,
+            dispatch, "Review", workspace="/tmp", review_request_fingerprint=fingerprint(request),
+            review_request=request,
         )
         value = {
             "schema_version": 1, "runner_id": "openai-compatible-v1",

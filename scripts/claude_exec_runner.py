@@ -20,7 +20,8 @@ def _permission_mode(profile):
     return "acceptEdits" if profile["permissions"]["workspace"] == "write" else "plan"
 
 
-def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_request_fingerprint=None):
+def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_request_fingerprint=None,
+                review_request=None):
     workspace = Path(workspace).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("Claude workspace must be an existing directory")
@@ -34,9 +35,10 @@ def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_reque
         "tools": _tools(profile),
         "workspace": str(workspace),
     }
-    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    fingerprint = review_request_binding(profile, review_request_fingerprint, review_request)
     if fingerprint is not None:
         configuration["review_request_fingerprint"] = fingerprint
+        configuration["review_request"] = review_request
     return freeze_launch(profile, prompt, configuration)
 
 
@@ -48,14 +50,17 @@ def command_for_launch(launch, prompt):
     if not {"claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace"} <= set(configuration) \
             or set(configuration) - {
                 "claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace",
-                "review_request_fingerprint",
+                "review_request_fingerprint", "review_request",
             } \
             or not isinstance(configuration["claude_bin"], str) or not configuration["claude_bin"] \
             or not isinstance(configuration["binary_fingerprint"], str) \
             or len(configuration["binary_fingerprint"]) != 64 \
             or not isinstance(configuration["workspace"], str):
         raise ValueError("Claude launch configuration is invalid")
-    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
+    review_request_binding(
+        launch["profile"], configuration.get("review_request_fingerprint"),
+        configuration.get("review_request"),
+    )
     _binary, binary_fingerprint = _binary_identity(configuration["claude_bin"])
     if binary_fingerprint != configuration["binary_fingerprint"]:
         raise ValueError("Claude binary changed after launch was frozen")

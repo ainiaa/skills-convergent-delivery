@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import delivery_state
 from delivery_next import upgrade_state
-from role_result import result_from_output
+from role_result import result_from_output, review_result
 from runner_launch import execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch
 from runner_contract import bind_role_result
 from role_fanout import fan_in, tasks_for_fanout
@@ -36,7 +36,7 @@ def _review_contract():
         raise ValueError("runner lifecycle cannot load the converge-review contract")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    _REVIEW_CONTRACT = module.normalize_request, module.request_fingerprint
+    _REVIEW_CONTRACT = module.normalize_request, module.normalize_result, module.request_fingerprint
     return _REVIEW_CONTRACT
 
 
@@ -47,10 +47,10 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
     if role != "reviewer":
         if request is not None or supplied_fingerprint is not None:
             raise ValueError("review request binding requires a reviewer dispatch")
-        return None
+        return None, None
     if not isinstance(request, dict):
         raise ValueError("reviewer lifecycle requires a frozen review request")
-    normalize_request, request_fingerprint = _review_contract()
+    normalize_request, _normalize_result, request_fingerprint = _review_contract()
     request = normalize_request(request)
     if request["task_id"] != state["task_key"]:
         raise ValueError("review request task does not match the current run")
@@ -61,7 +61,7 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
     fingerprint = request_fingerprint(request)
     if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
         raise ValueError("review request fingerprint does not match the frozen request")
-    return fingerprint
+    return request, fingerprint
 
 
 def _review_request_mapping(value, tasks, name):
@@ -89,15 +89,16 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
-    prompt = prompt_for_dispatch(dispatch, prompt)
-    review_request_fingerprint = review_request_binding(
+    review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
     )
+    prompt = prompt_for_dispatch(dispatch, prompt, review_request)
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
         review_request_fingerprint=review_request_fingerprint,
+        review_request=review_request,
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -108,7 +109,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
             or not isinstance(execution["output"], dict):
         raise ValueError("runner execution result is invalid")
-    receipt, role_result = _completed_execution(launch, execution)
+    receipt, role_result = _completed_execution(launch, execution, review_request)
     revision = append(_arguments(arguments, revision), "runner_results", receipt)
     return {
         "status": receipt["status"], "launch": launch, "result": receipt,
@@ -116,12 +117,26 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     }
 
 
-def _completed_execution(launch, execution):
+def _completed_execution(launch, execution, review_request=None):
     if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
             or not isinstance(execution["output"], dict):
         raise ValueError("runner execution result is invalid")
     receipt = execution["receipt"]
-    role_result = result_from_output(launch, execution["output"])
+    if launch["profile"]["role"] == "reviewer" and review_request is not None \
+            and execution["output"].get("status") == "available":
+        _normalize_request, normalize_result, _request_fingerprint = _review_contract()
+        try:
+            content = execution["output"].get("content")
+            if not isinstance(content, str):
+                raise ValueError("reviewer output content is invalid")
+            record = normalize_result(
+                json.loads(content), launch["profile"]["worker_id"], review_request,
+            )
+            role_result = review_result(launch, record)
+        except (KeyError, ValueError, json.JSONDecodeError):
+            role_result = result_from_output(launch, {"status": "unavailable"})
+    else:
+        role_result = result_from_output(launch, execution["output"])
     if receipt.get("status") == "completed" and role_result["role"] in {"scout", "reviewer"}:
         receipt = bind_role_result(launch, receipt, role_result)
     return receipt, role_result
@@ -141,17 +156,21 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     state = load(arguments)
     prepared = []
     for task in tasks:
-        prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]])
-        review_request_fingerprint = review_request_binding(
+        review_request, review_request_fingerprint = review_request_binding(
             state, task["dispatch"], (review_requests or {}).get(task["task_id"]),
             (review_request_fingerprints or {}).get(task["task_id"]),
         )
+        prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]], review_request)
         launch = plan_dispatch_launch(
             task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
             claude_bin=arguments.claude_bin,
             review_request_fingerprint=review_request_fingerprint,
+            review_request=review_request,
         )
-        prepared.append({"task_id": task["task_id"], "launch": launch, "prompt": prompt})
+        prepared.append({
+            "task_id": task["task_id"], "launch": launch, "prompt": prompt,
+            "review_request": review_request,
+        })
     if any(item["launch"]["runner_id"] == "openai-compatible-v1" for item in prepared) \
             and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -170,7 +189,7 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
         executions = [future.result() for future in futures]
     completed = []
     for item, execution in zip(prepared, executions):
-        receipt, role_result = _completed_execution(item["launch"], execution)
+        receipt, role_result = _completed_execution(item["launch"], execution, item["review_request"])
         revision = append(_arguments(arguments, revision), "runner_results", receipt)
         completed.append({"task_id": item["task_id"], "role_result": role_result})
     return {
@@ -181,7 +200,7 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--dispatch", type=argparse.FileType("r"), required=True)
     parser.add_argument("--input", type=argparse.FileType("r"), required=True)
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
@@ -197,29 +216,28 @@ def main():
     parser.add_argument("--fanout", action="store_true")
     parser.add_argument("--review-request-fingerprint")
     parser.add_argument("--review-request-fingerprints")
-    parser.add_argument("--review-request")
-    parser.add_argument("--review-requests")
+    parser.add_argument("--review-request-file", type=argparse.FileType("r"))
+    parser.add_argument("--review-requests-file", type=argparse.FileType("r"))
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)
         prompt = arguments.input.read()
         if arguments.fanout and (
-                arguments.review_request_fingerprint is not None or arguments.review_request is not None
+                arguments.review_request_fingerprint is not None or arguments.review_request_file is not None
         ):
             raise ValueError("single review request is not valid for fan-out")
         if not arguments.fanout and (
-                arguments.review_request_fingerprints is not None or arguments.review_requests is not None
+                arguments.review_request_fingerprints is not None or arguments.review_requests_file is not None
         ):
             raise ValueError("fan-out review requests require --fanout")
         review_request_fingerprints = (
             json.loads(arguments.review_request_fingerprints)
             if arguments.review_request_fingerprints is not None else None
         )
-        arguments.review_request = (
-            json.loads(arguments.review_request) if arguments.review_request is not None else None
-        )
+        arguments.review_request = json.load(arguments.review_request_file) \
+            if arguments.review_request_file is not None else None
         review_requests = (
-            json.loads(arguments.review_requests) if arguments.review_requests is not None else None
+            json.load(arguments.review_requests_file) if arguments.review_requests_file is not None else None
         )
         result = (
             run_fanout(

@@ -12,7 +12,7 @@ from codex_exec_runner import command_for_launch as codex_command_for_launch
 from codex_exec_runner import execute_launch as execute_codex_launch
 from codex_exec_runner import plan_launch as plan_codex_launch
 from openai_compatible_runner import PROVIDERS, execute_request, plan_request
-from role_result import prompt_for_role
+from role_result import prompt_for_review, prompt_for_role
 from runner_contract import validate_launch
 from runner_registry import validate_runner_profile
 
@@ -34,24 +34,28 @@ def _profile(dispatch):
     return profile
 
 
-def prompt_for_dispatch(dispatch, prompt):
+def prompt_for_dispatch(dispatch, prompt, review_request=None):
     """Apply the read-only result contract after validating the frozen dispatch."""
-    return prompt_for_role(_profile(dispatch)["role"], prompt)
+    role = _profile(dispatch)["role"]
+    return prompt_for_review(prompt, review_request) if role == "reviewer" and review_request is not None \
+        else prompt_for_role(role, prompt)
 
 
 def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude",
-                         review_request_fingerprint=None):
+                         review_request_fingerprint=None, review_request=None):
     """Turn exactly one frozen external-runner dispatch into a prompt-free launch receipt."""
     profile = _profile(dispatch)
     if profile["runner_id"] == "codex-exec-v1":
         return plan_codex_launch(
             profile, prompt, workspace=workspace, codex_bin=codex_bin,
             review_request_fingerprint=review_request_fingerprint,
+            review_request=review_request,
         )
     if profile["runner_id"] == "claude-code-v1":
         return plan_claude_launch(
             profile, prompt, workspace=workspace, claude_bin=claude_bin,
             review_request_fingerprint=review_request_fingerprint,
+            review_request=review_request,
         )
     provider = PROVIDERS.get(profile["effective"]["provider"])
     if profile["runner_id"] != "openai-compatible-v1" or provider is None:
@@ -63,6 +67,7 @@ def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", clau
         profile, prompt, base_url=provider["origin"] + "/api/paas/v4",
         api_key_env=provider["api_key_env"], effort_binding=effort_binding,
         review_request_fingerprint=review_request_fingerprint,
+        review_request=review_request,
     )
 
 

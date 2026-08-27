@@ -36,7 +36,20 @@ def _is_isolated_worktree(workspace):
     return workspace.resolve() == top_level and git_dir != common_dir
 
 
-def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request_fingerprint=None):
+def _user_config_fingerprint():
+    config_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    path = config_home / "config.toml"
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+
+
+def _sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request_fingerprint=None,
+                review_request=None):
     if not isinstance(codex_bin, str) or not codex_bin:
         raise ValueError("Codex binary is required")
     workspace = Path(workspace).expanduser().resolve()
@@ -51,10 +64,12 @@ def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request
         "binary_fingerprint": binary_fingerprint,
         "sandbox": sandbox,
         "workspace": str(workspace),
+        "user_config_fingerprint": _user_config_fingerprint(),
     }
-    fingerprint = review_request_binding(profile, review_request_fingerprint)
+    fingerprint = review_request_binding(profile, review_request_fingerprint, review_request)
     if fingerprint is not None:
         configuration["review_request_fingerprint"] = fingerprint
+        configuration["review_request"] = review_request
     return freeze_launch(profile, prompt, configuration)
 
 
@@ -65,16 +80,26 @@ def command_for_launch(launch, prompt):
     configuration = launch["configuration"]
     if not {"codex_bin", "binary_fingerprint", "sandbox", "workspace"} <= set(configuration) \
             or set(configuration) - {
-                "codex_bin", "binary_fingerprint", "sandbox", "workspace", "review_request_fingerprint",
+                "codex_bin", "binary_fingerprint", "sandbox", "workspace", "user_config_fingerprint",
+                "review_request_fingerprint", "review_request",
             } \
             or configuration["sandbox"] not in {"read-only", "workspace-write"} \
             or not isinstance(configuration["codex_bin"], str) \
             or not configuration["codex_bin"] \
             or not isinstance(configuration["binary_fingerprint"], str) \
-            or len(configuration["binary_fingerprint"]) != 64 \
-            or not isinstance(configuration["workspace"], str):
+            or not _sha256(configuration["binary_fingerprint"]) \
+            or not isinstance(configuration["workspace"], str) \
+            or "user_config_fingerprint" in configuration \
+            and configuration["user_config_fingerprint"] != "missing" \
+            and not _sha256(configuration["user_config_fingerprint"]):
         raise ValueError("Codex launch configuration is invalid")
-    review_request_binding(launch["profile"], configuration.get("review_request_fingerprint"))
+    review_request_binding(
+        launch["profile"], configuration.get("review_request_fingerprint"),
+        configuration.get("review_request"),
+    )
+    if "user_config_fingerprint" in configuration \
+            and configuration["user_config_fingerprint"] != _user_config_fingerprint():
+        raise ValueError("Codex user config changed after launch was frozen")
     _binary, binary_fingerprint = _binary_identity(configuration["codex_bin"])
     if binary_fingerprint != configuration["binary_fingerprint"]:
         raise ValueError("Codex binary changed after launch was frozen")

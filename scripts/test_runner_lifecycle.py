@@ -14,7 +14,8 @@ from types import SimpleNamespace
 from multi_model import resolve
 from role_dispatch import plan_dispatch, plan_read_only_fanout
 from runner_contract import fingerprint
-from runner_lifecycle import run_dispatch, run_fanout
+from runner_lifecycle import _completed_execution, run_dispatch, run_fanout
+from runner_launch import plan_dispatch_launch
 
 
 RUNNER_LIFECYCLE = Path(__file__).with_name("runner_lifecycle.py")
@@ -41,6 +42,14 @@ def review_fingerprint(request):
     return hashlib.sha256(
         json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def review_response(request):
+    return json.dumps({
+        "protocol_version": 3, "mode": request["mode"], "axis": request["axis"],
+        "phase": request["phase"], "source_fingerprint": request["source_fingerprint"],
+        "independent": True, "status": "pass", "findings": [],
+    })
 
 
 def managed_state(workspace, *, revision=7):
@@ -178,7 +187,8 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.arguments.review_request = review_request()
         recorded = []
 
-        def execute(launch, _prompt, **_kwargs):
+        def execute(launch, prompt, **_kwargs):
+            self.assertIn("Review v3 result JSON", prompt)
             value = {
                 "schema_version": 1, "runner_id": "openai-compatible-v1",
                 "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
@@ -187,7 +197,10 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[],"next_action":"verify"}'},
+                "output": {
+                    "status": "available",
+                    "content": review_response(launch["configuration"]["review_request"]),
+                },
             }
 
         run_dispatch(
@@ -201,6 +214,12 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertEqual(
             review_fingerprint(self.arguments.review_request),
             recorded[0][1]["configuration"]["review_request_fingerprint"],
+        )
+        self.assertEqual(self.arguments.review_request, recorded[0][1]["configuration"]["review_request"])
+        self.assertEqual("available", recorded[1][1]["role_result"]["status"])
+        self.assertEqual(
+            review_fingerprint(self.arguments.review_request),
+            recorded[1][1]["role_result"]["review_record"]["request_fingerprint"],
         )
 
     def test_reviewer_rejects_an_unbound_request_before_persisting_a_launch(self):
@@ -222,6 +241,32 @@ class RunnerLifecycleTest(unittest.TestCase):
             )
 
         self.assertEqual([], appended)
+
+    def test_malformed_reviewer_output_is_persisted_as_unavailable(self):
+        dispatch = plan_dispatch(self.profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        request = review_request()
+        prompt = "Review"
+        launch = plan_dispatch_launch(
+            dispatch, prompt, workspace=self.workspace, review_request_fingerprint=review_fingerprint(request),
+            review_request=request,
+        )
+        value = {
+            "schema_version": 1, "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+            "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+            "requested_model": launch["profile"]["effective"]["model"],
+            "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+        }
+        receipt, role_result = _completed_execution(
+            launch, {"receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+                     "output": {"status": "available", "content": None}}, request,
+        )
+
+        self.assertEqual("unavailable", role_result["status"])
+        self.assertEqual(role_result, receipt["role_result"])
 
     def test_reviewer_rejects_a_request_from_another_run_before_persisting_a_launch(self):
         profiles = resolve(
@@ -261,7 +306,8 @@ class RunnerLifecycleTest(unittest.TestCase):
         def execute(launch, prompt, **_kwargs):
             self.assertEqual("runner_launches", records[0][1])
             self.assertEqual(2, len(records[0][2]))
-            self.assertIn("Return only JSON", prompt)
+            reviewer = launch["profile"]["role"] == "reviewer"
+            self.assertIn("Review v3 result JSON" if reviewer else "Return only JSON", prompt)
             effective = launch["profile"]["effective"]
             value = {
                 "schema_version": 1, "runner_id": launch["runner_id"],
@@ -272,7 +318,11 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:143","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}'},
+                "output": {
+                    "status": "available",
+                    "content": review_response(launch["configuration"]["review_request"])
+                    if reviewer else '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:143","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}',
+                },
             }
 
         result = run_fanout(
@@ -341,6 +391,25 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("require --fanout", result.stdout)
+
+    def test_cli_rejects_a_raw_review_request_argument(self):
+        dispatch_path = self.workspace / "dispatch.json"
+        prompt_path = self.workspace / "prompt.txt"
+        dispatch_path.write_text(json.dumps(plan_dispatch(self.profiles, flow_state())), encoding="utf-8")
+        prompt_path.write_text("Collect evidence", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable, str(RUNNER_LIFECYCLE), "--allow-execute",
+                "--dispatch", str(dispatch_path), "--input", str(prompt_path),
+                "--review-request", '{"acceptance":["sensitive"]}',
+                "--repo-id", "/missing/repo", "--task-key", "missing-task", "--run-id", "missing-run",
+                "--writer-id", "writer", "--expected-revision", "0",
+            ], text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unrecognized arguments: --review-request", result.stderr)
 
 
 if __name__ == "__main__":
