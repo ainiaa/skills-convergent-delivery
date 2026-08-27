@@ -151,7 +151,7 @@ def run(arguments):
     state["revision"] = -1
     state = arm(
         state, requirements, acceptance, arguments.runtime, arguments.service_runner,
-        verification_argv, audit_argv,
+        verification_argv, audit_argv, arguments.audit_findings_exit_code,
     )
     lease = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
@@ -191,6 +191,7 @@ def main():
     parser.add_argument("--service-runner", choices=("codex-exec-v1", "claude-code-v1"))
     parser.add_argument("--verification-argv")
     parser.add_argument("--audit-argv")
+    parser.add_argument("--audit-findings-exit-code", type=int)
     parser.add_argument("--risk-flag", action="append", default=[])
     parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))

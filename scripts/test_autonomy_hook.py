@@ -200,6 +200,35 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn("no state progress", json.loads(second.stdout)["reason"])
         self.assertEqual(1, queue_count)
 
+    def test_codex_queues_a_repair_after_a_real_audit_finding_transition(self):
+        from delivery_next import upgrade_state
+        from test_delivery_next import SOURCE, autonomous_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
+            state_dir = root / "state/a"
+            state_dir.mkdir(parents=True)
+            state = upgrade_state(autonomous_state(workspace=str(workspace), current_stage="autonomy-repair"))
+            state["execution_control"]["autonomy"]["audit_batches"] = [{
+                "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial", "status": "findings",
+                "covered_manifest_ids": ["requirement", "scope", "acceptance"], "finding_fingerprints": ["a" * 64],
+            }]
+            (state_dir / "run.json").write_text(json.dumps(state), encoding="utf-8")
+            executable = root / "codex"
+            capture = root / "commands"
+            executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$AUTONOMY_CAPTURE"\n', encoding="utf-8")
+            executable.chmod(0o755)
+            environment = os.environ | {"PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
+                                        "CONVERGE_STATE_ROOT": str(root / "state"),
+                                        "AUTONOMY_CAPTURE": str(capture)}
+
+            result = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
+            queued = capture.read_text(encoding="utf-8")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('"phase": "autonomy-repair"', queued)
+
     def test_service_wakeup_does_not_terminate_a_running_launchagent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

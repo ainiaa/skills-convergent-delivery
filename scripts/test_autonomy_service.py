@@ -78,7 +78,7 @@ class AutonomyServiceTest(unittest.TestCase):
 
             self.assertEqual([], paths)
             self.assertEqual(1, len(diagnostics))
-            self.assertIn("invalid active autonomous service state", diagnostics[0])
+            self.assertIn("invalid autonomous service state", diagnostics[0])
 
     def test_service_scan_reports_an_unreadable_managed_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -260,6 +260,64 @@ class AutonomyServiceTest(unittest.TestCase):
             check = current["ledger"]["checks"][-1]
             self.assertEqual(("autonomy-audit", "fail"), (check["stage"], check["result"]))
             self.assertEqual(result["audit"], check["evidence_receipts"][0])
+
+    def test_final_service_action_routes_an_explicit_audit_finding_to_one_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "round-1-semantic-review", ["python3", "-c", "raise SystemExit(7)"],
+            )
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state["execution_control"]["autonomy"]["runtime"]["audit_findings_exit_code"] = 7
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual(("advanced", "audit_findings"), (result["status"], result["reason"]))
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("autonomy-repair", current["current_stage"])
+            self.assertEqual("findings", current["execution_control"]["autonomy"]["audit_batches"][-1]["status"])
+
+    def test_terminal_service_state_releases_a_lease_left_by_an_interrupted_finalizer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state.update(status="blocked", blocked_code="no_progress", blocked_reason="interrupted after write")
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            result = autonomy_service.run_once(path, state_root, lease_root)
+            inspected = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "inspect",
+                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
+                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            ], text=True, capture_output=True, check=False)
+
+            self.assertEqual({"status": "terminal", "terminal": "blocked"}, result)
+            self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
+
+    def test_service_scan_stops_after_cleaning_a_terminal_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state.update(status="blocked", blocked_code="no_progress", blocked_reason="interrupted after write")
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch.object(sys, "argv", [
+                    "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                    "--lease-root", str(lease_root),
+            ]), redirect_stderr(StringIO()):
+                self.assertEqual(0, autonomy_service.main())
+
+    def test_service_scan_exits_successfully_after_a_persistent_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "truncated.json").write_text("{", encoding="utf-8")
+            with patch.object(sys, "argv", ["autonomy_service.py", "--serve", "--state-root", str(root)]), \
+                    redirect_stderr(StringIO()):
+                self.assertEqual(0, autonomy_service.main())
 
     def test_service_records_the_frozen_runner_launch_and_result(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -992,11 +992,11 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("blocked\n", inactive.stdout)
         self.assertNotEqual(0, inactive.returncode)
 
-    def test_active_final_verification_state_must_not_restart(self):
+    def test_active_final_verification_state_selects_its_frozen_final_action(self):
         result = self.current(state(current_stage="verify-final"))
 
-        self.assertEqual("blocked\n", result.stdout)
-        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("verify-final\n", result.stdout)
+        self.assertEqual(0, result.returncode)
 
     def test_legacy_engine_state_is_rejected(self):
         result = self.current(

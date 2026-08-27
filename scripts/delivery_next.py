@@ -38,6 +38,7 @@ NATIVE_ACTIVE_STAGES = {
     "verify-round-1",
     "round-2-risk-review",
     "verify-final",
+    "autonomy-repair",
 }
 PDLC_ACTIVE_STAGES = {"pdlc-run"}
 ENGINE_SELECTIONS = {"auto", "explicit"}
@@ -391,7 +392,8 @@ def validate_autonomy(value, source_fingerprint, routing):
     runtime = require_mapping(value["runtime"], "autonomy runtime")
     if runtime == {"mode": "hook"}:
         pass
-    elif set(runtime) == {"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv"} \
+    elif set(runtime) in ({"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv"},
+                          {"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv", "audit_findings_exit_code"}) \
             and runtime["mode"] == "service":
         from worker_profile import validate_worker_profile
         profile = validate_worker_profile(runtime["runner_profile"])
@@ -407,6 +409,12 @@ def validate_autonomy(value, source_fingerprint, routing):
                 not isinstance(item, str) or not item.strip() for item in audit
         ) or audit == verifier:
             raise ValueError("autonomy service verifier argv is invalid")
+        findings_code = runtime.get("audit_findings_exit_code")
+        if findings_code is not None and (
+                not isinstance(findings_code, int) or isinstance(findings_code, bool)
+                or not 1 <= findings_code <= 255
+        ):
+            raise ValueError("autonomy service audit findings exit code is invalid")
         if routing["review_tier"] != "low":
             raise ValueError("autonomy service requires a low-risk route")
     else:
@@ -962,7 +970,9 @@ def validate_state(state, arguments):
         return "round-2-risk-review"
     if stage == "round-2-risk-review":
         return "verify-final"
-    raise ValueError("verify-final must transition to complete or blocked before resume")
+    if stage in {"verify-final", "autonomy-repair"}:
+        return stage
+    raise ValueError("native autonomous stage is invalid")
 
 
 def validate_active_lease(state, arguments):

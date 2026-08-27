@@ -35,6 +35,11 @@
     {"id": "service-default-roots-required", "check": ["scripts/test_autonomy_begin.py", "AutonomyBeginTest.test_service_mode_rejects_custom_roots_that_the_launchagent_cannot_use"]},
     {"id": "service-state-path-protected", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_direct_service_state_must_belong_to_the_selected_state_root"]},
     {"id": "hook-unreadable-state-blocked", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_unreadable_managed_state_blocks_instead_of_approving"]},
-    {"id": "hook-report-only-revision-blocked", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_does_not_queue_the_same_action_after_a_report_only_revision"]}
+    {"id": "hook-report-only-revision-blocked", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_does_not_queue_the_same_action_after_a_report_only_revision"]},
+    {"id": "hook-audit-finding-repair-action", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_queues_a_repair_after_a_real_audit_finding_transition"]},
+    {"id": "service-audit-finding-repair", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_final_service_action_routes_an_explicit_audit_finding_to_one_repair"]},
+    {"id": "service-terminal-lease-recovery", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_terminal_service_state_releases_a_lease_left_by_an_interrupted_finalizer"]},
+    {"id": "service-diagnostic-exit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_exits_successfully_after_a_persistent_diagnostic"]},
+    {"id": "service-terminal-scan-exit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_stops_after_cleaning_a_terminal_state"]}
   ]
 }

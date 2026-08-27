@@ -48,6 +48,7 @@ NATIVE_STAGE_TRANSITIONS = {
     "round-1-build": "round-1-semantic-review",
     "verify-round-1": "round-2-risk-review",
     "round-2-risk-review": "verify-final",
+    "autonomy-repair": "verify-final",
 }
 TERMINAL_STATUSES = {"complete"}
 
@@ -276,10 +277,14 @@ def validate_transition(previous, candidate):
                 raise ValueError("autonomy budget cannot increase or skip")
         added_audits = new_autonomy["audit_batches"][len(old_autonomy["audit_batches"]):]
         expected_re_audit = int(bool(added_audits and added_audits[-1]["phase"] == "re_audit"))
-        expected_repair = expected_re_audit
-        if old_autonomy["repair_budget_remaining"] - new_autonomy["repair_budget_remaining"] != expected_repair \
+        repair_steps = len(candidate["ledger"]["repair_fingerprints"]) - len(
+            previous["ledger"]["repair_fingerprints"]
+        )
+        if repair_steps not in {0, 1}:
+            raise ValueError("autonomy repair must advance one step")
+        if old_autonomy["repair_budget_remaining"] - new_autonomy["repair_budget_remaining"] != repair_steps \
                 or old_autonomy["re_audit_budget_remaining"] - new_autonomy["re_audit_budget_remaining"] != expected_re_audit:
-                raise ValueError("autonomy budget must match audit transition")
+            raise ValueError("autonomy budget must match audit transition")
         validate_action_attempt_transition(
             old_autonomy.get("action_attempts", []), new_autonomy.get("action_attempts", [])
         )
@@ -379,7 +384,16 @@ def validate_transition(previous, candidate):
         allowed_next = "pdlc-run"
     else:
         allowed_next = next_native_stage(old_stage, candidate)
-    if candidate["status"] == "active" and new_stage not in {old_stage, allowed_next}:
+    initial_findings = (
+        previous["schema_version"] == 11
+        and not previous["execution_control"]["autonomy"]["audit_batches"]
+        and len(candidate["execution_control"]["autonomy"]["audit_batches"]) == 1
+        and candidate["execution_control"]["autonomy"]["audit_batches"][0]["status"] == "findings"
+    )
+    repair_after_final_audit = allowed_next == "verify-final" and new_stage == "autonomy-repair" \
+        and initial_findings
+    if candidate["status"] == "active" and new_stage not in {old_stage, allowed_next} \
+            and not repair_after_final_audit:
         raise ValueError("current_stage must advance through the protocol")
     if candidate["status"] == "blocked" and new_stage != old_stage:
         raise ValueError("blocked state must retain the current stage")

@@ -31,7 +31,7 @@ Hook 从 stdin 读取宿主提供的 `cwd`。仅当 `~/.convergent-delivery/stat
 - 多个 run、状态损坏（含不可解析或非对象 JSON）、scope/risk 漂移或证据不新鲜：block 并写明可恢复原因。
 - 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。
 
-Hook 不执行模型命令、不写任务状态、不保存 prompt/transcript，也不能创建后台恢复。Codex 必须收到宿主 `session_id`，否则拒绝把 active run 伪装为完成；Claude 原生 Stop continuation 不需要新进程或额外 session ID。native v11 正常路径最多五次连续续跑，低于 Claude 的八次宿主保护上限；未推进 state 的 Codex run 在一次投递后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
+Hook 不执行模型命令、不写任务状态、不保存 prompt/transcript，也不能创建后台恢复。Codex 必须收到宿主 `session_id`，否则拒绝把 active run 伪装为完成；Claude 原生 Stop continuation 不需要新进程或额外 session ID。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进 state 的 Codex run 在一次投递后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
 
 ## Arm
 

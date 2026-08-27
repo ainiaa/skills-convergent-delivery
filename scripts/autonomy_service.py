@@ -134,7 +134,16 @@ def _advance_verified_action(state_path, state_root, lease_root, action, verific
         source = verification["source"]
         state["source_receipt"] = source
         state["source_fingerprint"] = source["source_fingerprint"]
-        state["current_stage"] = action["phase"]
+        if action["phase"] == "autonomy-repair":
+            autonomy = state["execution_control"]["autonomy"]
+            if not autonomy["audit_batches"] or autonomy["audit_batches"][-1]["status"] != "findings" \
+                    or autonomy["repair_budget_remaining"] != 1:
+                raise ValueError("autonomy repair is not authorized by an initial audit finding")
+            autonomy["repair_budget_remaining"] = 0
+            state["ledger"]["repair_fingerprints"].append(verification["receipt_fingerprint"])
+            state["current_stage"] = "verify-final"
+        else:
+            state["current_stage"] = action["phase"]
     return _update(state_path, state_root, lease_root, mutate)
 
 
@@ -162,8 +171,20 @@ def _complete(state_path, state_root, lease_root, verification, audit):
                 "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
                 "finding_fingerprints": [],
             })
+        elif autonomy is not None and len(autonomy["audit_batches"]) == 1 \
+                and autonomy["audit_batches"][0]["status"] == "findings" \
+                and autonomy["repair_budget_remaining"] == 0 \
+                and autonomy["re_audit_budget_remaining"] == 1:
+            autonomy["audit_batches"].append({
+                "source_fingerprint": source,
+                "phase": "re_audit",
+                "status": "pass",
+                "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
+                "finding_fingerprints": [],
+            })
+            autonomy["re_audit_budget_remaining"] = 0
         elif autonomy is not None:
-            raise ValueError("service final audit must be the initial audit")
+            raise ValueError("service final audit is not eligible for completion")
         ledger = state["ledger"]
         ledger["checks"].append({
             "stage": "autonomy-audit", "command": audit["command"], "result": "pass",
@@ -251,6 +272,31 @@ def block(state_path, state, state_root, lease_root, reason, evidence=None):
     return blocked
 
 
+def _record_audit_findings(state_path, state_root, lease_root, verification, audit):
+    def mutate(state):
+        autonomy = state["execution_control"]["autonomy"]
+        if autonomy["audit_batches"] or autonomy["repair_budget_remaining"] != 1:
+            raise ValueError("autonomous audit findings cannot be repaired again")
+        source = verification["source"]
+        state["source_receipt"] = source
+        state["source_fingerprint"] = source["source_fingerprint"]
+        state["current_stage"] = "autonomy-repair"
+        autonomy["audit_batches"].append({
+            "source_fingerprint": source["source_fingerprint"],
+            "phase": "initial",
+            "status": "findings",
+            "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
+            "finding_fingerprints": [audit["receipt_fingerprint"]],
+        })
+        attempt = _latest(state)
+        attempt["status"] = "committed"
+        attempt["commit"] = {
+            "source_fingerprint": source["source_fingerprint"],
+            "verification_fingerprint": verification["receipt_fingerprint"],
+        }
+    return _update(state_path, state_root, lease_root, mutate)
+
+
 def _finalize_observed(state_path, state_root, lease_root):
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
     attempt = _latest(state)
@@ -270,7 +316,15 @@ def _finalize_observed(state_path, state_root, lease_root):
             service_runtime(state)["audit_argv"],
             timeout_seconds=_time_policy(service_runtime(state)["runner_profile"])["absolute_seconds"],
         )
-        if audit["exit_code"] != 0 or audit["source"] != verification["source"]:
+        if audit["source"] != verification["source"]:
+            block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
+            return {"status": "blocked", "reason": "audit_failed", "audit": audit}
+        findings_code = service_runtime(state).get("audit_findings_exit_code")
+        if audit["exit_code"] == findings_code:
+            repaired = _record_audit_findings(state_path, state_root, lease_root, verification, audit)
+            return {"status": "advanced", "reason": "audit_findings", "audit": audit,
+                    "revision": repaired["revision"]}
+        if audit["exit_code"] != 0:
             block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
         completed = _complete(state_path, state_root, lease_root, verification, audit)
@@ -327,6 +381,9 @@ def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
         ) from error
     service_runtime(state)
     try:
+        if state["status"] in {"complete", "blocked"}:
+            _release(state, state_root, lease_root)
+            return {"status": "terminal", "terminal": state["status"]}
         return _run_once(state_path, state_root, lease_root)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         try:
@@ -355,14 +412,14 @@ def service_paths(root):
         runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime") \
             if isinstance(state.get("execution_control"), dict) \
             and isinstance(state["execution_control"].get("autonomy"), dict) else None
-        if state.get("status") != "active" or not isinstance(runtime, dict) \
+        if state.get("status") not in {"active", "complete", "blocked"} or not isinstance(runtime, dict) \
                 or runtime.get("mode") != "service":
             continue
         try:
             validate_state(state, SimpleNamespace(strict_evidence=True))
             service_runtime(state)
         except (KeyError, ValueError) as error:
-            diagnostics.append(f"invalid active autonomous service state {path}: {error}")
+            diagnostics.append(f"invalid autonomous service state {path}: {error}")
             continue
         paths.append(path)
     return paths, diagnostics
@@ -385,18 +442,27 @@ def main():
             print(f"autonomous service blocked: {error}", file=sys.stderr)
             return 2
     cycles = {}
-    had_error = False
+    reported_diagnostics = set()
+    cleaned_terminals = set()
     while True:
         paths, diagnostics = service_paths(arguments.state_root)
         for diagnostic in diagnostics:
-            print(f"autonomous service blocked: {diagnostic}", file=sys.stderr)
-        had_error = had_error or bool(diagnostics)
+            if diagnostic not in reported_diagnostics:
+                print(f"autonomous service blocked: {diagnostic}", file=sys.stderr)
+                reported_diagnostics.add(diagnostic)
         if not paths:
-            return 2 if had_error else 0
+            return 0
+        active_paths = False
         for path in paths:
             try:
                 key = str(path)
                 state = json.loads(path.read_text(encoding="utf-8"))
+                if state["status"] in {"complete", "blocked"}:
+                    if key not in cleaned_terminals:
+                        run_once(path, arguments.state_root, arguments.lease_root)
+                        cleaned_terminals.add(key)
+                    continue
+                active_paths = True
                 limit = service_runtime(state)["max_cycles"]
                 if cycles.get(key, 0) >= limit:
                     block(path, state, Path(arguments.state_root), arguments.lease_root or
@@ -406,8 +472,9 @@ def main():
                 run_once(path, arguments.state_root, arguments.lease_root)
                 cycles[key] = cycles.get(key, 0) + 1
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-                had_error = True
                 print(f"autonomous service blocked: {path}: {error}", file=sys.stderr)
+        if not active_paths:
+            return 0
         time.sleep(5)
 
 

@@ -21,7 +21,7 @@ def _argv(value, name):
 
 
 def arm(state, requirements, acceptance, runtime="hook", service_runner=None, verification_argv=None,
-        audit_argv=None):
+        audit_argv=None, audit_findings_exit_code=None):
     if not isinstance(state, dict) or state.get("schema_version") != 10:
         raise ValueError("only an active Schema v10 state can be explicitly armed")
     if state.get("status") != "active":
@@ -56,7 +56,13 @@ def arm(state, requirements, acceptance, runtime="hook", service_runner=None, ve
             "mode": "service", "runner_profile": profile, "max_cycles": 5,
             "verification_argv": verification_argv, "audit_argv": audit_argv,
         }
-    elif runtime != "hook" or service_runner is not None or verification_argv is not None or audit_argv is not None:
+        if audit_findings_exit_code is not None:
+            if not isinstance(audit_findings_exit_code, int) or isinstance(audit_findings_exit_code, bool) \
+                    or not 1 <= audit_findings_exit_code <= 255:
+                raise ValueError("service autonomy audit findings exit code is invalid")
+            runtime_value["audit_findings_exit_code"] = audit_findings_exit_code
+    elif runtime != "hook" or service_runner is not None or verification_argv is not None \
+            or audit_argv is not None or audit_findings_exit_code is not None:
         raise ValueError("autonomy runtime is invalid")
     updated["execution_control"] = {
         **updated["execution_control"],
@@ -84,6 +90,7 @@ def main():
     parser.add_argument("--service-runner", choices=("codex-exec-v1", "claude-code-v1"))
     parser.add_argument("--verification-argv")
     parser.add_argument("--audit-argv")
+    parser.add_argument("--audit-findings-exit-code", type=int)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--lease-root")
     parser.add_argument("--state-root")
@@ -100,7 +107,8 @@ def main():
         )
         audit_argv = json.loads(arguments.audit_argv) if arguments.audit_argv is not None else None
         candidate = arm(state, arguments.requirement, arguments.acceptance,
-                        arguments.runtime, arguments.service_runner, verification_argv, audit_argv)
+                        arguments.runtime, arguments.service_runner, verification_argv, audit_argv,
+                        arguments.audit_findings_exit_code)
         if not arguments.write:
             print(json.dumps(candidate, sort_keys=True))
             return 0
