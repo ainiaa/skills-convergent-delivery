@@ -35,14 +35,34 @@ CONTROLLER_FILES = (
     "scripts/claude_exec_runner.py",
     "scripts/openai_compatible_runner.py",
     "scripts/multi_model.py",
+    "scripts/multi_model_eval.py",
     "scripts/role_flow.py",
     "scripts/role_dispatch.py",
+    "scripts/role_fanout.py",
+    "scripts/role_result.py",
     "scripts/provider_contract.py",
     "scripts/run_contract.py",
     "scripts/task_profile.py",
     "scripts/trigger_eval.py",
     "scripts/runtime_adapter.py",
     "scripts/controller_snapshot.py",
+    "scripts/autonomy_gate.py",
+    "scripts/autonomy_hook.py",
+    "scripts/autonomy_hook_config.py",
+    "scripts/autonomy_preflight.py",
+    "scripts/autonomy_service.py",
+    "scripts/autonomy_arm.py",
+    "scripts/autonomy_begin.py",
+    "scripts/autonomous_delivery_eval.py",
+    "scripts/test_autonomy_arm.py",
+    "scripts/test_autonomy_begin.py",
+    "scripts/test_autonomy_service.py",
+    "scripts/test_autonomy_gate.py",
+    "scripts/test_autonomy_hook.py",
+    "scripts/test_autonomy_preflight.py",
+    "scripts/test_delivery_next.py",
+    "scripts/test_delivery_state.py",
+    "scripts/test_runtime_scenarios.py",
 )
 CONTROL_RESOURCE_FILES = (
     "SKILL.md",
@@ -52,6 +72,9 @@ CONTROL_RESOURCE_FILES = (
     "references/review-orchestration.md",
     "references/worker-runners.md",
     "references/multi-model.md",
+    "references/multi-model-evaluation.json",
+    "references/autonomous-delivery-evaluation.json",
+    "references/runtime-adapters.md",
     "references/state-schema.md",
     "references/task-routing.md",
     "references/reporting.md",
@@ -218,6 +241,31 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     if (root / "VERSION").read_text(encoding="utf-8").strip() != value["package_version"]:
         raise ValueError("controller snapshot version changed")
     return value
+
+
+def managed_state_snapshot(path):
+    """Load the controller snapshot frozen in one managed v10/v11 state file."""
+    path = Path(path).expanduser().resolve()
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("managed state is unreadable") from error
+    if not isinstance(state, dict) or state.get("schema_version") not in {10, 11} \
+            or not all(isinstance(state.get(field), str) and state[field] for field in (
+                "repo_id", "task_key", "run_id"
+            )):
+        raise ValueError("managed state identity is invalid")
+    root = path.parents[2]
+    expected = root / hashlib.sha256(state["repo_id"].encode()).hexdigest() \
+        / hashlib.sha256(state["task_key"].encode()).hexdigest() \
+        / f"{hashlib.sha256(state['run_id'].encode()).hexdigest()}.json"
+    if path != expected:
+        raise ValueError("snapshot descriptor must be the managed state path")
+    controller = state.get("controller")
+    snapshot = controller.get("snapshot") if isinstance(controller, dict) else None
+    if snapshot is None:
+        raise ValueError("managed state has no frozen controller snapshot")
+    return validate_snapshot(snapshot)
 
 
 def trusted_command(descriptor_path, script, arguments):

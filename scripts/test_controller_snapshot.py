@@ -22,6 +22,9 @@ REQUIRED_CONTROL_REFERENCES = (
     "references/review-orchestration.md",
     "references/worker-runners.md",
     "references/multi-model.md",
+    "references/multi-model-evaluation.json",
+    "references/autonomous-delivery-evaluation.json",
+    "references/runtime-adapters.md",
     "skills/converge-plan/SKILL.md",
     "skills/converge-plan/references/plan-contract.md",
     "skills/converge-plan/scripts/plan_check.py",
@@ -116,10 +119,13 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_registry.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_flow.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_dispatch.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/role_fanout.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/role_result.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/codex_exec_runner.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/claude_exec_runner.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_launch.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_lifecycle.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/multi_model_eval.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "providers/native-v1.json").is_file())
             self.assertTrue((Path(descriptor["root"]) / "SKILL.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/state-schema.md").is_file())
@@ -130,8 +136,11 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
             self.assertIn("scripts/role_flow.py", descriptor["files"])
             self.assertIn("scripts/role_dispatch.py", descriptor["files"])
+            self.assertIn("scripts/role_fanout.py", descriptor["files"])
+            self.assertIn("scripts/role_result.py", descriptor["files"])
             self.assertIn("scripts/runner_launch.py", descriptor["files"])
             self.assertIn("scripts/runner_lifecycle.py", descriptor["files"])
+            self.assertIn("scripts/multi_model_eval.py", descriptor["files"])
             for relative in REQUIRED_CONTROL_REFERENCES:
                 self.assertIn(relative, descriptor["files"])
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())

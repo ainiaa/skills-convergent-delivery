@@ -1,0 +1,752 @@
+{
+  "schema_version": 5,
+  "plan_id": "plan-autonomy-service-closure-20260827",
+  "requirement_fingerprint": "abb730a685dd1502cb152db7cf1c11135d6c272affac2e5ce9254a393834dda7",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "8b7e26d659d94e5435980a1ace9c2077e554fdcb",
+    "source": {
+      "baseline_commit": "8b7e26d659d94e5435980a1ace9c2077e554fdcb",
+      "changed_entries": [
+        {
+          "content_fingerprint": "1a8df856561d7972625e831504b3fa677abab86895238194895e0109d1de4f91",
+          "kind": "file",
+          "mode": "100644",
+          "path": "README.md"
+        },
+        {
+          "content_fingerprint": "1c614aee565cd7aa040fb188a7a9a94b5f9cf36b6ec952bb2a2a34711ca9ff2c",
+          "kind": "file",
+          "mode": "100644",
+          "path": "SKILL.md"
+        },
+        {
+          "content_fingerprint": "323fd55ae44739a80f2c2e9460c22993882d3b01a398ac02350acaadd7155fef",
+          "kind": "file",
+          "mode": "100644",
+          "path": "docs/02_design/architecture/F20260827-autonomous-delivery-gate.md"
+        },
+        {
+          "content_fingerprint": "32baa0bce5fc41e0e78a9b0b4e6122a1e9f9f63d4da2d08e268196ef4f7d5e77",
+          "kind": "file",
+          "mode": "100644",
+          "path": "docs/06_tasks/F20260827-autonomous-delivery-gate-plan.json"
+        },
+        {
+          "content_fingerprint": "7ecc2d81cde5e0b1882d127d4b8ecd231fdbc5ed245a13fdf617b201a6ed5f31",
+          "kind": "file",
+          "mode": "100644",
+          "path": "install.sh"
+        },
+        {
+          "content_fingerprint": "50c3ce46023c7dfcc868c65ba0135e15eb6f47e4ca41115e6982b4ae62d14648",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/autonomous-delivery-evaluation.json"
+        },
+        {
+          "content_fingerprint": "f37f4eb1bc557dcf5822d313d38e9d0808aa9f2a59e8095f36757b7cc18be698",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/execution-control.md"
+        },
+        {
+          "content_fingerprint": "b9c77fb55f629ba8ac97fbd597fd1d4eab8208441ca2d316f866b7b1729a936a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/multi-model-evaluation.json"
+        },
+        {
+          "content_fingerprint": "d2c707181d84ed54d7147f3d953ea9c0b8c916a9c568b8cf413008f77c447dda",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/multi-model.md"
+        },
+        {
+          "content_fingerprint": "a0a939387ffd06cfa285fe3d58d2ad66107a7674ac1f5fcba9fe3321bc6391e0",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/runtime-adapters.md"
+        },
+        {
+          "content_fingerprint": "1ecb95f2bad8dcb518b40978bc3bb04c85ed6279456d9e9386f05094687e5e0a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "references/state-schema.md"
+        },
+        {
+          "content_fingerprint": "be97a4b7c166592cb2f660a20739f91557603e19eb62f12f994696c9b923b750",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomous_delivery_eval.py"
+        },
+        {
+          "content_fingerprint": "b263f8f9f30d71f00f8b951b8af34897709d1d28fecc88f788a41a871d09e90f",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_arm.py"
+        },
+        {
+          "content_fingerprint": "262c4a65b15871980fbc40b4f7e446afd513fdb51790b4570b0454d1feb9569a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_begin.py"
+        },
+        {
+          "content_fingerprint": "83086e19c159c79b39b720486e6dea51dbd7713c3765f680fe06d8215302f248",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_gate.py"
+        },
+        {
+          "content_fingerprint": "a0d79d4a15c954919fd08c2fa5990e11549d947c1946310268d599a2e4bc0de8",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_hook.py"
+        },
+        {
+          "content_fingerprint": "36415cedfb77d4b9c48feef1e6a849131eafd179095ef568ebf5190404988ea4",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_hook_config.py"
+        },
+        {
+          "content_fingerprint": "dcd998f543bd56a43e66d106ebfad8bdad9f7f190542aee8191f85ca54e271e2",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_preflight.py"
+        },
+        {
+          "content_fingerprint": "bf99bcb488eb81dc2fea904571f67f805ccdd82be58735b2cea6a70ab4355fb4",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_service.py"
+        },
+        {
+          "content_fingerprint": "bd6360619149a314d3404238a9d37c542f5e8968e798df85b1dea2143479c2b5",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/autonomy_service_config.py"
+        },
+        {
+          "content_fingerprint": "a5642f46fd36a2e0ee7fd80d68ac55e4051dd634757d68b95fed3fcfa5ad3c42",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/check.sh"
+        },
+        {
+          "content_fingerprint": "fc0105fa7fba6ce92d9c74dc2ac36a64873ff56096db6f9dc190aef7dda52c27",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/claude_exec_runner.py"
+        },
+        {
+          "content_fingerprint": "47b78bbcd8dbc5af382b89edb1fd30baa5c1c704096c5649f78a68c1f6a259a3",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/codex_exec_runner.py"
+        },
+        {
+          "content_fingerprint": "fed0937e999fa5ded2b52c6a98cb54812446f963e583cf7747bab66bbbd5ef70",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/controller_snapshot.py"
+        },
+        {
+          "content_fingerprint": "092ad2afe8802f76972af16dc0c804a7ef35d24d98d81fbcb524f0004ddd609a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/delivery_next.py"
+        },
+        {
+          "content_fingerprint": "b079d143a107428cf646fa4b5bf56f6c32f9145e99df1487086017278ed6758c",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/delivery_report.py"
+        },
+        {
+          "content_fingerprint": "792ba3bcece81e0ad5fa8bf6d3988a9cb204f4eb3b3fc2df763823980359ab3e",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/delivery_state.py"
+        },
+        {
+          "content_fingerprint": "f18f68d45935cdec39dbf2d0a56a3bddef0e713a3679930bc1720a093203ada1",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/multi_model_eval.py"
+        },
+        {
+          "content_fingerprint": "ae823909f39a82700da9c24db2304b0d06b5303add9ffa860f0cc76c8f80c593",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/role_dispatch.py"
+        },
+        {
+          "content_fingerprint": "d37182efb0608dc9a8fd4cb4fa0580fd3987f40389be89063eb2610e5018bc47",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/role_fanout.py"
+        },
+        {
+          "content_fingerprint": "eed1393690cc3cd330c4ac58496226c9a498170aab37aa3473bf884d977edffe",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/role_result.py"
+        },
+        {
+          "content_fingerprint": "e0082f6c20768cf43f77861d51c616c594b94396f97e2e6e610ea945dcddd0c3",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/runner_lifecycle.py"
+        },
+        {
+          "content_fingerprint": "05a4bd28515ee20c752bf2cecfbfacdff2d3c9c2a2a63a864c760ea056b5fe1e",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomous_delivery_eval.py"
+        },
+        {
+          "content_fingerprint": "39e45921329fa57006c8b80542a841ac52485e38f4e8b010aed2b47d2a4e1cf6",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_arm.py"
+        },
+        {
+          "content_fingerprint": "8674afcb6e2307f14683f32d9f4778113c01687e53a86c71dcdf96df6321815a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_begin.py"
+        },
+        {
+          "content_fingerprint": "9903e3e383977d84b7b6d586ea8065a5bc45904c8ed4a56d8640e7115997b42e",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_gate.py"
+        },
+        {
+          "content_fingerprint": "6ed368102fa6c219006edd928d843d073d9fb186ced4c29b2cde89527188a471",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_hook.py"
+        },
+        {
+          "content_fingerprint": "e7445c49c06d057504e6fa5bcd3f5a009cd0ed2d558b1331edddfdfdab79fa92",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_hook_config.py"
+        },
+        {
+          "content_fingerprint": "4e3c76932dcd0e6c7d62aa798570fd751d43738b6193030ccd7f806c10cd2d5c",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_preflight.py"
+        },
+        {
+          "content_fingerprint": "c5894cb2aa9a391f89f858f091f36e983e3623bc317d0a49027dc15a3a747749",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_autonomy_service.py"
+        },
+        {
+          "content_fingerprint": "78d9a8d5140449599582606d81a8e195925eeb39ab5240bec5c1a048f490805a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_claude_exec_runner.py"
+        },
+        {
+          "content_fingerprint": "e96c2680c0943167e66b1d698d8dcc407fee9213425f2a838606df731e4e448a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_codex_exec_runner.py"
+        },
+        {
+          "content_fingerprint": "5d263e24c5c244e770efc0f5d6245b75445ac4e9f493df6e9b70cdd1cfe336c4",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_controller_snapshot.py"
+        },
+        {
+          "content_fingerprint": "48b62a448c638984ebe109e26fea58528d6a8546b04eb9d423c465e88e5e9439",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_delivery_next.py"
+        },
+        {
+          "content_fingerprint": "da6b18fddd9af9f24d8cb2e6aca2a1c1ce2dcd2a97a21d0e224199d76cdb4ab6",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_delivery_report.py"
+        },
+        {
+          "content_fingerprint": "bf581553cee07dd042f25037899bd9fadf28a76d0a915f7163488f0aa3c14715",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_delivery_state.py"
+        },
+        {
+          "content_fingerprint": "10c53cc2c8f2d5e5b1a3d735b444dd2afdb0065d82a29dddd824c41ffb1a535a",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_install.py"
+        },
+        {
+          "content_fingerprint": "113afd3f533ec5348244d82a0e2eb2e24b42afada53efd2ee0df3202163fb910",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_multi_model_eval.py"
+        },
+        {
+          "content_fingerprint": "2da063689c71302f950a03891fb8c896f4062a2afd95a4e8d7281a0009883e07",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_role_dispatch.py"
+        },
+        {
+          "content_fingerprint": "55fb7baca550f657b1a4a6004d4e5ddb136b8e1a81ffba8676187296db9cf122",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_role_fanout.py"
+        },
+        {
+          "content_fingerprint": "d2ebd07c6f4d9f6139f8ed0eccd6623cf6b9a741f9e09646255f9844a7fb156b",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_role_flow.py"
+        },
+        {
+          "content_fingerprint": "463ed0dc6f73f911f4773589fba1a2a9574f5d478a9015c709e7fd629222fcc1",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_role_result.py"
+        },
+        {
+          "content_fingerprint": "cb982afa1e9bc8e4e4177710a4c0a468a6dd28fa441a09a727ee1f620789cf1c",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_runner_contract.py"
+        },
+        {
+          "content_fingerprint": "d8b1ceeb289fb8b81ae45cc775581b4ef1a278980d15fc0afd1d1239e2398b12",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_runner_lifecycle.py"
+        },
+        {
+          "content_fingerprint": "e3e4b5598764650b3434a842e50ab4a5490ee456c466fea22c5ca7418dfd7b11",
+          "kind": "file",
+          "mode": "100644",
+          "path": "scripts/test_runtime_scenarios.py"
+        },
+        {
+          "content_fingerprint": "22ba481fa799a9fa3895364056224058ee57e7021f21fee3261254ae731c0a15",
+          "kind": "file",
+          "mode": "100644",
+          "path": "skills/converge-eval/SKILL.md"
+        }
+      ],
+      "changed_paths": [
+        "README.md",
+        "SKILL.md",
+        "docs/02_design/architecture/F20260827-autonomous-delivery-gate.md",
+        "docs/06_tasks/F20260827-autonomous-delivery-gate-plan.json",
+        "install.sh",
+        "references/autonomous-delivery-evaluation.json",
+        "references/execution-control.md",
+        "references/multi-model-evaluation.json",
+        "references/multi-model.md",
+        "references/runtime-adapters.md",
+        "references/state-schema.md",
+        "scripts/autonomous_delivery_eval.py",
+        "scripts/autonomy_arm.py",
+        "scripts/autonomy_begin.py",
+        "scripts/autonomy_gate.py",
+        "scripts/autonomy_hook.py",
+        "scripts/autonomy_hook_config.py",
+        "scripts/autonomy_preflight.py",
+        "scripts/autonomy_service.py",
+        "scripts/autonomy_service_config.py",
+        "scripts/check.sh",
+        "scripts/claude_exec_runner.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/controller_snapshot.py",
+        "scripts/delivery_next.py",
+        "scripts/delivery_report.py",
+        "scripts/delivery_state.py",
+        "scripts/multi_model_eval.py",
+        "scripts/role_dispatch.py",
+        "scripts/role_fanout.py",
+        "scripts/role_result.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/test_autonomous_delivery_eval.py",
+        "scripts/test_autonomy_arm.py",
+        "scripts/test_autonomy_begin.py",
+        "scripts/test_autonomy_gate.py",
+        "scripts/test_autonomy_hook.py",
+        "scripts/test_autonomy_hook_config.py",
+        "scripts/test_autonomy_preflight.py",
+        "scripts/test_autonomy_service.py",
+        "scripts/test_claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_controller_snapshot.py",
+        "scripts/test_delivery_next.py",
+        "scripts/test_delivery_report.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_install.py",
+        "scripts/test_multi_model_eval.py",
+        "scripts/test_role_dispatch.py",
+        "scripts/test_role_fanout.py",
+        "scripts/test_role_flow.py",
+        "scripts/test_role_result.py",
+        "scripts/test_runner_contract.py",
+        "scripts/test_runner_lifecycle.py",
+        "scripts/test_runtime_scenarios.py",
+        "skills/converge-eval/SKILL.md"
+      ],
+      "commit_id": "8b7e26d659d94e5435980a1ace9c2077e554fdcb",
+      "diff_fingerprint": "4141efb88c2a13120d038e429761c63871faf6095e6f8eaeb77f3dee31051438",
+      "schema_version": 2,
+      "source_fingerprint": "3c53657e19c031013e86845139d681fbc25ce56dbd0e4384db6113e0abd1629b",
+      "tree_hash": "31bbc96c5473be217ccbe24d53d6906c37e8940c"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "service 的 verify-final 在独立验证成功后以每项验收收据进入 complete，失败则以可验证原因 blocked。"
+      ],
+      "goal": "修复无法自然完成且验证收据未绑定验收项的根因。",
+      "owned_paths": [
+        "scripts/autonomy_service.py",
+        "scripts/evidence_contract.py",
+        "scripts/delivery_next.py",
+        "scripts/test_autonomy_service.py",
+        "scripts/test_evidence_contract.py",
+        "scripts/test_delivery_next.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "为最终验证成功、验证失败及缺失验收证据添加失败回归测试。",
+        "实现服务端唯一的终态和验收收据派生转换。",
+        "运行 T1 的定向验证命令。"
+      ],
+      "acceptance": [
+        "仅当所有冻结 acceptance 都有当前源码、退出码为 0 的独立 Evidence Receipt 时，service 将 active 状态转为 complete。",
+        "verify-final 的验证失败、缺项或陈旧源码均转为 blocked，绝不留在 active。",
+        "模型不能自行写 terminal；每项 acceptance 的证据由 service 执行的冻结 verifier 派生。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_service.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_evidence_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_delivery_next.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "fix",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "task_kind": "fix",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md",
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"
+              }
+            ]
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "service 在 runner、verifier 或状态写入异常时以持久预算和租约清理有限退出，不会崩溃循环或无限挂起。"
+      ],
+      "goal": "把异步执行故障收敛为状态机可恢复的 blocked 终态。",
+      "owned_paths": [
+        "scripts/autonomy_service.py",
+        "scripts/evidence_contract.py",
+        "scripts/delivery_lease.py",
+        "scripts/test_autonomy_service.py",
+        "scripts/test_evidence_contract.py",
+        "scripts/test_delivery_lease.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "为 verifier 超时、runner 无进展、持久预算耗尽、状态写入冲突与终态 lease 释放添加失败回归测试。",
+        "实现有界 verifier、持久 action/cycle 预算和异常转 blocked 的清场路径。",
+        "运行 T2 的定向验证命令。"
+      ],
+      "acceptance": [
+        "验证命令具有冻结超时，runner 仅在可观察输出进展的有限窗口内延展；无进展、超限或超时必定停止。",
+        "任何 observe、commit 或 block 的写回异常都不会使服务反复重启；不确定动作不重放。",
+        "complete 与 blocked 都释放本 run 的 writer lease；进程重启后仍遵守同一持久预算。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_service.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_evidence_contract.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_delivery_lease.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "fix",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "task_kind": "fix",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md",
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"
+              }
+            ]
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "service run 只能在可执行、可发现且同根的隔离工作树中被事务式 arm，并由可触发的服务配置接手。"
+      ],
+      "goal": "修复“创建成功但 service 永不执行”的启动根因。",
+      "owned_paths": [
+        "scripts/autonomy_begin.py",
+        "scripts/autonomy_service.py",
+        "scripts/autonomy_service_config.py",
+        "scripts/autonomy_hook.py",
+        "scripts/autonomy_preflight.py",
+        "scripts/test_autonomy_begin.py",
+        "scripts/test_autonomy_service.py",
+        "scripts/test_autonomy_hook.py",
+        "scripts/test_autonomy_preflight.py"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "为主检出拒绝、state-root 不一致、arm 失败回滚和 service 启动触发添加失败回归测试。",
+        "实现启动前 workspace/root 预检及失败事务回滚。",
+        "运行 T3 的定向验证命令。"
+      ],
+      "acceptance": [
+        "service 模式拒绝非独立 Git worktree、未通过 runner 预检或宿主无法发现的 state-root。",
+        "acquire 后任一步失败都会删除新 state 并释放刚获取的 lease，不影响既有 run。",
+        "创建有效 service run 后，已安装服务无需 Stop Hook 事件即可被唤起处理；配置只操作本 Skill 的 LaunchAgent。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_begin.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_service.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_hook.py",
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_autonomy_preflight.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "fix",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "task_kind": "fix",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md",
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"
+              }
+            ]
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb"
+      }
+    },
+    {
+      "task_id": "T4",
+      "task_kind": "integration",
+      "outcomes": [
+        "自治 service 的真实控制流在无模型调用的集成替身中从 arm 推进至 complete 或有证据 blocked，且文档精确说明边界。"
+      ],
+      "goal": "完成 service 闭环的端到端回归和可操作交接。",
+      "owned_paths": [
+        "README.md",
+        "SKILL.md",
+        "docs/02_design/architecture/F20260827-autonomous-delivery-gate.md",
+        "references/execution-control.md",
+        "references/runtime-adapters.md",
+        "scripts/check.sh",
+        "scripts/test_runtime_scenarios.py",
+        "scripts/test_autonomy_service.py"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "添加从 arm、单动作、独立验证到 terminal 和清场的集成场景。",
+        "更新自治 service 的启用、恢复、停止与卸载边界说明。",
+        "运行完整检查并审计本计划。"
+      ],
+      "acceptance": [
+        "无真实模型调用、全局 Hook/LaunchAgent 写入或外发操作的测试可证明 complete、verifier failure、runner failure、重启预算耗尽和 arm rollback 的终态。",
+        "文档明确：service 仅支持显式安装、隔离 worktree 与预检通过的宿主；不承诺后台模型可用性。",
+        "完整检查通过，且本计划只计入冻结基线之后本任务 owned_paths 的增量。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runtime_scenarios.py",
+        "PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "refactor",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "task_kind": "refactor",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": true
+            },
+            "contract_fingerprint": "36630ab70e23678f1799b0c1a1301269554f0030e0e1f9fa2bd182085e7610d1",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md",
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e"
+              }
+            ]
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "39e0113a3de4d75274a351b81b56782b039c8ab59b05dfae4ad272c137750d2b"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "service 模式可在独立 verifier 成功后从 active 进入带每项验收收据的 complete。",
+    "所有 runner、verifier、持久化和启动故障均在冻结预算内进入可解释 blocked，并释放 lease。",
+    "无模型调用的集成回归覆盖 arm、执行、终态、重启和清场，完整检查通过。",
+    "当前已存在的未提交自治与多模型改动被保留且不误算为本计划的范围漂移。"
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "是否继续扩大多模型或 agent 编排范围？",
+      "resolution": "否；本轮仅修复已审计的自治 service 闭环根因，复用现有 Single State、runner 与 Hook 边界。",
+      "source": "user"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "是否把真实模型或全局 LaunchAgent 安装纳入自动测试？",
+      "resolution": "否；常规验证只用替身和冻结命令，真实调用与安装仍需用户明确授权。",
+      "source": "user"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "故障时是否自动重试或重放可能已修改工作区的动作？",
+      "resolution": "否；不确定结果直接 blocked，避免重复副作用；恢复仅从可验证的新状态开始。",
+      "source": "code"
+    },
+    {
+      "id": "D4",
+      "status": "resolved",
+      "question": "本轮是否提交、推送、安装或卸载用户全局配置？",
+      "resolution": "否；这些不可逆或外部状态变更不在本计划范围内。",
+      "source": "user"
+    }
+  ]
+}

@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 from delivery_engine import controller_identity, provider_reference
 from delivery_next import validate_state
+from delivery_report import build_report
 from delivery_state import validate_transition
+from autonomy_gate import decide as autonomy_decide
 from provider_contract import canonical_fingerprint
 from run_contract import action
 from runtime_adapter import cleanup_receipt, negotiate
@@ -87,6 +89,25 @@ def blocked_worker_state():
 
 
 class RuntimeScenarioTest(unittest.TestCase):
+
+    def test_autonomous_gate_to_terminal_report_uses_one_state_derived_path(self):
+        from test_autonomy_gate import completed_state
+
+        completed = completed_state()
+        self.assertEqual({"decision": "allow", "terminal": "complete"}, autonomy_decide(completed))
+        self.assertEqual("pass", build_report(completed)["autonomy_audit"]["status"])
+
+        blocked = copy.deepcopy(completed)
+        blocked.update(status="blocked", blocked_code="decision", blocked_reason="approval required")
+        blocked["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
+        self.assertEqual({"decision": "allow", "terminal": "blocked"}, autonomy_decide(blocked))
+        self.assertEqual("decision", build_report(blocked)["outcome"])
+
+    def test_legacy_state_is_not_silently_armed_for_autonomy(self):
+        from test_delivery_next import state
+
+        self.assertEqual({"decision": "allow", "terminal": "inactive"}, autonomy_decide(state()))
+
     def test_provisional_cross_session_work_cannot_dispatch(self):
         decision = classify(profile(assessment_phase="provisional", cross_session=True))
         self.assertEqual("planned", decision["route"])

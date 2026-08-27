@@ -134,7 +134,7 @@ class DeliveryReportTest(unittest.TestCase):
         result["receipt_fingerprint"] = runner_fingerprint(result)
         result = bind_role_result(launch, result, result_from_output(launch, {
             "status": "available",
-            "content": '{"findings":[{"summary":"usage reported","evidence":["provider receipt"]}],"next_action":"continue"}',
+            "content": '{"findings":[{"summary":"usage reported","evidence":[{"kind":"artifact","reference":"provider-receipt.json","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"continue"}',
         }))
         payload["ledger"].update(runner_launches=[launch], runner_results=[result])
 
@@ -315,6 +315,22 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(["统一 Provider 契约", "增加可见进度"], report["key_changes"])
         self.assertEqual(["observed"], report["verification_evidence_levels"])
         self.assertEqual([], report["verification_scope"]["checks"])
+
+    def test_autonomous_completion_report_includes_only_the_current_audit_receipt_summary(self):
+        from test_autonomy_gate import completed_state
+
+        result = self.run_report(completed_state())
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(
+            {
+                "status": "pass",
+                "source_fingerprint": SOURCE["source_fingerprint"],
+                "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            },
+            report["autonomy_audit"],
+        )
 
     def test_report_does_not_launder_controller_attested_acceptance_as_ready(self):
         payload = state()

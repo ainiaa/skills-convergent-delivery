@@ -82,6 +82,8 @@ def build_report(state):
         )
         for item in state["ledger"]["checks"]
     )
+    autonomy = state["execution_control"].get("autonomy")
+    audit = autonomy["audit_batches"][-1] if autonomy and autonomy["audit_batches"] else None
     verification_parts = []
     if verification_scope["acceptance"]:
         verification_parts.append(
@@ -130,6 +132,11 @@ def build_report(state):
         "next_action": state["handoff"]["next_action"],
         "workspace_changes": workspace_changes,
         "execution_metrics": execution_metrics(state),
+        "autonomy_audit": None if audit is None else {
+            "status": audit["status"],
+            "source_fingerprint": audit["source_fingerprint"],
+            "covered_manifest_ids": audit["covered_manifest_ids"],
+        },
     }
     identity = {
         key: report[key]
@@ -138,7 +145,7 @@ def build_report(state):
             "verification_evidence_levels", "attested_check_count",
             "verification_note_level", "completed_rounds", "repaired_issues",
             "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
-            "execution_metrics",
+            "execution_metrics", "autonomy_audit",
         )
     }
     fingerprint = hashlib.sha256(

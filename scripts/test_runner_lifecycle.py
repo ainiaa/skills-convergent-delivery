@@ -59,7 +59,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":["test"]}],"next_action":"continue"}'},
+                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:44","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"continue"}'},
             }
 
         result = run_dispatch(
@@ -77,7 +77,7 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertEqual("available", result["role_result"]["status"])
         self.assertEqual("scout", result["role_result"]["role"])
         self.assertEqual(result["role_result"], records[1][2]["role_result"])
-        self.assertNotIn("content", str(records[1][2]))
+        self.assertNotIn("'content':", str(records[1][2]))
         self.assertNotIn("output", result)
         self.assertNotIn("output", records[1][2])
 
@@ -106,7 +106,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":["test"]}],"next_action":"verify"}'},
+                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:92","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}'},
             }
 
         result = run_dispatch(
@@ -168,7 +168,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":["test"]}],"next_action":"verify"}'},
+                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:143","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}'},
             }
 
         result = run_fanout(

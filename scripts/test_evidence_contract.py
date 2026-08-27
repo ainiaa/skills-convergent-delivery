@@ -93,6 +93,14 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertEqual(127, receipt["exit_code"])
         self.assertFalse(evidence_contract.valid_evidence_receipts([receipt], source))
 
+    def test_timeout_becomes_a_non_passing_receipt(self):
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-c", "import time; time.sleep(1)"],
+            timeout_seconds=0.01,
+        )
+
+        self.assertEqual(124, receipt["exit_code"])
+
     def test_cli_executes_the_command_without_a_shell(self):
         marker = self.workspace / "marker.txt"
         result = subprocess.run(

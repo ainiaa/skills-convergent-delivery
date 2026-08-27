@@ -41,10 +41,12 @@ def plan_dispatch(profiles, flow_state):
     return _agent_plan(decision, profile)
 
 
-def plan_read_only_fanout(profiles, tasks):
+def plan_read_only_fanout(profiles, tasks, *, require_heterogeneous=False):
     """Freeze up to three independent read-only tasks; execution remains controller-owned."""
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 3:
         raise ValueError("read-only fan-out supports at most three tasks")
+    if not isinstance(require_heterogeneous, bool):
+        raise ValueError("read-only fan-out heterogeneity flag is invalid")
     planned = []
     seen = set()
     for task in tasks:
@@ -68,9 +70,19 @@ def plan_read_only_fanout(profiles, tasks):
                 profile,
             ),
         })
-    return {"status": "fanout", "executor": "external_runner_fanout", "tasks": sorted(
-        planned, key=lambda item: item["task_id"]
-    )}
+    planned = sorted(planned, key=lambda item: item["task_id"])
+    if require_heterogeneous:
+        identities = {
+            (item["dispatch"]["profile"]["effective"]["provider"],
+             item["dispatch"]["profile"]["effective"]["model"])
+            for item in planned
+        }
+        if len(planned) < 2 or len(identities) != len(planned):
+            raise ValueError("heterogeneous fan-out requires distinct model profiles")
+    return {
+        "status": "fanout", "executor": "external_runner_fanout",
+        "heterogeneous": require_heterogeneous, "tasks": planned,
+    }
 
 
 def main():
@@ -80,6 +92,7 @@ def main():
     parser.add_argument("--profile")
     parser.add_argument("--role", action="append", default=[])
     parser.add_argument("--fanout", type=argparse.FileType("r"))
+    parser.add_argument("--require-heterogeneous", action="store_true")
     arguments = parser.parse_args()
     try:
         profiles = resolve(
@@ -87,7 +100,10 @@ def main():
             role_overrides=parse_role_overrides(arguments.role),
         )
         result = (
-            plan_read_only_fanout(profiles, json.load(arguments.fanout))
+            plan_read_only_fanout(
+                profiles, json.load(arguments.fanout),
+                require_heterogeneous=arguments.require_heterogeneous,
+            )
             if arguments.fanout is not None else plan_dispatch(profiles, json.load(sys.stdin))
         )
         print(json.dumps(result, sort_keys=True))

@@ -110,7 +110,11 @@ def run_fanout(arguments, dispatch, prompts, *, load=load_current,
         receipt, role_result = _completed_execution(item["launch"], execution)
         revision = append(_arguments(arguments, revision), "runner_results", receipt)
         completed.append({"task_id": item["task_id"], "role_result": role_result})
-    return {"status": "completed", "fan_in": fan_in(dispatch, completed), "revision": revision}
+    return {
+        "status": "completed",
+        "fan_in": fan_in(dispatch, completed, {item["task_id"]: item["launch"] for item in prepared}),
+        "revision": revision,
+    }
 
 
 def main():

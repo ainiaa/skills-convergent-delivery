@@ -14,6 +14,10 @@
 
 只有 `implementer` 可以请求工作区写入。同一工作区一次只有一个 implementer。`verifier` 是工具角色，不配置模型画像；模型可以解释失败，但不能替代其测试和源码证据。
 
+这是一套按角色绑定模型的协作配置，不是多模型投票或共识系统。重复 fan-out 的同一角色复用同一冻结 profile；它们的独立性只来自任务范围和上下文，不能宣称获得了不同模型的独立判断。需要异质性复核时，必须显式选择不同的角色 profile 或单独授权外部只读审计，并以验收与工具证据裁决，不能由票数放行。
+
+只读角色的新结果使用 v2：每一项 evidence 都是 `{kind, reference, content_fingerprint}`，其中 `kind` 为 `file`、`command`、`url` 或 `artifact`，且 content fingerprint 必须是 SHA-256 形状。`file` 必须包含仓库相对路径和正行号，URL 仅允许 HTTPS。该 fingerprint 只是模型结论中受格式约束的声明，尚未由控制器重算或获取，不能当作 observed Evidence Receipt，也不能单独推进验收；原始模型回答不进入 ledger。为了恢复旧 run，已持久化的 v1 字符串 evidence 仍可校验，但新 launch 不会再产生 v1 结果。
+
 ## 动态流程
 
 `scripts/role_flow.py` 根据冻结状态返回唯一的下一角色和运行方式：`serial` 复用当前控制上下文，`agent` 只在上下文隔离或独立审查确有收益时创建实例，`tool` 只执行确定性验证。它不会把全部角色塞进每个任务。
@@ -35,7 +39,35 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 ## 受控只读 fan-out
 
-默认仍是单一下一动作。只有 controller 已证明任务彼此独立时，才可调用 `role_dispatch.plan_read_only_fanout` 或 `role_dispatch.py --fanout <tasks.json>` 创建 1–3 个固定 task id 的 scout/reviewer dispatch；任何可写 workspace 或可用 shell 的 profile 都会被拒绝。`runner_lifecycle.run_fanout` 与 `runner_lifecycle.py --fanout` 消费该冻结 dispatch 和 task-id→prompt 的 JSON 输入：先以一次原子状态更新追加**全部** launch，再并发执行，随后按冻结 task id 顺序追加 receipt 并调用 `role_fanout.fan_in` 汇总。任一 branch 没有 `completed` receipt 或没有 `available` 的结构化结果，fan-in 失败并保持交接阻塞；不会自动重派，也不会把原文、peer 消息或完整会话传给其他 worker。该入口不改动 `role_flow.py` 的默认单角色路径，也不允许并行 implementer 或并行写工作区。
+默认仍是单一下一动作。只有 controller 已证明任务彼此独立时，才可调用 `role_dispatch.plan_read_only_fanout` 或 `role_dispatch.py --fanout <tasks.json>` 创建 1–3 个固定 task id 的 scout/reviewer dispatch；任何可写 workspace 或可用 shell 的 profile 都会被拒绝。高风险任务可额外传 `--require-heterogeneous`，此时至少两个 branch 的 `(provider, model)` 必须各不相同；例如用 `--role reviewer=glm-5.2@high` 为 reviewer 选择显式外部只读 profile。默认不会因 fan-out 自动替换模型。`runner_lifecycle.run_fanout` 与 `runner_lifecycle.py --fanout` 消费该冻结 dispatch 和 task-id→prompt 的 JSON 输入：先以一次原子状态更新追加**全部** launch，再并发执行，随后按冻结 task id 顺序追加 receipt 并调用 `role_fanout.fan_in` 汇总。任一 branch 没有 `completed` receipt 或没有 `available` 的结构化结果，fan-in 失败并保持交接阻塞；不会自动重派，也不会把原文、peer 消息或完整会话传给其他 worker。该入口不改动 `role_flow.py` 的默认单角色路径，也不允许并行 implementer 或并行写工作区。
+
+## 行为评测
+
+`references/multi-model-evaluation.json` 固定 16 个只读 scout/reviewer 场景，覆盖四种证据类型和五种 next action。每个场景携带一个冻结的合成证据内容；评测器先重算其 SHA-256，再要求模型只返回对应的唯一 `{kind, reference, content_fingerprint}`，额外或伪造引用同样失败。每个场景只有一个 oracle action，且所有会进入模型 prompt 的字段都不得出现 `next_action` 或该动作词；自定义题库违反该规则会被拒绝。当前评测验证 JSON 合规、给定证据的精确引用、基于证据的路由和用量；合成 URL 仅是离线 fixture，不验证真实网络检索，也不把模型声明当作业务验收证据。默认仅解析配置并输出不含 prompt 的 `planned` 报告；只有显式 `--execute` 才会启动 runner。报告以 schema v3 输出 `scenario_fingerprint`、`evaluator_fingerprint` 和 `controller_fingerprint`；不同指纹的结果不可横向比较，可选 `--output` 应指向评测工件目录而非业务 ledger。
+
+需要把结果用于控制面决策时，必须从已冻结、只读的 Controller Snapshot 脚本运行，并将 `--snapshot-descriptor` 指向该 run 的 managed state 文件（而不是可任意制作的 snapshot JSON）。该模式拒绝自定义题库，验证该 state 的 canonical path 与其中冻结的 snapshot，并报告其聚合 `controller_fingerprint`；直接从候选工作区运行会标记为 `trust_level=diagnostic`，不能作为可信评测回执。
+
+对两个及以上已执行的 snapshot 报告，可用同一评测器的 `--compare-report` 生成横向摘要；它拒绝 controller 或题库指纹不同的报告，并只汇总 pass/fail、耗时和 provider 已返回的整数 usage 字段。比较产物固定标为 `trust_level=diagnostic`，不得用于控制面放行或模型路由；它不推断 token 价格或货币成本：缺少供应商可审计定价/用量时，报告必须保持该项为空而不是估算。
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD"
+python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD" --execute \
+  --output /absolute/path/multi-model-eval.json
+python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" \
+  --compare-report /absolute/path/profile-a.json \
+  --compare-report /absolute/path/profile-b.json
+```
+
+GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `--allow-network`；这不会绕过凭据、预算或 runner 的既有网络授权。
+
+## 机制依据（2026-08）
+
+| 参考与决定 | 采用 / 不采用 | 原因 | 行为测试 |
+| --- | --- | --- | --- |
+| [OpenAI 的代码编排与结构化输出](https://openai.github.io/openai-agents-python/multi_agent/) | 采用类型化、可验证结果 | controller 需要检查输出，而不是转述 agent 对话 | `test_role_result.py` |
+| [Anthropic 的小样本评测与隐私观测](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用固定、显式执行的 16 场景评测 | 先测合规、路由和用量，且报告不存 transcript | `test_multi_model_eval.py` |
+| [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |
+| peer swarm、成员互聊、自动扩容 | 不采用 | 编码任务依赖高；当前目标是可恢复的单写入者控制 | `test_role_flow.py`、`test_runner_lifecycle.py` |
 
 本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob`。Codex 以 sandbox 强制边界，Claude 使用 `--bare --strict-mcp-config --input-format text`、冻结工具与 `acceptEdits`，不把它表述为 OS sandbox。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
 

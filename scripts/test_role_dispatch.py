@@ -108,6 +108,23 @@ class RoleDispatchTest(unittest.TestCase):
         self.assertEqual("external_runner_fanout", plan["executor"])
         self.assertEqual(["a", "b"], [item["task_id"] for item in plan["tasks"]])
 
+    def test_cli_requires_an_explicit_distinct_profile_for_heterogeneous_fanout(self):
+        tasks = Path(self.temporary.name) / "heterogeneous-fanout.json"
+        tasks.write_text(json.dumps([
+            {"task_id": "scout", "role": "scout"}, {"task_id": "review", "role": "reviewer"},
+        ]), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable, str(ROLE_DISPATCH), "--workspace", self.temporary.name,
+                "--fanout", str(tasks), "--require-heterogeneous",
+                "--role", "reviewer=glm-5.2@high",
+            ], text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["heterogeneous"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,7 +101,7 @@ def _runner_fingerprint():
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
-def run_evidence(workspace, baseline_commit, argv):
+def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     """Run one argv command and bind its outcome to the resulting workspace source."""
     workspace = Path(workspace).expanduser().resolve()
     if not isinstance(argv, list) or not argv or any(
@@ -109,8 +109,12 @@ def run_evidence(workspace, baseline_commit, argv):
     ):
         raise ValueError("evidence argv must be a non-empty string list")
     try:
-        result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False)
+        result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False,
+                                timeout=timeout_seconds)
         exit_code, stdout, stderr = result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired as error:
+        exit_code = 124
+        stdout, stderr = error.stdout or b"", error.stderr or b"verification timed out"
     except FileNotFoundError as error:
         exit_code, stdout, stderr = 127, b"", str(error).encode("utf-8")
     receipt = {

@@ -24,7 +24,9 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
+from delivery_next import (
+    WORKER_TERMINAL_STATUSES, upgrade_state, validate_action_attempts, validate_state,
+)
 from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
@@ -56,6 +58,10 @@ def state_path(root, repo, task_key, run_id):
     task_digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()
     run_digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
     return base / repo_digest / task_digest / f"{run_digest}.json"
+
+
+def managed_state_root(arguments):
+    return Path(getattr(arguments, "state_root", DEFAULT_STATE_ROOT)).expanduser().resolve()
 
 
 def write_private(path, payload):
@@ -137,10 +143,62 @@ def next_native_stage(stage, state):
     return NATIVE_STAGE_TRANSITIONS.get(stage)
 
 
+def validate_action_attempt_transition(previous, candidate):
+    """Allow one durable autonomous action to advance by one observed lifecycle step."""
+    validate_action_attempts(previous)
+    validate_action_attempts(candidate)
+    if len(candidate) == len(previous) + 1:
+        if candidate[:-1] != previous or candidate[-1]["status"] != "intent":
+            raise ValueError("autonomy action attempt must append an intent")
+        return
+    if len(candidate) != len(previous):
+        raise ValueError("autonomy action attempts are append-only")
+    changed = [index for index, (old, new) in enumerate(zip(previous, candidate)) if old != new]
+    if not changed:
+        return
+    if len(changed) != 1 or changed[0] != len(previous) - 1:
+        raise ValueError("only the latest autonomy action attempt may advance")
+    old, new = previous[-1], candidate[-1]
+    for field in ("attempt_id", "action", "owner", "time_policy"):
+        if new[field] != old[field]:
+            raise ValueError("autonomy action attempt identity is immutable")
+    if new["events"][:len(old["events"])] != old["events"]:
+        raise ValueError("autonomy action attempt events are append-only")
+    allowed = {
+        "intent": "running",
+        "running": "observed",
+        "observed": "committed",
+        "committed": "committed",
+    }
+    if new["status"] != allowed[old["status"]]:
+        raise ValueError("autonomy action attempt status must advance one step")
+    if old["observation"] is not None and new["observation"] != old["observation"]:
+        raise ValueError("autonomy action attempt observation is immutable")
+    if old["commit"] is not None and new["commit"] != old["commit"]:
+        raise ValueError("autonomy action attempt commit is immutable")
+
+
 def validate_transition(previous, candidate):
+    arming = previous["schema_version"] == 10 and candidate["schema_version"] == 11
     for field in IMMUTABLE_FIELDS:
+        if arming and field == "schema_version":
+            continue
         if candidate[field] != previous[field]:
             raise ValueError(f"{field} is immutable")
+    if arming:
+        if candidate["revision"] != previous["revision"] + 1 \
+                or candidate["status"] != "active" \
+                or candidate["execution_control"]["routing"] != previous["execution_control"]["routing"] \
+                or candidate["execution_control"]["review"] != previous["execution_control"]["review"]:
+            raise ValueError("autonomy arming may only add the frozen manifest")
+        for field in set(previous) | set(candidate):
+            if field not in {"schema_version", "revision", "execution_control"} \
+                    and candidate.get(field) != previous.get(field):
+                raise ValueError("autonomy arming may only add the frozen manifest")
+        autonomy = candidate["execution_control"]["autonomy"]
+        if autonomy["audit_batches"] or autonomy["repair_budget_remaining"] != 1 \
+                or autonomy["re_audit_budget_remaining"] != 1:
+            raise ValueError("autonomy arming must start with an unused budget")
     if previous.get("runtime_binding") is not None \
             and candidate.get("runtime_binding") != previous.get("runtime_binding"):
         raise ValueError("runtime_binding is immutable once workers are enabled")
@@ -199,6 +257,32 @@ def validate_transition(previous, candidate):
         raise ValueError("requires_stability_round must not regress")
     if candidate["execution_control"]["routing"] != previous["execution_control"]["routing"]:
         raise ValueError("frozen routing is immutable")
+    if previous["schema_version"] == 11:
+        old_autonomy = previous["execution_control"]["autonomy"]
+        new_autonomy = candidate["execution_control"]["autonomy"]
+        if new_autonomy["manifest"] != old_autonomy["manifest"]:
+            raise ValueError("autonomy manifest is immutable")
+        if new_autonomy["enabled"] != old_autonomy["enabled"]:
+            raise ValueError("autonomy enabled is immutable")
+        if new_autonomy["runtime"] != old_autonomy["runtime"]:
+            raise ValueError("autonomy runtime is immutable")
+        require_prefix(
+            old_autonomy["audit_batches"], new_autonomy["audit_batches"],
+            "autonomy audit batches",
+        )
+        for field in ("repair_budget_remaining", "re_audit_budget_remaining"):
+            if new_autonomy[field] > old_autonomy[field] \
+                    or old_autonomy[field] - new_autonomy[field] > 1:
+                raise ValueError("autonomy budget cannot increase or skip")
+        added_audits = new_autonomy["audit_batches"][len(old_autonomy["audit_batches"]):]
+        expected_re_audit = int(bool(added_audits and added_audits[-1]["phase"] == "re_audit"))
+        expected_repair = expected_re_audit
+        if old_autonomy["repair_budget_remaining"] - new_autonomy["repair_budget_remaining"] != expected_repair \
+                or old_autonomy["re_audit_budget_remaining"] - new_autonomy["re_audit_budget_remaining"] != expected_re_audit:
+                raise ValueError("autonomy budget must match audit transition")
+        validate_action_attempt_transition(
+            old_autonomy.get("action_attempts", []), new_autonomy.get("action_attempts", [])
+        )
     old_review = previous["execution_control"]["review"]
     new_review = candidate["execution_control"]["review"]
     if old_review["protocol_version"] != new_review["protocol_version"]:
@@ -346,7 +430,7 @@ def write(arguments):
     candidate = upgrade_state(raw_candidate)
     validate_candidate(candidate, arguments)
     managed_path = state_path(
-        DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
+        managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     with active_lease(
         candidate, arguments.lease_root, arguments.run_id, arguments.writer_id
@@ -415,7 +499,7 @@ def append_runner_records(arguments, field, records):
         raise ValueError("runner launch group is invalid")
     arguments.strict_evidence = True
     managed_path = state_path(
-        DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
+        managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     if not managed_path.is_file():
         raise ValueError("runner append requires an existing managed state")
@@ -473,7 +557,7 @@ def append_runner_record(arguments, field, record):
         return append_runner_records(arguments, field, [record])
     arguments.strict_evidence = True
     managed_path = state_path(
-        DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id
+        managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     if not managed_path.is_file():
         raise ValueError("runner append requires an existing managed state")
@@ -516,10 +600,10 @@ def append_runner(arguments, field):
     print(json.dumps({"status": "written", "revision": revision}))
 
 
-def discover(workspace, diagnose=False):
+def discover(workspace, diagnose=False, state_root=DEFAULT_STATE_ROOT):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
-    for path in sorted(DEFAULT_STATE_ROOT.rglob("*.json")):
+    for path in sorted(Path(state_root).expanduser().resolve().rglob("*.json")):
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             if state.get("workspace") != workspace:
@@ -541,7 +625,13 @@ def discover(workspace, diagnose=False):
                 except (KeyError, OSError, ValueError) as error:
                     summary.update(health="blocked", reason=str(error))
             states.append(summary)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as error:
+            if diagnose:
+                states.append({
+                    "path": str(path), "run_id": None, "task_key": None, "status": "unknown",
+                    "revision": None, "workspace": None, "health": "blocked",
+                    "reason": f"unreadable managed state: {error}",
+                })
             continue
     return {"workspace": workspace, "states": states}
 
@@ -553,6 +643,7 @@ def main():
     ))
     parser.add_argument("--input")
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--repo")
     parser.add_argument("--workspace")
     parser.add_argument("--task-key")
@@ -565,12 +656,12 @@ def main():
         if arguments.command == "path":
             if not all((arguments.repo, arguments.task_key, arguments.run_id)):
                 raise ValueError("path requires --repo, --task-key, and --run-id")
-            print(state_path(DEFAULT_STATE_ROOT, arguments.repo, arguments.task_key, arguments.run_id))
+            print(state_path(managed_state_root(arguments), arguments.repo, arguments.task_key, arguments.run_id))
             return 0
         if arguments.command in {"list", "doctor"}:
             if not arguments.workspace:
                 raise ValueError(f"{arguments.command} requires --workspace")
-            result = discover(arguments.workspace, arguments.command == "doctor")
+            result = discover(arguments.workspace, arguments.command == "doctor", arguments.state_root)
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
             return 0 if arguments.command == "list" or all(
                 state.get("health") == "valid" for state in result["states"]

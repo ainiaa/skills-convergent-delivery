@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,8 @@ from pathlib import Path
 
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
 from delivery_next import (
-    upgrade_state, validate_execution_control, validate_provider_reference, validate_state,
+    upgrade_state, validate_autonomy_completion, validate_execution_control, validate_provider_reference,
+    validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
 from runner_contract import freeze_launch
@@ -21,7 +23,7 @@ from worker_profile import fingerprint as worker_profile_fingerprint
 
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).resolve().parent.parent)).resolve()
 HEAD = subprocess.run(
     ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
     capture_output=True, text=True,
@@ -113,6 +115,30 @@ def state(**overrides):
     return value
 
 
+def autonomous_state(**overrides):
+    payload = state(schema_version=11)
+    payload["execution_control"] = {
+        **payload["execution_control"],
+        "autonomy": {
+            "schema_version": 1,
+            "enabled": True,
+            "manifest": {
+                "source_fingerprint": SOURCE["source_fingerprint"],
+                "items": [
+                    {"id": "requirement", "kind": "requirement", "value": "Requested behavior"},
+                    {"id": "scope", "kind": "scope", "value": "."},
+                    {"id": "acceptance", "kind": "acceptance", "value": "Requested behavior"},
+                ],
+            },
+            "audit_batches": [],
+            "repair_budget_remaining": 1,
+            "re_audit_budget_remaining": 1,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
 def runtime_binding():
     return bind_observed("codex", {
         "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
@@ -186,6 +212,54 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_autonomy_completion_rejects_an_uncommitted_action(self):
+        autonomy = {
+            "audit_batches": [{
+                "source_fingerprint": "a" * 64, "phase": "initial", "status": "pass",
+                "covered_manifest_ids": ["requirement", "scope", "acceptance"], "finding_fingerprints": [],
+            }],
+            "action_attempts": [{"status": "observed"}],
+        }
+        with self.assertRaisesRegex(ValueError, "committed"):
+            validate_autonomy_completion(autonomy, "a" * 64)
+
+    def test_autonomous_complete_requires_a_current_full_scope_audit(self):
+        payload = autonomous_state(
+            status="complete", current_stage="verify-final", revision=3,
+        )
+
+        with self.assertRaisesRegex(ValueError, "autonomy requires a current passing audit"):
+            validate_state(payload, SimpleNamespace())
+
+        payload["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
+            "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": [],
+        }]
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_autonomous_audit_cannot_claim_full_coverage_with_missing_manifest_item(self):
+        payload = autonomous_state(
+            status="complete", current_stage="verify-final", revision=3,
+        )
+        payload["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
+            "status": "pass", "covered_manifest_ids": ["requirement", "scope"],
+            "finding_fingerprints": [],
+        }]
+
+        with self.assertRaisesRegex(ValueError, "coverage"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_autonomous_manifest_cannot_omit_requirement_or_acceptance(self):
+        payload = autonomous_state()
+        payload["execution_control"]["autonomy"]["manifest"]["items"] = [
+            {"id": "scope", "kind": "scope", "value": "."},
+        ]
+
+        with self.assertRaisesRegex(ValueError, "requirement, scope, and acceptance"):
+            validate_state(payload, SimpleNamespace())
+
     def test_caller_cannot_override_the_canonical_profile_route(self):
         payload = upgrade_state(state())
         payload["execution_control"]["routing"]["route"] = "batch"

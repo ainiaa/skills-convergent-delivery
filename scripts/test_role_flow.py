@@ -76,6 +76,24 @@ class RoleFlowTest(unittest.TestCase):
             )),
         )
 
+    def test_planned_flow_has_one_minimal_path_per_phase(self):
+        states = [
+            state(routing="frozen", route="planned", evidence="missing", task_spec="missing"),
+            state(routing="frozen", route="planned", task_spec="missing"),
+            state(routing="frozen", route="planned"),
+            state(routing="frozen", route="planned", implementation="complete"),
+            state(
+                routing="frozen", route="planned", implementation="complete", verification="passed",
+                review="pending",
+            ),
+            state(routing="frozen", route="planned", implementation="complete", verification="passed"),
+        ]
+
+        self.assertEqual(
+            ["scout", "specifier", "implementer", "verifier", "reviewer", None],
+            [next_role(item).get("role") for item in states],
+        )
+
     def test_rejects_inconsistent_or_unknown_state(self):
         with self.assertRaisesRegex(ValueError, "route"):
             next_role(state(routing="frozen", route=None))

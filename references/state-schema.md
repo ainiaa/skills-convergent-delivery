@@ -1,4 +1,4 @@
-# 轻量状态 Schema v10
+# 轻量状态 Schema v10 / v11
 
 仅用于跨服务、跨会话、使用子代理或用户要求恢复的单个 `converge` 任务。无委托且可在当前上下文一次完成的简单任务可以不持久化。状态不得保存密钥、Cookie、请求正文或敏感业务数据；多 Batch 计划继续使用独立 Batch state。
 
@@ -57,6 +57,8 @@
 无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
 `source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v2 由 `task_profile.freeze_routing` 唯一生成：完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。旧 Routing v1 只读兼容，不能写入新 complete。
+
+Schema v11 仅用于用户明确启用自治交付的 run。在既有 `execution_control` 内增加不可变 `autonomy`：它冻结需求、范围和验收 manifest，并保存至多一次 initial audit 与一次修复后的 re-audit。每批 audit 必须注明当前源码指纹、覆盖的 manifest 项和 finding 指纹；只有覆盖全部项、finding 为空且指纹等于当前源码的 pass batch，v11 才能进入 `complete`。`action_attempts` 是同一状态内至多八条的动作记录：每条冻结 action、owner 和启动/无进展/绝对时限，且只能按 `intent → running → observed → committed` 推进；只有带运行回执和验证指纹的 observed 结果才能 committed，且 `complete` 前最后一个动作必须已经 committed。中断或未知结果不能推进 delivery stage，后续 controller 必须先协调真实工件。service runtime 仅支持低风险 route，必须分别冻结非空且不相同的 `verification_argv` 与 `audit_argv`；两者都按 argv 直接执行，不能接受 shell 字符串或模型生成的命令。service 的每个外部 runner 都必须先追加冻结 launch、再追加匹配 result；最终 audit 失败也必须作为 fail check 保留 Evidence Receipt。旧 v10 继续按原语义运行，绝不被静默改写为 v11。
 
 Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；当前 round 的 finding 必须携带 records，历史 round 可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
@@ -173,6 +175,11 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" list --workspace <absolu
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" doctor --workspace <absolute-worktree>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" write --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
+python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_arm.py" --state <derived-path> --requirement <item> \
+  --acceptance <item> --write --lease-root <root> --state-root <state-root> --repo-id <repo> \
+  --task-key <task> --run-id <run> --writer-id <writer> --expected-revision <revision>
+python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_begin.py" --workspace <absolute-worktree> \
+  --scope <relative-path> --requirement <item> --acceptance <criterion>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" append-runner-launches --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --run-id <run> \

@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Validate deterministic controller-owned fan-in for bounded read-only tasks."""
 
-from runner_contract import fingerprint
+from role_result import validate_available_result
+from runner_contract import fingerprint, validate_launch
 from runner_registry import validate_runner_profile
 
 
-_PLAN_FIELDS = {"status", "executor", "tasks"}
+_PLAN_FIELDS = {"status", "executor", "heterogeneous", "tasks"}
+_LEGACY_PLAN_FIELDS = _PLAN_FIELDS - {"heterogeneous"}
 _TASK_FIELDS = {"task_id", "dispatch"}
 _RESULT_FIELDS = {"task_id", "role_result"}
 
 
 def tasks_for_fanout(plan):
-    if not isinstance(plan, dict) or set(plan) != _PLAN_FIELDS \
+    if not isinstance(plan, dict) or (set(plan) != _PLAN_FIELDS and set(plan) != _LEGACY_PLAN_FIELDS) \
             or plan.get("status") != "fanout" or plan.get("executor") != "external_runner_fanout" \
+            or not isinstance(plan.get("heterogeneous", False), bool) \
             or not isinstance(plan.get("tasks"), list) or not 1 <= len(plan["tasks"]) <= 3:
         raise ValueError("read-only fan-out plan is invalid")
     tasks = []
@@ -45,26 +48,50 @@ def tasks_for_fanout(plan):
         tasks.append(item)
     if tasks != sorted(tasks, key=lambda item: item["task_id"]):
         raise ValueError("read-only fan-out tasks must have stable order")
+    if plan.get("heterogeneous", False):
+        fingerprints = {
+            (item["dispatch"]["profile"]["effective"]["provider"],
+             item["dispatch"]["profile"]["effective"]["model"])
+            for item in tasks
+        }
+        if len(tasks) < 2 or len(fingerprints) != len(tasks):
+            raise ValueError("heterogeneous fan-out requires distinct model profiles")
     return tasks
 
 
-def _available_result(value, role):
-    required = {
-        "schema_version", "launch_fingerprint", "role", "status", "findings", "next_action",
-        "result_fingerprint",
-    }
-    if not isinstance(value, dict) or set(value) != required or value.get("schema_version") != 1 \
-            or value.get("role") != role or value.get("status") != "available":
-        raise ValueError("fan-in requires an available structured role result")
-    expected = {key: item for key, item in value.items() if key != "result_fingerprint"}
-    if value.get("result_fingerprint") != fingerprint(expected):
-        raise ValueError("fan-in role result fingerprint is invalid")
-    return value
+def _available_result(value, role, launch):
+    if not isinstance(value, dict) or value.get("launch_fingerprint") != launch["launch_fingerprint"]:
+        raise ValueError("fan-in result does not match its frozen launch")
+    try:
+        return validate_available_result(
+            value, role=role, launch_fingerprint=launch["launch_fingerprint"],
+        )
+    except ValueError as error:
+        raise ValueError("fan-in requires an available structured role result") from error
 
 
-def fan_in(plan, results):
+def _launches_for_tasks(tasks, launches):
+    if not isinstance(launches, dict) or set(launches) != {task["task_id"] for task in tasks}:
+        raise ValueError("fan-in launches must match the frozen task ids")
+    verified = {}
+    for task in tasks:
+        try:
+            launch = validate_launch(launches[task["task_id"]])
+        except ValueError as error:
+            raise ValueError("fan-in launch is invalid") from error
+        dispatch = task["dispatch"]
+        if launch["runner_id"] != dispatch["runner_id"] \
+                or launch["profile_fingerprint"] != dispatch["profile_fingerprint"] \
+                or launch["profile"]["role"] != dispatch["role"]:
+            raise ValueError("fan-in launch does not match its frozen task")
+        verified[task["task_id"]] = launch
+    return verified
+
+
+def fan_in(plan, results, launches):
     """Merge only validated, available conclusions in frozen task-id order."""
     tasks = tasks_for_fanout(plan)
+    launches = _launches_for_tasks(tasks, launches)
     if not isinstance(results, list) or len(results) != len(tasks):
         raise ValueError("fan-in results are incomplete")
     expected = {item["task_id"]: item for item in tasks}
@@ -75,6 +102,7 @@ def fan_in(plan, results):
             raise ValueError("fan-in result is invalid")
         received[item["task_id"]] = _available_result(
             item["role_result"], expected[item["task_id"]]["dispatch"]["role"],
+            launches[item["task_id"]],
         )
     if set(received) != set(expected):
         raise ValueError("fan-in results are incomplete")

@@ -4,6 +4,7 @@
 import shutil
 import io
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from claude_exec_runner import command_for_launch, execute_launch, plan_launch
@@ -92,6 +93,31 @@ class ClaudeExecRunnerTest(unittest.TestCase):
 
         _receipt, content = execution
         self.assertEqual("Review finding", content)
+
+    def test_timeout_kills_the_claude_process_group(self):
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO()
+            stderr = io.BytesIO()
+            pid = 123
+
+            def wait(self, timeout=None):
+                if timeout is not None:
+                    raise __import__("subprocess").TimeoutExpired("claude", timeout)
+                return 124
+
+            def kill(self):
+                raise AssertionError("process-group termination should be used")
+
+        with mock.patch("codex_exec_runner.os.killpg") as killpg:
+            receipt = execute_launch(
+                plan_launch(profile(), "Review the isolated task", workspace="/tmp", claude_bin=shutil.which("claude")),
+                "Review the isolated task", allow_execute=True,
+                process_factory=lambda *_args, **_kwargs: Process(),
+            )
+
+        self.assertEqual("timed_out", receipt["status"])
+        killpg.assert_called_once_with(123, __import__("signal").SIGKILL)
 
 
 if __name__ == "__main__":

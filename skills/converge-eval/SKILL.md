@@ -39,6 +39,8 @@ control 与 candidate 必须运行相同场景、输入、判定器和样本预�
 
 四类结果分别报告，不合并、不互相抵消。历史条目无匹配不等于历史风险为零；应明确 catalog 覆盖范围。
 
+修改 Schema v11 自治交付时，另运行冻结的 `references/autonomous-delivery-evaluation.json`：它至少覆盖 15 条从 active 到 complete、blocked 或 decision 的轨迹，且只保留状态、耗时、用量、verdict 与 receipt 摘要。普通评测不得保存 prompt/transcript 或调用真实模型；真实宿主 smoke 只可在用户明确选择后单独执行，不能拿预检或模型自述代替。
+
 ## 多样本与判定
 
 确定性场景默认一个 fresh-context sample；只有修改路由、循环、worker 清场等关键模型决策，或首次结果不稳定时，才使用契约规定的三个 fresh workers。关键决策必须对每个 required known acceptance 和已选 history scenario 分别获得三个不同 `worker_ref`；无关 exploration 不能用来凑数。每个 Sample Receipt 必须绑定 scenario/class、control/candidate 来源、同一 judge 指纹、worker ref、原始 evidence source 与双侧结果，并由 canonical receipt 指纹防止篡改。报告样本数、通过数、失败数、通过率与二元结果方差；单次 PASS 只能证明该次样本通过，不能证明稳定。

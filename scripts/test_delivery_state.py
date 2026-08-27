@@ -13,12 +13,14 @@ from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
 from delivery_state import validate_transition
+from autonomy_arm import arm
 from role_result import result_from_output
 from runner_contract import bind_role_result
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from runner_contract import fingerprint as runner_fingerprint, freeze_launch
+from run_contract import action
 from worker_profile import fingerprint as profile_fingerprint
 
 
@@ -33,6 +35,7 @@ def state(revision=0, writer_id="writer-1"):
         "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
         "context_isolation_benefit": False,
     }
+
     binding = {
         "controller": "converge",
         "workflow_provider": provider_reference("native-v1", "feature"),
@@ -96,7 +99,156 @@ def state(revision=0, writer_id="writer-1"):
     }
 
 
+def autonomous_state(revision=0):
+    payload = state(revision)
+    payload["schema_version"] = 11
+    payload["execution_control"] = {
+        **payload["execution_control"],
+        "autonomy": {
+            "schema_version": 1,
+            "enabled": True,
+            "manifest": {
+                "source_fingerprint": "a" * 64,
+                "items": [
+                    {"id": "requirement", "kind": "requirement", "value": "requested behavior"},
+                    {"id": "scope", "kind": "scope", "value": "."},
+                ],
+            },
+            "audit_batches": [],
+            "repair_budget_remaining": 1,
+            "re_audit_budget_remaining": 1,
+        },
+    }
+    return payload
+
+
+def action_attempt(status="intent", *, events=None, observation=None, commit=None):
+    return {
+        "attempt_id": "attempt-1",
+        "action": action("execute-inline", task_id="task-payment", phase="round-1-build"),
+        "status": status,
+        "owner": "writer-1",
+        "time_policy": {
+            "startup_seconds": 10,
+            "idle_seconds": 30,
+            "absolute_seconds": 120,
+            "max_extensions": 1,
+        },
+        "events": events or [],
+        "observation": observation,
+        "commit": commit,
+    }
+
+
 class DeliveryStateTest(unittest.TestCase):
+
+    def test_legacy_autonomy_state_upgrades_with_no_action_attempts(self):
+        armed = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+        self.assertEqual([], armed["execution_control"]["autonomy"]["action_attempts"])
+        del armed["execution_control"]["autonomy"]["action_attempts"]
+        self.assertEqual([], upgrade_state(armed)["execution_control"]["autonomy"]["action_attempts"])
+
+    def test_autonomous_attempt_must_progress_intent_running_observed_committed(self):
+        current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+
+        intent = copy.deepcopy(current)
+        intent["revision"] += 1
+        intent["execution_control"]["autonomy"]["action_attempts"] = [action_attempt()]
+        validate_transition(current, intent)
+
+        running = copy.deepcopy(intent)
+        running["revision"] += 1
+        running["execution_control"]["autonomy"]["action_attempts"][-1]["status"] = "running"
+        running["execution_control"]["autonomy"]["action_attempts"][-1]["events"] = [{
+            "kind": "started", "at": "2026-08-27T00:00:00Z", "evidence_fingerprint": "a" * 64,
+        }]
+        validate_transition(intent, running)
+
+        observed = copy.deepcopy(running)
+        observed["revision"] += 1
+        observed["execution_control"]["autonomy"]["action_attempts"][-1].update(
+            status="observed",
+            observation={"outcome": "completed", "receipt_fingerprint": "b" * 64},
+        )
+        validate_transition(running, observed)
+
+        committed = copy.deepcopy(observed)
+        committed["revision"] += 1
+        committed["execution_control"]["autonomy"]["action_attempts"][-1]["status"] = "committed"
+        committed["execution_control"]["autonomy"]["action_attempts"][-1]["commit"] = {
+            "source_fingerprint": "a" * 64,
+            "verification_fingerprint": "c" * 64,
+        }
+        validate_transition(observed, committed)
+
+    def test_autonomous_attempt_cannot_commit_without_a_observed_result(self):
+        current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+        intent = copy.deepcopy(current)
+        intent["revision"] += 1
+        intent["execution_control"]["autonomy"]["action_attempts"] = [action_attempt()]
+        validate_transition(current, intent)
+
+        forged = copy.deepcopy(intent)
+        forged["revision"] += 1
+        forged["execution_control"]["autonomy"]["action_attempts"][-1].update(
+            status="committed",
+            commit={"source_fingerprint": "a" * 64, "verification_fingerprint": "b" * 64},
+        )
+        with self.assertRaisesRegex(ValueError, "attempt"):
+            validate_transition(intent, forged)
+
+    def test_path_and_list_honor_the_explicit_state_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = (Path(directory) / "state").resolve()
+            path = subprocess.run(
+                [
+                    sys.executable, str(STATE_SCRIPT), "path", "--state-root", str(root),
+                    "--repo", "/repo/common.git", "--task-key", "task-payment", "--run-id", "run-1",
+                ], text=True, capture_output=True, check=False,
+            )
+            listed = subprocess.run(
+                [
+                    sys.executable, str(STATE_SCRIPT), "list", "--state-root", str(root),
+                    "--workspace", "/repo/worktree",
+                ], text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(0, path.returncode, path.stderr)
+        self.assertTrue(Path(path.stdout.strip()).is_relative_to(root))
+        self.assertEqual(0, listed.returncode, listed.stderr)
+        self.assertEqual([], json.loads(listed.stdout)["states"])
+    def test_explicit_arm_is_the_only_schema_v10_to_v11_transition(self):
+        previous = upgrade_state(state())
+        candidate = arm(previous, ["fix requested behavior"], ["targeted test passes"])
+
+        validate_transition(previous, candidate)
+
+        forged = copy.deepcopy(candidate)
+        forged["execution_control"]["autonomy"]["repair_budget_remaining"] = 0
+        with self.assertRaisesRegex(ValueError, "arming"):
+            validate_transition(previous, forged)
+
+    def test_autonomy_manifest_is_immutable_and_audit_batches_are_append_only(self):
+        previous = upgrade_state(autonomous_state())
+        changed_manifest = copy.deepcopy(previous)
+        changed_manifest["revision"] = 1
+        changed_manifest["execution_control"]["autonomy"]["manifest"]["items"][0]["value"] = "rewritten"
+        with self.assertRaisesRegex(ValueError, "autonomy manifest"):
+            validate_transition(previous, changed_manifest)
+
+        audited = copy.deepcopy(previous)
+        audited["revision"] = 1
+        audited["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": "a" * 64, "phase": "initial", "status": "findings",
+            "covered_manifest_ids": ["requirement", "scope"], "finding_fingerprints": ["b" * 64],
+        }]
+        validate_transition(previous, audited)
+
+        rewritten = copy.deepcopy(audited)
+        rewritten["revision"] = 2
+        rewritten["execution_control"]["autonomy"]["audit_batches"][0]["status"] = "pass"
+        with self.assertRaisesRegex(ValueError, "autonomy audit batches"):
+            validate_transition(audited, rewritten)
     def runtime_binding(self):
         return bind_observed("codex", {
             "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
@@ -245,6 +397,24 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, diagnosed.returncode, diagnosed.stderr)
             self.assertEqual("valid", json.loads(diagnosed.stdout)["states"][0]["health"])
 
+    def test_doctor_reports_unreadable_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_home = Path(directory) / "home"
+            state_root = state_home / ".convergent-delivery" / "state"
+            state_root.mkdir(parents=True)
+            (state_root / "truncated.json").write_text("{", encoding="utf-8")
+            environment = self.environment(state_home)
+
+            result = subprocess.run(
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", "/repo/worktree-a"],
+                text=True, capture_output=True, check=False, env=environment,
+            )
+
+            self.assertEqual(1, result.returncode)
+            state = json.loads(result.stdout)["states"][0]
+            self.assertEqual("blocked", state["health"])
+            self.assertIn("unreadable managed state", state["reason"])
+
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}
 
@@ -359,7 +529,7 @@ class DeliveryStateTest(unittest.TestCase):
             return receipt
         return bind_role_result(launch, receipt, result_from_output(launch, {
             "status": "available",
-            "content": '{"findings":[{"summary":"focused result","evidence":["test"]}],"next_action":"continue"}',
+            "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_delivery_state.py:335","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"continue"}',
         }))
 
     def test_write_requires_current_lease_and_monotonic_revision(self):

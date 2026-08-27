@@ -120,13 +120,13 @@ class RunnerContractTest(unittest.TestCase):
         receipt["receipt_fingerprint"] = contract_fingerprint(receipt)
         role_result = result_from_output(launch, {
             "status": "available",
-            "content": '{"findings":[{"summary":"missing check","evidence":["test"]}],"next_action":"verify"}',
+            "content": '{"findings":[{"summary":"missing check","evidence":[{"kind":"file","reference":"scripts/test_runner_contract.py:1","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}',
         })
 
         self.assertFalse(role_results_complete([launch], [receipt]))
         completed = bind_role_result(launch, receipt, role_result)
         self.assertTrue(role_results_complete([launch], [completed]))
-        self.assertNotIn("content", str(completed))
+        self.assertNotIn("'content':", str(completed))
 
         completed["role_result"]["role"] = "reviewer"
         completed["receipt_fingerprint"] = contract_fingerprint({

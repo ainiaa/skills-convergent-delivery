@@ -31,6 +31,9 @@ REQUIRED_SOURCE_FILES=(
   references/tdd-providers.md
   references/worker-runners.md
   references/multi-model.md
+  references/multi-model-evaluation.json
+  references/autonomous-delivery-evaluation.json
+  references/runtime-adapters.md
   providers/generic-tdd-v1.json
   providers/mattpocock-tdd-v1.json
   providers/native-v1.json
@@ -53,14 +56,34 @@ REQUIRED_SOURCE_FILES=(
   scripts/claude_exec_runner.py
   scripts/openai_compatible_runner.py
   scripts/multi_model.py
+  scripts/multi_model_eval.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
   scripts/test_trigger_evals.py
   scripts/test_fast_path.py
   scripts/test_runner_lifecycle.py
+  scripts/test_multi_model_eval.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
+  scripts/autonomy_gate.py
+  scripts/autonomy_hook.py
+  scripts/autonomy_hook_config.py
+  scripts/autonomy_preflight.py
+  scripts/autonomy_service.py
+  scripts/autonomy_service_config.py
+  scripts/autonomy_arm.py
+  scripts/autonomy_begin.py
+  scripts/autonomous_delivery_eval.py
+  scripts/test_autonomy_arm.py
+  scripts/test_autonomy_begin.py
+  scripts/test_autonomy_gate.py
+  scripts/test_autonomy_hook.py
+  scripts/test_autonomy_preflight.py
+  scripts/test_autonomy_service.py
+  scripts/test_delivery_next.py
+  scripts/test_delivery_state.py
+  scripts/test_runtime_scenarios.py
   skills/converge-plan/SKILL.md
   skills/converge-plan/references/plan-contract.md
   skills/converge-plan/scripts/plan_check.py
@@ -86,6 +109,8 @@ TARGET="all"
 SOURCE_OVERRIDE=""
 OFFLINE=0
 FORCE=0
+AUTONOMY=0
+AUTONOMY_SERVICE=0
 INSTALL_LOCK_HELD=0
 
 usage() {
@@ -95,13 +120,17 @@ converge installer
 Usage:
   bash install.sh [--target codex|claude|all] [--source /path/to/clone]
   bash install.sh --upgrade [--target codex|claude|all]
-  bash install.sh --uninstall [--target codex|claude|all]
+  bash install.sh --uninstall [--target codex|claude|all] [--autonomy]
+  bash install.sh --autonomy-service-uninstall
   bash install.sh --version [--offline]
   bash install.sh --doctor [--target codex|claude|all] [--offline]
 
 The default target is all (Codex and Claude Code). Installation creates the
 converge, converge-plan, converge-review, converge-batch, and converge-eval symlinks as one
 Suite. It never replaces an existing directory.
+
+Autonomy is available for Codex and Claude Code (`--target <host> --autonomy`);
+the installer rejects hosts whose locally observed continuation capability is unavailable.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
@@ -118,6 +147,10 @@ while [[ $# -gt 0 ]]; do
     --doctor) ACTION="doctor"; shift ;;
     --offline) OFFLINE=1; shift ;;
     --force) FORCE=1; shift ;;
+    --autonomy) AUTONOMY=1; shift ;;
+    --autonomy-service) AUTONOMY_SERVICE=1; shift ;;
+    --autonomy-service-uninstall) ACTION="service-uninstall"; shift ;;
+    --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Error: unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -429,6 +462,38 @@ install_skill() {
   echo "${runtime}: installed ${skill} → $target"
 }
 
+autonomy_hook_config() {
+  local runtime="$1"
+  local remove="${2:-}"
+  local config
+  case "$runtime" in
+    codex) config="${HOME}/.codex/hooks.json" ;;
+    claude) config="${HOME}/.claude/settings.json" ;;
+  esac
+  local command="python3 ${SOURCE_DIR}/scripts/autonomy_hook.py --host ${runtime}"
+  local args=(--config "$config" --command "$command")
+  [[ "$remove" == "remove" ]] && args+=(--remove)
+  python3 "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}"
+  if [[ "$remove" == "remove" ]]; then
+    echo "${runtime}: autonomy Stop hook removed"
+  else
+    echo "${runtime}: autonomy Stop hook installed"
+  fi
+}
+
+autonomy_preflight() {
+  local runtime="$1"
+  python3 "${SOURCE_DIR}/scripts/autonomy_preflight.py" --host "$runtime" --source "$SOURCE_DIR"
+}
+
+autonomy_service_config() {
+  local remove="${1:-}"
+  local args=(--source "$SOURCE_DIR")
+  [[ "$remove" == "remove" ]] && args+=(--remove)
+  python3 "${SOURCE_DIR}/scripts/autonomy_service_config.py" "${args[@]}"
+  [[ "$remove" == "remove" ]] && echo "autonomy service removed" || echo "autonomy service installed"
+}
+
 is_skill_link() {
   local target="$1"
   local skill="$2"
@@ -475,6 +540,12 @@ fi
 
 acquire_install_lock
 
+if [[ "$ACTION" == "service-uninstall" ]]; then
+  prepare_source
+  autonomy_service_config remove
+  exit 0
+fi
+
 if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   prepare_source
   RUNTIMES=("$TARGET")
@@ -484,6 +555,12 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
       ensure_installable "$(target_path "$runtime" "$skill")" "$(skill_source "$skill")"
     done
   done
+  if [[ "$AUTONOMY" -eq 1 ]]; then
+    for runtime in "${RUNTIMES[@]}"; do autonomy_preflight "$runtime"; done
+  fi
+  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
+    autonomy_service_config
+  fi
   for runtime in "${RUNTIMES[@]}"; do
     migrate_legacy_target "$runtime"
   done
@@ -492,6 +569,9 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
       install_skill "$runtime" "$skill"
     done
   done
+  if [[ "$AUTONOMY" -eq 1 ]]; then
+    for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime"; done
+  fi
   echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Claude Code reloads Skills live; start a new Codex task only if discovery is stale."
 elif [[ "$ACTION" == "uninstall" ]]; then
   RUNTIMES=("$TARGET")
@@ -501,6 +581,14 @@ elif [[ "$ACTION" == "uninstall" ]]; then
       ensure_uninstallable "$runtime" "$skill"
     done
   done
+  if [[ "$AUTONOMY" -eq 1 ]]; then
+    prepare_source
+    for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime" remove; done
+  fi
+  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
+    prepare_source
+    autonomy_service_config remove
+  fi
   for runtime in "${RUNTIMES[@]}"; do
     for skill in "${SKILL_NAMES[@]}"; do
       uninstall_skill "$runtime" "$skill"

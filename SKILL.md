@@ -7,19 +7,19 @@ metadata:
 
 # Converge：单任务闭环执行
 
-Converge 始终是 controller；规划、只读、跨会话分别用 `converge-plan`、`converge-review`、`converge-batch`。触发见 [激活](references/activation.md)。
+Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-review`；见 `references/activation.md`。
+
+闭环 arm v11；Codex queue、Claude Stop 逐动作续跑；终态只认新鲜证据。用户明确要求闭环执行时，先用 `autonomy_begin.py` 创建并 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
 
 ## 开始
 
-Skill 根目录记为 `CONVERGE_SKILL_DIR`。
-
-冻结验收/路径/基线/行为，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown`失败；行为改动回归；fast path 停用，走完整路径。
+Skill 根目录记为 `CONVERGE_SKILL_DIR`。冻结验收/路径/基线，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown`失败，走完整路径。
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
 
-Provider Schema v2；pdlc-v1/native-v1；`engine` 由 binding 派生，不能成为第二真相。PDLC 显式执行冻结入口；见 [TDD](references/tdd-providers.md)、[控制](references/execution-control.md)。
+Provider Schema v2；pdlc-v1/native-v1，`engine` 只由 binding 派生，不能成为第二真相；见 [TDD](references/tdd-providers.md)、[控制](references/execution-control.md)。
 
 ## 路由
 
@@ -27,9 +27,9 @@ Provider Schema v2；pdlc-v1/native-v1；`engine` 由 binding 派生，不能成
 
 复杂、未知或长任务用 `converge-plan`，按独立可验收的业务切片执行；仅 `cross_session` 进 `converge-batch` 并先获 commit 授权，见 [Plan Contract](skills/converge-plan/references/plan-contract.md)。
 
-worker 用当前会话真实能力；跨会话需 `host_observed` bridge，缺能力手工交接，见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+worker 用真实能力；跨会话需 `host_observed` bridge，缺能力手工交接。
 
-多模型：读 [多模型协作](references/multi-model.md)，`agent` 用 `role_dispatch.py`。
+多模型：`agent` 用 `role_dispatch.py`。
 
 ## 终态
 
@@ -41,4 +41,4 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release --root <root> --
 
 仅 `{"status":"released"}` 成功。按 [审查编排](references/review-orchestration.md) 复核；无进展停止，禁止删测试、降阈值或扩大范围造绿。
 
-Plan 审计见 [Plan Contract](skills/converge-plan/references/plan-contract.md) 与 [状态 Schema](references/state-schema.md)。`delivery_report.py` 按 [交付回执](references/reporting.md) 输出交付轮数 / 修复问题数 / 待处理项；外发另行授权。Suite 改动用 `converge-eval` 评估。
+Plan 审计见 [Plan Contract](skills/converge-plan/references/plan-contract.md) 与 [状态](references/state-schema.md)。`delivery_report.py` 按 [交付回执](references/reporting.md) 输出交付轮数 / 修复问题数 / 待处理项；外发另行授权。Suite 改动用 `converge-eval`。

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -83,13 +84,13 @@ def command_for_launch(launch, prompt):
     effective = launch["profile"]["effective"]
     return [
         configuration["codex_bin"], "exec", "--json", "--ephemeral", "--ignore-user-config",
-        "--ignore-rules", "--sandbox",
+        "--ignore-rules", "-c", "features.respect_system_proxy=true", "--sandbox",
         configuration["sandbox"], "-m", effective["model"],
         "-c", f'model_reasoning_effort="{effective["reasoning_effort"]}"', "-",
     ]
 
 
-def _capture_bounded(process, limit):
+def _capture_bounded(process, limit, on_progress=None):
     """Drain both pipes while retaining digests and bounded stdout for this invocation."""
     lock = threading.Lock()
     total = [0]
@@ -103,6 +104,8 @@ def _capture_bounded(process, limit):
             if not chunk:
                 return
             digests[name].update(chunk)
+            if on_progress is not None:
+                on_progress({"stream": name, "bytes": len(chunk)})
             with lock:
                 total[0] += len(chunk)
                 over_limit = total[0] > limit
@@ -110,7 +113,7 @@ def _capture_bounded(process, limit):
                     captured[name].extend(chunk)
             if over_limit:
                 exceeded.set()
-                process.kill()
+                _terminate_process(process)
                 return
 
     threads = [
@@ -120,6 +123,18 @@ def _capture_bounded(process, limit):
     for thread in threads:
         thread.start()
     return threads, exceeded, digests, captured
+
+
+def _terminate_process(process):
+    """Kill the dedicated session so a timed-out CLI cannot leave model children behind."""
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            return
+        except OSError:
+            pass
+    process.kill()
 
 
 def _start_prompt_writer(process, prompt):
@@ -167,7 +182,7 @@ def _response_from_jsonl(stdout):
 
 
 def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
-                   capture_content=False):
+                   capture_content=False, on_progress=None):
     """Start only the exact frozen local process after explicit caller opt-in."""
     if allow_execute is not True:
         raise ValueError("real Codex execution requires explicit allow_execute=True")
@@ -183,10 +198,10 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     try:
         process = process_factory(
             command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
         threads, exceeded, digests, captured = _capture_bounded(
-            process, launch["profile"]["budget"]["max_output_chars"]
+            process, launch["profile"]["budget"]["max_output_chars"], on_progress
         )
         writer, write_errors = _start_prompt_writer(process, prompt)
         exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
@@ -202,7 +217,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         stdout_fingerprint = digests["stdout"].hexdigest()
         stderr_fingerprint = digests["stderr"].hexdigest()
     except subprocess.TimeoutExpired as error:
-        process.kill()
+        _terminate_process(process)
         for thread in threads:
             thread.join()
         if writer is not None:
@@ -214,7 +229,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     except OSError as error:
         error_type = type(error).__name__
         if process is not None:
-            process.kill()
+            _terminate_process(process)
             for thread in threads:
                 thread.join()
             if writer is not None:

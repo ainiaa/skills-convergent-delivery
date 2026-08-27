@@ -5,6 +5,7 @@ import io
 import shutil
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from codex_exec_runner import command_for_launch, execute_launch, plan_launch
@@ -35,11 +36,12 @@ class CodexExecRunnerTest(unittest.TestCase):
             read_profile, "Fix the isolated task", workspace="/tmp", codex_bin=shutil.which("codex")
         )
         command = command_for_launch(launch, "Fix the isolated task")
-        self.assertEqual(shutil.which("codex"), command[0])
+        self.assertEqual(str(Path(shutil.which("codex")).resolve()), command[0])
         self.assertIn("--json", command)
         self.assertIn("--ephemeral", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ignore-rules", command)
+        self.assertIn("features.respect_system_proxy=true", command)
         self.assertIn("--sandbox", command)
         self.assertEqual("read-only", command[command.index("--sandbox") + 1])
         self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
@@ -137,6 +139,29 @@ class CodexExecRunnerTest(unittest.TestCase):
         self.assertEqual("high", receipt["requested_reasoning_effort"])
         self.assertIsNone(content)
 
+    def test_reports_bounded_io_liveness_without_persisting_output(self):
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO(b'{"type":"thread.started"}\n')
+            stderr = io.BytesIO()
+
+            def wait(self, timeout):
+                return 0
+
+            def kill(self):
+                pass
+
+        events = []
+        execute_launch(
+            plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                        "Collect evidence", workspace="/tmp"),
+            "Collect evidence", allow_execute=True,
+            process_factory=lambda *_args, **_kwargs: Process(),
+            on_progress=lambda event: events.append(event),
+        )
+
+        self.assertEqual([{"stream": "stdout", "bytes": 26}], events)
+
     def test_returns_the_final_jsonl_agent_message_only_in_the_ephemeral_output(self):
         class Process:
             stdin = io.BytesIO()
@@ -201,6 +226,32 @@ class CodexExecRunnerTest(unittest.TestCase):
         self.assertEqual("timed_out", receipt["status"])
         self.assertTrue(process.killed)
         self.assertTrue(process.reaped)
+
+    def test_timeout_kills_the_entire_process_group(self):
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO()
+            stderr = io.BytesIO()
+            pid = 123
+
+            def wait(self, timeout=None):
+                if timeout is not None:
+                    raise __import__("subprocess").TimeoutExpired("codex", timeout)
+                return 124
+
+            def kill(self):
+                raise AssertionError("process-group termination should be used")
+
+        with mock.patch("codex_exec_runner.os.killpg") as killpg:
+            receipt = execute_launch(
+                plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                            "Fix the isolated task", workspace="/tmp"),
+                "Fix the isolated task", allow_execute=True,
+                process_factory=lambda *_args, **_kwargs: Process(),
+            )
+
+        self.assertEqual("timed_out", receipt["status"])
+        killpg.assert_called_once_with(123, __import__("signal").SIGKILL)
 
     def test_timeout_starts_while_the_prompt_writer_is_still_blocked(self):
         class Input:

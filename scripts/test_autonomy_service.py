@@ -1,0 +1,285 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stderr
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
+
+import autonomy_service
+from autonomy_arm import arm
+from autonomy_begin import initial_state
+from autonomy_service import service_paths, service_runtime
+from delivery_state import state_path
+from runner_contract import fingerprint, freeze_launch
+
+
+class AutonomyServiceTest(unittest.TestCase):
+    def managed_service_state(self, directory, stage=None, audit_argv=None):
+        root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
+        state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
+        initial = initial_state(root, ["complete task"], ["tests pass"], ["."], "run-service", "writer-service")
+        if stage is not None:
+            initial["current_stage"] = stage
+        acquired = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
+            "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],
+            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
+        ], text=True, capture_output=True, check=False)
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        created = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+            "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
+            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
+            "--expected-revision", "-1",
+        ], input=json.dumps(initial), text=True, capture_output=True, check=False)
+        self.assertEqual(0, created.returncode, created.stderr)
+        armed = arm(
+            initial, ["complete task"], ["tests pass"], "service", "codex-exec-v1",
+            ["true"], audit_argv or ["python3", "-c", "pass"],
+        )
+        armed_write = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+            "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
+            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
+            "--expected-revision", "0",
+        ], input=json.dumps(armed), text=True, capture_output=True, check=False)
+        self.assertEqual(0, armed_write.returncode, armed_write.stderr)
+        return state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"]), state_root, lease_root
+
+    def test_only_explicit_service_states_are_discoverable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service_path, _state_root, _lease_root = self.managed_service_state(root)
+            service = json.loads(service_path.read_text(encoding="utf-8"))
+            hook = json.loads(json.dumps(service))
+            hook["execution_control"]["autonomy"]["runtime"] = {"mode": "hook"}
+            (root / "hook.json").write_text(json.dumps(hook), encoding="utf-8")
+            paths, diagnostics = service_paths(root)
+            self.assertEqual([service_path.resolve()], paths)
+            self.assertEqual([], diagnostics)
+            self.assertEqual("service", service_runtime(service)["mode"])
+
+    def test_service_scan_rejects_a_recognized_invalid_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-service.json"
+            path.write_text(json.dumps({
+                "schema_version": 11, "status": "active",
+                "execution_control": {"autonomy": {"runtime": {"mode": "service"}}},
+            }), encoding="utf-8")
+
+            paths, diagnostics = service_paths(directory)
+
+            self.assertEqual([], paths)
+            self.assertEqual(1, len(diagnostics))
+            self.assertIn("invalid active autonomous service state", diagnostics[0])
+
+    def test_service_scan_reports_an_unreadable_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "truncated.json"
+            path.write_text("{", encoding="utf-8")
+
+            paths, diagnostics = service_paths(directory)
+
+            self.assertEqual([], paths)
+            self.assertEqual(1, len(diagnostics))
+            self.assertIn("unreadable managed state", diagnostics[0])
+
+    def test_service_scan_keeps_healthy_runs_when_another_state_is_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, _lease_root = self.managed_service_state(directory)
+            (state_root / "invalid-service.json").write_text(json.dumps({
+                "schema_version": 11, "status": "active",
+                "execution_control": {"autonomy": {"runtime": {"mode": "service"}}},
+            }), encoding="utf-8")
+
+            paths, diagnostics = service_paths(state_root)
+
+            self.assertEqual([path.resolve()], paths)
+            self.assertEqual(1, len(diagnostics))
+
+    def test_direct_invalid_service_state_exits_with_a_recovery_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-service.json"
+            path.write_text(json.dumps({
+                "schema_version": 11, "status": "active",
+                "execution_control": {"autonomy": {"runtime": {"mode": "service"}}},
+            }), encoding="utf-8")
+            stderr = StringIO()
+
+            with patch.object(sys, "argv", ["autonomy_service.py", "--state", str(path)]), \
+                    redirect_stderr(stderr):
+                result = autonomy_service.main()
+
+            self.assertEqual(2, result)
+            self.assertIn("manual recovery required", stderr.getvalue())
+
+    def test_release_failure_is_not_silently_ignored(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        failed = subprocess.CompletedProcess([], 2, "", "lease is unavailable")
+
+        with patch.object(autonomy_service.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(ValueError, "lease release failed"):
+                autonomy_service._release(state, Path("/state"), Path("/leases"))
+
+    def test_service_persists_and_commits_a_model_action_only_after_frozen_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+
+            def completed_action(_path, _state, _next_action, _state_root, _lease_root):
+                return {"status": "completed", "receipt_fingerprint": "a" * 64}
+
+            with patch.object(autonomy_service, "execute", side_effect=completed_action) as execute:
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual("advanced", result["status"])
+            self.assertEqual(1, execute.call_count)
+            current = json.loads(path.read_text(encoding="utf-8"))
+            attempt = current["execution_control"]["autonomy"]["action_attempts"][-1]
+            self.assertEqual("committed", attempt["status"])
+            self.assertEqual("round-1-build", current["current_stage"])
+            self.assertEqual(0, result["verification"]["exit_code"])
+            self.assertEqual(
+                result["verification"]["source"], current["source_receipt"],
+            )
+            self.assertEqual(
+                result["verification"]["source"]["source_fingerprint"],
+                attempt["commit"]["source_fingerprint"],
+            )
+
+    def test_service_blocks_a_restarted_running_action_without_replaying_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            action = autonomy_service.decide(state)["next_action"]
+            autonomy_service._append_intent(path, state_root, lease_root, action)
+            autonomy_service._start(path, state_root, lease_root)
+
+            with patch.object(autonomy_service, "execute") as execute:
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual({"status": "blocked", "reason": "runner_not_completed"}, result)
+            execute.assert_not_called()
+            current = json.loads(path.read_text(encoding="utf-8"))
+            attempt = current["execution_control"]["autonomy"]["action_attempts"][-1]
+            self.assertEqual("unknown", attempt["observation"]["outcome"])
+            self.assertEqual("blocked", current["status"])
+
+    def test_final_service_action_creates_the_current_passing_audit_before_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual("complete", result["status"])
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("complete", current["status"])
+            audit = current["execution_control"]["autonomy"]["audit_batches"][-1]
+            self.assertEqual("pass", audit["status"])
+            self.assertEqual(current["source_fingerprint"], audit["source_fingerprint"])
+            self.assertEqual(
+                {item["id"] for item in current["execution_control"]["autonomy"]["manifest"]["items"]},
+                set(audit["covered_manifest_ids"]),
+            )
+            self.assertEqual(
+                "autonomy-audit", current["ledger"]["checks"][-1]["stage"],
+            )
+
+    def test_final_service_action_blocks_when_the_independent_audit_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "round-2-risk-review", ["false"],
+            )
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual("blocked", result["status"])
+            self.assertEqual("audit_failed", result["reason"])
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("blocked", current["status"])
+            check = current["ledger"]["checks"][-1]
+            self.assertEqual(("autonomy-audit", "fail"), (check["stage"], check["result"]))
+            self.assertEqual(result["audit"], check["evidence_receipts"][0])
+
+    def test_service_records_the_frozen_runner_launch_and_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            action = autonomy_service.decide(state)["next_action"]
+            autonomy_service._append_intent(path, state_root, lease_root, action)
+            started = autonomy_service._start(path, state_root, lease_root)
+            profile = started["execution_control"]["autonomy"]["runtime"]["runner_profile"]
+            launch = freeze_launch(profile, "frozen autonomous action", {
+                "codex_bin": "codex", "binary_fingerprint": "b" * 64,
+                "sandbox": "workspace-write", "workspace": started["workspace"],
+            })
+            raw_receipt = {
+                "schema_version": 1, "runner_id": "codex-exec-v1",
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "exit_code": 0, "stdout_fingerprint": "c" * 64, "stderr_fingerprint": "d" * 64,
+                "requested_model": profile["effective"]["model"],
+                "requested_reasoning_effort": profile["effective"]["reasoning_effort"],
+            }
+            receipt = {**raw_receipt, "receipt_fingerprint": fingerprint(raw_receipt)}
+
+            with patch.object(autonomy_service, "plan_codex", return_value=launch), patch.object(
+                    autonomy_service, "execute_codex", return_value=(receipt, "")):
+                actual = autonomy_service.execute(path, started, action, state_root, lease_root)
+
+            self.assertEqual(receipt, actual)
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual([launch], current["ledger"]["runner_launches"])
+            self.assertEqual([receipt], current["ledger"]["runner_results"])
+
+    def test_service_persists_an_unexpected_finalization_error_as_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ), patch.object(autonomy_service, "_complete", side_effect=ValueError("review missing")):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual("blocked", result["status"])
+            self.assertIn("review missing", result["reason"])
+            self.assertEqual("blocked", json.loads(path.read_text(encoding="utf-8"))["status"])
+
+    def test_final_completion_derives_fresh_receipts_for_every_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            state = {"revision": 0, "source_fingerprint": "a" * 64, "ledger": {"checks": [], "acceptance": [
+                {"criterion": "first"}, {"criterion": "second"},
+            ]}}
+            path.write_text(json.dumps(state), encoding="utf-8")
+            receipt = {
+                "command": "true", "receipt_fingerprint": "b" * 64,
+                "source": {"source_fingerprint": "a" * 64},
+            }
+
+            with patch.object(autonomy_service, "_write", side_effect=lambda _p, candidate, *_: candidate):
+                completed = autonomy_service._complete(path, Path(directory), Path(directory), receipt, receipt)
+
+            self.assertEqual("complete", completed["status"])
+            for acceptance in completed["ledger"]["acceptance"]:
+                self.assertEqual("pass", acceptance["result"])
+                self.assertEqual("fresh", acceptance["freshness"])
+                self.assertEqual([receipt], acceptance["evidence_receipts"])
+
+
+if __name__ == "__main__":
+    unittest.main()

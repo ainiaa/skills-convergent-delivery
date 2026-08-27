@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -19,8 +20,10 @@ SKILL_SOURCES = {
 
 
 class InstallTest(unittest.TestCase):
-    def run_installer_from(self, home, source, *arguments):
+    def run_installer_from(self, home, source, *arguments, path=None):
         environment = os.environ | {"HOME": str(home)}
+        if path is not None:
+            environment["PATH"] = f"{path}{os.pathsep}{environment['PATH']}"
         return subprocess.run(
             ["bash", str(INSTALLER), "--source", str(source), *arguments],
             text=True,
@@ -64,6 +67,91 @@ class InstallTest(unittest.TestCase):
                 for name in SKILL_SOURCES:
                     target = home / f".{runtime}/skills/{name}"
                     self.assertFalse(target.exists() or target.is_symlink())
+
+    def test_explicit_autonomy_install_is_reversible_and_preserves_peer_stop_hooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            executable = home / "codex"
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+            config = home / ".codex/hooks.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"peer"}]}]}}\n',
+                encoding="utf-8",
+            )
+            installed = self.run_installer_from(
+                home, ROOT, "--target", "codex", "--autonomy", path=home,
+            )
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            commands = [
+                item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
+                for item in entry["hooks"]
+            ]
+            managed = f"python3 {ROOT}/scripts/autonomy_hook.py --host codex"
+            self.assertEqual(["peer", managed], commands)
+
+            removed = self.run_installer_from(
+                home, ROOT, "--autonomy-uninstall", "--target", "codex", path=home,
+            )
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            commands = [
+                item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
+                for item in entry["hooks"]
+            ]
+            self.assertEqual(["peer"], commands)
+
+    def test_explicit_claude_autonomy_install_is_reversible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            executable = root / "claude"
+            executable.write_text("#!/bin/sh\nprintf '2.1.246 (Claude Code)\\n'\n", encoding="utf-8")
+            executable.chmod(0o755)
+            result = self.run_installer_from(
+                home, ROOT, "--target", "claude", "--autonomy", path=root,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            config = home / ".claude/settings.json"
+            commands = [
+                item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
+                for item in entry["hooks"]
+            ]
+            managed = f"python3 {ROOT}/scripts/autonomy_hook.py --host claude"
+            self.assertEqual([managed], commands)
+
+            removed = self.run_installer_from(
+                home, ROOT, "--autonomy-uninstall", "--target", "claude", path=root,
+            )
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("Stop", []))
+
+    def test_autonomy_service_uninstall_preserves_the_installed_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launchctl = bin_dir / "launchctl"
+            launchctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            launchctl.chmod(0o755)
+            installed = self.run_installer(home, "--target", "codex")
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            service = home / "Library/LaunchAgents/com.convergent-delivery.autonomy.plist"
+            service.parent.mkdir(parents=True)
+            service.write_text("placeholder", encoding="utf-8")
+
+            removed = self.run_installer_from(
+                home, ROOT, "--target", "codex", "--autonomy-service-uninstall", path=bin_dir,
+            )
+
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertFalse(service.exists())
+            for name, source in SKILL_SOURCES.items():
+                target = home / f".codex/skills/{name}"
+                self.assertTrue(target.is_symlink(), target)
+                self.assertEqual(source, target.resolve())
 
     def test_version_and_doctor_detect_an_incomplete_suite(self):
         with tempfile.TemporaryDirectory() as directory:

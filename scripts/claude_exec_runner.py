@@ -6,7 +6,9 @@ import json
 import subprocess
 from pathlib import Path
 
-from codex_exec_runner import _binary_identity, _capture_bounded, _is_isolated_worktree, _start_prompt_writer
+from codex_exec_runner import (
+    _binary_identity, _capture_bounded, _is_isolated_worktree, _start_prompt_writer, _terminate_process,
+)
 from runner_contract import fingerprint, freeze_launch, validate_launch
 
 
@@ -70,7 +72,7 @@ def command_for_launch(launch, prompt):
 
 
 def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
-                   capture_content=False):
+                   capture_content=False, on_progress=None):
     """Start only the exact frozen local process after explicit caller opt-in."""
     if allow_execute is not True:
         raise ValueError("real Claude execution requires explicit allow_execute=True")
@@ -86,10 +88,10 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     try:
         process = process_factory(
             command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
         threads, exceeded, digests, captured = _capture_bounded(
-            process, launch["profile"]["budget"]["max_output_chars"]
+            process, launch["profile"]["budget"]["max_output_chars"], on_progress
         )
         writer, write_errors = _start_prompt_writer(process, prompt)
         exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
@@ -102,7 +104,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         elif write_errors:
             raise write_errors[0]
     except subprocess.TimeoutExpired:
-        process.kill()
+        _terminate_process(process)
         for thread in threads:
             thread.join()
         if writer is not None:
@@ -112,7 +114,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     except OSError as error:
         error_type = type(error).__name__
         if process is not None:
-            process.kill()
+            _terminate_process(process)
             for thread in threads:
                 thread.join()
             if writer is not None:

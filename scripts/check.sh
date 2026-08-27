@@ -36,6 +36,14 @@ done
 bash -n install.sh
 python3 scripts/test_install.py
 python3 scripts/test_delivery_next.py
+python3 scripts/test_autonomy_gate.py
+python3 scripts/test_autonomy_hook.py
+python3 scripts/test_autonomy_hook_config.py
+python3 scripts/test_autonomy_preflight.py
+python3 scripts/test_autonomy_service.py
+python3 scripts/test_autonomy_arm.py
+python3 scripts/test_autonomy_begin.py
+python3 scripts/test_autonomous_delivery_eval.py
 python3 scripts/test_delivery_lease.py
 python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
@@ -60,6 +68,7 @@ python3 scripts/test_runner_launch.py
 python3 scripts/test_runner_lifecycle.py
 python3 scripts/test_openai_compatible_runner.py
 python3 scripts/test_multi_model.py
+python3 scripts/test_multi_model_eval.py
 python3 scripts/test_role_flow.py
 python3 scripts/test_role_dispatch.py
 python3 scripts/test_trigger_evals.py

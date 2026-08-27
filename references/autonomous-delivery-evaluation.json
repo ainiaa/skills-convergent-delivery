@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "privacy": {"store_transcript": false, "allowed_fields": ["duration_ms", "receipt_fingerprint", "status", "usage"]},
+  "scenarios": [
+    {"id": "full-fix", "check": ["scripts/test_runtime_scenarios.py", "RuntimeScenarioTest.test_autonomous_gate_to_terminal_report_uses_one_state_derived_path"]},
+    {"id": "new-finding-batch", "check": ["scripts/test_delivery_next.py", "DeliveryNextTest.test_autonomous_complete_requires_a_current_full_scope_audit"]},
+    {"id": "repeated-finding", "check": ["scripts/test_delivery_state.py", "DeliveryStateTest.test_autonomy_manifest_is_immutable_and_audit_batches_are_append_only"]},
+    {"id": "stale-evidence", "check": ["scripts/test_delivery_next.py", "DeliveryNextTest.test_complete_acceptance_must_match_the_current_source_fingerprint"]},
+    {"id": "missing-manifest", "check": ["scripts/test_autonomy_gate.py", "AutonomyGateTest.test_missing_or_non_autonomous_state_is_a_noop_but_invalid_autonomous_state_blocks"]},
+    {"id": "partial-coverage", "check": ["scripts/test_delivery_next.py", "DeliveryNextTest.test_autonomous_audit_cannot_claim_full_coverage_with_missing_manifest_item"]},
+    {"id": "scope-drift", "check": ["scripts/test_delivery_next.py", "DeliveryNextTest.test_completion_rejects_scope_and_risk_drift_from_the_frozen_profile"]},
+    {"id": "risk-drift", "check": ["scripts/test_delivery_next.py", "DeliveryNextTest.test_completion_rejects_scope_and_risk_drift_from_the_frozen_profile"]},
+    {"id": "decision-gate", "check": ["scripts/test_runtime_scenarios.py", "RuntimeScenarioTest.test_autonomous_gate_to_terminal_report_uses_one_state_derived_path"]},
+    {"id": "permission-gate", "check": ["scripts/test_runtime_scenarios.py", "RuntimeScenarioTest.test_autonomous_gate_to_terminal_report_uses_one_state_derived_path"]},
+    {"id": "user-stop", "check": ["scripts/test_autonomy_gate.py", "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows"]},
+    {"id": "unsupported-host", "check": ["scripts/test_autonomy_preflight.py", "AutonomyPreflightTest.test_rejects_enablement_when_host_or_adapter_is_not_observed"]},
+    {"id": "claude-native-stop", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_claude_active_run_blocks_stop_with_the_frozen_action_without_a_second_process"]},
+    {"id": "codex-no-progress", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_does_not_queue_the_same_state_revision_twice"]},
+    {"id": "invalid-state", "check": ["scripts/test_autonomy_gate.py", "AutonomyGateTest.test_missing_or_non_autonomous_state_is_a_noop_but_invalid_autonomous_state_blocks"]},
+    {"id": "multiple-active-runs", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_multiple_active_runs_block_instead_of_failing_open"]},
+    {"id": "recovery-handoff", "check": ["scripts/test_runtime_scenarios.py", "RuntimeScenarioTest.test_legacy_state_is_not_silently_armed_for_autonomy"]},
+    {"id": "service-verified-commit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_persists_and_commits_a_model_action_only_after_frozen_verification"]},
+    {"id": "service-final-audit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_final_service_action_creates_the_current_passing_audit_before_completion"]},
+    {"id": "service-audit-failure-blocks", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_final_service_action_blocks_when_the_independent_audit_fails"]},
+    {"id": "service-finalization-error-blocks", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_persists_an_unexpected_finalization_error_as_blocked"]},
+    {"id": "service-restart-no-replay", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_blocks_a_restarted_running_action_without_replaying_it"]},
+    {"id": "service-invalid-state-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_rejects_a_recognized_invalid_active_state"]},
+    {"id": "service-runner-ledger", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_the_frozen_runner_launch_and_result"]},
+    {"id": "service-invalid-state-isolated", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_keeps_healthy_runs_when_another_state_is_invalid"]},
+    {"id": "service-release-failure-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_release_failure_is_not_silently_ignored"]}
+  ]
+}
