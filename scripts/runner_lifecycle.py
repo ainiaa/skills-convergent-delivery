@@ -2,6 +2,7 @@
 """Persist and execute one explicit multi-model external runner lifecycle."""
 
 import argparse
+import importlib.util
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,6 +18,56 @@ from role_fanout import fan_in, tasks_for_fanout
 
 def _arguments(arguments, revision):
     return SimpleNamespace(**{**vars(arguments), "expected_revision": revision, "strict_evidence": True})
+
+
+_REVIEW_CONTRACT = None
+
+
+def _review_contract():
+    """Load the installed companion review adapter as the request canonicalizer."""
+    global _REVIEW_CONTRACT
+    if _REVIEW_CONTRACT is not None:
+        return _REVIEW_CONTRACT
+    path = Path(__file__).resolve().parents[1] / "skills" / "converge-review" / "scripts" / "review_contract.py"
+    if not path.is_file():
+        raise ValueError("runner lifecycle requires the installed converge-review contract")
+    spec = importlib.util.spec_from_file_location("converge_review_contract", path)
+    if spec is None or spec.loader is None:
+        raise ValueError("runner lifecycle cannot load the converge-review contract")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _REVIEW_CONTRACT = module.normalize_request, module.request_fingerprint
+    return _REVIEW_CONTRACT
+
+
+def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
+    """Derive a reviewer launch binding from its full frozen Review v3 request."""
+    profile = dispatch.get("profile") if isinstance(dispatch, dict) else None
+    role = profile.get("role") if isinstance(profile, dict) else None
+    if role != "reviewer":
+        if request is not None or supplied_fingerprint is not None:
+            raise ValueError("review request binding requires a reviewer dispatch")
+        return None
+    if not isinstance(request, dict):
+        raise ValueError("reviewer lifecycle requires a frozen review request")
+    normalize_request, request_fingerprint = _review_contract()
+    request = normalize_request(request)
+    if request["task_id"] != state["task_key"]:
+        raise ValueError("review request task does not match the current run")
+    if request["source_fingerprint"] != state["source_fingerprint"]:
+        raise ValueError("review request source does not match the current run")
+    if request["baseline_commit"] != state["baseline"]["commit"]:
+        raise ValueError("review request baseline does not match the current run")
+    fingerprint = request_fingerprint(request)
+    if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
+        raise ValueError("review request fingerprint does not match the frozen request")
+    return fingerprint
+
+
+def _review_request_mapping(value, tasks, name):
+    task_ids = {task["task_id"] for task in tasks}
+    if value is not None and (not isinstance(value, dict) or not set(value) <= task_ids):
+        raise ValueError(f"fan-out {name} are invalid")
 
 
 def load_current(arguments):
@@ -39,10 +90,14 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
     prompt = prompt_for_dispatch(dispatch, prompt)
+    review_request_fingerprint = review_request_binding(
+        state, dispatch, getattr(arguments, "review_request", None),
+        getattr(arguments, "review_request_fingerprint", None),
+    )
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
-        review_request_fingerprint=getattr(arguments, "review_request_fingerprint", None),
+        review_request_fingerprint=review_request_fingerprint,
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -72,7 +127,7 @@ def _completed_execution(launch, execution):
     return receipt, role_result
 
 
-def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, *, load=load_current,
+def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, review_requests=None, *, load=load_current,
                append_launches=delivery_state.append_runner_records,
                append=delivery_state.append_runner_record, execute=execute_dispatch_launch):
     """Persist all bounded read-only launches before concurrently executing and merging them."""
@@ -81,19 +136,20 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, *
     tasks = tasks_for_fanout(dispatch)
     if not isinstance(prompts, dict) or set(prompts) != {task["task_id"] for task in tasks}:
         raise ValueError("fan-out prompts must match the frozen task ids")
-    if review_request_fingerprints is not None and (
-            not isinstance(review_request_fingerprints, dict)
-            or not set(review_request_fingerprints) <= {task["task_id"] for task in tasks}
-    ):
-        raise ValueError("fan-out review request fingerprints are invalid")
+    _review_request_mapping(review_request_fingerprints, tasks, "review request fingerprints")
+    _review_request_mapping(review_requests, tasks, "review requests")
     state = load(arguments)
     prepared = []
     for task in tasks:
         prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]])
+        review_request_fingerprint = review_request_binding(
+            state, task["dispatch"], (review_requests or {}).get(task["task_id"]),
+            (review_request_fingerprints or {}).get(task["task_id"]),
+        )
         launch = plan_dispatch_launch(
             task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
             claude_bin=arguments.claude_bin,
-            review_request_fingerprint=(review_request_fingerprints or {}).get(task["task_id"]),
+            review_request_fingerprint=review_request_fingerprint,
         )
         prepared.append({"task_id": task["task_id"], "launch": launch, "prompt": prompt})
     if any(item["launch"]["runner_id"] == "openai-compatible-v1" for item in prepared) \
@@ -141,20 +197,35 @@ def main():
     parser.add_argument("--fanout", action="store_true")
     parser.add_argument("--review-request-fingerprint")
     parser.add_argument("--review-request-fingerprints")
+    parser.add_argument("--review-request")
+    parser.add_argument("--review-requests")
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)
         prompt = arguments.input.read()
-        if arguments.fanout and arguments.review_request_fingerprint is not None:
-            raise ValueError("single review request fingerprint is not valid for fan-out")
-        if not arguments.fanout and arguments.review_request_fingerprints is not None:
-            raise ValueError("fan-out review request fingerprints require --fanout")
+        if arguments.fanout and (
+                arguments.review_request_fingerprint is not None or arguments.review_request is not None
+        ):
+            raise ValueError("single review request is not valid for fan-out")
+        if not arguments.fanout and (
+                arguments.review_request_fingerprints is not None or arguments.review_requests is not None
+        ):
+            raise ValueError("fan-out review requests require --fanout")
         review_request_fingerprints = (
             json.loads(arguments.review_request_fingerprints)
             if arguments.review_request_fingerprints is not None else None
         )
+        arguments.review_request = (
+            json.loads(arguments.review_request) if arguments.review_request is not None else None
+        )
+        review_requests = (
+            json.loads(arguments.review_requests) if arguments.review_requests is not None else None
+        )
         result = (
-            run_fanout(arguments, dispatch, json.loads(prompt), review_request_fingerprints)
+            run_fanout(
+                arguments, dispatch, json.loads(prompt), review_request_fingerprints,
+                review_requests,
+            )
             if arguments.fanout else run_dispatch(arguments, dispatch, prompt)
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

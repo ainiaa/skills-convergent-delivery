@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 修复外部 Codex reviewer 的配置与完成闭环：leaf runner 恢复读取用户 `$CODEX_HOME/config.toml`，冻结 model/effort/sandbox 仍覆盖可变默认值；external reviewer 不再伪装为 host worker，而是以冻结 `profile.worker_id`、同一 request binding 与 completed role result 作为独立外部证据身份。runner lifecycle 现要求完整 canonical Review v3 request，调用既有 adapter 重算 fingerprint 并在外部调用前校验当前 task、baseline 与源码；fan-out reviewer 缺少请求或请求不匹配时不再写入 launch、不产生模型调用。
 - 修复 Review 与自治完成的剩余旁路：runner lifecycle 现可将冻结 `review_request_fingerprint` 贯通到 Codex、Claude 与 OpenAI-compatible launch，并拒绝非 reviewer 伪绑定；自治 complete 必须有 committed action，audit batch 与具体 Evidence Receipt 指纹绑定，service 同时校验冻结 `audit_argv`；没有 lease root 的 active Gate 不再返回可执行 continuation。
 - 加固自治 service 与 Review 完成门禁：同一 managed state 的 service 推进改为非阻塞互斥，竞争调用明确返回 `busy`；过期或非所属 lease 会在 Hook/Service 排队或执行前阻断，需人工恢复的 service state 只诊断一次后退出，不再无限重试。自治完成必须保存与当前源码绑定的 audit Evidence Receipt；Review pass 必须同时具备绑定同一 `review_request_fingerprint` 的已完成 reviewer role result。Review adapter 现保留 `blocked_reason`，并补齐上述回归测试与使用契约。
 - 新增显式自治交付与可选低风险持久 service：冻结单步 action、独立 verifier/audit、runner launch/result 回执与有限 cycle budget；修复初始化与终态 lease 清场、无效 service state 隔离、Hook state 的 service 误处置、service 唤醒强杀、state root 错配、损坏状态 fail-open 和 metadata revision 绕过续跑上限；审计失败仍保留证据。损坏或不可读的 managed state 现输出恢复诊断，不再被 service/doctor/Hook 静默忽略。

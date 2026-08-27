@@ -2,6 +2,7 @@
 """Tests for the controller-owned external runner lifecycle."""
 
 import json
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,28 @@ def flow_state():
     }
 
 
+def review_request(*, task_id="task-1", source_fingerprint="a" * 64, baseline_commit="b" * 40):
+    return {
+        "protocol_version": 3, "task_id": task_id, "axis": "quality", "phase": "initial",
+        "mode": "blind", "acceptance": ["Review behavior"], "allowed_scope": ["scripts"],
+        "baseline_commit": baseline_commit, "source_fingerprint": source_fingerprint,
+        "prior_findings": [],
+    }
+
+
+def review_fingerprint(request):
+    return hashlib.sha256(
+        json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def managed_state(workspace, *, revision=7):
+    return {
+        "revision": revision, "workspace": str(workspace), "task_key": "task-1",
+        "source_fingerprint": "a" * 64, "baseline": {"commit": "b" * 40},
+    }
+
+
 class RunnerLifecycleTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -36,6 +59,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             allow_execute=True, allow_network=False, codex_bin=shutil.which("codex"), claude_bin="claude",
             repo_id="/repo/common.git", task_key="task-1", run_id="run-1", writer_id="writer-1",
             expected_revision=7, lease_root="/leases", review_request_fingerprint=None,
+            review_request=None,
         )
 
     def tearDown(self):
@@ -86,7 +110,7 @@ class RunnerLifecycleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit"):
             run_dispatch(
                 self.arguments, plan_dispatch(self.profiles, flow_state()), "Collect evidence",
-                load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+                load=lambda _arguments: managed_state(self.workspace),
             )
 
     def test_claude_uses_the_same_structured_result_path_as_codex(self):
@@ -129,12 +153,13 @@ class RunnerLifecycleTest(unittest.TestCase):
             **flow_state(), "evidence": "sufficient", "implementation": "complete",
             "verification": "passed", "review": "pending",
         })
+        self.arguments.review_request = review_request()
         appended = []
 
         with self.assertRaisesRegex(ValueError, "network"):
             run_dispatch(
                 self.arguments, dispatch, "Review",
-                load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+                load=lambda _arguments: managed_state(self.workspace),
                 append=lambda *_arguments: appended.append(_arguments),
             )
 
@@ -150,7 +175,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             "verification": "passed", "review": "pending",
         })
         self.arguments.allow_network = True
-        self.arguments.review_request_fingerprint = "a" * 64
+        self.arguments.review_request = review_request()
         recorded = []
 
         def execute(launch, _prompt, **_kwargs):
@@ -167,13 +192,57 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         run_dispatch(
             self.arguments, dispatch, "Review", load=lambda _arguments: {
-                "revision": 7, "workspace": str(self.workspace),
+            **managed_state(self.workspace),
             }, append=lambda arguments, field, record: (
                 recorded.append((field, record)) or arguments.expected_revision + 1
             ), execute=execute,
         )
 
-        self.assertEqual("a" * 64, recorded[0][1]["configuration"]["review_request_fingerprint"])
+        self.assertEqual(
+            review_fingerprint(self.arguments.review_request),
+            recorded[0][1]["configuration"]["review_request_fingerprint"],
+        )
+
+    def test_reviewer_rejects_an_unbound_request_before_persisting_a_launch(self):
+        profiles = resolve(
+            None, workspace=self.workspace, home=self.workspace / "home",
+            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
+        )
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        self.arguments.allow_network = True
+        appended = []
+
+        with self.assertRaisesRegex(ValueError, "review request"):
+            run_dispatch(
+                self.arguments, dispatch, "Review", load=lambda _arguments: managed_state(self.workspace),
+                append=lambda *_arguments: appended.append(_arguments),
+            )
+
+        self.assertEqual([], appended)
+
+    def test_reviewer_rejects_a_request_from_another_run_before_persisting_a_launch(self):
+        profiles = resolve(
+            None, workspace=self.workspace, home=self.workspace / "home",
+            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
+        )
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        self.arguments.allow_network = True
+        self.arguments.review_request = review_request(task_id="other-task")
+        appended = []
+
+        with self.assertRaisesRegex(ValueError, "task"):
+            run_dispatch(
+                self.arguments, dispatch, "Review", load=lambda _arguments: managed_state(self.workspace),
+                append=lambda *_arguments: appended.append(_arguments),
+            )
+
+        self.assertEqual([], appended)
 
     def test_fanout_persists_every_read_only_launch_before_any_execution_then_merges_by_task_id(self):
         records = []
@@ -208,7 +277,8 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         result = run_fanout(
             self.arguments, dispatch, {"a": "Scout", "b": "Review"},
-            load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+            review_requests={"b": review_request()},
+            load=lambda _arguments: managed_state(self.workspace),
             append_launches=append_launches, append=append, execute=execute,
         )
 
@@ -217,6 +287,21 @@ class RunnerLifecycleTest(unittest.TestCase):
         ])
         self.assertEqual(["a", "b"], [item["task_id"] for item in result["fan_in"]["results"]])
         self.assertNotIn("output", str(result))
+
+    def test_fanout_reviewer_rejects_a_missing_frozen_request_before_persisting_launches(self):
+        dispatch = plan_read_only_fanout(self.profiles, [
+            {"task_id": "a", "role": "scout"}, {"task_id": "b", "role": "reviewer"},
+        ])
+        recorded = []
+
+        with self.assertRaisesRegex(ValueError, "frozen review request"):
+            run_fanout(
+                self.arguments, dispatch, {"a": "Scout", "b": "Review"},
+                load=lambda _arguments: managed_state(self.workspace),
+                append_launches=lambda *_arguments: recorded.append(_arguments),
+            )
+
+        self.assertEqual([], recorded)
 
     def test_cli_routes_a_fanout_dispatch_to_the_fanout_lifecycle(self):
         dispatch_path = self.workspace / "fanout.json"

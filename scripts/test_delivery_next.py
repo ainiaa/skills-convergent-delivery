@@ -180,7 +180,7 @@ def desktop_binding():
 
 def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
                             integration_budget=0, integration_status=None,
-                            integration_reviewer="reviewer-a"):
+                            integration_reviewer="reviewer-a", reviewer_ref="reviewer-a"):
     payload = upgrade_state(state(
         status="complete", current_stage="verify-final", revision=3,
         runtime_binding=runtime_binding(),
@@ -196,7 +196,7 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     review["integration_budget_remaining"] = integration_budget
     base = {
         "phase": "initial", "source_fingerprint": source, "status": "pass",
-        "reviewer_ref": "reviewer-a", "finding_fingerprints": [],
+        "reviewer_ref": reviewer_ref, "finding_fingerprints": [],
         "task_id": payload["task_key"], "request_fingerprint": "e" * 64,
     }
     requests = [
@@ -233,32 +233,34 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
             payload["runtime_binding"], 3, reviewer_refs, [], [],
             "2026-08-21T00:00:00Z", host_observation=observation,
         )
-        launches, results = [], []
-        for index, reviewer_ref in enumerate(reviewer_refs):
-            profile = {
-                "schema_version": 1, "worker_id": reviewer_ref, "role": "reviewer",
-                "runner_id": "openai-compatible-v1",
-                "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
-                "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
-                "permissions": {"workspace": "read", "shell": False, "network": "egress"},
-                "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 12000},
-            }
-            profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
-            launch = freeze_launch(profile, "Review", {
-                "api_key_env": "GLM_API_KEY", "review_request_fingerprint": "e" * 64,
-            })
-            receipt = {
-                "schema_version": 1, "runner_id": "openai-compatible-v1",
-                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
-                "response_id": f"review-{index + 1}", "response_model": "glm-5.2", "usage": None,
-                "response_fingerprint": ("ab"[index]) * 64,
-            }
-            receipt["receipt_fingerprint"] = runner_fingerprint(receipt)
-            launches.append(launch)
-            results.append(bind_role_result(launch, receipt, result_from_output(launch, {
-                "status": "available", "content": '{"findings":[],"next_action":"verify"}',
-            })))
-        payload["ledger"].update(runner_launches=launches, runner_results=results)
+    else:
+        reviewer_refs = [reviewer_ref]
+    launches, results = [], []
+    for index, reviewer_ref in enumerate(reviewer_refs):
+        profile = {
+            "schema_version": 1, "worker_id": reviewer_ref, "role": "reviewer",
+            "runner_id": "openai-compatible-v1",
+            "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
+            "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+            "permissions": {"workspace": "read", "shell": False, "network": "egress"},
+            "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 12000},
+        }
+        profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
+        launch = freeze_launch(profile, "Review", {
+            "api_key_env": "GLM_API_KEY", "review_request_fingerprint": "e" * 64,
+        })
+        receipt = {
+            "schema_version": 1, "runner_id": "openai-compatible-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": f"review-{index + 1}", "response_model": "glm-5.2", "usage": None,
+            "response_fingerprint": ("ab"[index]) * 64,
+        }
+        receipt["receipt_fingerprint"] = runner_fingerprint(receipt)
+        launches.append(launch)
+        results.append(bind_role_result(launch, receipt, result_from_output(launch, {
+            "status": "available", "content": '{"findings":[],"next_action":"verify"}',
+        })))
+    payload["ledger"].update(runner_launches=launches, runner_results=results)
     return payload
 
 
@@ -878,8 +880,16 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("review", result.stderr)
 
-    def test_normal_review_requires_a_registered_completed_reviewer(self):
-        payload = reviewed_complete_state(reviewer_registered=False)
+    def test_normal_review_accepts_a_completed_external_reviewer(self):
+        payload = reviewed_complete_state(
+            reviewer_registered=False, reviewer_ref="reviewer-1",
+        )
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_normal_review_rejects_an_incomplete_registered_reviewer(self):
+        payload = reviewed_complete_state()
+        payload["workers"][0]["status"] = "interrupted"
 
         with self.assertRaisesRegex(ValueError, "registered completed reviewer"):
             validate_state(payload, SimpleNamespace())

@@ -562,12 +562,13 @@ def validate_review_gate(routing, review, workers, task_key, runner_launches, ru
         if tier != "low" and latest["spec"]["reviewer_ref"] != latest["quality"]["reviewer_ref"]:
             raise ValueError("current spec and quality axes must use one reviewer")
         reviewer_refs = {latest[axis]["reviewer_ref"] for axis in required_axes}
-        completed_reviewers = {
-            worker["ref"] for worker in workers
-            if worker["role"] == "reviewer" and worker["status"] == "completed"
-        }
-        if not reviewer_refs <= completed_reviewers:
-            raise ValueError("review pass requires a registered completed reviewer")
+        workers_by_ref = {worker["ref"]: worker for worker in workers}
+        for reviewer_ref in reviewer_refs:
+            registered = workers_by_ref.get(reviewer_ref)
+            if registered is not None and (
+                    registered["role"] != "reviewer" or registered["status"] != "completed"
+            ):
+                raise ValueError("review pass requires a registered completed reviewer")
         if not runner_role_results_complete:
             raise ValueError("review pass requires a completed reviewer result")
         results_by_launch = {

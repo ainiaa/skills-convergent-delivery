@@ -91,8 +91,8 @@ def command_for_launch(launch, prompt):
         raise ValueError("Codex write launch requires an isolated Git worktree")
     effective = launch["profile"]["effective"]
     return [
-        configuration["codex_bin"], "exec", "--json", "--ephemeral", "--ignore-user-config",
-        "--ignore-rules", "-c", "features.respect_system_proxy=true", "--sandbox",
+        configuration["codex_bin"], "exec", "--json", "--ephemeral", "-c",
+        "features.respect_system_proxy=true", "--sandbox",
         configuration["sandbox"], "-m", effective["model"],
         "-c", f'model_reasoning_effort="{effective["reasoning_effort"]}"', "-",
     ]
