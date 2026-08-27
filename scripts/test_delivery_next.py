@@ -49,6 +49,15 @@ def routing(profile=None, allowed_paths=None):
     return freeze_routing(profile or task_profile(), allowed_paths or ["."])
 
 
+def graph_receipt(source_fingerprint, scope_fingerprint):
+    value = {
+        "schema_version": 1, "tool": "codegraph",
+        "source_fingerprint": source_fingerprint, "scope_fingerprint": scope_fingerprint,
+        "output_fingerprint": "a" * 64,
+    }
+    return {**value, "receipt_fingerprint": runner_fingerprint(value)}
+
+
 def state(**overrides):
     binding = {
         "controller": "converge",
@@ -180,7 +189,8 @@ def desktop_binding():
 
 def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
                             integration_budget=0, integration_status=None,
-                            integration_reviewer="reviewer-a", reviewer_ref="reviewer-a"):
+                            integration_reviewer="reviewer-a", reviewer_ref="reviewer-a",
+                            full_closure=False):
     payload = upgrade_state(state(
         status="complete", current_stage="verify-final", revision=3,
         runtime_binding=runtime_binding(),
@@ -188,10 +198,11 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     source = payload["source_fingerprint"]
     payload["execution_control"]["routing"]["review_tier"] = "normal"
     integration_required = integration_budget == 1 or integration_status is not None
-    payload["execution_control"]["routing"] = routing(task_profile(
+    closure_request_text = "修复全部已知问题" if full_closure else ""
+    payload["execution_control"]["routing"] = freeze_routing(task_profile(
         scope="cross-service" if integration_required else "cross-module",
         risk_flags=["cross-service"] if integration_required else [],
-    ))
+    ), ["."], request_text=closure_request_text)
     review = payload["execution_control"]["review"]
     review["integration_budget_remaining"] = integration_budget
     base = {
@@ -209,6 +220,10 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
         requests.append({
             **base, "axis": "integration", "status": integration_status,
             "reviewer_ref": integration_reviewer, "mode": "blind", "independent": True,
+        })
+    if full_closure:
+        requests.append({
+            **base, "axis": "quality", "phase": "closure", "mode": "blind", "independent": True,
         })
     review["rounds"] = [{"source_fingerprint": source, "requests": requests}]
     if reviewer_registered:
@@ -270,6 +285,16 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
         launches.append(launch)
         results.append(bind_role_result(launch, receipt, review_result(launch, record)))
     payload["ledger"].update(runner_launches=launches, runner_results=results)
+    if full_closure:
+        closure = next(record for record in requests if record["phase"] == "closure")
+        payload["execution_control"]["closure"] = {
+            "schema_version": 1, "status": "pass", "source_fingerprint": source,
+            "scope_fingerprint": payload["execution_control"]["routing"]["profile_fingerprint"],
+            "graph_receipt": graph_receipt(
+                source, payload["execution_control"]["routing"]["profile_fingerprint"],
+            ),
+            "review_request_fingerprint": closure["request_fingerprint"],
+        }
     return payload
 
 
@@ -377,6 +402,98 @@ class DeliveryNextTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "canonical task profile"):
             validate_state(payload, SimpleNamespace())
+
+    def test_caller_cannot_drop_a_frozen_full_closure_requirement(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = freeze_routing(
+            task_profile(), ["."], request_text="修复全部已知问题"
+        )
+        payload["execution_control"]["routing"]["full_closure_required"] = False
+
+        with self.assertRaisesRegex(ValueError, "canonical task profile"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_route_requires_one_explicit_pending_or_terminal_gate(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = freeze_routing(
+            task_profile(), ["."], request_text="彻底检查并修复全部已知问题"
+        )
+
+        with self.assertRaisesRegex(ValueError, "closure gate"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_complete_requires_a_current_passing_gate(self):
+        payload = reviewed_complete_state()
+        routing_value = freeze_routing(
+            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题"
+        )
+        payload["execution_control"]["routing"] = routing_value
+        payload["execution_control"]["closure"] = {
+            "schema_version": 1, "status": "pending", "source_fingerprint": None,
+            "scope_fingerprint": routing_value["profile_fingerprint"],
+            "graph_receipt": None, "review_request_fingerprint": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "current passing closure gate"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_gate_requires_one_current_independent_closure_review(self):
+        payload = reviewed_complete_state()
+        routing_value = freeze_routing(
+            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题"
+        )
+        payload["execution_control"]["routing"] = routing_value
+        payload["execution_control"]["closure"] = {
+            "schema_version": 1, "status": "pass",
+            "source_fingerprint": payload["source_fingerprint"],
+            "scope_fingerprint": routing_value["profile_fingerprint"],
+            "graph_receipt": graph_receipt(
+                payload["source_fingerprint"], routing_value["profile_fingerprint"],
+            ),
+            "review_request_fingerprint": "b" * 64,
+        }
+
+        with self.assertRaisesRegex(ValueError, "closure review"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_can_complete_with_one_bound_independent_closure_review(self):
+        payload = reviewed_complete_state(full_closure=True)
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_full_closure_rejects_a_tampered_graph_receipt(self):
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"]["closure"]["graph_receipt"]["output_fingerprint"] = "b" * 64
+
+        with self.assertRaisesRegex(ValueError, "graph receipt fingerprint"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_rejects_a_third_review_instead_of_looping(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = next(
+            record for record in payload["execution_control"]["review"]["rounds"][0]["requests"]
+            if record["phase"] == "closure"
+        )
+        payload["execution_control"]["review"]["rounds"][0]["requests"].extend([
+            dict(closure), dict(closure),
+        ])
+
+        with self.assertRaisesRegex(ValueError, "closure review budget"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_routes_final_verification_to_one_closure_review(self):
+        payload = state(current_stage="verify-final")
+        routing_value = freeze_routing(
+            task_profile(), ["."], request_text="彻底检查所有问题"
+        )
+        payload["execution_control"]["routing"] = routing_value
+        payload["execution_control"]["closure"] = {
+            "schema_version": 1, "status": "pending", "source_fingerprint": None,
+            "scope_fingerprint": routing_value["profile_fingerprint"],
+            "graph_receipt": None, "review_request_fingerprint": None,
+        }
+
+        self.assertEqual("closure-review", validate_state(payload, SimpleNamespace()))
 
     def test_completion_rejects_scope_and_risk_drift_from_the_frozen_profile(self):
         with tempfile.TemporaryDirectory() as directory:

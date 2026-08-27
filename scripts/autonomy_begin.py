@@ -60,7 +60,8 @@ def _release_lease(arguments, state):
         raise ValueError("autonomy lease cleanup failed")
 
 
-def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None):
+def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None,
+                  request_text=""):
     workspace = Path(workspace).expanduser().resolve()
     baseline = _git(workspace, "rev-parse", "HEAD")
     source = workspace_source(workspace, baseline)
@@ -76,6 +77,21 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         "stage_providers": {},
     }
     task_key = _task_key(workspace, baseline, scope, acceptance)
+    routing = freeze_routing(profile, scope, request_text=request_text)
+    execution_control = {
+        "routing": routing,
+        "review": {
+            "protocol_version": 3, "repair_budget_remaining": 1,
+            "re_review_budget_remaining": 1, "integration_budget_remaining": 0,
+            "rounds": [{"source_fingerprint": source["source_fingerprint"], "requests": []}],
+        },
+    }
+    if routing["full_closure_required"]:
+        execution_control["closure"] = {
+            "schema_version": 1, "status": "pending", "source_fingerprint": None,
+            "scope_fingerprint": routing["profile_fingerprint"],
+            "graph_receipt": None, "review_request_fingerprint": None,
+        }
     return {
         "schema_version": 10, "run_id": run_id, "repo_id": str(workspace),
         "task_key": task_key, "writer_id": writer_id, "revision": 0,
@@ -86,14 +102,7 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
                        ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest(),
         "source_fingerprint": source["source_fingerprint"], "source_receipt": source,
-        "execution_control": {
-            "routing": freeze_routing(profile, scope),
-            "review": {
-                "protocol_version": 3, "repair_budget_remaining": 1,
-                "re_review_budget_remaining": 1, "integration_budget_remaining": 0,
-                "rounds": [{"source_fingerprint": source["source_fingerprint"], "requests": []}],
-            },
-        },
+        "execution_control": execution_control,
         "controller": controller_identity(),
         "provider_binding": {
             "selection": "explicit", "reason": "autonomy begin freezes native controller",
@@ -147,6 +156,7 @@ def run(arguments):
     run_id, writer_id = f"run-{uuid.uuid4()}", f"writer-{uuid.uuid4()}"
     state = initial_state(
         workspace, requirements, acceptance, scope, run_id, writer_id, arguments.risk_flag,
+        arguments.request_file.read() if arguments.request_file is not None else "",
     )
     state["revision"] = -1
     state = arm(
@@ -193,6 +203,7 @@ def main():
     parser.add_argument("--audit-argv")
     parser.add_argument("--audit-findings-exit-code", type=int)
     parser.add_argument("--risk-flag", action="append", default=[])
+    parser.add_argument("--request-file", type=argparse.FileType("r"))
     parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
     arguments = parser.parse_args()

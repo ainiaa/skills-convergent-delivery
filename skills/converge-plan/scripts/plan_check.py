@@ -93,6 +93,19 @@ def paths_overlap(left, right):
     return path_contains(left, right) or path_contains(right, left)
 
 
+def canonical_fingerprint(value):
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def graph_projection(chains):
+    return [
+        {key: chain[key] for key in ("id", "entrypoints", "callers")}
+        for chain in chains
+    ]
+
+
 def task_conflicts(left, right):
     return any(paths_overlap(a, b) for a in left["owned_paths"] for b in right["owned_paths"])
 
@@ -171,9 +184,10 @@ def validate_decisions(value):
     return value
 
 
-def validate_closure_matrix(value, final_acceptance):
-    if not isinstance(value, dict) or set(value) != {"schema_version", "chains"} \
-            or value.get("schema_version") != 2:
+def validate_closure_matrix(value, final_acceptance, source_fingerprint):
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version", "chains", "graph_receipt",
+    } or value.get("schema_version") != 3:
         raise ValueError("closure_matrix fields are invalid")
     chains = value["chains"]
     if not isinstance(chains, list) or not 1 <= len(chains) <= 16:
@@ -235,6 +249,20 @@ def validate_closure_matrix(value, final_acceptance):
             criteria = require_strings(cell["acceptance"], "closure_matrix acceptance", non_empty=True)
             if any(criterion not in final_acceptance for criterion in criteria):
                 raise ValueError("closure_matrix acceptance must be a final_acceptance criterion")
+    receipt = value["graph_receipt"]
+    fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "receipt_fingerprint"}
+    if not isinstance(receipt, dict) or set(receipt) != fields or receipt.get("schema_version") != 1 \
+            or receipt.get("tool") != "codegraph":
+        raise ValueError("closure_matrix graph_receipt is invalid")
+    if require_sha256(receipt["source_fingerprint"], "closure_matrix graph source") != source_fingerprint:
+        raise ValueError("closure_matrix graph receipt must match the frozen Source Receipt")
+    if receipt["chains_fingerprint"] != canonical_fingerprint(graph_projection(chains)):
+        raise ValueError("closure_matrix graph receipt does not bind the chain projection")
+    expected = canonical_fingerprint({
+        key: item for key, item in receipt.items() if key != "receipt_fingerprint"
+    })
+    if receipt["receipt_fingerprint"] != expected:
+        raise ValueError("closure_matrix graph receipt fingerprint changed")
     return value
 
 
@@ -318,7 +346,9 @@ def validate_plan(plan):
         }
         tasks.append(task)
 
-    closure_matrix = validate_closure_matrix(plan.get("closure_matrix"), final_acceptance)
+    closure_matrix = validate_closure_matrix(
+        plan.get("closure_matrix"), final_acceptance, plan["baseline"]["source"]["source_fingerprint"]
+    )
     matrix_entrypoints = [
         path for chain in closure_matrix["chains"] for path in chain["entrypoints"]
     ]

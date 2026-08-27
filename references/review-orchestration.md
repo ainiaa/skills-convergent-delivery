@@ -11,7 +11,7 @@
 }
 ```
 
-一轮 finding 按根因合并后只允许一次 repair 和一次定向 re-review；`closure` 与 `re_review` 共用唯一复核额度。修复后 `source_fingerprint 未变化`、没有原 defect 关闭、re-review 返回相同 finding 指纹，或预算耗尽仍有 defect 时立即 blocked，不再循环。
+一轮 finding 按根因合并后只允许一次 repair 和一次定向 re-review；`closure` 与 `re_review` 共用唯一复核额度。修复后 `source_fingerprint 未变化`、没有原 defect 关闭、相同 finding 指纹重复或预算耗尽仍有 defect 时立即 blocked，不再循环。全量收口在最终验证后额外使用 `closure`：最多初审一次，若有 finding 只允许一次修复和一次最终 closure review；第三次请求或最终仍有 finding 时立即 `blocked/uncovered`。
 
 仅当计划包含多个任务或跨服务契约，并且全部任务结论均为新鲜 pass 后，发起一次 integration 初审。integration 只审查跨任务风险：接口组合、数据映射、共享状态、迁移/执行顺序和端到端路径；task-local finding 不计入 integration 结论。integration 有跨任务 defect 时使用同一固定 repair/re-review 预算，但不得重新开启 initial review。
 

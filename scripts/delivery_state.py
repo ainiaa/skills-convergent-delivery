@@ -141,6 +141,19 @@ def validate_acceptance_transition(previous, candidate, previous_history, candid
 def next_native_stage(stage, state):
     if stage == "round-1-semantic-review":
         return "verify-round-1" if state["requires_stability_round"] else "verify-final"
+    if stage == "verify-final":
+        closure = state["execution_control"].get("closure")
+        if closure is not None and closure["status"] == "pending":
+            return "closure-review"
+        return "verify-final"
+    if stage == "closure-review":
+        closure = state["execution_control"]["closure"]
+        return "closure-repair" if closure["status"] == "findings" else "verify-final" if closure["status"] == "pass" else stage
+    if stage == "closure-repair":
+        return "closure-final-review"
+    if stage == "closure-final-review":
+        closure = state["execution_control"]["closure"]
+        return "verify-final" if closure["status"] == "pass" else stage
     return NATIVE_STAGE_TRANSITIONS.get(stage)
 
 

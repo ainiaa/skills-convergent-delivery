@@ -37,9 +37,20 @@ PATH_RISK_MARKERS = {
     "idempotency": ("idempotency", "idempotent"),
     "timezone": ("timezone", "time-zone"),
 }
+FULL_CLOSURE_MARKERS = (
+    "全部", "所有", "深度审查", "彻底", "不留遗漏", "还有没有其他问题",
+    "all known", "all bugs", "any other bugs", "deep review", "no omissions",
+)
 
 
-def classify(value):
+def requires_full_closure(request_text):
+    if not isinstance(request_text, str):
+        raise ValueError("request text must be a string")
+    text = request_text.casefold()
+    return any(marker in text for marker in FULL_CLOSURE_MARKERS)
+
+
+def classify(value, request_text=""):
     if not isinstance(value, dict) or set(value) != PROFILE_FIELDS:
         raise ValueError("task profile fields are invalid")
     if value.get("schema_version") != 2:
@@ -92,6 +103,10 @@ def classify(value):
     else:
         recommended_route = "inline"
         reasons.append("bounded_local_task")
+    full_closure_required = requires_full_closure(request_text)
+    if full_closure_required and recommended_route == "inline":
+        recommended_route = "planned"
+        reasons.append("full_closure_claim")
     route = recommended_route if value["assessment_phase"] == "frozen" else "planned"
     review_tier = "high" if risks else "low" if recommended_route == "inline" else "normal"
     return {
@@ -99,6 +114,7 @@ def classify(value):
         "recommended_route": recommended_route,
         "review_tier": review_tier,
         "assessment_phase": value["assessment_phase"],
+        "full_closure_required": full_closure_required,
         "reasons": reasons,
     }
 
@@ -120,14 +136,35 @@ def _canonical_paths(paths):
     return sorted(canonical)
 
 
-def freeze_routing(profile, allowed_paths, assessment_count=1):
+def _routing_decision(profile, full_closure_required):
     decision = classify(profile)
+    if not full_closure_required:
+        return decision
+    recommended_route = decision["recommended_route"]
+    if recommended_route == "inline":
+        recommended_route = "planned"
+    return {
+        **decision,
+        "route": recommended_route if profile["assessment_phase"] == "frozen" else "planned",
+        "recommended_route": recommended_route,
+        "review_tier": "high" if profile["risk_flags"] else "normal",
+        "full_closure_required": True,
+    }
+
+
+def _routing(profile, allowed_paths, assessment_count, request_fingerprint, full_closure_required):
+    decision = _routing_decision(profile, full_closure_required)
     if profile["assessment_phase"] != "frozen" or assessment_count not in {1, 2}:
         raise ValueError("routing requires one or two frozen assessments")
     allowed = _canonical_paths(allowed_paths)
-    identity = {"profile": profile, "allowed_paths": allowed}
+    identity = {
+        "profile": profile,
+        "allowed_paths": allowed,
+        "request_fingerprint": request_fingerprint,
+        "full_closure_required": full_closure_required,
+    }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "frozen",
         "assessment_count": assessment_count,
         "route": decision["route"],
@@ -137,10 +174,43 @@ def freeze_routing(profile, allowed_paths, assessment_count=1):
         "integration_required": (
             profile["scope"] == "cross-service" or profile["delegable_tasks"] > 1
         ),
+        "request_fingerprint": request_fingerprint,
+        "full_closure_required": full_closure_required,
         "profile_fingerprint": hashlib.sha256(
             json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
     }
+
+
+def freeze_routing(profile, allowed_paths, assessment_count=1, request_text=""):
+    if not isinstance(request_text, str):
+        raise ValueError("request text must be a string")
+    return _routing(
+        profile,
+        allowed_paths,
+        assessment_count,
+        hashlib.sha256(request_text.encode("utf-8")).hexdigest(),
+        requires_full_closure(request_text),
+    )
+
+
+def validate_frozen_routing(value):
+    if not isinstance(value, dict):
+        raise ValueError("routing must be an object")
+    request_fingerprint = value.get("request_fingerprint")
+    if not isinstance(request_fingerprint, str) or len(request_fingerprint) != 64 \
+            or any(char not in "0123456789abcdef" for char in request_fingerprint):
+        raise ValueError("routing request_fingerprint must be a lowercase sha256")
+    full_closure_required = value.get("full_closure_required")
+    if not isinstance(full_closure_required, bool):
+        raise ValueError("routing full_closure_required must be boolean")
+    return _routing(
+        value.get("profile"),
+        value.get("allowed_paths"),
+        value.get("assessment_count"),
+        request_fingerprint,
+        full_closure_required,
+    )
 
 
 def infer_path_risks(paths):
@@ -158,11 +228,13 @@ def infer_path_risks(paths):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="-")
+    parser.add_argument("--request-file", type=argparse.FileType("r"))
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("task profile input must use stdin")
-        print(json.dumps(classify(json.load(sys.stdin)), sort_keys=True))
+        request_text = arguments.request_file.read() if arguments.request_file is not None else ""
+        print(json.dumps(classify(json.load(sys.stdin), request_text), sort_keys=True))
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "error", "message": str(error)}, sort_keys=True))

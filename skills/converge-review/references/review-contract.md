@@ -50,9 +50,9 @@
 
 ## Closure
 
-`closure` 输入为原 finding、修复后的源码指纹和对应验证。只判断：原问题是否不再复现、验证是否新鲜通过、修复是否越界或扩大风险面。
+普通 `closure` 输入为原 finding、修复后的源码指纹和对应验证，只判断原问题是否不再复现、验证是否新鲜通过、修复是否越界或扩大风险面。
 
-closure 不发现新问题。若扩大风险面，主执行者最多再请求一次新的风险 review。
+当冻结 Routing Receipt 声明 `full_closure_required=true` 时，最终 `closure` 还必须对冻结范围、当前 diff、定向图谱影响面与验收作独立盲审，可报告新的 scoped finding。该模式最多允许“初审 → 一次修复 → 最终复核”：最终复核仍有 finding 时由控制器 `blocked/uncovered`，不得再派第三次 closure。
 
 ## Axes and bounded re-review
 

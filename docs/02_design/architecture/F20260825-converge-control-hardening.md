@@ -34,4 +34,5 @@
 |---|---|---|
 | [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用“完成声明必须由最后变更后的证据支撑” | Plan v6 将 `final_acceptance` 映射到强制 closure matrix，`plan_check.py audit --require-complete` 因 `uncovered` 确定性失败；而不是把“测试全绿”当作全量完成。 |
 | [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 采用失败契约测试和真实近似触发场景 | 先让 `test_universal_completion_claims_require_a_finite_closure_matrix` 失败，再加入入口规则、矩阵和压力场景；不把关键词断言误称为独立模型评测。 |
+| Review 与 Plan 的跨状态绑定 | 不新增仅供声明的 `closure_matrix_fingerprint` 字段 | 当前 Single State 的 Review 已绑定同一源码、验收与允许范围；Plan audit 已绑定同一 Source Receipt 与矩阵。两者之间没有可执行的计划执行器可消费该字段，持久化它只会制造第二份可伪造、不可验证的真相。改以 v3 Routing Receipt 阻止全量请求绕开 Plan，且以 Plan matrix v3 的 Source/调用面投影回执阻止其在执行中漂移；`test_task_profile.py`、`test_autonomy_begin.py`、`test_plan_check.py` 覆盖该闭环。 |
 | 独立 coverage 数据库、第二状态机、无限“再检查一次”循环 | 不采用 | Plan 已有任务、验收和审计真源；新增可写台账会产生双重事实，重复扫描也不能证明不存在未知 bug。矩阵限定输入/冻结/副作用/回执/恢复，并将无法覆盖处如实标为 `uncovered`。 |

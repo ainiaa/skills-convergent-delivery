@@ -28,7 +28,7 @@ from evidence_contract import (
     valid_evidence_receipts, validate_source_receipt, workspace_source,
 )
 from runner_contract import fingerprint as runner_fingerprint, role_results_complete, runner_results_complete
-from task_profile import freeze_routing, infer_path_risks
+from task_profile import infer_path_risks, validate_frozen_routing
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -38,6 +38,9 @@ NATIVE_ACTIVE_STAGES = {
     "verify-round-1",
     "round-2-risk-review",
     "verify-final",
+    "closure-review",
+    "closure-repair",
+    "closure-final-review",
     "autonomy-repair",
 }
 PDLC_ACTIVE_STAGES = {"pdlc-run"}
@@ -211,28 +214,74 @@ def _path_contains(owner, changed):
     return owner == "." or changed == owner or changed.startswith(owner + "/")
 
 
+def validate_closure_gate(value, source_fingerprint, routing):
+    fields = {
+        "schema_version", "status", "source_fingerprint", "scope_fingerprint",
+        "graph_receipt", "review_request_fingerprint",
+    }
+    if not isinstance(value, dict) or set(value) != fields or value.get("schema_version") != 1:
+        raise ValueError("closure gate fields are invalid")
+    if value.get("status") not in {"pending", "pass", "findings", "uncovered", "blocked"}:
+        raise ValueError("closure gate status is invalid")
+    if value.get("scope_fingerprint") != routing["profile_fingerprint"]:
+        raise ValueError("closure gate scope does not match frozen routing")
+    if value["status"] == "pending":
+        if any(value[field] is not None for field in (
+            "source_fingerprint", "graph_receipt", "review_request_fingerprint",
+        )):
+            raise ValueError("pending closure gate cannot contain a stale receipt")
+        return value
+    if value.get("source_fingerprint") != source_fingerprint:
+        raise ValueError("closure gate must match the current source")
+    graph = value.get("graph_receipt")
+    graph_fields = {
+        "schema_version", "tool", "source_fingerprint", "scope_fingerprint",
+        "output_fingerprint", "receipt_fingerprint",
+    }
+    if not isinstance(graph, dict) or set(graph) != graph_fields \
+            or graph.get("schema_version") != 1 or graph.get("tool") != "codegraph":
+        raise ValueError("closure gate graph receipt is invalid")
+    if graph["source_fingerprint"] != source_fingerprint \
+            or graph["scope_fingerprint"] != routing["profile_fingerprint"]:
+        raise ValueError("closure gate graph receipt does not match current source and scope")
+    require_sha256(graph.get("output_fingerprint"), "closure gate graph output")
+    if graph["receipt_fingerprint"] != runner_fingerprint({
+            key: item for key, item in graph.items() if key != "receipt_fingerprint"
+    }):
+        raise ValueError("closure gate graph receipt fingerprint changed")
+    require_sha256(value.get("review_request_fingerprint"), "closure gate review_request_fingerprint")
+    return value
+
+
 def validate_execution_control(value, source_fingerprint, task_key=None, schema_version=10):
     value = require_mapping(value, "execution_control")
     expected_fields = {"routing", "review"}
     if schema_version == 11:
         expected_fields.add("autonomy")
-    if set(value) != expected_fields:
-        raise ValueError("execution_control fields are invalid")
     routing = require_mapping(value["routing"], "execution_control.routing")
     routing_fields = {
         "schema_version", "status", "assessment_count", "route", "review_tier",
         "profile_fingerprint", "profile", "allowed_paths", "integration_required",
+        "request_fingerprint", "full_closure_required",
     }
     if set(routing) != routing_fields:
         raise ValueError("execution_control.routing fields are invalid")
     count = routing["assessment_count"]
     if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 2:
         raise ValueError("routing assessment_count must be from 0 to 2")
-    if routing["schema_version"] != 2 or routing["status"] != "frozen":
-        raise ValueError("routing schema_version must be 2 and frozen")
-    expected = freeze_routing(routing["profile"], routing["allowed_paths"], count)
+    if routing["schema_version"] != 3 or routing["status"] != "frozen":
+        raise ValueError("routing schema_version must be 3 and frozen")
+    expected = validate_frozen_routing(routing)
     if routing != expected:
         raise ValueError("routing does not match the canonical task profile")
+    if routing["full_closure_required"]:
+        expected_fields.add("closure")
+        if "closure" not in value:
+            raise ValueError("full closure route requires a closure gate")
+    if set(value) != expected_fields:
+        raise ValueError("execution_control fields are invalid")
+    if routing["full_closure_required"]:
+        validate_closure_gate(value["closure"], source_fingerprint, routing)
 
     review = require_mapping(value["review"], "execution_control.review")
     if set(review) != {
@@ -248,6 +297,7 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     rounds = review["rounds"]
     if not isinstance(rounds, list):
         raise ValueError("review rounds must be a list")
+    closure_history = []
     for round_value in rounds:
         if not isinstance(round_value, dict) or set(round_value) != {
             "source_fingerprint", "requests"
@@ -303,6 +353,8 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
             validate_finding_records(request.get("finding_records"), findings)
             if require_sha256(request["source_fingerprint"], "review request source") != round_source:
                 raise ValueError("review request source must match its round")
+            if request["phase"] == "closure":
+                closure_history.append(request)
     if rounds and rounds[-1]["source_fingerprint"] != source_fingerprint:
         raise ValueError("current review round must match the current source")
     integration_requests = [
@@ -315,6 +367,13 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
             raise ValueError("integration review budget does not match the frozen task profile")
     elif review["integration_budget_remaining"] or integration_requests:
         raise ValueError("integration review is not allowed by the frozen task profile")
+    if routing["full_closure_required"]:
+        if len(closure_history) > 2:
+            raise ValueError("full closure review budget is exhausted")
+        if len(closure_history) == 2 and (
+                closure_history[0]["status"] != "findings" or closure_history[1]["status"] != "pass"
+        ):
+            raise ValueError("full closure review may only repair once before the final pass")
     return routing, review
 
 
@@ -551,7 +610,8 @@ def _external_request_matches_state(launch, review_record, *, task_key, baseline
 
 
 def validate_review_gate(routing, review, workers, task_key, baseline_commit, source_fingerprint,
-                         acceptance, runner_launches, runner_results, runner_role_results_complete):
+                         acceptance, runner_launches, runner_results, runner_role_results_complete,
+                         closure_gate=None):
     tier = routing["review_tier"]
     requests = review["rounds"][-1]["requests"] if review["rounds"] else []
     latest = {}
@@ -579,15 +639,28 @@ def validate_review_gate(routing, review, workers, task_key, baseline_commit, so
         required_axes.append("integration")
         if latest["integration"]["status"] != "pass":
             raise ValueError("integration review requires a current pass")
-    if required_axes:
+    required_requests = [latest[axis] for axis in required_axes]
+    if routing["full_closure_required"]:
+        closure_requests = [
+            request for request in requests if request["phase"] == "closure"
+        ]
+        if len(closure_requests) != 1:
+            raise ValueError("full closure requires exactly one current closure review")
+        closure = closure_requests[0]
+        if closure["status"] != "pass" or closure["mode"] != "blind" or not closure["independent"]:
+            raise ValueError("full closure requires an independent blind closure review pass")
+        if closure_gate is None or closure["request_fingerprint"] != closure_gate["review_request_fingerprint"]:
+            raise ValueError("closure review does not match the closure gate")
+        required_requests.append(closure)
+    if required_requests:
         if any(
             request.get("task_id") != task_key or not request.get("request_fingerprint")
-            for request in (latest[axis] for axis in required_axes)
+            for request in required_requests
         ):
             raise ValueError("review pass must be bound to the frozen review request")
         if tier != "low" and latest["spec"]["reviewer_ref"] != latest["quality"]["reviewer_ref"]:
             raise ValueError("current spec and quality axes must use one reviewer")
-        reviewer_refs = {latest[axis]["reviewer_ref"] for axis in required_axes}
+        reviewer_refs = {request["reviewer_ref"] for request in required_requests}
         workers_by_ref = {worker["ref"]: worker for worker in workers}
         for reviewer_ref in reviewer_refs:
             registered = workers_by_ref.get(reviewer_ref)
@@ -601,7 +674,7 @@ def validate_review_gate(routing, review, workers, task_key, baseline_commit, so
             result.get("launch_fingerprint"): result for result in runner_results
             if isinstance(result, dict)
         }
-        for request in (latest[axis] for axis in required_axes):
+        for request in required_requests:
             if not any(
                 launch["profile"]["role"] == "reviewer"
                 and launch["profile"]["worker_id"] == request["reviewer_ref"]
@@ -684,7 +757,7 @@ def validate_state(state, arguments):
     autonomy = validate_autonomy(
         state["execution_control"]["autonomy"], source_fingerprint, routing
     ) if source_schema == 11 else None
-    if source_receipt is not None and routing["schema_version"] == 2:
+    if source_receipt is not None and routing["schema_version"] == 3:
         allowed_paths = routing["allowed_paths"]
         drift = [
             path for path in source_receipt["changed_paths"]
@@ -985,8 +1058,10 @@ def validate_state(state, arguments):
     if status == "complete":
         if routing["status"] != "frozen":
             raise ValueError("complete state requires a frozen route")
-        if routing["schema_version"] != 2:
+        if routing["schema_version"] != 3:
             raise ValueError("complete state requires canonical routing and scope")
+        if routing["full_closure_required"] and state["execution_control"]["closure"]["status"] != "pass":
+            raise ValueError("complete state requires a current passing closure gate")
         if source_fingerprint is None:
             raise ValueError("complete state requires a source_fingerprint")
         if strict_evidence and source_receipt is None:
@@ -996,7 +1071,7 @@ def validate_state(state, arguments):
         validate_review_gate(
             routing, review_control, workers, task_key, baseline["commit"], source_fingerprint,
             acceptance, runner_launches, runner_results,
-            runner_role_results_complete,
+            runner_role_results_complete, state["execution_control"].get("closure"),
         )
         if autonomy is not None:
             validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks)
@@ -1058,6 +1133,21 @@ def validate_state(state, arguments):
         return "round-2-risk-review"
     if stage == "round-2-risk-review":
         return "verify-final"
+    if stage == "verify-final" and routing["full_closure_required"] \
+            and state["execution_control"]["closure"]["status"] == "pending":
+        return "closure-review"
+    if stage == "closure-review":
+        closure_status = state["execution_control"]["closure"]["status"]
+        return "closure-repair" if closure_status == "findings" else "verify-final" if closure_status == "pass" else stage
+    if stage == "closure-repair":
+        return "closure-final-review"
+    if stage == "closure-final-review":
+        closure_status = state["execution_control"]["closure"]["status"]
+        if closure_status == "pass":
+            return "verify-final"
+        if closure_status in {"findings", "uncovered", "blocked"}:
+            raise ValueError("closure budget is exhausted; block with the remaining findings")
+        return stage
     if stage in {"verify-final", "autonomy-repair"}:
         return stage
     raise ValueError("native autonomous stage is invalid")

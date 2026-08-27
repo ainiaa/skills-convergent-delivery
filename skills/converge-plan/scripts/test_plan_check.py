@@ -119,7 +119,43 @@ def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     }
 
 
+def graph_receipt(source, chains):
+    projection = [
+        {key: chain[key] for key in ("id", "entrypoints", "callers")}
+        for chain in chains
+    ]
+    value = {
+        "schema_version": 1,
+        "tool": "codegraph",
+        "source_fingerprint": source["source_fingerprint"],
+        "chains_fingerprint": hashlib.sha256(
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    return {
+        **value,
+        "receipt_fingerprint": hashlib.sha256(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def refresh_graph_receipt(value):
+    matrix = value["closure_matrix"]
+    matrix["graph_receipt"] = graph_receipt(value["baseline"]["source"], matrix["chains"])
+
+
 def plan(tasks, context="short", planner=None, checkpoint="same_session"):
+    chains = [{
+        "id": "main",
+        "description": "the planned control chain",
+        "entrypoints": sorted({path for item in tasks for path in item["owned_paths"]}),
+        "callers": ["external"],
+        "coverage": {
+            dimension: {"status": "covered", "acceptance": ["all checks pass"]}
+            for dimension in ("input", "freeze", "effect", "receipt", "recovery")
+        },
+    }]
     return {
         "schema_version": 6,
         "plan_id": "plan-example",
@@ -134,17 +170,9 @@ def plan(tasks, context="short", planner=None, checkpoint="same_session"):
         "tasks": tasks,
         "final_acceptance": ["all checks pass"],
         "closure_matrix": {
-            "schema_version": 2,
-            "chains": [{
-                "id": "main",
-                "description": "the planned control chain",
-                "entrypoints": sorted({path for item in tasks for path in item["owned_paths"]}),
-                "callers": ["external"],
-                "coverage": {
-                    dimension: {"status": "covered", "acceptance": ["all checks pass"]}
-                    for dimension in ("input", "freeze", "effect", "receipt", "recovery")
-                },
-            }],
+            "schema_version": 3,
+            "chains": chains,
+            "graph_receipt": graph_receipt(PROJECT_SOURCE, chains),
         },
         "decisions": [],
         "checkpoint": checkpoint,
@@ -220,6 +248,7 @@ class PlanCheckTest(unittest.TestCase):
         value["baseline"]["source"] = evidence_contract.workspace_source(
             self.workspace, self.baseline
         )
+        refresh_graph_receipt(value)
         result = self.run_check(
             "audit",
             {"plan": value, "task_results": {}, "final_acceptance": []},
@@ -286,6 +315,7 @@ class PlanCheckTest(unittest.TestCase):
         self.assertIn("callers", result.stderr)
 
         value["closure_matrix"]["chains"][0]["callers"] = ["tests/service"]
+        refresh_graph_receipt(value)
         result = self.run_check("validate", value)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("owned_paths", result.stderr)
@@ -521,6 +551,7 @@ class PlanCheckTest(unittest.TestCase):
             "commit": self.baseline,
             "source": evidence_contract.workspace_source(self.workspace, self.baseline),
         }
+        refresh_graph_receipt(value)
         self.write_changes("src/a/file.py", "src/b/file.py", "extra.txt")
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
         envelope = {
@@ -657,6 +688,7 @@ class PlanCheckTest(unittest.TestCase):
             "commit": self.baseline,
             "source": evidence_contract.workspace_source(self.workspace, self.baseline),
         }
+        refresh_graph_receipt(value)
         self.write_changes("src\\evil")
 
         result = self.run_check(
@@ -674,6 +706,7 @@ class PlanCheckTest(unittest.TestCase):
             "commit": self.baseline,
             "source": evidence_contract.workspace_source(self.workspace, self.baseline),
         }
+        refresh_graph_receipt(value)
         self.write_changes("outside.txt")
         subprocess.run(["git", "-C", str(self.workspace), "add", "outside.txt"], check=True)
         subprocess.run(

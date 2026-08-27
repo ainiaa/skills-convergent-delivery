@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 新增有界终态 closure gate：全量收口任务在 `verify-final` 后确定性进入 `closure-review`，gate 必须绑定当前源码、冻结范围、图谱回执与独立 blind Review v3 closure request 才能 complete；首次 finding 最多修复一次并作一次最终复核，第三次 closure 或最终仍有 finding 明确 blocked/uncovered，禁止无限修复循环。
+- 修复“全量收口”请求在状态恢复时丢失的路由旁路：Routing Receipt 升级为 v3，冻结原始请求 SHA-256 与 `full_closure_required`，两者纳入回执指纹并在每次恢复、范围和终态校验时重算；`autonomy_begin` 同样接收 `--request-file`，不会再把已声明的“全部/彻底”任务降回空请求的 inline 路径。Plan v6 的 closure matrix 升级为内层 v3：图谱回执绑定基线 Source Receipt 与每条链的 `id/entrypoints/callers` 投影，改动入口或调用面必须重新出具回执。
 - 修复“局部全绿即全量完成”的收口缺口：用户要求“全部/所有/深度审查/彻底/不留遗漏”时，Converge 现在必须先冻结有限影响面矩阵，将输入、冻结、副作用、回执与恢复逐格映射到既有 task/final acceptance 的新鲜证据；未覆盖项明确为 `uncovered`，不得再宣称“全部完成”或“没有其他问题”。复用 Plan v6 completion audit，不新增第二状态机或无界复查循环。
 - 将收口矩阵升级为 Plan Contract v6 的强制结构，而非文字约定：所有计划必须逐链声明 input/freeze/effect/receipt/recovery，`covered`/`not_applicable` 均绑定既有 final acceptance，`uncovered` 使 `plan_check audit --require-complete` 确定性失败；v5 和更早计划直接拒绝。
 - 加固收口矩阵 v2：每条链必须列出 workspace entrypoint 与 caller，entrypoint 必须覆盖全部 `owned_paths`；audit 再用实际最终 diff 检查 `closure_scope_drift`，防止只写泛化主链或漏列实际改动入口。

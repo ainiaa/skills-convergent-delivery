@@ -32,6 +32,16 @@ class AutonomyBeginTest(unittest.TestCase):
                 "service", "codex-exec-v1", ["true"], ["python3", "-c", "pass"],
             )
 
+    def test_raw_full_closure_request_is_preserved_in_the_armed_routing_receipt(self):
+        state = initial_state(
+            ROOT, ["complete task"], ["tests pass"], ["."], "run-closure", "writer-closure",
+            request_text="彻底检查并修复全部已知问题",
+        )
+
+        routing = state["execution_control"]["routing"]
+        self.assertTrue(routing["full_closure_required"])
+        self.assertEqual("planned", routing["route"])
+
     def test_service_mode_rejects_the_primary_checkout_before_acquiring_a_lease(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

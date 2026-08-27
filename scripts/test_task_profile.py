@@ -4,10 +4,11 @@
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
-from task_profile import classify, freeze_routing, infer_path_risks
+from task_profile import classify, freeze_routing, infer_path_risks, requires_full_closure
 
 
 def profile(**overrides):
@@ -30,6 +31,27 @@ def profile(**overrides):
 class TaskProfileTest(unittest.TestCase):
     def test_local_known_task_stays_inline(self):
         self.assertEqual(classify(profile())["route"], "inline")
+
+    def test_universal_completion_claim_forces_a_plan_and_is_exposed_to_the_controller(self):
+        result = classify(profile(), "请深度审查并修复全部已知问题，不留遗漏")
+
+        self.assertTrue(result["full_closure_required"])
+        self.assertEqual("planned", result["route"])
+        self.assertIn("full_closure_claim", result["reasons"])
+        self.assertTrue(requires_full_closure("Are there any other bugs? Fix all of them."))
+
+    def test_cli_accepts_the_raw_request_only_from_a_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            request_path = Path(temporary) / "request.txt"
+            request_path.write_text("彻底检查所有问题", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("task_profile.py")),
+                 "--request-file", str(request_path)],
+                input=json.dumps(profile()), text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("planned", json.loads(result.stdout)["route"])
 
     def test_unknown_or_cross_service_task_requires_plan(self):
         self.assertEqual(classify(profile(uncertainty="high"))["route"], "planned")
@@ -93,12 +115,19 @@ class TaskProfileTest(unittest.TestCase):
 
         routing = freeze_routing(value, ["service-a", "service-b"])
 
-        self.assertEqual(2, routing["schema_version"])
+        self.assertEqual(3, routing["schema_version"])
         self.assertEqual("planned", routing["route"])
         self.assertEqual("high", routing["review_tier"])
         self.assertTrue(routing["integration_required"])
         self.assertEqual(value, routing["profile"])
         self.assertEqual(64, len(routing["profile_fingerprint"]))
+
+    def test_frozen_routing_binds_the_raw_request_closure_decision(self):
+        routing = freeze_routing(profile(), ["."], request_text="彻底检查所有问题")
+
+        self.assertTrue(routing["full_closure_required"])
+        self.assertEqual("planned", routing["route"])
+        self.assertEqual(64, len(routing["request_fingerprint"]))
 
     def test_scope_paths_are_canonical_and_risk_inference_is_conservative(self):
         with self.assertRaisesRegex(ValueError, "allowed_paths"):
