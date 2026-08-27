@@ -151,7 +151,7 @@ def main():
             print(json.dumps(approve(), sort_keys=True))
             return 0
         state_path, state = active
-        result = decide(state)
+        result = decide(state, lease_root=lease_root())
         if result["decision"] == "allow":
             print(json.dumps(approve(), sort_keys=True))
             return 0

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from autonomy_gate import decide
-from test_delivery_next import SOURCE, autonomous_state
+from test_delivery_next import EVIDENCE, SOURCE, autonomous_state
 
 
 SCRIPT = Path(__file__).with_name("autonomy_gate.py")
@@ -19,6 +19,10 @@ def completed_state():
         "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
         "finding_fingerprints": [],
     }]
+    payload["ledger"]["checks"].append({
+        "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
+        "evidence_receipts": [EVIDENCE],
+    })
     return payload
 
 

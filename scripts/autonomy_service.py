@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+import fcntl
 import hashlib
 import json
 import subprocess
@@ -11,11 +12,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from contextlib import contextmanager
 
 from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
-from delivery_next import validate_state
+from delivery_next import validate_active_lease, validate_state
 from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
 from evidence_contract import run_evidence
 
@@ -33,6 +35,23 @@ def _fingerprint(value):
 
 def _timestamp():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _service_lock(state_path):
+    """Allow one service controller to advance one managed state at a time."""
+    lock_path = state_path.with_name(f".{state_path.name}.service.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _time_policy(profile):
@@ -350,7 +369,7 @@ def _finalize_observed(state_path, state_root, lease_root):
 
 def _run_once(state_path, state_root, lease_root):
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    action = decide(state)
+    action = decide(state, lease_root=lease_root)
     if action["decision"] == "allow":
         return {"status": "terminal", "terminal": action["terminal"]}
     attempts = state["execution_control"]["autonomy"]["action_attempts"]
@@ -380,35 +399,41 @@ def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
     state_path = Path(state_path).expanduser().resolve()
     state_root = Path(state_root).expanduser().resolve()
     lease_root = Path(lease_root or Path.home() / ".convergent-delivery" / "leases").expanduser().resolve()
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        validate_state(state, SimpleNamespace(strict_evidence=True))
-        if state_path != managed_state_path(
-                state_root, state["repo_id"], state["task_key"], state["run_id"]
-        ).resolve():
-            raise ValueError("autonomous service state path does not match state root")
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-        raise ValueError(
-            f"manual recovery required for autonomous service state {state_path}: {error}"
-        ) from error
-    service_runtime(state)
-    try:
+    with _service_lock(state_path) as acquired:
+        if not acquired:
+            return {"status": "busy"}
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            validate_state(state, SimpleNamespace(strict_evidence=True))
+            if state_path != managed_state_path(
+                    state_root, state["repo_id"], state["task_key"], state["run_id"]
+            ).resolve():
+                raise ValueError("autonomous service state path does not match state root")
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"manual recovery required for autonomous service state {state_path}: {error}"
+            ) from error
+        service_runtime(state)
         if state["status"] in {"complete", "blocked"}:
             _release(state, state_root, lease_root)
             return {"status": "terminal", "terminal": state["status"]}
-        return _run_once(state_path, state_root, lease_root)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        validate_active_lease(state, SimpleNamespace(
+            lease_root=lease_root, run_id=state["run_id"], writer_id=state["writer_id"],
+        ))
         try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict) or state.get("status") != "active":
-                raise ValueError("state is not an active recoverable service run")
-            service_runtime(state)
-            block(state_path, state, state_root, lease_root, f"autonomous service error: {error}")
-        except (OSError, ValueError, KeyError, json.JSONDecodeError) as recovery_error:
-            raise ValueError(
-                f"manual recovery required for autonomous service state {state_path}: {recovery_error}"
-            ) from error
-        return {"status": "blocked", "reason": str(error)}
+            return _run_once(state_path, state_root, lease_root)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                if not isinstance(state, dict) or state.get("status") != "active":
+                    raise ValueError("state is not an active recoverable service run")
+                service_runtime(state)
+                block(state_path, state, state_root, lease_root, f"autonomous service error: {error}")
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as recovery_error:
+                raise ValueError(
+                    f"manual recovery required for autonomous service state {state_path}: {recovery_error}"
+                ) from error
+            return {"status": "blocked", "reason": str(error)}
 
 
 def service_paths(root):
@@ -457,6 +482,7 @@ def main():
     cycles = {}
     reported_diagnostics = set()
     cleaned_terminals = set()
+    failed_paths = set()
     while True:
         paths, diagnostics = service_paths(arguments.state_root)
         for diagnostic in diagnostics:
@@ -475,6 +501,8 @@ def main():
                         run_once(path, arguments.state_root, arguments.lease_root)
                         cleaned_terminals.add(key)
                     continue
+                if key in failed_paths:
+                    continue
                 active_paths = True
                 limit = service_runtime(state)["max_cycles"]
                 if cycles.get(key, 0) >= limit:
@@ -482,10 +510,12 @@ def main():
                           Path.home() / ".convergent-delivery" / "leases",
                           "autonomous service exhausted its frozen cycle budget")
                     continue
-                run_once(path, arguments.state_root, arguments.lease_root)
-                cycles[key] = cycles.get(key, 0) + 1
+                outcome = run_once(path, arguments.state_root, arguments.lease_root)
+                if outcome["status"] != "busy":
+                    cycles[key] = cycles.get(key, 0) + 1
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                 print(f"autonomous service blocked: {path}: {error}", file=sys.stderr)
+                failed_paths.add(str(path))
         if not active_paths:
             return 0
         time.sleep(5)

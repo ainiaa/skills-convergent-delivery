@@ -261,8 +261,12 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
                 "axis", "phase", "source_fingerprint", "status", "reviewer_ref",
                 "mode", "independent", "finding_fingerprints", "task_id", "request_fingerprint",
             }
+            extras = set(request) - request_fields if isinstance(request, dict) else set()
+            allowed_extras = {"finding_records"}
+            if isinstance(request, dict) and request.get("status") == "blocked":
+                allowed_extras.add("blocked_reason")
             if not isinstance(request, dict) or not request_fields <= set(request) \
-                    or set(request) - request_fields not in (set(), {"finding_records"}):
+                    or extras - allowed_extras:
                 raise ValueError("review request fields are invalid")
             require_sha256(request["request_fingerprint"], "review request fingerprint")
             require_string(request["task_id"], "review request task_id")
@@ -292,6 +296,10 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
             if request["status"] == "findings" and round_source == source_fingerprint \
                     and "finding_records" not in request:
                 raise ValueError("current review findings require finding_records")
+            if request["status"] == "blocked":
+                require_string(request.get("blocked_reason"), "review blocked_reason")
+            elif "blocked_reason" in request:
+                raise ValueError("non-blocked review cannot include blocked_reason")
             validate_finding_records(request.get("finding_records"), findings)
             if require_sha256(request["source_fingerprint"], "review request source") != round_source:
                 raise ValueError("review request source must match its round")
@@ -491,16 +499,23 @@ def validate_autonomy(value, source_fingerprint, routing):
     return value
 
 
-def validate_autonomy_completion(autonomy, source_fingerprint):
+def validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks):
     batches = autonomy["audit_batches"]
     if not batches or batches[-1]["source_fingerprint"] != source_fingerprint \
             or batches[-1]["status"] != "pass":
         raise ValueError("autonomy requires a current passing audit")
     if autonomy["action_attempts"] and autonomy["action_attempts"][-1]["status"] != "committed":
         raise ValueError("autonomy requires its latest action to be committed")
+    if source_receipt is None or not any(
+            item.get("stage") == "autonomy-audit" and item.get("result") == "pass"
+            and valid_evidence_receipts(item.get("evidence_receipts"), source_receipt)
+            for item in checks
+    ):
+        raise ValueError("autonomy requires a current audit Evidence Receipt")
 
 
-def validate_review_gate(routing, review, workers, task_key):
+def validate_review_gate(routing, review, workers, task_key, runner_launches, runner_results,
+                         runner_role_results_complete):
     tier = routing["review_tier"]
     requests = review["rounds"][-1]["requests"] if review["rounds"] else []
     latest = {}
@@ -543,6 +558,23 @@ def validate_review_gate(routing, review, workers, task_key):
         }
         if not reviewer_refs <= completed_reviewers:
             raise ValueError("review pass requires a registered completed reviewer")
+        if not runner_role_results_complete:
+            raise ValueError("review pass requires a completed reviewer result")
+        results_by_launch = {
+            result.get("launch_fingerprint"): result for result in runner_results
+            if isinstance(result, dict)
+        }
+        for request in (latest[axis] for axis in required_axes):
+            if not any(
+                launch["profile"]["role"] == "reviewer"
+                and launch["profile"]["worker_id"] == request["reviewer_ref"]
+                and launch["configuration"].get("review_request_fingerprint")
+                == request["request_fingerprint"]
+                and results_by_launch.get(launch["launch_fingerprint"], {}).get("role_result", {}).get("status")
+                == "available"
+                for launch in runner_launches
+            ):
+                raise ValueError("review pass requires a completed reviewer result bound to its request")
 
 
 def validate_state(state, arguments):
@@ -916,9 +948,12 @@ def validate_state(state, arguments):
             raise ValueError("complete state requires a source_receipt")
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
-        validate_review_gate(routing, review_control, workers, task_key)
+        validate_review_gate(
+            routing, review_control, workers, task_key, runner_launches, runner_results,
+            runner_role_results_complete,
+        )
         if autonomy is not None:
-            validate_autonomy_completion(autonomy, source_fingerprint)
+            validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks)
         if workers and tree_receipt is None:
             raise ValueError("complete state requires a fresh worker tree receipt")
         if tree_receipt is not None:

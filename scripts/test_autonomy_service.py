@@ -3,7 +3,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -13,6 +15,7 @@ import autonomy_service
 from autonomy_arm import arm
 from autonomy_begin import initial_state
 from autonomy_service import service_paths, service_runtime
+from delivery_lease import lease_paths
 from delivery_state import state_path
 from runner_contract import fingerprint, freeze_launch
 
@@ -209,6 +212,57 @@ class AutonomyServiceTest(unittest.TestCase):
                 result["verification"]["source"]["source_fingerprint"],
                 attempt["commit"]["source_fingerprint"],
             )
+
+    def test_concurrent_service_calls_leave_the_second_call_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            started, release = threading.Event(), threading.Event()
+
+            def completed_action(*_arguments):
+                started.set()
+                self.assertTrue(release.wait(timeout=5))
+                return {"status": "completed", "receipt_fingerprint": "a" * 64}
+
+            with patch.object(autonomy_service, "execute", side_effect=completed_action):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    first = executor.submit(autonomy_service.run_once, path, state_root, lease_root)
+                    self.assertTrue(started.wait(timeout=5))
+                    second = autonomy_service.run_once(path, state_root, lease_root)
+                    release.set()
+                    self.assertEqual("advanced", first.result(timeout=5)["status"])
+
+            self.assertEqual({"status": "busy"}, second)
+            self.assertEqual("active", json.loads(path.read_text(encoding="utf-8"))["status"])
+
+    def test_expired_service_lease_stops_before_an_action_is_started(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            for lease in lease_paths(
+                    lease_root, state["repo_id"], state["workspace"], state["task_key"]
+            ).values():
+                record = json.loads(lease.read_text(encoding="utf-8"))
+                record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                lease.write_text(json.dumps(record), encoding="utf-8")
+
+            with patch.object(autonomy_service, "_append_intent") as append:
+                with self.assertRaisesRegex(ValueError, "active lease is not owned"):
+                    autonomy_service.run_once(path, state_root, lease_root)
+
+            append.assert_not_called()
+
+    def test_service_scan_does_not_retry_a_path_that_requires_manual_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            with patch.object(autonomy_service, "run_once", side_effect=ValueError("persist failed")) as run, \
+                    patch.object(autonomy_service.time, "sleep"), \
+                    patch.object(sys, "argv", [
+                        "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                        "--lease-root", str(lease_root),
+                    ]), redirect_stderr(StringIO()):
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual([path], [call.args[0] for call in run.call_args_list])
 
     def test_service_blocks_a_restarted_running_action_without_replaying_it(self):
         with tempfile.TemporaryDirectory() as directory:

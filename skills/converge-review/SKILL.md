@@ -37,4 +37,4 @@ metadata:
 
 ## 输出
 
-用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。公开结果先通过 `python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --input - --reviewer-ref <ref> --request '<canonical-request-json>'` 对照冻结请求，生成包含 `task_id/request_fingerprint` 的内部记录；不得由模型手工改写后直接写入状态。旧协议直接拒绝。
+用户直接请求 review 时，用简洁报告说明发现、影响和证据，不称“交付完成”。受 `converge` 委托时，只返回 Review Protocol v3 结果，不修复、不重复运行实现流程。公开结果先通过 `python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --input - --reviewer-ref <ref> --request '<canonical-request-json>'` 对照冻结请求，生成包含 `task_id/request_fingerprint` 的内部记录；不得由模型手工改写后直接写入状态。对应 runner launch 的 configuration 必须写入同一个 `review_request_fingerprint`，并保留完成的 reviewer role result；否则状态机不接受 pass。旧协议直接拒绝。

@@ -131,6 +131,21 @@ class ReviewContractTest(unittest.TestCase):
                 "blocked_reason": "missing source",
             }, reviewer_ref="reviewer-1", request=review_request(axis="quality", mode="blind"))
 
+    def test_blocked_result_preserves_its_recovery_reason(self):
+        result = normalize_result({
+            "protocol_version": 3,
+            "mode": "shared",
+            "axis": "spec",
+            "phase": "initial",
+            "source_fingerprint": "a" * 64,
+            "independent": False,
+            "status": "blocked",
+            "findings": [],
+            "blocked_reason": "frozen source is unavailable",
+        }, reviewer_ref="reviewer-1", request=review_request())
+
+        self.assertEqual("frozen source is unavailable", result["blocked_reason"])
+
     def test_initial_quality_and_integration_results_must_be_independent_blind_reviews(self):
         for axis in ("quality", "integration"):
             with self.subTest(axis=axis), self.assertRaisesRegex(ValueError, "independent blind"):

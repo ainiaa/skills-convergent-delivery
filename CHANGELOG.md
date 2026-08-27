@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 加固自治 service 与 Review 完成门禁：同一 managed state 的 service 推进改为非阻塞互斥，竞争调用明确返回 `busy`；过期或非所属 lease 会在 Hook/Service 排队或执行前阻断，需人工恢复的 service state 只诊断一次后退出，不再无限重试。自治完成必须保存与当前源码绑定的 audit Evidence Receipt；Review pass 必须同时具备绑定同一 `review_request_fingerprint` 的已完成 reviewer role result。Review adapter 现保留 `blocked_reason`，并补齐上述回归测试与使用契约。
 - 新增显式自治交付与可选低风险持久 service：冻结单步 action、独立 verifier/audit、runner launch/result 回执与有限 cycle budget；修复初始化与终态 lease 清场、无效 service state 隔离、Hook state 的 service 误处置、service 唤醒强杀、state root 错配、损坏状态 fail-open 和 metadata revision 绕过续跑上限；审计失败仍保留证据。损坏或不可读的 managed state 现输出恢复诊断，不再被 service/doctor/Hook 静默忽略。
 - 修复自治计划在审计 finding、终态崩溃和服务异常中的失控：initial finding 确定性进入单次 `autonomy-repair` 后再作 final re-audit，Hook 保持 stage/action 去重但不再拦截真实阶段推进；service 仅在显式声明 `audit_findings_exit_code` 时将该退出码视为 finding，其余 audit 非零仍安全阻塞。重启扫描会幂等释放终态遗留 lease；诊断性坏 state 记录一次后成功退出，避免 LaunchAgent 无限重启。
 - 修复自治 repair 与 Review v3 共用 `ledger.repair_fingerprints` 导致预算串扰：自治 repair 改用独立、append-only 的 `ledger.autonomy_repair_fingerprints`，只可在 initial finding 后的 `autonomy-repair → verify-final` 转换中消费；service repair 不再错误消耗 Review repair 预算或被状态校验阻塞。

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from delivery_next import upgrade_state, validate_state
+from delivery_next import upgrade_state, validate_active_lease, validate_state
 from run_contract import delivery_action
 
 
@@ -15,7 +15,7 @@ def allow(terminal):
     return {"decision": "allow", "terminal": terminal}
 
 
-def decide(payload):
+def decide(payload, lease_root=None):
     if not isinstance(payload, dict) or payload.get("schema_version") != 11:
         return allow("inactive")
     autonomy = payload.get("execution_control", {}).get("autonomy")
@@ -25,6 +25,10 @@ def decide(payload):
     stage = validate_state(state, SimpleNamespace(strict_evidence=True))
     if stage in {"complete", "blocked"}:
         return allow(stage)
+    if lease_root is not None:
+        validate_active_lease(state, SimpleNamespace(
+            lease_root=lease_root, run_id=state["run_id"], writer_id=state["writer_id"],
+        ))
     return {
         "decision": "block",
         "next_action": delivery_action(stage, state["task_key"], state.get("blocked_reason")),

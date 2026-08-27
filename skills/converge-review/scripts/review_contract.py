@@ -137,7 +137,7 @@ def normalize_result(value, reviewer_ref, request):
     if status == "blocked":
         _string(value.get("blocked_reason"), "blocked_reason")
 
-    return {
+    record = {
         "task_id": request["task_id"],
         "request_fingerprint": request_fingerprint(request),
         "axis": axis,
@@ -150,6 +150,9 @@ def normalize_result(value, reviewer_ref, request):
         "finding_fingerprints": fingerprints,
         "finding_records": records,
     }
+    if status == "blocked":
+        record["blocked_reason"] = _string(value.get("blocked_reason"), "blocked_reason")
+    return record
 
 
 def main():

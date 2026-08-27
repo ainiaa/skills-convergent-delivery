@@ -13,6 +13,7 @@ from unittest.mock import patch
 import autonomy_hook
 from autonomy_arm import arm
 from autonomy_begin import initial_state
+from delivery_lease import lease_paths
 from delivery_state import state_path
 
 SCRIPT = Path(__file__).with_name("autonomy_hook.py")
@@ -131,12 +132,9 @@ class AutonomyHookTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            workspace = Path(json.loads(path.read_text(encoding="utf-8"))["workspace"])
             commands = root / "commands"
-            state_dir = root / "state/a"
-            state_dir.mkdir(parents=True)
-            state = autonomous_state(workspace=str(workspace.resolve()))
-            (state_dir / "run.json").write_text(json.dumps(state), encoding="utf-8")
             executable = root / "codex"
             executable.write_text(
                 '#!/bin/sh\nprintf "%s\\n" "$@" > "$AUTONOMY_CAPTURE"\n', encoding="utf-8"
@@ -146,7 +144,8 @@ class AutonomyHookTest(unittest.TestCase):
                 "cwd": str(workspace), "session_id": "thread-123",
             }, os.environ | {
                 "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
-                "CONVERGE_STATE_ROOT": str(root / "state"),
+                "CONVERGE_STATE_ROOT": str(state_root),
+                "CONVERGE_LEASE_ROOT": str(lease_root),
                 "AUTONOMY_CAPTURE": str(commands),
             })
 
@@ -154,8 +153,8 @@ class AutonomyHookTest(unittest.TestCase):
             self.assertEqual("approve", json.loads(result.stdout)["decision"])
             queued = commands.read_text(encoding="utf-8")
             self.assertIn("queue\n--thread\nthread-123", queued)
-            self.assertIn("run.json", queued)
-            self.assertIn('"action": "verify"', queued)
+            self.assertIn(path.name, queued)
+            self.assertIn('"action": "execute-inline"', queued)
 
     def test_codex_does_not_queue_the_same_state_revision_twice(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -228,25 +227,27 @@ class AutonomyHookTest(unittest.TestCase):
 
     def test_codex_queues_a_repair_after_a_real_audit_finding_transition(self):
         from delivery_next import upgrade_state
-        from test_delivery_next import SOURCE, autonomous_state
-
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
-            state_dir = root / "state/a"
-            state_dir.mkdir(parents=True)
-            state = upgrade_state(autonomous_state(workspace=str(workspace), current_stage="autonomy-repair"))
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = upgrade_state(json.loads(path.read_text(encoding="utf-8")))
+            workspace = Path(state["workspace"])
+            state["current_stage"] = "autonomy-repair"
             state["execution_control"]["autonomy"]["audit_batches"] = [{
-                "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial", "status": "findings",
-                "covered_manifest_ids": ["requirement", "scope", "acceptance"], "finding_fingerprints": ["a" * 64],
+                "source_fingerprint": state["source_fingerprint"], "phase": "initial", "status": "findings",
+                "covered_manifest_ids": [
+                    item["id"] for item in state["execution_control"]["autonomy"]["manifest"]["items"]
+                ],
+                "finding_fingerprints": ["a" * 64],
             }]
-            (state_dir / "run.json").write_text(json.dumps(state), encoding="utf-8")
+            path.write_text(json.dumps(state), encoding="utf-8")
             executable = root / "codex"
             capture = root / "commands"
             executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$AUTONOMY_CAPTURE"\n', encoding="utf-8")
             executable.chmod(0o755)
             environment = os.environ | {"PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
-                                        "CONVERGE_STATE_ROOT": str(root / "state"),
+                                        "CONVERGE_STATE_ROOT": str(state_root),
+                                        "CONVERGE_LEASE_ROOT": str(lease_root),
                                         "AUTONOMY_CAPTURE": str(capture)}
 
             result = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
@@ -332,22 +333,37 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
 
     def test_claude_active_run_blocks_stop_with_the_frozen_action_without_a_second_process(self):
-        from test_delivery_next import autonomous_state
-
         with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
-            state_dir = Path(directory) / "state/a"
-            state_dir.mkdir(parents=True)
-            (state_dir / "run.json").write_text(
-                json.dumps(autonomous_state(workspace=str(workspace.resolve()))), encoding="utf-8"
-            )
+            _path, state_root, lease_root = self.managed_hook_state(directory)
+            workspace = Path(json.loads(_path.read_text(encoding="utf-8"))["workspace"])
             result = self.invoke("claude", {"cwd": str(workspace), "session_id": "thread-123"}, os.environ | {
-                "CONVERGE_STATE_ROOT": str(Path(directory) / "state"),
+                "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
             })
         self.assertEqual(0, result.returncode, result.stderr + result.stdout)
         decision = json.loads(result.stdout)
         self.assertEqual("block", decision["decision"])
-        self.assertIn('"action": "verify"', decision["reason"])
+        self.assertIn('"action": "execute-inline"', decision["reason"])
+
+    def test_expired_lease_blocks_the_hook_before_queueing_a_continuation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            for lease in lease_paths(
+                    lease_root, state["repo_id"], state["workspace"], state["task_key"]
+            ).values():
+                record = json.loads(lease.read_text(encoding="utf-8"))
+                record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                lease.write_text(json.dumps(record), encoding="utf-8")
+            capture = root / "commands"
+            result = self.invoke("codex", {"cwd": state["workspace"], "session_id": "thread-123"}, os.environ | {
+                "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
+                "AUTONOMY_CAPTURE": str(capture),
+            })
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("active lease", json.loads(result.stdout)["reason"])
+        self.assertFalse(capture.exists())
 
 
 if __name__ == "__main__":

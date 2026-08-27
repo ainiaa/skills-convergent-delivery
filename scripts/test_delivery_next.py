@@ -14,7 +14,8 @@ from delivery_next import (
     validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
-from runner_contract import freeze_launch
+from role_result import result_from_output
+from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from runtime_adapter import bind_observed, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
@@ -208,6 +209,32 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
             payload["runtime_binding"], 3, reviewer_refs, [], [],
             "2026-08-21T00:00:00Z", host_observation=observation,
         )
+        launches, results = [], []
+        for index, reviewer_ref in enumerate(reviewer_refs):
+            profile = {
+                "schema_version": 1, "worker_id": reviewer_ref, "role": "reviewer",
+                "runner_id": "openai-compatible-v1",
+                "requested": {"model": "glm-5.2", "reasoning_effort": "high"},
+                "effective": {"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+                "permissions": {"workspace": "read", "shell": False, "network": "egress"},
+                "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 12000},
+            }
+            profile["profile_fingerprint"] = worker_profile_fingerprint(profile)
+            launch = freeze_launch(profile, "Review", {
+                "api_key_env": "GLM_API_KEY", "review_request_fingerprint": "e" * 64,
+            })
+            receipt = {
+                "schema_version": 1, "runner_id": "openai-compatible-v1",
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "response_id": f"review-{index + 1}", "response_model": "glm-5.2", "usage": None,
+                "response_fingerprint": ("ab"[index]) * 64,
+            }
+            receipt["receipt_fingerprint"] = runner_fingerprint(receipt)
+            launches.append(launch)
+            results.append(bind_role_result(launch, receipt, result_from_output(launch, {
+                "status": "available", "content": '{"findings":[],"next_action":"verify"}',
+            })))
+        payload["ledger"].update(runner_launches=launches, runner_results=results)
     return payload
 
 
@@ -221,7 +248,7 @@ class DeliveryNextTest(unittest.TestCase):
             "action_attempts": [{"status": "observed"}],
         }
         with self.assertRaisesRegex(ValueError, "committed"):
-            validate_autonomy_completion(autonomy, "a" * 64)
+            validate_autonomy_completion(autonomy, "a" * 64, None, [])
 
     def test_autonomous_complete_requires_a_current_full_scope_audit(self):
         payload = autonomous_state(
@@ -236,7 +263,22 @@ class DeliveryNextTest(unittest.TestCase):
             "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
             "finding_fingerprints": [],
         }]
+        payload["ledger"]["checks"].append({
+            "stage": "autonomy-audit", "command": EVIDENCE["command"], "result": "pass",
+            "evidence_receipts": [EVIDENCE],
+        })
         self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_autonomous_complete_requires_a_source_bound_audit_receipt(self):
+        payload = autonomous_state(status="complete", current_stage="verify-final", revision=3)
+        payload["execution_control"]["autonomy"]["audit_batches"] = [{
+            "source_fingerprint": SOURCE["source_fingerprint"], "phase": "initial",
+            "status": "pass", "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": [],
+        }]
+
+        with self.assertRaisesRegex(ValueError, "audit Evidence Receipt"):
+            validate_state(payload, SimpleNamespace())
 
     def test_autonomous_audit_cannot_claim_full_coverage_with_missing_manifest_item(self):
         payload = autonomous_state(
@@ -358,6 +400,35 @@ class DeliveryNextTest(unittest.TestCase):
             ]
             with self.assertRaisesRegex(ValueError, "runner launch"):
                 validate_state(payload, SimpleNamespace())
+
+    def test_complete_review_pass_requires_the_completed_reviewer_result(self):
+        payload = reviewed_complete_state()
+        payload["ledger"].pop("runner_launches")
+        payload["ledger"].pop("runner_results")
+
+        with self.assertRaisesRegex(ValueError, "reviewer result"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_complete_review_pass_requires_a_result_bound_to_its_frozen_request(self):
+        payload = reviewed_complete_state()
+        payload["ledger"]["runner_launches"][0]["configuration"]["review_request_fingerprint"] = "a" * 64
+        launch = payload["ledger"]["runner_launches"][0]
+        launch["launch_fingerprint"] = runner_fingerprint({
+            key: value for key, value in launch.items() if key != "launch_fingerprint"
+        })
+        result = payload["ledger"]["runner_results"][0]
+        result["launch_fingerprint"] = launch["launch_fingerprint"]
+        result["role_result"]["launch_fingerprint"] = launch["launch_fingerprint"]
+        role_result = result["role_result"]
+        role_result["result_fingerprint"] = runner_fingerprint({
+            key: value for key, value in role_result.items() if key != "result_fingerprint"
+        })
+        result["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in result.items() if key != "receipt_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "bound to its request"):
+            validate_state(payload, SimpleNamespace())
 
     def test_legacy_single_state_schemas_are_rejected(self):
         for schema_version in range(5, 10):
