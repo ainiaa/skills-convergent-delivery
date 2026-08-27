@@ -91,6 +91,17 @@ class AutonomyServiceTest(unittest.TestCase):
             self.assertEqual(1, len(diagnostics))
             self.assertIn("unreadable managed state", diagnostics[0])
 
+    def test_service_scan_reports_a_non_object_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "array.json"
+            path.write_text("[]", encoding="utf-8")
+
+            paths, diagnostics = service_paths(directory)
+
+            self.assertEqual([], paths)
+            self.assertEqual(1, len(diagnostics))
+            self.assertIn("not an object", diagnostics[0])
+
     def test_service_scan_keeps_healthy_runs_when_another_state_is_invalid(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, _lease_root = self.managed_service_state(directory)
@@ -261,6 +272,25 @@ class AutonomyServiceTest(unittest.TestCase):
             self.assertEqual(("autonomy-audit", "fail"), (check["stage"], check["result"]))
             self.assertEqual(result["audit"], check["evidence_receipts"][0])
 
+    def test_service_records_the_failed_verifier_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state["execution_control"]["autonomy"]["runtime"]["verification_argv"] = ["false"]
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            current = json.loads(path.read_text(encoding="utf-8"))
+            check = current["ledger"]["checks"][-1]
+            self.assertEqual("blocked", result["status"])
+            self.assertEqual(("autonomy-verification", "fail"), (check["stage"], check["result"]))
+            self.assertEqual(result["verification"], check["evidence_receipts"][0])
+
     def test_final_service_action_routes_an_explicit_audit_finding_to_one_repair(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_service_state(
@@ -280,6 +310,61 @@ class AutonomyServiceTest(unittest.TestCase):
             current = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual("autonomy-repair", current["current_stage"])
             self.assertEqual("findings", current["execution_control"]["autonomy"]["audit_batches"][-1]["status"])
+
+    def test_service_records_a_reaudit_finding_after_the_repair_budget_is_spent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "verify-final", ["python3", "-c", "raise SystemExit(7)"],
+            )
+            state = json.loads(path.read_text(encoding="utf-8"))
+            source = state["source_fingerprint"]
+            autonomy = state["execution_control"]["autonomy"]
+            autonomy["runtime"]["audit_findings_exit_code"] = 7
+            autonomy["repair_budget_remaining"] = 0
+            autonomy["audit_batches"] = [{
+                "source_fingerprint": source, "phase": "initial", "status": "findings",
+                "covered_manifest_ids": [item["id"] for item in autonomy["manifest"]["items"]],
+                "finding_fingerprints": ["a" * 64],
+            }]
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "b" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            current = json.loads(path.read_text(encoding="utf-8"))
+            check = current["ledger"]["checks"][-1]
+            self.assertEqual(("blocked", "audit_findings_after_repair"), (result["status"], result["reason"]))
+            self.assertEqual(("autonomy-audit", "fail"), (check["stage"], check["result"]))
+            self.assertEqual(result["audit"], check["evidence_receipts"][0])
+
+    def test_service_repair_consumes_only_the_autonomy_repair_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            source = state["source_fingerprint"]
+            state["current_stage"] = "autonomy-repair"
+            state["execution_control"]["autonomy"]["audit_batches"] = [{
+                "source_fingerprint": source, "phase": "initial", "status": "findings",
+                "covered_manifest_ids": [item["id"] for item in state["execution_control"]["autonomy"]["manifest"]["items"]],
+                "finding_fingerprints": ["a" * 64],
+            }]
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch.object(
+                    autonomy_service, "execute",
+                    return_value={"status": "completed", "receipt_fingerprint": "a" * 64},
+            ):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("advanced", result["status"])
+            self.assertEqual("verify-final", current["current_stage"])
+            self.assertEqual(0, current["execution_control"]["autonomy"]["repair_budget_remaining"])
+            self.assertEqual(1, current["execution_control"]["review"]["repair_budget_remaining"])
+            self.assertEqual([result["verification"]["receipt_fingerprint"]], current["ledger"]["autonomy_repair_fingerprints"])
 
     def test_terminal_service_state_releases_a_lease_left_by_an_interrupted_finalizer(self):
         with tempfile.TemporaryDirectory() as directory:

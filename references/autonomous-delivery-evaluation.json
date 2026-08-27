@@ -40,6 +40,14 @@
     {"id": "service-audit-finding-repair", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_final_service_action_routes_an_explicit_audit_finding_to_one_repair"]},
     {"id": "service-terminal-lease-recovery", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_terminal_service_state_releases_a_lease_left_by_an_interrupted_finalizer"]},
     {"id": "service-diagnostic-exit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_exits_successfully_after_a_persistent_diagnostic"]},
-    {"id": "service-terminal-scan-exit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_stops_after_cleaning_a_terminal_state"]}
+    {"id": "service-terminal-scan-exit", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_stops_after_cleaning_a_terminal_state"]},
+    {"id": "service-repair-budget-isolated", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_repair_consumes_only_the_autonomy_repair_budget"]},
+    {"id": "autonomy-repair-stage-required", "check": ["scripts/test_delivery_state.py", "DeliveryStateTest.test_autonomy_repair_budget_cannot_be_consumed_outside_its_repair_stage"]},
+    {"id": "hook-queue-failure-terminalizes", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_queue_failure_is_not_retried_automatically"]},
+    {"id": "hook-missing-session-terminalizes", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_missing_session_terminalizes_the_active_run"]},
+    {"id": "service-verifier-failure-receipt", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_the_failed_verifier_receipt"]},
+    {"id": "service-reaudit-finding-receipt", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_a_reaudit_finding_after_the_repair_budget_is_spent"]},
+    {"id": "service-non-object-state-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_reports_a_non_object_managed_state"]},
+    {"id": "doctor-non-object-state-visible", "check": ["scripts/test_delivery_state.py", "DeliveryStateTest.test_doctor_reports_a_non_object_managed_state"]}
   ]
 }

@@ -140,7 +140,9 @@ def _advance_verified_action(state_path, state_root, lease_root, action, verific
                     or autonomy["repair_budget_remaining"] != 1:
                 raise ValueError("autonomy repair is not authorized by an initial audit finding")
             autonomy["repair_budget_remaining"] = 0
-            state["ledger"]["repair_fingerprints"].append(verification["receipt_fingerprint"])
+            state["ledger"].setdefault("autonomy_repair_fingerprints", []).append(
+                verification["receipt_fingerprint"]
+            )
             state["current_stage"] = "verify-final"
         else:
             state["current_stage"] = action["phase"]
@@ -255,12 +257,12 @@ def execute(state_path, state, next_action, state_root, lease_root):
     return receipt
 
 
-def block(state_path, state, state_root, lease_root, reason, evidence=None):
+def block(state_path, state, state_root, lease_root, reason, evidence=None, stage="autonomy-audit"):
     def mutate(candidate):
         candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
         if evidence is not None:
             candidate["ledger"]["checks"].append({
-                "stage": "autonomy-audit", "command": evidence["command"], "result": "fail",
+                "stage": stage, "command": evidence["command"], "result": "fail",
                 "evidence_receipts": [evidence],
             })
 
@@ -308,7 +310,10 @@ def _finalize_observed(state_path, state_root, lease_root):
         timeout_seconds=_time_policy(service_runtime(state)["runner_profile"])["absolute_seconds"],
     )
     if verification["exit_code"] != 0:
-        block(state_path, state, state_root, lease_root, "frozen autonomous verification failed")
+        block(
+            state_path, state, state_root, lease_root, "frozen autonomous verification failed",
+            verification, stage="autonomy-verification",
+        )
         return {"status": "blocked", "reason": "verification_failed", "verification": verification}
     if attempt["action"].get("phase") == "verify-final":
         audit = run_evidence(
@@ -321,6 +326,13 @@ def _finalize_observed(state_path, state_root, lease_root):
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
         findings_code = service_runtime(state).get("audit_findings_exit_code")
         if audit["exit_code"] == findings_code:
+            autonomy = state["execution_control"]["autonomy"]
+            if autonomy["audit_batches"] or autonomy["repair_budget_remaining"] != 1:
+                block(
+                    state_path, state, state_root, lease_root,
+                    "autonomous audit findings remain after the one permitted repair", audit,
+                )
+                return {"status": "blocked", "reason": "audit_findings_after_repair", "audit": audit}
             repaired = _record_audit_findings(state_path, state_root, lease_root, verification, audit)
             return {"status": "advanced", "reason": "audit_findings", "audit": audit,
                     "revision": repaired["revision"]}
@@ -408,6 +420,7 @@ def service_paths(root):
             diagnostics.append(f"unreadable managed state {path}: {error}")
             continue
         if not isinstance(state, dict):
+            diagnostics.append(f"invalid autonomous service state {path}: state is not an object")
             continue
         runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime") \
             if isinstance(state.get("execution_control"), dict) \

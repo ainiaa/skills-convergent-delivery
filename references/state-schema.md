@@ -56,9 +56,9 @@
 
 无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
-`source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v2 由 `task_profile.freeze_routing` 唯一生成：完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。旧 Routing v1 只读兼容，不能写入新 complete。
+`source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v2 由 `task_profile.freeze_routing` 唯一生成：完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。旧 Routing v1 只读兼容，不能写入新 complete。`delivery_state.py doctor` 对不可解析和非对象 managed JSON 都返回 `health=blocked`，不会静默跳过磁盘损坏。
 
-Schema v11 仅用于用户明确启用自治交付的 run。在既有 `execution_control` 内增加不可变 `autonomy`：它冻结需求、范围和验收 manifest，并保存至多一次 initial audit 与一次修复后的 re-audit。每批 audit 必须注明当前源码指纹、覆盖的 manifest 项和 finding 指纹；只有覆盖全部项、finding 为空且指纹等于当前源码的 pass batch，v11 才能进入 `complete`。`action_attempts` 是同一状态内至多八条的动作记录：每条冻结 action、owner 和启动/无进展/绝对时限，且只能按 `intent → running → observed → committed` 推进；只有带运行回执和验证指纹的 observed 结果才能 committed，且 `complete` 前最后一个动作必须已经 committed。中断或未知结果不能推进 delivery stage，后续 controller 必须先协调真实工件。service runtime 仅支持低风险 route，必须分别冻结非空且不相同的 `verification_argv` 与 `audit_argv`；两者都按 argv 直接执行，不能接受 shell 字符串或模型生成的命令。service 的每个外部 runner 都必须先追加冻结 launch、再追加匹配 result；最终 audit 失败也必须作为 fail check 保留 Evidence Receipt。旧 v10 继续按原语义运行，绝不被静默改写为 v11。
+Schema v11 仅用于用户明确启用自治交付的 run。在既有 `execution_control` 内增加不可变 `autonomy`：它冻结需求、范围和验收 manifest，并保存至多一次 initial audit 与一次修复后的 re-audit。每批 audit 必须注明当前源码指纹、覆盖的 manifest 项和 finding 指纹；只有覆盖全部项、finding 为空且指纹等于当前源码的 pass batch，v11 才能进入 `complete`。`action_attempts` 是同一状态内至多八条的动作记录：每条冻结 action、owner 和启动/无进展/绝对时限，且只能按 `intent → running → observed → committed` 推进；只有带运行回执和验证指纹的 observed 结果才能 committed，且 `complete` 前最后一个动作必须已经 committed。中断或未知结果不能推进 delivery stage，后续 controller 必须先协调真实工件。service runtime 仅支持低风险 route，必须分别冻结非空且不相同的 `verification_argv` 与 `audit_argv`；两者都按 argv 直接执行，不能接受 shell 字符串或模型生成的命令。service 的每个外部 runner 都必须先追加冻结 launch、再追加匹配 result；失败 verifier 与最终 audit 都必须作为 fail check 保留 Evidence Receipt。旧 v10 继续按原语义运行，绝不被静默改写为 v11。
 
 Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；当前 round 的 finding 必须携带 records，历史 round 可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个已登记、role 为 reviewer、宿主状态 completed 的 worker；高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
@@ -149,12 +149,12 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 `ledger` 继续保存；所有 fresh/pass 验收必须携带与顶层 `source_fingerprint` 相同的源码指纹。Schema v10 写入 complete 时，每项验收还必须携带 Evidence Receipt v2：由 `evidence_contract.py run` 使用 argv（不经 shell）真实执行，保存退出码、stdout/stderr 摘要、runner/receipt 指纹和完整 Source Receipt v2。只有 `exit_code=0/evidence_level=observed` 且 source 等于顶层 `source_receipt` 才通过。旧 Schema 和 Evidence v1 直接拒绝。`execution_control` 是路由和审查的唯一真源，保存 canonical routing、Review Protocol v3 单轴请求以及剩余 repair/re-review/integration 预算：
 
 - `completed_rounds`：0–2；
-- append-only `repair_fingerprints` 与 `checks`；
+- append-only `repair_fingerprints`（Review v3）与 `autonomy_repair_fingerprints`（自治 audit repair）以及 `checks`；两者预算不得互相消费；
 - 当前 `acceptance` 及被替换事实的 `acceptance_history`；
 - append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
-`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`delivery_state.py doctor` 遇到无法解析的 managed JSON 时返回一条 `health=blocked` 的诊断（身份字段为 null），使磁盘损坏不会被恢复检查静默忽略。
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`delivery_state.py doctor` 遇到无法解析或非对象的 managed JSON 时返回一条 `health=blocked` 的诊断（身份字段为 null），使磁盘损坏不会被恢复检查静默忽略。
 
 交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 

@@ -2,6 +2,7 @@
 """Translate an active autonomous run into a host Stop-hook decision."""
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -19,9 +20,7 @@ def approve():
 
 def active_state(workspace):
     workspace = str(Path(workspace).expanduser().resolve())
-    root = Path(os.environ.get(
-        "CONVERGE_STATE_ROOT", Path.home() / ".convergent-delivery" / "state"
-    ))
+    root = state_root()
     matches = []
     for path in root.rglob("*.json") if root.is_dir() else ():
         try:
@@ -37,6 +36,18 @@ def active_state(workspace):
     if len(matches) > 1:
         raise ValueError("multiple autonomous runs are active for this workspace")
     return matches[0] if matches else None
+
+
+def state_root():
+    return Path(os.environ.get(
+        "CONVERGE_STATE_ROOT", Path.home() / ".convergent-delivery" / "state"
+    )).expanduser().resolve()
+
+
+def lease_root():
+    return Path(os.environ.get(
+        "CONVERGE_LEASE_ROOT", Path.home() / ".convergent-delivery" / "leases"
+    )).expanduser().resolve()
 
 
 def session_id(payload):
@@ -94,6 +105,33 @@ def queue_codex(session, state_path, state, next_action):
             raise ValueError("Codex could not queue the autonomous continuation")
 
 
+def terminalize_hook_failure(state_path, state, reason):
+    """Persist a terminal no-progress result; never retry an uncertain continuation."""
+    candidate = copy.deepcopy(state)
+    candidate["revision"] += 1
+    candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
+    command = [
+        sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+        "--lease-root", str(lease_root()), "--state-root", str(state_root()),
+        "--repo-id", state["repo_id"], "--task-key", state["task_key"],
+        "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+        "--expected-revision", str(state["revision"]),
+    ]
+    result = subprocess.run(command, input=json.dumps(candidate), text=True, capture_output=True, check=False)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "could not persist autonomous hook failure")
+    release = subprocess.run([
+        sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "release",
+        "--root", str(lease_root()), "--state-root", str(state_root()),
+        "--repo", state["repo_id"], "--workspace", state["workspace"],
+        "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+    ], text=True, capture_output=True, check=False)
+    if release.returncode:
+        raise ValueError(release.stderr.strip() or release.stdout.strip() or "could not release autonomous lease")
+    if json.loads(release.stdout) != {"status": "released"}:
+        raise ValueError("could not release autonomous lease")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", choices=("codex", "claude"), required=True)
@@ -137,8 +175,14 @@ def main():
             return 0
         current_session = session_id(payload)
         if current_session is None:
-            raise ValueError("Codex hook payload has no session_id for autonomous continuation")
-        queue_codex(current_session, state_path, state, result["next_action"])
+            error = ValueError("Codex hook payload has no session_id for autonomous continuation")
+            terminalize_hook_failure(state_path, state, str(error))
+            raise error
+        try:
+            queue_codex(current_session, state_path, state, result["next_action"])
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            terminalize_hook_failure(state_path, state, str(error))
+            raise
         print(json.dumps(approve(), sort_keys=True))
         return 0
     except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:

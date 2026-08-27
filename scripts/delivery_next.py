@@ -754,7 +754,7 @@ def validate_state(state, arguments):
             raise ValueError("worker tree receipt active_refs are invalid")
     ledger = require_mapping(state.get("ledger"), "ledger")
     allowed_ledger_fields = {
-        "completed_rounds", "repair_fingerprints", "key_changes", "checks", "acceptance",
+        "completed_rounds", "repair_fingerprints", "autonomy_repair_fingerprints", "key_changes", "checks", "acceptance",
         "acceptance_history", "runner_launches", "runner_results", "report_history",
     }
     if not set(ledger) <= allowed_ledger_fields:
@@ -774,6 +774,13 @@ def validate_state(state, arguments):
         raise ValueError("ledger.repair_fingerprints must be a list of strings")
     if len(set(repair_fingerprints)) != len(repair_fingerprints):
         raise ValueError("ledger.repair_fingerprints must not contain duplicates")
+    autonomy_repair_fingerprints = ledger.get("autonomy_repair_fingerprints", [])
+    if not isinstance(autonomy_repair_fingerprints, list) or not all(
+            isinstance(item, str) and len(item) == 64
+            and all(character in "0123456789abcdef" for character in item)
+            for item in autonomy_repair_fingerprints
+    ) or len(set(autonomy_repair_fingerprints)) != len(autonomy_repair_fingerprints):
+        raise ValueError("ledger.autonomy_repair_fingerprints must be unique sha256 values")
     key_changes = ledger.get("key_changes", [])
     if not isinstance(key_changes, list) or len(key_changes) > 5 or not all(
         isinstance(item, str) and item.strip() and len(item) <= 120 for item in key_changes

@@ -12,7 +12,7 @@ from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
-from delivery_state import validate_transition
+from delivery_state import discover, validate_transition
 from autonomy_arm import arm
 from role_result import result_from_output
 from runner_contract import bind_role_result
@@ -249,6 +249,26 @@ class DeliveryStateTest(unittest.TestCase):
         rewritten["execution_control"]["autonomy"]["audit_batches"][0]["status"] = "pass"
         with self.assertRaisesRegex(ValueError, "autonomy audit batches"):
             validate_transition(audited, rewritten)
+
+    def test_autonomy_repair_budget_cannot_be_consumed_outside_its_repair_stage(self):
+        previous = upgrade_state(autonomous_state())
+        forged = copy.deepcopy(previous)
+        forged["revision"] = 1
+        forged["execution_control"]["autonomy"]["repair_budget_remaining"] = 0
+        forged["ledger"]["autonomy_repair_fingerprints"] = ["a" * 64]
+
+        with self.assertRaisesRegex(ValueError, "autonomy repair"):
+            validate_transition(previous, forged)
+
+    def test_doctor_reports_a_non_object_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "array.json").write_text("[]", encoding="utf-8")
+
+            result = discover(root, diagnose=True, state_root=root)
+
+        self.assertEqual("blocked", result["states"][0]["health"])
+        self.assertIn("not an object", result["states"][0]["reason"])
     def runtime_binding(self):
         return bind_observed("codex", {
             "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",

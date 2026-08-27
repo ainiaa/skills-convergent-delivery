@@ -6,6 +6,8 @@
 
 - 新增显式自治交付与可选低风险持久 service：冻结单步 action、独立 verifier/audit、runner launch/result 回执与有限 cycle budget；修复初始化与终态 lease 清场、无效 service state 隔离、Hook state 的 service 误处置、service 唤醒强杀、state root 错配、损坏状态 fail-open 和 metadata revision 绕过续跑上限；审计失败仍保留证据。损坏或不可读的 managed state 现输出恢复诊断，不再被 service/doctor/Hook 静默忽略。
 - 修复自治计划在审计 finding、终态崩溃和服务异常中的失控：initial finding 确定性进入单次 `autonomy-repair` 后再作 final re-audit，Hook 保持 stage/action 去重但不再拦截真实阶段推进；service 仅在显式声明 `audit_findings_exit_code` 时将该退出码视为 finding，其余 audit 非零仍安全阻塞。重启扫描会幂等释放终态遗留 lease；诊断性坏 state 记录一次后成功退出，避免 LaunchAgent 无限重启。
+- 修复自治 repair 与 Review v3 共用 `ledger.repair_fingerprints` 导致预算串扰：自治 repair 改用独立、append-only 的 `ledger.autonomy_repair_fingerprints`，只可在 initial finding 后的 `autonomy-repair → verify-final` 转换中消费；service repair 不再错误消耗 Review repair 预算或被状态校验阻塞。
+- 修复自治 Hook 的失败收束与 service 证据缺口：Codex queue 失败、无 session 或重复 Stop 无进展时，run 现在确定性写为 `blocked/no_progress` 并释放 lease，绝不重投不确定 continuation；service 对失败 verifier 和修复后的再次 audit finding 都保留 fail Evidence Receipt。非对象 managed JSON 现与损坏 JSON 一样由 service/doctor 诊断，文档同步明确仅有诊断时 service 成功退出以避免 LaunchAgent 重启循环。
 - 多模型协作改为结构化、可恢复的结果闭环：只读 scout/reviewer 只能返回与冻结 launch 绑定的受限 JSON 结论，原始模型文本不再经 lifecycle 返回或进入 ledger；完成 receipt 与结论同条原子记录，缺少结论的历史 receipt 会交接阻塞而非重派。新增 controller-owned、最多三个任务的只读 fan-out/fan-in：全部 launch 先原子持久化，再并发执行并按 task id 稳定汇总；禁止 writer、peer 消息、共享任务队列与自动重试，默认单角色和非多模型路径不变。
 - 修复 fan-out 两个完成性缺口：`invalid`/`unavailable` 的只读角色结果不再满足完成门槛，必须交接阻塞；`role_dispatch.py --fanout` 与 `runner_lifecycle.py --fanout` 现为明确、可测试的 CLI 接线，不再只停留在 Python helper。
 - README 将新手快速开始前置：安装、刷新、首个可复制提示词与五个 Skill 的选择表在能力总览之前；补充多模型的显式触发、默认角色分工、示例与证据边界，完整运行时示例和维护说明仍保留在后文链接。

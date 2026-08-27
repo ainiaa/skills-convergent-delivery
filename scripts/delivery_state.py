@@ -277,8 +277,8 @@ def validate_transition(previous, candidate):
                 raise ValueError("autonomy budget cannot increase or skip")
         added_audits = new_autonomy["audit_batches"][len(old_autonomy["audit_batches"]):]
         expected_re_audit = int(bool(added_audits and added_audits[-1]["phase"] == "re_audit"))
-        repair_steps = len(candidate["ledger"]["repair_fingerprints"]) - len(
-            previous["ledger"]["repair_fingerprints"]
+        repair_steps = len(candidate["ledger"].get("autonomy_repair_fingerprints", [])) - len(
+            previous["ledger"].get("autonomy_repair_fingerprints", [])
         )
         if repair_steps not in {0, 1}:
             raise ValueError("autonomy repair must advance one step")
@@ -395,6 +395,14 @@ def validate_transition(previous, candidate):
     if candidate["status"] == "active" and new_stage not in {old_stage, allowed_next} \
             and not repair_after_final_audit:
         raise ValueError("current_stage must advance through the protocol")
+    autonomy_repair_steps = len(candidate["ledger"].get("autonomy_repair_fingerprints", [])) - len(
+        previous["ledger"].get("autonomy_repair_fingerprints", [])
+    )
+    if autonomy_repair_steps and not (
+            previous["schema_version"] == 11 and old_stage == "autonomy-repair" and new_stage == "verify-final"
+            and old_autonomy["audit_batches"] and old_autonomy["audit_batches"][-1]["status"] == "findings"
+    ):
+        raise ValueError("autonomy repair must follow an initial audit finding")
     if candidate["status"] == "blocked" and new_stage != old_stage:
         raise ValueError("blocked state must retain the current stage")
     if candidate["status"] == "complete":
@@ -412,6 +420,11 @@ def validate_transition(previous, candidate):
         old_ledger["repair_fingerprints"],
         new_ledger["repair_fingerprints"],
         "ledger.repair_fingerprints",
+    )
+    require_prefix(
+        old_ledger.get("autonomy_repair_fingerprints", []),
+        new_ledger.get("autonomy_repair_fingerprints", []),
+        "ledger.autonomy_repair_fingerprints",
     )
     require_prefix(old_ledger["checks"], new_ledger["checks"], "ledger.checks")
     require_prefix(
@@ -620,6 +633,8 @@ def discover(workspace, diagnose=False, state_root=DEFAULT_STATE_ROOT):
     for path in sorted(Path(state_root).expanduser().resolve().rglob("*.json")):
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError("managed state is not an object")
             if state.get("workspace") != workspace:
                 continue
             summary = {
@@ -639,7 +654,7 @@ def discover(workspace, diagnose=False, state_root=DEFAULT_STATE_ROOT):
                 except (KeyError, OSError, ValueError) as error:
                     summary.update(health="blocked", reason=str(error))
             states.append(summary)
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, ValueError, json.JSONDecodeError) as error:
             if diagnose:
                 states.append({
                     "path": str(path), "run_id": None, "task_key": None, "status": "unknown",
