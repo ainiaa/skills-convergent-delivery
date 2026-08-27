@@ -26,8 +26,10 @@ def active_state(workspace):
     for path in root.rglob("*.json") if root.is_dir() else ():
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"unreadable managed state {path}: {error}") from error
+        if not isinstance(value, dict):
+            raise ValueError(f"managed state {path} is not an object")
         if value.get("workspace") == workspace and value.get("schema_version") == 11 \
                 and value.get("execution_control", {}).get("autonomy", {}).get("enabled") is True \
                 and value.get("status") == "active":
@@ -69,7 +71,7 @@ def continuation_receipt_path(state_path):
 def queue_codex(session, state_path, state, next_action):
     receipt_path = continuation_receipt_path(state_path)
     identity = {
-        "revision": state["revision"],
+        "stage": state["current_stage"],
         "action_fingerprint": hashlib.sha256(
             json.dumps(next_action, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -122,7 +124,7 @@ def main():
             if not plist.is_file():
                 raise ValueError("autonomous service is not installed")
             subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                ["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
             print(json.dumps(approve(), sort_keys=True))

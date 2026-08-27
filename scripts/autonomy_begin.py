@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from delivery_engine import controller_identity, provider_reference
-from delivery_state import state_path
+from delivery_state import DEFAULT_STATE_ROOT, state_path
 from evidence_contract import workspace_source
 from autonomy_arm import arm
 from provider_contract import canonical_fingerprint
@@ -134,6 +134,12 @@ def run(arguments):
         raise ValueError("autonomy begin requires a scope")
     if arguments.runtime == "service" and not _is_linked_worktree(workspace):
         raise ValueError("service autonomy requires an isolated Git worktree")
+    if arguments.runtime == "service" and (
+            Path(arguments.state_root).expanduser().resolve() != DEFAULT_STATE_ROOT.resolve()
+            or Path(arguments.lease_root).expanduser().resolve()
+            != (Path.home() / ".convergent-delivery" / "leases").resolve()
+    ):
+        raise ValueError("service autonomy requires the default managed roots")
     verification_argv = (
         json.loads(arguments.verification_argv) if arguments.verification_argv is not None else None
     )

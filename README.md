@@ -182,9 +182,9 @@ bash install.sh --target <codex|claude> --autonomy
 bash install.sh --autonomy-uninstall --target <codex|claude>
 ```
 
-Codex 用 `queue --thread` 将 gate 的单一下一动作投递回同一 task，同一 state revision 只会成功投递一次；若 Stop 再次触发而状态未推进，会停止自动 queue 并明确报 `no state progress`。Claude Code 2.1.246+ 用原生 Stop Hook `block` 在同一会话内继续，不会另起 `--resume` 进程。v11 native 正常路径最多需要五次连续续跑，低于 Claude 的八次宿主上限。预检不替代用户在目标宿主中的 live smoke，也不承诺后台或跨会话自行恢复。完整语义见 [自治适配](references/runtime-adapters.md) 与 [设计说明](docs/02_design/architecture/F20260827-autonomous-delivery-gate.md)。
+Codex 用 `queue --thread` 将 gate 的单一下一动作投递回同一 task；同一阶段和 action 只会成功投递一次，`report_history` 等非目标 revision 不会触发新的 queue，重复 Stop 会明确报 `no state progress`。Claude Code 2.1.246+ 用原生 Stop Hook `block` 在同一会话内继续，不会另起 `--resume` 进程。v11 native 正常路径最多需要五次连续续跑，低于 Claude 的八次宿主上限。预检不替代用户在目标宿主中的 live smoke，也不承诺后台或跨会话自行恢复。完整语义见 [自治适配](references/runtime-adapters.md) 与 [设计说明](docs/02_design/architecture/F20260827-autonomous-delivery-gate.md)。
 
-需要跨会话服务恢复时，再显式安装 `bash install.sh --target codex --autonomy-service`，并用 `autonomy_begin.py --runtime service --service-runner <id> --verification-argv '<JSON argv>' --audit-argv '<JSON argv>'` 创建 run。service 仅支持低风险路由；语义风险用可重复的 `--risk-flag <risk>` 声明，高风险改走正常自治路径的独立 review。服务只在已落盘动作完成、冻结 verifier 与独立 audit 都通过后推进；重启时未知中的动作会阻塞，不会自动重跑。
+需要跨会话服务恢复时，再显式安装 `bash install.sh --target codex --autonomy-service`，并用 `autonomy_begin.py --runtime service --service-runner <id> --verification-argv '<JSON argv>' --audit-argv '<JSON argv>'` 创建 run。service 仅支持低风险路由和默认 managed state/lease roots；语义风险用可重复的 `--risk-flag <risk>` 声明，高风险改走正常自治路径的独立 review。服务只在已落盘动作完成、冻结 verifier 与独立 audit 都通过后推进；重启时未知中的动作会阻塞，不会自动重跑。
 
 ## 工作方式
 

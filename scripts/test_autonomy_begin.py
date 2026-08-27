@@ -142,6 +142,18 @@ class AutonomyBeginTest(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertIn("isolated Git worktree", result.stderr)
 
+    def test_service_mode_rejects_custom_roots_that_the_launchagent_cannot_use(self):
+        arguments = SimpleNamespace(
+            workspace=str(ROOT), requirement=["complete task"], acceptance=["tests pass"], scope=["."],
+            runtime="service", service_runner="codex-exec-v1", verification_argv='["true"]',
+            audit_argv='["python3", "-c", "pass"]', risk_flag=[],
+            state_root="/tmp/converge-state", lease_root="/tmp/converge-leases",
+        )
+
+        with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True):
+            with self.assertRaisesRegex(ValueError, "default managed roots"):
+                autonomy_begin.run(arguments)
+
 
 if __name__ == "__main__":
     unittest.main()

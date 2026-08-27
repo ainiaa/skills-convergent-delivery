@@ -16,7 +16,7 @@ from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
 from delivery_next import validate_state
-from delivery_state import DEFAULT_STATE_ROOT
+from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
 from evidence_contract import run_evidence
 
 
@@ -317,13 +317,23 @@ def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         validate_state(state, SimpleNamespace(strict_evidence=True))
-        service_runtime(state)
+        if state_path != managed_state_path(
+                state_root, state["repo_id"], state["task_key"], state["run_id"]
+        ).resolve():
+            raise ValueError("autonomous service state path does not match state root")
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"manual recovery required for autonomous service state {state_path}: {error}"
+        ) from error
+    service_runtime(state)
+    try:
         return _run_once(state_path, state_root, lease_root)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
             if not isinstance(state, dict) or state.get("status") != "active":
                 raise ValueError("state is not an active recoverable service run")
+            service_runtime(state)
             block(state_path, state, state_root, lease_root, f"autonomous service error: {error}")
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as recovery_error:
             raise ValueError(

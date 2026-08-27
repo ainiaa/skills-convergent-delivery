@@ -154,7 +154,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 - append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
-`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`delivery_state.py doctor` 遇到无法解析的 managed JSON 时返回一条 `health=blocked` 的诊断（身份字段为 null），使磁盘损坏不会被恢复检查静默忽略。
 
 交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 

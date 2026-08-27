@@ -18,7 +18,7 @@ from runner_contract import fingerprint, freeze_launch
 
 
 class AutonomyServiceTest(unittest.TestCase):
-    def managed_service_state(self, directory, stage=None, audit_argv=None):
+    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service"):
         root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(root, ["complete task"], ["tests pass"], ["."], "run-service", "writer-service")
@@ -37,10 +37,13 @@ class AutonomyServiceTest(unittest.TestCase):
             "--expected-revision", "-1",
         ], input=json.dumps(initial), text=True, capture_output=True, check=False)
         self.assertEqual(0, created.returncode, created.stderr)
-        armed = arm(
-            initial, ["complete task"], ["tests pass"], "service", "codex-exec-v1",
-            ["true"], audit_argv or ["python3", "-c", "pass"],
-        )
+        if runtime == "service":
+            armed = arm(
+                initial, ["complete task"], ["tests pass"], "service", "codex-exec-v1",
+                ["true"], audit_argv or ["python3", "-c", "pass"],
+            )
+        else:
+            armed = arm(initial, ["complete task"], ["tests pass"], runtime)
         armed_write = subprocess.run([
             sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
             "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
@@ -116,6 +119,49 @@ class AutonomyServiceTest(unittest.TestCase):
 
             self.assertEqual(2, result)
             self.assertIn("manual recovery required", stderr.getvalue())
+
+    def test_direct_hook_state_is_rejected_without_mutating_state_or_releasing_leases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, runtime="hook")
+            before = path.read_bytes()
+            state = json.loads(before)
+            stderr = StringIO()
+
+            with patch.object(sys, "argv", [
+                    "autonomy_service.py", "--state", str(path), "--state-root", str(state_root),
+                    "--lease-root", str(lease_root),
+            ]), redirect_stderr(stderr):
+                result = autonomy_service.main()
+
+            inspected = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "inspect",
+                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
+                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(2, result)
+            self.assertIn("not armed for the autonomous service", stderr.getvalue())
+            self.assertEqual(before, path.read_bytes())
+            self.assertEqual(0, inspected.returncode, inspected.stderr)
+            self.assertTrue(all(json.loads(inspected.stdout)["leases"].values()))
+
+    def test_direct_service_state_must_belong_to_the_selected_state_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            copy_path = Path(directory) / "copy.json"
+            copy_path.write_bytes(path.read_bytes())
+            before = copy_path.read_bytes()
+            stderr = StringIO()
+
+            with patch.object(sys, "argv", [
+                    "autonomy_service.py", "--state", str(copy_path), "--state-root", str(state_root),
+                    "--lease-root", str(lease_root),
+            ]), redirect_stderr(stderr):
+                result = autonomy_service.main()
+
+            self.assertEqual(2, result)
+            self.assertIn("does not match state root", stderr.getvalue())
+            self.assertEqual(before, copy_path.read_bytes())
+            self.assertEqual(before, path.read_bytes())
 
     def test_release_failure_is_not_silently_ignored(self):
         state = {

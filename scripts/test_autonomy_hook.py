@@ -4,8 +4,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import copy
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
+import autonomy_hook
 
 SCRIPT = Path(__file__).with_name("autonomy_hook.py")
 
@@ -75,6 +80,22 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("multiple autonomous runs", json.loads(result.stdout)["reason"])
 
+    def test_unreadable_managed_state_blocks_instead_of_approving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            state_dir = root / "state/a"
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text("{", encoding="utf-8")
+
+            result = self.invoke("codex", {"cwd": str(workspace)}, os.environ | {
+                "CONVERGE_STATE_ROOT": str(root / "state"),
+            })
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("unreadable managed state", json.loads(result.stdout)["reason"])
+
     def test_codex_active_run_queues_exactly_one_gate_action_to_the_same_session(self):
         from test_delivery_next import autonomous_state
 
@@ -137,6 +158,71 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(2, second.returncode)
         self.assertIn("no state progress", json.loads(second.stdout)["reason"])
         self.assertEqual(1, queued.splitlines().count("queue"))
+
+    def test_codex_does_not_queue_the_same_action_after_a_report_only_revision(self):
+        from delivery_next import upgrade_state
+        from delivery_state import validate_transition
+        from test_delivery_next import autonomous_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
+            state_dir = root / "state/a"
+            state_dir.mkdir(parents=True)
+            path = state_dir / "run.json"
+            current = upgrade_state(autonomous_state(workspace=str(workspace)))
+            path.write_text(json.dumps(current), encoding="utf-8")
+            executable = root / "codex"
+            capture = root / "commands"
+            executable.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$@" >> "$AUTONOMY_CAPTURE"\n', encoding="utf-8"
+            )
+            executable.chmod(0o755)
+            environment = os.environ | {
+                "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
+                "CONVERGE_STATE_ROOT": str(root / "state"),
+                "AUTONOMY_CAPTURE": str(capture),
+            }
+
+            first = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
+            report_only = copy.deepcopy(current)
+            report_only["revision"] += 1
+            report_only["ledger"]["report_history"] = {
+                "last_outcome": "attention", "reported_fingerprints": [], "summary_fingerprint": "a" * 64,
+            }
+            validate_transition(current, report_only)
+            path.write_text(json.dumps(report_only), encoding="utf-8")
+            second = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
+            queue_count = capture.read_text(encoding="utf-8").splitlines().count("queue")
+
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual(2, second.returncode)
+        self.assertIn("no state progress", json.loads(second.stdout)["reason"])
+        self.assertEqual(1, queue_count)
+
+    def test_service_wakeup_does_not_terminate_a_running_launchagent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plist = root / "home/Library/LaunchAgents/com.convergent-delivery.autonomy.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text("installed", encoding="utf-8")
+            state = {"execution_control": {"autonomy": {"runtime": {"mode": "service"}}}}
+            output = StringIO()
+            completed = subprocess.CompletedProcess([], 0, "", "")
+
+            with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
+                    patch.object(autonomy_hook, "decide", return_value={"decision": "block", "next_action": {}}), \
+                    patch.object(autonomy_hook.Path, "home", return_value=root / "home"), \
+                    patch.object(autonomy_hook.subprocess, "run", return_value=completed) as run, \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch.object(sys, "stdin", StringIO(json.dumps({"cwd": str(root)}))), redirect_stdout(output):
+                result = autonomy_hook.main()
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/com.convergent-delivery.autonomy"],
+            run.call_args.args[0],
+        )
 
     def test_codex_queue_failure_is_not_retried_automatically(self):
         from test_delivery_next import autonomous_state

@@ -27,6 +27,14 @@
     {"id": "service-invalid-state-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_rejects_a_recognized_invalid_active_state"]},
     {"id": "service-runner-ledger", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_the_frozen_runner_launch_and_result"]},
     {"id": "service-invalid-state-isolated", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_keeps_healthy_runs_when_another_state_is_invalid"]},
-    {"id": "service-release-failure-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_release_failure_is_not_silently_ignored"]}
+    {"id": "service-release-failure-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_release_failure_is_not_silently_ignored"]},
+    {"id": "begin-release-failure-visible", "check": ["scripts/test_autonomy_begin.py", "AutonomyBeginTest.test_failed_initial_state_write_reports_a_failed_lease_cleanup"]},
+    {"id": "service-unreadable-state-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_reports_an_unreadable_managed_state"]},
+    {"id": "service-hook-state-protected", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_direct_hook_state_is_rejected_without_mutating_state_or_releasing_leases"]},
+    {"id": "service-wakeup-non-destructive", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_service_wakeup_does_not_terminate_a_running_launchagent"]},
+    {"id": "service-default-roots-required", "check": ["scripts/test_autonomy_begin.py", "AutonomyBeginTest.test_service_mode_rejects_custom_roots_that_the_launchagent_cannot_use"]},
+    {"id": "service-state-path-protected", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_direct_service_state_must_belong_to_the_selected_state_root"]},
+    {"id": "hook-unreadable-state-blocked", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_unreadable_managed_state_blocks_instead_of_approving"]},
+    {"id": "hook-report-only-revision-blocked", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_does_not_queue_the_same_action_after_a_report_only_revision"]}
   ]
 }
