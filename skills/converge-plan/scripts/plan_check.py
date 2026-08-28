@@ -505,7 +505,7 @@ def audit(envelope, workspace):
     scope_drift = [
         path for path in changed_paths if not any(path_contains(owner, path) for owner in owned_paths)
     ]
-    source_chain_complete = plan["schema_version"] != 5 or cursor == source
+    source_chain_complete = cursor == source
     return {
         "complete": (
             all(status == "DONE" for status in statuses.values())

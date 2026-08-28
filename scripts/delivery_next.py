@@ -225,7 +225,7 @@ def plan_check_module():
     return module
 
 
-def validate_closure_plan(plan, routing, baseline):
+def validate_closure_plan(plan, routing, baseline, provider_binding):
     module = plan_check_module()
     module.validate_plan(plan)
     if plan["requirement_fingerprint"] != routing["request_fingerprint"]:
@@ -244,10 +244,12 @@ def validate_closure_plan(plan, routing, baseline):
                    for scope in routing["allowed_paths"])
            for task in plan["tasks"] for owned in task["owned_paths"]):
         raise ValueError("closure plan task scope exceeds frozen routing")
+    if any(task["provider_binding"] != provider_binding for task in plan["tasks"]):
+        raise ValueError("closure plan provider binding does not match state")
     return module
 
 
-def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline):
+def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline, provider_binding):
     fields = {
         "schema_version", "status", "source_fingerprint", "scope_fingerprint",
         "graph_receipt", "review_request_fingerprint", "plan", "audit",
@@ -258,7 +260,7 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
         raise ValueError("closure gate status is invalid")
     if value.get("scope_fingerprint") != routing["profile_fingerprint"]:
         raise ValueError("closure gate scope does not match frozen routing")
-    validate_closure_plan(value.get("plan"), routing, baseline)
+    validate_closure_plan(value.get("plan"), routing, baseline, provider_binding)
     if value["status"] == "pending":
         if any(value[field] is not None for field in (
             "source_fingerprint", "graph_receipt", "review_request_fingerprint", "audit",
@@ -307,7 +309,7 @@ def validate_closure_audit(closure, workspace, source_fingerprint, acceptance):
 
 
 def validate_execution_control(value, source_fingerprint, task_key=None, schema_version=10,
-                               baseline=None, source_receipt=None):
+                               baseline=None, source_receipt=None, provider_binding=None):
     value = require_mapping(value, "execution_control")
     expected_fields = {"routing", "review"}
     if schema_version == 11:
@@ -335,7 +337,9 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     if set(value) != expected_fields:
         raise ValueError("execution_control fields are invalid")
     if routing["full_closure_required"]:
-        validate_closure_gate(value["closure"], source_fingerprint, source_receipt, routing, baseline)
+        validate_closure_gate(
+            value["closure"], source_fingerprint, source_receipt, routing, baseline, provider_binding,
+        )
 
     review = require_mapping(value["review"], "execution_control.review")
     if set(review) != {
@@ -805,9 +809,11 @@ def validate_state(state, arguments):
             raise ValueError("source_receipt does not match state source and baseline")
         if workspace_source(workspace, baseline["commit"]) != source_receipt:
             raise ValueError("source_receipt does not match the current workspace")
+    provider_binding = state.get("provider_binding")
+    workflow_provider = validate_provider_binding(provider_binding)
     routing, review_control = validate_execution_control(
         state.get("execution_control"), source_fingerprint, task_key, source_schema,
-        baseline, source_receipt,
+        baseline, source_receipt, provider_binding,
     )
     autonomy = validate_autonomy(
         state["execution_control"]["autonomy"], source_fingerprint, routing
@@ -827,7 +833,6 @@ def validate_state(state, arguments):
             raise ValueError(
                 f"source risk exceeds the frozen task profile: {sorted(undeclared_risks)[0]}"
             )
-    workflow_provider = validate_provider_binding(state.get("provider_binding"))
     runtime_binding = state.get("runtime_binding")
     if runtime_binding is not None:
         validate_runtime_binding(runtime_binding)

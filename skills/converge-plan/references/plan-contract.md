@@ -46,7 +46,7 @@
 
 任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；`workflow_provider` 与每个 stage 都必须是完整 Provider Reference v2（manifest、task contract、entrypoint 与 closure 来源），摘要 ID 一律拒绝。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
-只接受 v6 计划；用于全量收口 closure gate 时，`requirement_fingerprint` 必须等于 Routing Receipt 冻结的原始请求 SHA-256。必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix.schema_version=3` 至少一条链，每条必须有非空的 workspace 内 `entrypoints` 和 `callers`（无仓库 caller 时明确写 `external`），并覆盖全部 task `owned_paths`；`graph_receipt` 必须来自冻结 Source Receipt、声明 `codegraph`，并同时绑定链的 `id/entrypoints/callers` 投影。任一调用面或入口变化都必须重新出具回执；每条还必须覆盖 `input/freeze/effect/receipt/recovery`。`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
+只接受 v6 计划；用于全量收口 closure gate 时，`requirement_fingerprint` 必须等于 Routing Receipt 冻结的原始请求 SHA-256，所有 task 的完整 Provider Binding 必须等于 state 的冻结 Binding。必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix.schema_version=3` 至少一条链，每条必须有非空的 workspace 内 `entrypoints` 和 `callers`（无仓库 caller 时明确写 `external`），并覆盖全部 task `owned_paths`；`graph_receipt` 必须来自冻结 Source Receipt、声明 `codegraph`，并同时绑定链的 `id/entrypoints/callers` 投影。任一调用面或入口变化都必须重新出具回执；每条还必须覆盖 `input/freeze/effect/receipt/recovery`。`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 

@@ -752,6 +752,31 @@ class PlanCheckTest(unittest.TestCase):
         self.assertNotIn("preexisting.txt", output["scope_drift"])
         self.assertIn("src/b/wrong-owner.py", output["task_scope_drift"]["T1"])
 
+    def test_v6_audit_requires_the_task_source_chain_to_end_at_the_workspace_source(self):
+        value = plan([task("T1", ["src"])])
+        source = self.current_source(value)
+        fake_after = dict(source)
+        fake_after["diff_fingerprint"] = "b" * 64
+        fake_after["source_fingerprint"] = hashlib.sha256(json.dumps(
+            {key: item for key, item in fake_after.items() if key != "source_fingerprint"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        envelope = {
+            "plan": value,
+            "task_results": {"T1": {
+                "status": "DONE", "fresh_pass": True,
+                "source_before": value["baseline"]["source"], "source_after": fake_after,
+                "evidence": [evidence_receipt(fake_after, "check-T1")],
+            }},
+            "final_acceptance": final_evidence(source),
+        }
+
+        result = self.run_check("audit", envelope, self.workspace)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["source_chain_complete"])
+        self.assertFalse(json.loads(result.stdout)["complete"])
+
 
 if __name__ == "__main__":
     unittest.main()

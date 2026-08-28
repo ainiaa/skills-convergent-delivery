@@ -6,6 +6,7 @@
 
 - 调整根 `SKILL.md` 的可读性契约：移除 2700B 的静态字节上限，恢复完整、自然的路由和自治说明；继续以行为、引用和完整检查验证功能，不用压缩措辞换取测试通过。
 - 闭环修复全量收口 Plan binding：closure gate 现精确绑定 routing 的需求摘要、state baseline 的 commit/diff identity 和允许范围；矩阵必须真正覆盖而非仅与 scope 相交，Plan task 不得越出 scope。complete 会在当前 workspace 重跑并要求 Plan audit 覆盖 state acceptance，缺 audit、未完成或旧源码证据一律拒绝；图谱回执改为绑定当前源码上的 observed `codegraph` Evidence Receipt，不再接受自填输出 hash。
+- 修复 Plan v6 审计与 Provider 冻结的两条旁路：task source chain 的最终 receipt 必须等于真实 workspace Source Receipt，不能以自洽但脱离实际源码的 `source_after` 结束；全量收口 Plan 的每个 task Provider Binding 必须精确匹配 state Binding，不能在 closure 时切换 Provider 选择或理由。
 - 修复全量收口的通用状态旁路：所有 `full_closure_required` 状态的 closure gate 现在必须携带并通过完整 Plan v6，且 Plan baseline 与 state 一致、closure matrix 覆盖冻结 scope；恢复和非自治路径不能再只凭 review gate 绕过矩阵审计。
 - 修复全量收口与跨服务自治入口：`autonomy_begin --full-closure` 现明确拒绝并要求先走 Plan v6 closure matrix，避免无计划状态绕过矩阵审计；跨服务路由的 integration review budget 改由冻结路由派生。`task_profile.py` 分类 CLI 移除无效 `--request-file`，文档改为由持久化 `freeze_routing` 绑定原始请求摘要。
 - 修复自治闭环的路由与 Provider 冻结偏差：`autonomy_begin` 现冻结 `auto|pdlc|native` 的实际 Provider Binding 和 `feature|fix|refactor` 类型，并按 Provider 选择正确起始阶段；未提供冻结任务画像时按高不确定性保守进入 planned，显式画像与路径/语义风险合并后写入 Routing Receipt。全量收口改为控制器显式 `--full-closure` 决策，不再从原始请求关键词猜测；task lease identity 同时绑定 requirements，避免不同目标发生跨 worktree 冲突。

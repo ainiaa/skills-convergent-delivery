@@ -68,7 +68,7 @@ def closure_plan(requirement_fingerprint=None):
         "stage_providers": {},
     }
     provider_binding = {
-        "selection": "auto", "reason": "native workflow is frozen", "task_kind": "feature",
+        "selection": "auto", "reason": "PDLC is unavailable", "task_kind": "feature",
         "binding": binding, "binding_fingerprint": canonical_fingerprint(binding),
     }
     chain = {
@@ -546,6 +546,13 @@ class DeliveryNextTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "closure plan requirement"):
             validate_state(payload, SimpleNamespace())
 
+    def test_full_closure_rejects_a_plan_task_with_a_different_provider_binding(self):
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"]["closure"]["plan"]["tasks"][0]["provider_binding"]["selection"] = "explicit"
+
+        with self.assertRaisesRegex(ValueError, "closure plan provider binding"):
+            validate_state(payload, SimpleNamespace())
+
     def test_full_closure_rejects_a_plan_with_a_different_baseline_diff(self):
         payload = reviewed_complete_state(full_closure=True)
         plan = payload["execution_control"]["closure"]["plan"]
@@ -587,6 +594,7 @@ class DeliveryNextTest(unittest.TestCase):
             validate_closure_plan(
                 plan, routing_value,
                 {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
+                state()["provider_binding"],
             )
 
     def test_full_closure_complete_requires_a_passing_plan_audit(self):
