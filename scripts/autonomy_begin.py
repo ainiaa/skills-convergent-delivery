@@ -9,12 +9,12 @@ import sys
 import uuid
 from pathlib import Path
 
-from delivery_engine import controller_identity, provider_reference
+from delivery_engine import controller_identity, selection
 from delivery_state import DEFAULT_STATE_ROOT, state_path
 from evidence_contract import workspace_source
 from autonomy_arm import arm
 from provider_contract import canonical_fingerprint
-from task_profile import freeze_routing, infer_path_risks
+from task_profile import classify, freeze_routing, infer_path_risks
 
 
 def _git(workspace, *arguments):
@@ -25,9 +25,10 @@ def _git(workspace, *arguments):
     return result.stdout.strip()
 
 
-def _task_key(workspace, baseline, scope, acceptance):
+def _task_key(workspace, baseline, scope, acceptance, requirements):
     value = json.dumps({"workspace": str(workspace), "baseline": baseline,
-                        "scope": sorted(scope), "acceptance": sorted(acceptance)},
+                        "scope": sorted(scope), "acceptance": sorted(acceptance),
+                        "requirements": sorted(requirements)},
                        ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "task-" + hashlib.sha256(value.encode()).hexdigest()
 
@@ -60,24 +61,54 @@ def _release_lease(arguments, state):
         raise ValueError("autonomy lease cleanup failed")
 
 
+def _provider_binding(mode, task_kind):
+    result = selection(mode, None, [], task_kind)
+    if result.get("status") != "selected":
+        raise ValueError(result.get("reason") or "could not select an autonomy Provider")
+    binding = result["binding"]
+    return {
+        "selection": "auto" if mode == "auto" else "explicit",
+        "reason": result["reason"],
+        "task_kind": task_kind,
+        "binding": binding,
+        "binding_fingerprint": canonical_fingerprint(binding),
+    }
+
+
+def _task_profile(value, scope, changed_paths, risk_flags):
+    if value is None:
+        value = {
+            "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
+            "coupling": "single", "uncertainty": "high", "verification": "local",
+            "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
+            "context_isolation_benefit": False,
+        }
+    if not isinstance(value, dict):
+        raise ValueError("task profile must be an object")
+    profile = {
+        **value,
+        "risk_flags": sorted(
+            set(value.get("risk_flags", []))
+            | set(infer_path_risks([*changed_paths, *scope]))
+            | set(risk_flags or [])
+        ),
+    }
+    classify(profile)
+    return profile
+
+
 def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None,
-                  request_text=""):
+                  request_text="", mode="auto", task_kind="feature", full_closure_required=False,
+                  task_profile=None):
     workspace = Path(workspace).expanduser().resolve()
     baseline = _git(workspace, "rev-parse", "HEAD")
     source = workspace_source(workspace, baseline)
-    profile = {
-        "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
-        "coupling": "single", "uncertainty": "low", "verification": "local",
-        "risk_flags": sorted(set(infer_path_risks(source["changed_paths"])) | set(risk_flags or [])),
-        "cross_session": False, "delegable_tasks": 0, "context_isolation_benefit": False,
-    }
-    binding = {
-        "controller": "converge",
-        "workflow_provider": provider_reference("native-v1", "feature"),
-        "stage_providers": {},
-    }
-    task_key = _task_key(workspace, baseline, scope, acceptance)
-    routing = freeze_routing(profile, scope, request_text=request_text)
+    profile = _task_profile(task_profile, scope, source["changed_paths"], risk_flags)
+    task_key = _task_key(workspace, baseline, scope, acceptance, requirements)
+    routing = freeze_routing(
+        profile, scope, request_text=request_text, full_closure_required=full_closure_required,
+    )
+    provider_binding = _provider_binding(mode, task_kind)
     execution_control = {
         "routing": routing,
         "review": {
@@ -104,12 +135,12 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         "source_fingerprint": source["source_fingerprint"], "source_receipt": source,
         "execution_control": execution_control,
         "controller": controller_identity(),
-        "provider_binding": {
-            "selection": "explicit", "reason": "autonomy begin freezes native controller",
-            "task_kind": "feature", "binding": binding,
-            "binding_fingerprint": canonical_fingerprint(binding),
-        },
-        "current_stage": "scope", "requires_stability_round": False, "status": "active",
+        "provider_binding": provider_binding,
+        "current_stage": (
+            "scope" if provider_binding["binding"]["workflow_provider"]["id"] == "native-v1"
+            else "pdlc-run"
+        ),
+        "requires_stability_round": False, "status": "active",
         "ledger": {
             "completed_rounds": 0, "repair_fingerprints": [], "checks": [],
             "acceptance": [
@@ -153,10 +184,14 @@ def run(arguments):
         json.loads(arguments.verification_argv) if arguments.verification_argv is not None else None
     )
     audit_argv = json.loads(arguments.audit_argv) if arguments.audit_argv is not None else None
+    task_profile = (
+        json.loads(arguments.task_profile_json) if arguments.task_profile_json is not None else None
+    )
     run_id, writer_id = f"run-{uuid.uuid4()}", f"writer-{uuid.uuid4()}"
     state = initial_state(
         workspace, requirements, acceptance, scope, run_id, writer_id, arguments.risk_flag,
         arguments.request_file.read() if arguments.request_file is not None else "",
+        arguments.mode, arguments.task_kind, arguments.full_closure, task_profile,
     )
     state["revision"] = -1
     state = arm(
@@ -198,11 +233,16 @@ def main():
     parser.add_argument("--acceptance", action="append", default=[])
     parser.add_argument("--scope", action="append", default=[])
     parser.add_argument("--runtime", choices=("hook", "service"), default="hook")
+    parser.add_argument("--mode", choices=("auto", "pdlc", "native"), default="auto")
+    parser.add_argument("--kind", dest="task_kind", choices=("feature", "fix", "refactor"),
+                        default="feature")
     parser.add_argument("--service-runner", choices=("codex-exec-v1", "claude-code-v1"))
     parser.add_argument("--verification-argv")
     parser.add_argument("--audit-argv")
     parser.add_argument("--audit-findings-exit-code", type=int)
     parser.add_argument("--risk-flag", action="append", default=[])
+    parser.add_argument("--full-closure", action="store_true")
+    parser.add_argument("--task-profile-json")
     parser.add_argument("--request-file", type=argparse.FileType("r"))
     parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))

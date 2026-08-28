@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 import autonomy_begin
 from autonomy_arm import arm
-from autonomy_begin import initial_state
+from autonomy_begin import _task_key, initial_state
+from delivery_engine import selection
 from delivery_next import validate_state
 
 
@@ -22,7 +23,7 @@ class AutonomyBeginTest(unittest.TestCase):
     def test_explicit_semantic_risk_is_frozen_and_rejects_service_mode(self):
         state = initial_state(
             ROOT, ["change payment behavior"], ["payment is correct"], ["."],
-            "run-risk", "writer-risk", ["payment"],
+            "run-risk", "writer-risk", ["payment"], mode="native",
         )
 
         self.assertEqual("high", state["execution_control"]["routing"]["review_tier"])
@@ -32,15 +33,71 @@ class AutonomyBeginTest(unittest.TestCase):
                 "service", "codex-exec-v1", ["true"], ["python3", "-c", "pass"],
             )
 
-    def test_raw_full_closure_request_is_preserved_in_the_armed_routing_receipt(self):
+    def test_explicit_full_closure_is_preserved_in_the_armed_routing_receipt(self):
         state = initial_state(
             ROOT, ["complete task"], ["tests pass"], ["."], "run-closure", "writer-closure",
-            request_text="彻底检查并修复全部已知问题",
+            request_text="彻底检查并修复全部已知问题", mode="native", full_closure_required=True,
         )
 
         routing = state["execution_control"]["routing"]
         self.assertTrue(routing["full_closure_required"])
         self.assertEqual("planned", routing["route"])
+
+    def test_scope_risk_and_requested_task_kind_are_frozen(self):
+        state = initial_state(
+            ROOT, ["fix payment retry"], ["retry is idempotent"], ["src/payment"],
+            "run-payment", "writer-payment", mode="native", task_kind="fix",
+        )
+
+        self.assertEqual("high", state["execution_control"]["routing"]["review_tier"])
+        self.assertEqual("fix", state["provider_binding"]["task_kind"])
+
+    def test_auto_mode_freezes_the_selected_provider_and_its_stage(self):
+        selected = selection("auto", None, [], "feature")
+        state = initial_state(
+            ROOT, ["complete task"], ["tests pass"], ["."], "run-auto", "writer-auto",
+        )
+
+        self.assertEqual(selected["binding"], state["provider_binding"]["binding"])
+        expected_stage = (
+            "scope" if selected["binding"]["workflow_provider"]["id"] == "native-v1"
+            else "pdlc-run"
+        )
+        self.assertEqual(expected_stage, state["current_stage"])
+
+    def test_missing_task_profile_is_routed_conservatively(self):
+        state = initial_state(
+            ROOT, ["fix login redirect"], ["redirect is correct"], ["."],
+            "run-conservative", "writer-conservative", mode="native",
+        )
+
+        routing = state["execution_control"]["routing"]
+        self.assertEqual("planned", routing["route"])
+        self.assertEqual("normal", routing["review_tier"])
+
+    def test_explicit_task_profile_is_frozen_instead_of_a_local_default(self):
+        task_profile = {
+            "schema_version": 2, "assessment_phase": "frozen", "scope": "cross-service",
+            "coupling": "dependent", "uncertainty": "medium", "verification": "external",
+            "risk_flags": ["cross-service"], "cross_session": False, "delegable_tasks": 0,
+            "context_isolation_benefit": False,
+        }
+        state = initial_state(
+            ROOT, ["coordinate services"], ["integration passes"], ["service-a", "service-b"],
+            "run-profile", "writer-profile", mode="native", task_profile=task_profile,
+        )
+
+        routing = state["execution_control"]["routing"]
+        self.assertEqual(task_profile, routing["profile"])
+        self.assertTrue(routing["integration_required"])
+
+    def test_task_key_binds_the_requirements(self):
+        arguments = (ROOT, "a" * 40, ["."], ["tests pass"])
+
+        self.assertNotEqual(
+            _task_key(*arguments, ["fix login redirect"]),
+            _task_key(*arguments, ["fix payment retry"]),
+        )
 
     def test_service_mode_rejects_the_primary_checkout_before_acquiring_a_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -63,7 +120,7 @@ class AutonomyBeginTest(unittest.TestCase):
                     sys.executable, str(SCRIPT), "--workspace", str(ROOT),
                     "--scope", ".", "--requirement", "complete the frozen task",
                     "--acceptance", "targeted tests pass", "--state-root", str(state_root),
-                    "--lease-root", str(lease_root),
+                    "--lease-root", str(lease_root), "--mode", "native",
                 ], text=True, capture_output=True, check=False,
             )
 

@@ -37,26 +37,15 @@ PATH_RISK_MARKERS = {
     "idempotency": ("idempotency", "idempotent"),
     "timezone": ("timezone", "time-zone"),
 }
-FULL_CLOSURE_MARKERS = (
-    "全部", "所有", "深度审查", "彻底", "不留遗漏", "还有没有其他问题",
-    "all known", "all bugs", "any other bugs", "deep review", "no omissions",
-)
-
-
-def requires_full_closure(request_text):
-    if not isinstance(request_text, str):
-        raise ValueError("request text must be a string")
-    text = request_text.casefold()
-    return any(marker in text for marker in FULL_CLOSURE_MARKERS)
-
-
-def classify(value, request_text=""):
+def classify(value, full_closure_required=False):
     if not isinstance(value, dict) or set(value) != PROFILE_FIELDS:
         raise ValueError("task profile fields are invalid")
     if value.get("schema_version") != 2:
         raise ValueError("schema_version must be 2")
     if value.get("assessment_phase") not in {"provisional", "frozen"}:
         raise ValueError("assessment_phase must be provisional or frozen")
+    if not isinstance(full_closure_required, bool):
+        raise ValueError("full_closure_required must be boolean")
     if value.get("scope") not in SCOPES:
         raise ValueError("scope is invalid")
     if value.get("coupling") not in COUPLINGS:
@@ -103,7 +92,6 @@ def classify(value, request_text=""):
     else:
         recommended_route = "inline"
         reasons.append("bounded_local_task")
-    full_closure_required = requires_full_closure(request_text)
     if full_closure_required and recommended_route == "inline":
         recommended_route = "planned"
         reasons.append("full_closure_claim")
@@ -137,19 +125,7 @@ def _canonical_paths(paths):
 
 
 def _routing_decision(profile, full_closure_required):
-    decision = classify(profile)
-    if not full_closure_required:
-        return decision
-    recommended_route = decision["recommended_route"]
-    if recommended_route == "inline":
-        recommended_route = "planned"
-    return {
-        **decision,
-        "route": recommended_route if profile["assessment_phase"] == "frozen" else "planned",
-        "recommended_route": recommended_route,
-        "review_tier": "high" if profile["risk_flags"] else "normal",
-        "full_closure_required": True,
-    }
+    return classify(profile, full_closure_required)
 
 
 def _routing(profile, allowed_paths, assessment_count, request_fingerprint, full_closure_required):
@@ -182,15 +158,18 @@ def _routing(profile, allowed_paths, assessment_count, request_fingerprint, full
     }
 
 
-def freeze_routing(profile, allowed_paths, assessment_count=1, request_text=""):
+def freeze_routing(profile, allowed_paths, assessment_count=1, request_text="",
+                   full_closure_required=False):
     if not isinstance(request_text, str):
         raise ValueError("request text must be a string")
+    if not isinstance(full_closure_required, bool):
+        raise ValueError("full_closure_required must be boolean")
     return _routing(
         profile,
         allowed_paths,
         assessment_count,
         hashlib.sha256(request_text.encode("utf-8")).hexdigest(),
-        requires_full_closure(request_text),
+        full_closure_required,
     )
 
 
@@ -229,12 +208,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="-")
     parser.add_argument("--request-file", type=argparse.FileType("r"))
+    parser.add_argument("--full-closure", action="store_true")
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("task profile input must use stdin")
         request_text = arguments.request_file.read() if arguments.request_file is not None else ""
-        print(json.dumps(classify(json.load(sys.stdin), request_text), sort_keys=True))
+        print(json.dumps(classify(json.load(sys.stdin), arguments.full_closure), sort_keys=True))
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "error", "message": str(error)}, sort_keys=True))

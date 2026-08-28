@@ -23,7 +23,7 @@ Provider Schema v2；pdlc-v1/native-v1，`engine` 只由 binding 派生，不能
 
 ## 路由
 
-`planned_task=true` 仅执行 capsule；否则按 [任务路由](references/task-routing.md) 用 `task_profile.py --request-file <raw-request>` 冻结画像；`full_closure_required=true` 禁止 `inline`。仅当路由不是 `inline`、需 worker/恢复或请求并发/无响应时，读 [计划执行与无响应保护](references/execution-control.md)。
+`planned_task=true` 仅执行 capsule；否则按 [任务路由](references/task-routing.md) 用 `task_profile.py --request-file <raw-request> [--full-closure]` 冻结画像；全量收口只能由控制器作出明确冻结决定，不能由关键词猜测；`full_closure_required=true` 禁止 `inline`。仅当路由不是 `inline`、需 worker/恢复或请求并发/无响应时，读 [计划执行与无响应保护](references/execution-control.md)。
 
 复杂、未知或长任务用 `converge-plan`，按独立可验收的业务切片执行；仅 `cross_session` 进 `converge-batch` 并先获 commit 授权。全量收口必须先用 `converge-plan` 建矩阵，终态须当前源码的 closure gate；缺项标 `uncovered`，不得宣称全部完成；见 [Plan Contract](skills/converge-plan/references/plan-contract.md)。
 

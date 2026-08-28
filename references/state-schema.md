@@ -179,7 +179,9 @@ python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_arm.py" --state <derived-path> --r
   --acceptance <item> --write --lease-root <root> --state-root <state-root> --repo-id <repo> \
   --task-key <task> --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_begin.py" --workspace <absolute-worktree> \
-  --scope <relative-path> --requirement <item> --acceptance <criterion>
+  --scope <relative-path> --requirement <item> --acceptance <criterion> \
+  --mode <auto|pdlc|native> --kind <feature|fix|refactor> \
+  --task-profile-json '<frozen-profile-json>' [--full-closure]
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" append-runner-launches --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --run-id <run> \

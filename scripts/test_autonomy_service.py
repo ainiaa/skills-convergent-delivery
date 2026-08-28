@@ -27,7 +27,15 @@ class AutonomyServiceTest(unittest.TestCase):
     def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service"):
         root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
-        initial = initial_state(root, ["complete task"], ["tests pass"], ["."], "run-service", "writer-service")
+        initial = initial_state(
+            root, ["complete task"], ["tests pass"], ["."], "run-service", "writer-service",
+            mode="native", task_profile={
+                "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
+                "coupling": "single", "uncertainty": "low", "verification": "local",
+                "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
+                "context_isolation_benefit": False,
+            },
+        )
         if stage is not None:
             initial["current_stage"] = stage
         acquired = subprocess.run([

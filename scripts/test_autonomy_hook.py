@@ -29,7 +29,10 @@ class AutonomyHookTest(unittest.TestCase):
     def managed_hook_state(self, directory):
         workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
-        initial = initial_state(workspace, ["complete task"], ["tests pass"], ["."], "run-hook", "writer-hook")
+        initial = initial_state(
+            workspace, ["complete task"], ["tests pass"], ["."], "run-hook", "writer-hook",
+            mode="native",
+        )
         acquired = subprocess.run([
             sys.executable, str(SCRIPT.with_name("delivery_lease.py")), "acquire",
             "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],

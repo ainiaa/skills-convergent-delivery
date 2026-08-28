@@ -1,4 +1,4 @@
-# Task Routing Contract v2
+# Task Routing Contract v3
 
 执行拓扑与风险强度分开判断。先由控制器根据需求、调用链和真实验证方式填写任务画像，再由 `scripts/task_profile.py` 确定性选择 `inline | planned | delegated | batch`。不得按文件数或主观总分路由。
 
@@ -16,7 +16,9 @@
 {"schema_version":2,"assessment_phase":"frozen","scope":"local","coupling":"single","uncertainty":"low","verification":"local","risk_flags":[],"cross_session":false,"delegable_tasks":0,"context_isolation_benefit":false}
 ```
 
-将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 可查看分类；正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths)` 生成 Routing Receipt v2。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
+将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 可查看分类；全量收口由控制器明确传入 `--full-closure`，原始请求只用于绑定摘要，绝不能由关键词、否定词或同义表达推断。正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths, full_closure_required=<bool>)` 生成 Routing Receipt v3。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
+
+`autonomy_begin.py` 应接收控制器已冻结的同形 `--task-profile-json`；省略时按 `uncertainty=high` 保守路由，不能把未知任务假定为低风险。路径和显式 `--risk-flag` 只会追加风险，绝不能降低画像声明的风险。
 
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
 

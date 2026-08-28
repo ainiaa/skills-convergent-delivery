@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from task_profile import classify, freeze_routing, infer_path_risks, requires_full_closure
+from task_profile import classify, freeze_routing, infer_path_risks
 
 
 def profile(**overrides):
@@ -32,21 +32,27 @@ class TaskProfileTest(unittest.TestCase):
     def test_local_known_task_stays_inline(self):
         self.assertEqual(classify(profile())["route"], "inline")
 
-    def test_universal_completion_claim_forces_a_plan_and_is_exposed_to_the_controller(self):
-        result = classify(profile(), "请深度审查并修复全部已知问题，不留遗漏")
+    def test_explicit_full_closure_forces_a_plan_and_is_exposed_to_the_controller(self):
+        result = classify(profile(), full_closure_required=True)
 
         self.assertTrue(result["full_closure_required"])
         self.assertEqual("planned", result["route"])
         self.assertIn("full_closure_claim", result["reasons"])
-        self.assertTrue(requires_full_closure("Are there any other bugs? Fix all of them."))
 
-    def test_cli_accepts_the_raw_request_only_from_a_file(self):
+    def test_raw_request_does_not_override_explicit_closure_intent(self):
+        self.assertFalse(
+            freeze_routing(
+                profile(), ["."], request_text="不用深度审查，只修复登录问题",
+            )["full_closure_required"]
+        )
+
+    def test_cli_accepts_explicit_full_closure_with_a_raw_request_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             request_path = Path(temporary) / "request.txt"
             request_path.write_text("彻底检查所有问题", encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(Path(__file__).with_name("task_profile.py")),
-                 "--request-file", str(request_path)],
+                 "--request-file", str(request_path), "--full-closure"],
                 input=json.dumps(profile()), text=True, capture_output=True, check=False,
             )
 
@@ -122,8 +128,9 @@ class TaskProfileTest(unittest.TestCase):
         self.assertEqual(value, routing["profile"])
         self.assertEqual(64, len(routing["profile_fingerprint"]))
 
-    def test_frozen_routing_binds_the_raw_request_closure_decision(self):
-        routing = freeze_routing(profile(), ["."], request_text="彻底检查所有问题")
+    def test_frozen_routing_binds_an_explicit_closure_decision(self):
+        routing = freeze_routing(profile(), ["."], request_text="彻底检查所有问题",
+                                 full_closure_required=True)
 
         self.assertTrue(routing["full_closure_required"])
         self.assertEqual("planned", routing["route"])

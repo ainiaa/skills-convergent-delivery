@@ -202,7 +202,7 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     payload["execution_control"]["routing"] = freeze_routing(task_profile(
         scope="cross-service" if integration_required else "cross-module",
         risk_flags=["cross-service"] if integration_required else [],
-    ), ["."], request_text=closure_request_text)
+    ), ["."], request_text=closure_request_text, full_closure_required=full_closure)
     review = payload["execution_control"]["review"]
     review["integration_budget_remaining"] = integration_budget
     base = {
@@ -406,7 +406,7 @@ class DeliveryNextTest(unittest.TestCase):
     def test_caller_cannot_drop_a_frozen_full_closure_requirement(self):
         payload = upgrade_state(state())
         payload["execution_control"]["routing"] = freeze_routing(
-            task_profile(), ["."], request_text="修复全部已知问题"
+            task_profile(), ["."], request_text="修复全部已知问题", full_closure_required=True,
         )
         payload["execution_control"]["routing"]["full_closure_required"] = False
 
@@ -416,7 +416,8 @@ class DeliveryNextTest(unittest.TestCase):
     def test_full_closure_route_requires_one_explicit_pending_or_terminal_gate(self):
         payload = upgrade_state(state())
         payload["execution_control"]["routing"] = freeze_routing(
-            task_profile(), ["."], request_text="彻底检查并修复全部已知问题"
+            task_profile(), ["."], request_text="彻底检查并修复全部已知问题",
+            full_closure_required=True,
         )
 
         with self.assertRaisesRegex(ValueError, "closure gate"):
@@ -425,7 +426,8 @@ class DeliveryNextTest(unittest.TestCase):
     def test_full_closure_complete_requires_a_current_passing_gate(self):
         payload = reviewed_complete_state()
         routing_value = freeze_routing(
-            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题"
+            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题",
+            full_closure_required=True,
         )
         payload["execution_control"]["routing"] = routing_value
         payload["execution_control"]["closure"] = {
@@ -440,7 +442,8 @@ class DeliveryNextTest(unittest.TestCase):
     def test_full_closure_gate_requires_one_current_independent_closure_review(self):
         payload = reviewed_complete_state()
         routing_value = freeze_routing(
-            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题"
+            task_profile(scope="cross-module"), ["."], request_text="修复全部已知问题",
+            full_closure_required=True,
         )
         payload["execution_control"]["routing"] = routing_value
         payload["execution_control"]["closure"] = {
@@ -484,7 +487,7 @@ class DeliveryNextTest(unittest.TestCase):
     def test_full_closure_routes_final_verification_to_one_closure_review(self):
         payload = state(current_stage="verify-final")
         routing_value = freeze_routing(
-            task_profile(), ["."], request_text="彻底检查所有问题"
+            task_profile(), ["."], request_text="彻底检查所有问题", full_closure_required=True,
         )
         payload["execution_control"]["routing"] = routing_value
         payload["execution_control"]["closure"] = {
