@@ -119,14 +119,14 @@ def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     }
 
 
-def graph_receipt(source, chains):
+def graph_receipt(source, chains, tool="codegraph"):
     projection = [
         {key: chain[key] for key in ("id", "entrypoints", "callers")}
         for chain in chains
     ]
     value = {
         "schema_version": 1,
-        "tool": "codegraph",
+        "tool": tool,
         "source_fingerprint": source["source_fingerprint"],
         "chains_fingerprint": hashlib.sha256(
             json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -305,6 +305,19 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertFalse(json.loads(result.stdout)["closure_complete"])
+
+    def test_closure_matrix_accepts_codebase_memory_graph_receipts_only(self):
+        value = plan([task("T1", ["src"])])
+        value["closure_matrix"]["graph_receipt"] = graph_receipt(
+            value["baseline"]["source"], value["closure_matrix"]["chains"],
+            "codebase-memory-mcp",
+        )
+        self.assertEqual(0, self.run_check("validate", value).returncode)
+
+        value["closure_matrix"]["graph_receipt"] = graph_receipt(
+            value["baseline"]["source"], value["closure_matrix"]["chains"], "unknown-graph",
+        )
+        self.assertNotEqual(0, self.run_check("validate", value).returncode)
 
     def test_closure_matrix_must_cover_every_owned_path_with_entrypoints_and_callers(self):
         value = plan([task("T1", ["src/service", "tests/service"])])

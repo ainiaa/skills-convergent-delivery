@@ -26,6 +26,6 @@
 
 ## fast path
 
-通用 fast path 已停用：`git diff --ignore-all-space` 无法证明 Markdown 等文档不存在语义变化。`fast_path.py` 会确定性拒绝，所有改动均进入完整画像、TDD 和复核路径；只有未来引入 formatter 专属且可验证的语义安全 contract 后才能重新开放。
+通用 fast path 已停用：`git diff --ignore-all-space` 无法证明 Markdown 等文档不存在语义变化。所有改动均进入完整画像、TDD 和复核路径；只有未来引入 formatter 专属且可验证的语义安全 contract 后才能重新开放。
 
 代码逻辑、运行时配置、依赖升级、迁移、测试语义变化、未知验证、任一风险或范围漂移都不符合 fast path，立即按完整画像路由。fast path 不是低风险业务变更的别名，不能跳过 TDD、验收或 blind review。

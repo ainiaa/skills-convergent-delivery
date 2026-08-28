@@ -47,7 +47,6 @@ REQUIRED_SOURCE_FILES=(
   scripts/delivery_state.py
   scripts/delivery_task_key.py
   scripts/evidence_contract.py
-  scripts/fast_path.py
   scripts/worker_profile.py
   scripts/runner_registry.py
   scripts/runner_launch.py
@@ -61,7 +60,6 @@ REQUIRED_SOURCE_FILES=(
   scripts/run_contract.py
   scripts/task_profile.py
   scripts/test_trigger_evals.py
-  scripts/test_fast_path.py
   scripts/test_runner_lifecycle.py
   scripts/test_multi_model_eval.py
   scripts/runtime_adapter.py
@@ -299,6 +297,13 @@ do_doctor() {
   else
     echo "  Python:  missing"
     failed=1
+  fi
+  local codegraph_version
+  codegraph_version="$(codegraph --version 2>/dev/null || true)"
+  if [[ -n "$codegraph_version" ]]; then
+    echo "  CodeGraph: ${codegraph_version}"
+  else
+    echo "  CodeGraph: unavailable (required for full-closure audits)"
   fi
 
   local source

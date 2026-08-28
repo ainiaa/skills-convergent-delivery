@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -52,11 +53,17 @@ def routing(profile=None, allowed_paths=None):
     return freeze_routing(profile or task_profile(), allowed_paths or ["."])
 
 
-def graph_receipt(source_fingerprint, scope_fingerprint):
+def graph_receipt(source_fingerprint, scope_fingerprint, tool="codegraph"):
+    evidence = copy.deepcopy(GRAPH_EVIDENCE)
+    evidence["argv"][0] = tool
+    evidence["command"] = shlex.join(evidence["argv"])
+    evidence["receipt_fingerprint"] = runner_fingerprint({
+        key: item for key, item in evidence.items() if key != "receipt_fingerprint"
+    })
     value = {
-        "schema_version": 1, "tool": "codegraph",
+        "schema_version": 1, "tool": tool,
         "source_fingerprint": source_fingerprint, "scope_fingerprint": scope_fingerprint,
-        "output_fingerprint": GRAPH_EVIDENCE["stdout_fingerprint"], "evidence": GRAPH_EVIDENCE,
+        "output_fingerprint": evidence["stdout_fingerprint"], "evidence": evidence,
     }
     return {**value, "receipt_fingerprint": runner_fingerprint(value)}
 
@@ -607,6 +614,29 @@ class DeliveryNextTest(unittest.TestCase):
     def test_full_closure_rejects_a_tampered_graph_receipt(self):
         payload = reviewed_complete_state(full_closure=True)
         payload["execution_control"]["closure"]["graph_receipt"]["output_fingerprint"] = "b" * 64
+
+        with self.assertRaisesRegex(ValueError, "graph receipt"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_accepts_a_codebase_memory_graph_receipt(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        closure["graph_receipt"] = graph_receipt(
+            payload["source_fingerprint"],
+            payload["execution_control"]["routing"]["profile_fingerprint"],
+            "codebase-memory-mcp",
+        )
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_full_closure_rejects_an_unknown_graph_receipt_tool(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        closure["graph_receipt"] = graph_receipt(
+            payload["source_fingerprint"],
+            payload["execution_control"]["routing"]["profile_fingerprint"],
+            "unknown-graph",
+        )
 
         with self.assertRaisesRegex(ValueError, "graph receipt"):
             validate_state(payload, SimpleNamespace())

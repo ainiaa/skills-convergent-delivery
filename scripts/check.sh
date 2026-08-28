@@ -2,6 +2,15 @@
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 
+FULL_AUTONOMOUS_EVAL=false
+if [[ $# -gt 0 ]]; then
+  if [[ $# -ne 1 || $1 != "--full" ]]; then
+    echo "usage: bash scripts/check.sh [--full]" >&2
+    exit 2
+  fi
+  FULL_AUTONOMOUS_EVAL=true
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
@@ -43,7 +52,16 @@ python3 scripts/test_autonomy_preflight.py
 python3 scripts/test_autonomy_service.py
 python3 scripts/test_autonomy_arm.py
 python3 scripts/test_autonomy_begin.py
-python3 scripts/test_autonomous_delivery_eval.py
+if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
+  python3 scripts/test_autonomous_delivery_eval.py
+else
+  python3 scripts/test_autonomous_delivery_eval.py \
+    AutonomousDeliveryEvalTest.test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts \
+    AutonomousDeliveryEvalTest.test_command_exits_nonzero_when_a_bound_check_fails \
+    AutonomousDeliveryEvalTest.test_trusted_execution_uses_only_a_verified_controller_snapshot \
+    AutonomousDeliveryEvalTest.test_catalog_rejects_transcript_storage_and_missing_trajectory_coverage
+  echo "Full autonomous trajectory skipped; run bash scripts/check.sh --full before release."
+fi
 python3 scripts/test_delivery_lease.py
 python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
@@ -59,7 +77,6 @@ python3 scripts/test_delivery_state.py
 python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
-python3 scripts/test_fast_path.py
 python3 scripts/test_worker_profile.py
 python3 scripts/test_runner_registry.py
 python3 scripts/test_codex_exec_runner.py

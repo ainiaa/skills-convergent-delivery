@@ -110,12 +110,14 @@ class ControllerSnapshotTest(unittest.TestCase):
     def test_self_modification_keeps_the_frozen_snapshot_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
-            descriptor = controller_snapshot.create_snapshot(source, Path(directory) / "control")
+            descriptor = controller_snapshot.create_snapshot(
+                source, Path(directory) / "control", profile="extended"
+            )
             (source / controller_snapshot.CONTROLLER_FILES[0]).write_text("self modified\n", encoding="utf-8")
 
             identity = controller_snapshot.validate_snapshot(descriptor)
             self.assertTrue((Path(descriptor["root"]) / "scripts/delivery_next.py").is_file())
-            self.assertTrue((Path(descriptor["root"]) / "scripts/fast_path.py").is_file())
+            self.assertFalse((Path(descriptor["root"]) / "scripts/fast_path.py").exists())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_registry.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_flow.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_dispatch.py").is_file())
@@ -132,7 +134,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "references/reporting.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/tdd-providers.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/worker-runners.md").is_file())
-            self.assertIn("scripts/fast_path.py", descriptor["files"])
+            self.assertNotIn("scripts/fast_path.py", descriptor["files"])
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
             self.assertIn("scripts/role_flow.py", descriptor["files"])
             self.assertIn("scripts/role_dispatch.py", descriptor["files"])
@@ -146,7 +148,23 @@ class ControllerSnapshotTest(unittest.TestCase):
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())
 
         self.assertEqual("1.0.0", identity["package_version"])
+        self.assertEqual("extended", identity["profile"])
         self.assertNotEqual(str(source), descriptor["root"])
+
+    def test_core_snapshot_omits_optional_workers_and_direct_test_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            self.assertEqual("core", descriptor["profile"])
+            self.assertNotIn("scripts/autonomy_begin.py", descriptor["files"])
+            self.assertNotIn("scripts/multi_model.py", descriptor["files"])
+            self.assertNotIn("scripts/test_delivery_next.py", descriptor["files"])
+            with self.assertRaisesRegex(ValueError, "not authorized"):
+                controller_snapshot.trusted_command(
+                    descriptor_path, "scripts/test_delivery_next.py", []
+                )
 
     def test_version_only_change_creates_a_distinct_content_addressed_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:

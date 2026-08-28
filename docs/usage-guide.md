@@ -13,6 +13,7 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 - 使用远程安装时需要 Bash、`curl`、`git` 和可访问 GitHub 的网络。
 - 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.9 或更高版本。
+- 只有执行全量收口审计时才需要 `codegraph` 或 `codebase-memory-mcp`；`--doctor` 会显示 CodeGraph 是否可用。
 - 安装器不需要 `codex` 或 `claude` 命令行工具，但对应运行时必须已安装才能使用 Skill。
 - 已打开的 Codex 或 Claude Code 需要重启，或按各自的 Skill 刷新机制重新加载。
 
@@ -36,7 +37,7 @@ bash install.sh --upgrade --target all
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 五个入口是否来自同一版本、必需文件、Git、Python 和 Provider 解析，不修改安装。
+`--doctor` 检查 Suite 五个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
 
 安装器先预检两个运行时的全部五个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
@@ -85,13 +86,15 @@ PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Conve
 
 `converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 
+Controller Snapshot 默认使用最小的 `core` profile；需要自治或多模型运行时时，创建时显式传入 `--profile extended`。快照中不能直接执行测试脚本，受保护的自治评测由扩展快照内的评测器按其固定题库启动。
+
 ## 维护版本
 
 发布新版本时：
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和五个 Skill 的官方 quick_validate。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
+3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和五个 Skill 的官方 quick_validate；例行检查只运行自治评测的快速契约用例。发布前再运行 `bash scripts/check.sh --full` 或 `python3 scripts/autonomous_delivery_eval.py --catalog references/autonomous-delivery-evaluation.json --execute` 执行完整轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
 不要为 Codex 和 Claude Code 复制两份 Skill 源码；如需调整流程，修改仓库中的对应 Skill。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

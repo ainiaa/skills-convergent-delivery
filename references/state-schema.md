@@ -19,9 +19,9 @@
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
     "package_version": "0.0.21",
-    "protocol_version": 15,
+    "protocol_version": 16,
     "protocol_fingerprint": "<sha256>",
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.0.21", "protocol_version": 15, "protocol_fingerprint": "<sha256>", "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.0.21", "protocol_version": 16, "protocol_fingerprint": "<sha256>", "profile": "core", "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
@@ -50,7 +50,7 @@
 }
 ```
 
-`package_version` 只说明安装包版本。Snapshot closure 包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper，以及创建时 registry 扫描发现的全部 Provider manifest。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径。旧快照只允许协议明示的精确清场兼容，不能伪造迁移。
+`package_version` 只说明安装包版本。Snapshot closure 的 `profile=core` 只包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper；`profile=extended` 额外包含自治和多模型运行时及其受保护的评测输入。两种 profile 都冻结创建时 registry 扫描发现的全部 Provider manifest。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径或测试脚本。旧快照只允许协议明示的精确清场兼容，不能伪造迁移。
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 

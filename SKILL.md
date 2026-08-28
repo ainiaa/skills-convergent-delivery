@@ -2,14 +2,14 @@
 name: converge
 description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/使用多模型配合开发/闭环完成. Excludes read-only review and multi-Batch."
 metadata:
-  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
+  compatibility: Requires Git and Python 3.9+; full-closure audits require CodeGraph or codebase-memory-mcp. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge：单任务闭环执行
 
 Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-review`；见 `references/activation.md`。
 
-闭环 arm v11；终态只认新鲜证据。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
+需要持久状态的显式闭环使用 arm v11；终态只认新鲜证据。简单 `inline` 不创建 run。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
 
 ## 开始
 

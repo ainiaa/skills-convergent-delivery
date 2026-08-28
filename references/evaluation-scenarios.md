@@ -5,7 +5,7 @@
 | 场景 | 输入特征 | 预期行为 |
 |---|---|---|
 | 触发隔离 | 分别请求实现、只要计划、只读检查、执行多 Batch 计划、验收 Converge 规则 | 依次只选择 `converge`、`converge-plan`、`converge-review`、`converge-batch`、`converge-eval`；角色不互相吞并。 |
-| fast path | 通用 fast path 停用 | `fast_path.py` 确定性拒绝；Git 空白 diff 不足以证明 Markdown 等文档无语义变化。 |
+| fast path | 通用 fast path 停用 | 路由契约拒绝通用 fast path；Git 空白 diff 不足以证明 Markdown 等文档无语义变化。 |
 | fast path 拒绝 | 所有改动 | 进入完整画像、TDD 与相应 review，直到 formatter 专属 contract 可证明语义安全。 |
 | 计划拆分 | 跨层需求包含文档、测试、实现和验证 | 先形成多个单结果 task；每个 step 只有一个动作，不在一个模型步骤生成全部产物。 |
 | PDLC 委托屏障 | PDLC 可用且任务复杂 | 按独立业务切片形成有限 Provider Run；每个 run 完整委托 PDLC，主上下文不生成 PDLC 内部产物。 |

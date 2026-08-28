@@ -186,9 +186,30 @@ class InstallTest(unittest.TestCase):
             self.assertIn("Python:", doctor.stdout)
             self.assertIn("Provider:", doctor.stdout)
             self.assertIn("Activation:", doctor.stdout)
+            self.assertIn("CodeGraph:", doctor.stdout)
             self.assertIn("$converge", doctor.stdout)
             self.assertIn("AGENTS.md", doctor.stdout)
             self.assertNotIn('"binding"', doctor.stdout)
+
+    def test_doctor_warns_when_codegraph_is_unavailable_for_full_closure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bin_dir = home / "bin"
+            bin_dir.mkdir()
+            codegraph = bin_dir / "codegraph"
+            codegraph.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            codegraph.chmod(0o755)
+
+            installed = self.run_installer(home, "--target", "codex")
+            doctor = self.run_installer_from(
+                home, ROOT, "--doctor", "--target", "codex", "--offline", path=bin_dir,
+            )
+
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            self.assertEqual(0, doctor.returncode, doctor.stderr)
+            self.assertIn(
+                "CodeGraph: unavailable (required for full-closure audits)", doctor.stdout,
+            )
 
     def test_version_and_doctor_reject_a_linked_suite_with_missing_assets(self):
         with tempfile.TemporaryDirectory() as directory:

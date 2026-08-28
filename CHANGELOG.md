@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 全量收口图谱回执现在只接受 `codegraph` 或已评估的 `codebase-memory-mcp`，并将回执声明与实际执行命令名称、当前源码和输出指纹一同绑定；未知工具或伪造命令不再能放行。未安装 CodeGraph 时可使用后者的本地 CLI 图查询，但不会接受任意 MCP/命令作为替代。
+- Controller Snapshot 协议升级为 v16：默认 `core` profile 只冻结最小控制面，`extended` profile 显式保留自治与多模型运行时；trusted runner 同时拒绝直接执行测试脚本。多模型和自治评测的快照调用已改为显式请求 `extended`，避免依赖隐式全量复制。
+- `scripts/check.sh` 默认不再重复执行完整自治轨迹，只运行快速契约集；`--full` 与 `autonomous_delivery_eval.py --execute` 仍执行完整 47 场景评测，发布前可显式使用。补齐相应命令行、快照和回归测试。
+- 删除已停用的 `fast_path` 实现及其测试、安装和文档引用；doctor 现在实际探测并报告 CodeGraph 可用性，避免仅根据命令存在与否误报。
 - 调整根 `SKILL.md` 的可读性契约：移除 2700B 的静态字节上限，恢复完整、自然的路由和自治说明；继续以行为、引用和完整检查验证功能，不用压缩措辞换取测试通过。
 - 闭环修复全量收口 Plan binding：closure gate 现精确绑定 routing 的需求摘要、state baseline 的 commit/diff identity 和允许范围；矩阵必须真正覆盖而非仅与 scope 相交，Plan task 不得越出 scope。complete 会在当前 workspace 重跑并要求 Plan audit 覆盖 state acceptance，缺 audit、未完成或旧源码证据一律拒绝；图谱回执改为绑定当前源码上的 observed `codegraph` Evidence Receipt，不再接受自填输出 hash。
 - 修复 Plan v6 审计与 Provider 冻结的两条旁路：task source chain 的最终 receipt 必须等于真实 workspace Source Receipt，不能以自洽但脱离实际源码的 `source_after` 结束；全量收口 Plan 的每个 task Provider Binding 必须精确匹配 state Binding，不能在 closure 时切换 Provider 选择或理由。

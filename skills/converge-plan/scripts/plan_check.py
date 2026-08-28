@@ -13,7 +13,10 @@ if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
 from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source
-from delivery_next import validate_provider_binding as validate_complete_provider_binding
+from delivery_next import (
+    GRAPH_RECEIPT_TOOLS,
+    validate_provider_binding as validate_complete_provider_binding,
+)
 
 
 TASK_STATUSES = {"pending"}
@@ -252,7 +255,7 @@ def validate_closure_matrix(value, final_acceptance, source_fingerprint):
     receipt = value["graph_receipt"]
     fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "receipt_fingerprint"}
     if not isinstance(receipt, dict) or set(receipt) != fields or receipt.get("schema_version") != 1 \
-            or receipt.get("tool") != "codegraph":
+            or receipt.get("tool") not in GRAPH_RECEIPT_TOOLS:
         raise ValueError("closure_matrix graph_receipt is invalid")
     if require_sha256(receipt["source_fingerprint"], "closure_matrix graph source") != source_fingerprint:
         raise ValueError("closure_matrix graph receipt must match the frozen Source Receipt")

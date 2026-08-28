@@ -64,6 +64,7 @@ WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
 ROUTES = {"inline", "planned", "delegated", "batch"}
 REVIEW_TIERS = {"low", "normal", "high"}
+GRAPH_RECEIPT_TOOLS = frozenset({"codegraph", "codebase-memory-mcp"})
 PROGRESS_EVENTS = {"heartbeat", "milestone"}
 PROGRESS_PHASES = {
     "understanding", "planning", "reproducing", "testing", "implementing",
@@ -275,7 +276,7 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
         "output_fingerprint", "evidence", "receipt_fingerprint",
     }
     if not isinstance(graph, dict) or set(graph) != graph_fields \
-            or graph.get("schema_version") != 1 or graph.get("tool") != "codegraph":
+            or graph.get("schema_version") != 1 or graph.get("tool") not in GRAPH_RECEIPT_TOOLS:
         raise ValueError("closure gate graph receipt is invalid")
     if graph["source_fingerprint"] != source_fingerprint \
             or graph["scope_fingerprint"] != routing["profile_fingerprint"]:
@@ -283,9 +284,9 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
     require_sha256(graph.get("output_fingerprint"), "closure gate graph output")
     if source_receipt is None or not valid_evidence_receipts([graph.get("evidence")], source_receipt):
         raise ValueError("closure gate graph receipt evidence is invalid")
-    if Path(graph["evidence"]["argv"][0]).name != "codegraph" \
+    if Path(graph["evidence"]["argv"][0]).name != graph["tool"] \
             or graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
-        raise ValueError("closure gate graph receipt does not bind a CodeGraph output")
+        raise ValueError("closure gate graph receipt does not bind its graph-tool output")
     if graph["receipt_fingerprint"] != runner_fingerprint({
             key: item for key, item in graph.items() if key != "receipt_fingerprint"
     }):

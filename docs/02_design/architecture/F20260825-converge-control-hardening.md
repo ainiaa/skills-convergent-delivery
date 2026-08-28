@@ -12,7 +12,7 @@
 | 评测证据可在 candidate tree 内伪造、registry 顺序敏感 | Sample v4 强制候选仓库外的 absolute evaluator-attested artifact；registry 比较使用集合 | `skills/converge-eval/scripts/test_eval_kernel.py` | 不宣称 evidence 是 host-signed：当前宿主没有可验证的 evaluator-output artifact API |
 | 老快照继续执行旧安全规则 | Controller Protocol v12 阻止旧快照执行，唯一兼容动作是释放自身 lease | `scripts/test_controller_snapshot.py` | 不热修已冻结脚本：会破坏快照可审计性 |
 | 简单任务加载无关控制细节 | 根入口仅在非 inline/worker/recovery 路径读取 execution-control | `scripts/test_skill_contracts.py` | 不拆出新入口 skill，现有渐进披露已足够 |
-| fast path 可为语义文档签发 receipt | 通用 fast path 已停用；Git 空白 diff 不能证明 Markdown 等文档无语义变化 | `scripts/test_fast_path.py`：CLI 和 helper 均确定性拒绝 | 仅在未来提供 formatter 专属且可验证的语义安全 contract 时重新开放 |
+| fast path 可为语义文档签发 receipt | 通用 fast path 已停用；Git 空白 diff 不能证明 Markdown 等文档无语义变化 | 路由契约测试：所有改动进入完整路径 | 仅在未来提供 formatter 专属且可验证的语义安全 contract 时重新开放 |
 | 不同 worker 可能临时变更模型、effort 或权限 | Worker Profile v1 冻结 requested/effective model、effort、权限与有限预算；静态 registry 只暴露 Codex CLI 和只读 OpenAI-compatible 两种 runner | `scripts/test_worker_profile.py`、`scripts/test_runner_registry.py` | 不引入通用 agent framework、broker 或第二状态：控制器已有计划、lease 和完成门禁 |
 | 外部 CLI/API leaf 容易伪装成宿主 subagent | Codex launch 和 OpenAI-compatible HTTPS request 默认仅计划，真实执行要显式 opt-in；receipt 明确标为 `runner`，不进入 `runtime_binding`/`host_observed` | `scripts/test_codex_exec_runner.py`、`scripts/test_openai_compatible_runner.py` | 不伪造 Codex Desktop host bridge：宿主未公开 selector/tree receipt 前，runner 结果仍由 controller 复核 |
 

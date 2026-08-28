@@ -85,7 +85,9 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_trusted_execution_uses_only_a_verified_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
-            descriptor = create_snapshot(CATALOG.parent.parent, Path(directory) / "control")
+            descriptor = create_snapshot(
+                CATALOG.parent.parent, Path(directory) / "control", profile="extended"
+            )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
             result = subprocess.run(
                 [
@@ -104,7 +106,9 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_trusted_execution_runs_the_snapshot_checks(self):
         with tempfile.TemporaryDirectory() as directory:
-            descriptor = create_snapshot(CATALOG.parent.parent, Path(directory) / "control")
+            descriptor = create_snapshot(
+                CATALOG.parent.parent, Path(directory) / "control", profile="extended"
+            )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
             result = subprocess.run(
                 [
@@ -122,7 +126,9 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_trusted_evaluation_rejects_the_mutable_workspace_evaluator(self):
         with tempfile.TemporaryDirectory() as directory:
-            descriptor = create_snapshot(CATALOG.parent.parent, Path(directory) / "control")
+            descriptor = create_snapshot(
+                CATALOG.parent.parent, Path(directory) / "control", profile="extended"
+            )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
 
             with self.assertRaisesRegex(ValueError, "trusted snapshot"):

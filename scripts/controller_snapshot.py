@@ -14,7 +14,7 @@ from pathlib import Path
 from provider_contract import provider_manifest_paths
 
 
-CONTROLLER_FILES = (
+EXTENDED_CONTROLLER_FILES = (
     "references/execution-control.md",
     "references/execution-protocol.md",
     "scripts/delivery_engine.py",
@@ -25,7 +25,6 @@ CONTROLLER_FILES = (
     "scripts/delivery_state.py",
     "scripts/delivery_task_key.py",
     "scripts/evidence_contract.py",
-    "scripts/fast_path.py",
     "scripts/worker_profile.py",
     "scripts/runner_registry.py",
     "scripts/runner_launch.py",
@@ -64,7 +63,7 @@ CONTROLLER_FILES = (
     "scripts/test_delivery_state.py",
     "scripts/test_runtime_scenarios.py",
 )
-CONTROL_RESOURCE_FILES = (
+EXTENDED_CONTROL_RESOURCE_FILES = (
     "SKILL.md",
     "references/activation.md",
     "references/evaluation-scenarios.md",
@@ -95,13 +94,69 @@ CONTROL_RESOURCE_FILES = (
     "skills/converge-eval/references/evaluation-contract.json",
     "skills/converge-eval/scripts/eval_contract.py",
 )
+CORE_CONTROLLER_FILES = (
+    "references/execution-control.md",
+    "references/execution-protocol.md",
+    "scripts/delivery_engine.py",
+    "scripts/delivery_lease.py",
+    "scripts/delivery_next.py",
+    "scripts/delivery_progress.py",
+    "scripts/delivery_report.py",
+    "scripts/delivery_state.py",
+    "scripts/delivery_task_key.py",
+    "scripts/evidence_contract.py",
+    "scripts/worker_profile.py",
+    "scripts/runner_registry.py",
+    "scripts/runner_contract.py",
+    "scripts/role_result.py",
+    "scripts/provider_contract.py",
+    "scripts/run_contract.py",
+    "scripts/task_profile.py",
+    "scripts/trigger_eval.py",
+    "scripts/runtime_adapter.py",
+    "scripts/controller_snapshot.py",
+)
+CORE_CONTROL_RESOURCE_FILES = (
+    "SKILL.md",
+    "references/activation.md",
+    "references/evaluation-scenarios.md",
+    "references/evaluation-catalog.json",
+    "references/review-orchestration.md",
+    "references/runtime-adapters.md",
+    "references/state-schema.md",
+    "references/task-routing.md",
+    "references/reporting.md",
+    "references/tdd-providers.md",
+    "evals/evals.json",
+    "skills/converge-plan/SKILL.md",
+    "skills/converge-plan/references/plan-contract.md",
+    "skills/converge-plan/scripts/plan_check.py",
+    "skills/converge-review/SKILL.md",
+    "skills/converge-review/references/review-contract.md",
+    "skills/converge-review/scripts/review_contract.py",
+    "skills/converge-batch/SKILL.md",
+    "skills/converge-batch/references/batch-contract.md",
+    "skills/converge-batch/references/runtime-adapters.md",
+    "skills/converge-batch/scripts/batch_next.py",
+    "skills/converge-batch/scripts/batch_state.py",
+    "skills/converge-eval/SKILL.md",
+    "skills/converge-eval/references/evaluation-contract.json",
+    "skills/converge-eval/scripts/eval_contract.py",
+)
+SNAPSHOT_PROFILES = {
+    "core": (CORE_CONTROLLER_FILES, CORE_CONTROL_RESOURCE_FILES),
+    "extended": (EXTENDED_CONTROLLER_FILES, EXTENDED_CONTROL_RESOURCE_FILES),
+}
+# Compatibility exports retain the complete historical controller surface.
+CONTROLLER_FILES = EXTENDED_CONTROLLER_FILES
+CONTROL_RESOURCE_FILES = EXTENDED_CONTROL_RESOURCE_FILES
 TRUSTED_RUN_SCRIPTS = frozenset((
-    *(path for path in CONTROLLER_FILES if path.startswith("scripts/")),
+    *(path for path in CONTROLLER_FILES if path.startswith("scripts/") and "/test_" not in path),
     "skills/converge-batch/scripts/batch_next.py",
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 15
+PROTOCOL_VERSION = 16
 
 
 def provider_files(root):
@@ -112,8 +167,12 @@ def provider_files(root):
     )
 
 
-def snapshot_files(root):
-    return (*CONTROLLER_FILES, *CONTROL_RESOURCE_FILES, *provider_files(root))
+def snapshot_files(root, profile="core"):
+    try:
+        controller_files, resource_files = SNAPSHOT_PROFILES[profile]
+    except KeyError as error:
+        raise ValueError("controller snapshot profile is invalid") from error
+    return (*controller_files, *resource_files, *provider_files(root))
 
 
 # Compatibility exports are derived from the same registry scan used at runtime.
@@ -131,12 +190,13 @@ def aggregate_fingerprint(root, files=None):
     return digest.hexdigest()
 
 
-def descriptor(root, fingerprint, version, control_root=None, source_root=None, files=None):
+def descriptor(root, fingerprint, version, control_root=None, source_root=None, files=None, profile="core"):
     value = {
         "root": str(Path(root).resolve()),
         "package_version": version,
         "protocol_version": PROTOCOL_VERSION,
         "protocol_fingerprint": fingerprint,
+        "profile": profile,
         "files": list(files or snapshot_files(root)),
     }
     if control_root is not None:
@@ -146,10 +206,10 @@ def descriptor(root, fingerprint, version, control_root=None, source_root=None, 
     return value
 
 
-def create_snapshot(source, control_root):
+def create_snapshot(source, control_root, profile="core"):
     source = Path(source).expanduser().resolve()
     control_root = Path(control_root).expanduser().resolve()
-    files = snapshot_files(source)
+    files = snapshot_files(source, profile)
     fingerprint = aggregate_fingerprint(source, files)
     try:
         version = (source / "VERSION").read_text(encoding="utf-8").strip()
@@ -160,7 +220,7 @@ def create_snapshot(source, control_root):
     target = control_root / fingerprint
     if target.exists():
         return validate_snapshot(
-            descriptor(target, fingerprint, version, control_root, source, files)
+            descriptor(target, fingerprint, version, control_root, source, files, profile)
         )
     control_root.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=control_root))
@@ -182,7 +242,7 @@ def create_snapshot(source, control_root):
         except FileExistsError:
             remove_tree(temporary)
         return validate_snapshot(
-            descriptor(target, fingerprint, version, control_root, source, files)
+            descriptor(target, fingerprint, version, control_root, source, files, profile)
         )
     except Exception:
         if temporary.exists():
@@ -197,16 +257,23 @@ def remove_tree(path):
 
 
 def validate_snapshot(value, *, allow_legacy_release=False):
-    if not isinstance(value, dict) or set(value) != {
+    current_fields = {
         "root", "control_root", "source_root", "package_version", "protocol_version",
-        "protocol_fingerprint", "files"
-    }:
+        "protocol_fingerprint", "profile", "files"
+    }
+    legacy_fields = current_fields - {"profile"}
+    valid_shape = isinstance(value, dict) and (
+        set(value) == current_fields
+        or allow_legacy_release and set(value) == legacy_fields
+    )
+    if not valid_shape:
         raise ValueError("controller snapshot descriptor is invalid")
     root = Path(value["root"])
     control_root = Path(value["control_root"])
     source_root = Path(value["source_root"])
     files = value["files"]
-    expected_files = list(snapshot_files(root))
+    profile = value.get("profile", "extended")
+    expected_files = list(snapshot_files(root, profile))
     valid_files = files == expected_files or (
         allow_legacy_release
         and isinstance(files, list)
@@ -283,7 +350,7 @@ def trusted_command(descriptor_path, script, arguments):
             *arguments,
         ]
     frozen = validate_snapshot(value)
-    if script not in TRUSTED_RUN_SCRIPTS:
+    if script not in TRUSTED_RUN_SCRIPTS or script not in frozen["files"]:
         raise ValueError("controller snapshot script is not authorized")
     return [sys.executable, str(Path(frozen["root"]) / script), *arguments]
 
@@ -295,6 +362,7 @@ def main():
     parser.add_argument("--root")
     parser.add_argument("--descriptor")
     parser.add_argument("--script")
+    parser.add_argument("--profile", choices=tuple(SNAPSHOT_PROFILES), default="core")
     arguments, remainder = parser.parse_known_args()
     try:
         if arguments.command != "run" and remainder:
@@ -302,7 +370,7 @@ def main():
         if arguments.command == "create":
             if not arguments.source or not arguments.root:
                 raise ValueError("create requires --source and --root")
-            result = create_snapshot(arguments.source, arguments.root)
+            result = create_snapshot(arguments.source, arguments.root, arguments.profile)
         elif arguments.command == "validate":
             result = validate_snapshot(json.load(sys.stdin))
         else:

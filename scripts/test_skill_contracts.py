@@ -71,8 +71,6 @@ class SkillContractTest(unittest.TestCase):
             "references/evaluation-catalog.json",
             "references/review-orchestration.md",
             "evals/evals.json",
-            "scripts/fast_path.py",
-            "scripts/test_fast_path.py",
             "scripts/runner_registry.py",
             "scripts/codex_exec_runner.py",
             "scripts/openai_compatible_runner.py",
@@ -85,7 +83,8 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("converge-eval", checks)
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
         self.assertIn("scripts/test_trigger_evals.py", checks)
-        self.assertIn("scripts/test_fast_path.py", checks)
+        self.assertNotIn("fast_path.py", installer)
+        self.assertNotIn("test_fast_path.py", checks)
         self.assertIn("scripts/test_runner_registry.py", checks)
         self.assertIn(
             "skills/converge-review/scripts/test_review_axes_contract.py", checks
