@@ -63,6 +63,42 @@
       "should_trigger": true
     },
     {
+      "id": "autonomy-explicit-zh",
+      "prompt": "启用已安装的自治续跑，让这个明确授权的软件任务持续执行直到有验证结果或阻塞。",
+      "expected_skill": "converge-autonomy",
+      "should_trigger": true
+    },
+    {
+      "id": "autonomy-explicit-en",
+      "prompt": "Use the installed autonomy extension to continue this explicitly authorized delivery until it has fresh verification or a bounded block.",
+      "expected_skill": "converge-autonomy",
+      "should_trigger": true
+    },
+    {
+      "id": "multimodel-explicit-zh",
+      "prompt": "使用已安装的多模型协作执行这项开发任务，按角色派发并保留单一控制器。",
+      "expected_skill": "converge-multimodel",
+      "should_trigger": true
+    },
+    {
+      "id": "multimodel-explicit-en",
+      "prompt": "Use the installed multi-model extension for this implementation, with role-based workers under one controller.",
+      "expected_skill": "converge-multimodel",
+      "should_trigger": true
+    },
+    {
+      "id": "autonomy-explanation-near-miss",
+      "prompt": "解释自治续跑是什么、何时适合使用；不要启用续跑，也不要操作仓库。",
+      "expected_skill": null,
+      "should_trigger": false
+    },
+    {
+      "id": "multimodel-explanation-near-miss",
+      "prompt": "Explain what multi-model collaboration means; do not dispatch models or modify a repository.",
+      "expected_skill": null,
+      "should_trigger": false
+    },
+    {
       "id": "hard-negative-explanation",
       "prompt": "解释一下 TDD 的 red-green-refactor 是什么意思，不需要操作仓库。",
       "expected_skill": null,

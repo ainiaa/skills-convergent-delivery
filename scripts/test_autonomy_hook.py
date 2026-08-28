@@ -13,7 +13,9 @@ from unittest.mock import patch
 import autonomy_hook
 from autonomy_arm import arm
 from autonomy_begin import initial_state
+from controller_snapshot import create_snapshot
 from delivery_lease import lease_paths
+from delivery_engine import controller_identity
 from delivery_state import state_path
 
 SCRIPT = Path(__file__).with_name("autonomy_hook.py")
@@ -26,12 +28,12 @@ class AutonomyHookTest(unittest.TestCase):
             text=True, capture_output=True, check=False, env=environment,
         )
 
-    def managed_hook_state(self, directory):
+    def managed_hook_state(self, directory, controller=None):
         workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
             workspace, ["complete task"], ["tests pass"], ["."], "run-hook", "writer-hook",
-            mode="native",
+            mode="native", controller=controller,
         )
         acquired = subprocess.run([
             sys.executable, str(SCRIPT.with_name("delivery_lease.py")), "acquire",
@@ -55,6 +57,34 @@ class AutonomyHookTest(unittest.TestCase):
         ], input=json.dumps(armed), text=True, capture_output=True, check=False)
         self.assertEqual(0, armed_write.returncode, armed_write.stderr)
         return state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"]), state_root, lease_root
+
+    def test_new_snapshot_run_dispatches_the_hook_to_its_frozen_controller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                SCRIPT.parent.parent, root / "controller", extensions=("autonomy",)
+            )
+            path, state_root, lease_root = self.managed_hook_state(
+                directory, controller=controller_identity(snapshot=snapshot),
+            )
+            workspace = json.loads(path.read_text(encoding="utf-8"))["workspace"]
+            completed = subprocess.CompletedProcess([], 0, '{"decision":"approve"}\n', "")
+            with patch.object(autonomy_hook.subprocess, "run", return_value=completed) as run, \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": workspace, "session_id": "thread-1"}))), \
+                    patch.dict(os.environ, {
+                        "CONVERGE_STATE_ROOT": str(state_root),
+                        "CONVERGE_LEASE_ROOT": str(lease_root),
+                    }), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(0, autonomy_hook.main())
+
+            self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+            command = run.call_args.args[0]
+            self.assertEqual(sys.executable, command[0])
+            self.assertTrue(command[1].endswith("controller_snapshot.py"))
+            self.assertIn(str(path), command)
+            self.assertIn("--frozen-runtime", command)
 
     def test_no_active_autonomous_run_approves_for_both_hosts(self):
         with tempfile.TemporaryDirectory() as directory:

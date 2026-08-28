@@ -51,7 +51,7 @@
 }
 ```
 
-`package_version` 只说明安装包版本。Snapshot closure 默认只包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper。`extensions` 是创建时冻结的有序集合：`multimodel` 增加 runner、角色与评测运行时；`autonomy` 增加有界续跑。Hook 自治只冻结 `autonomy`，service 自治额外冻结 `multimodel`；旧 v16 `extended` descriptor 统一映射到二者，所有读取路径得到同一能力集合。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 先验证再执行，不能直接启动 snapshot Python 文件。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径或测试脚本。旧快照只允许协议明示的精确清场兼容，不能伪造升级。
+`package_version` 只说明安装包版本。Snapshot closure 默认只包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper。`extensions` 是创建时冻结的有序集合：`multimodel` 增加 runner、角色与评测运行时；`autonomy` 增加有界续跑；仅开发/发布时显式选择的 `autonomy-eval` 才增加自治评测器与 fixtures。Hook 自治只冻结 `autonomy`，service 自治额外冻结 `multimodel`；旧 v16 `extended` descriptor 统一映射到三者，所有读取路径得到同一能力集合。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 启动：它先验证快照不可变性（含被启动 bootstrap 的内容），再由快照自身验证其冻结协议并执行，不能直接启动 snapshot Python 文件；因此升级不会把有效 active run 改按新协议解释。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径或测试脚本。旧快照只允许协议明示的精确清场兼容，不能伪造升级。
 
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 

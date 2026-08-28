@@ -17,7 +17,7 @@ class CheckScriptTest(unittest.TestCase):
             if path.endswith(".json.lock") and (ROOT / path).exists()
         ])
 
-    def test_project_check_passes(self):
+    def test_default_check_validates_only_the_core_suite(self):
         result = subprocess.run(
             ["bash", "scripts/check.sh"],
             cwd=ROOT,
@@ -27,9 +27,13 @@ class CheckScriptTest(unittest.TestCase):
         )
 
         self.assertEqual(0, result.returncode, result.stderr)
-        for skill in ("converge", "converge-plan", "converge-review", "converge-batch"):
+        for skill in (
+            "converge", "converge-plan", "converge-review", "converge-batch", "converge-eval",
+        ):
             self.assertIn(f"Official validator passed: {skill}", result.stdout)
-        self.assertIn("Full autonomous trajectory skipped", result.stdout)
+        for extension in ("converge-autonomy", "converge-multimodel"):
+            self.assertNotIn(f"Official validator passed: {extension}", result.stdout)
+        self.assertIn("Extension suite skipped; run bash scripts/check.sh --full", result.stdout)
         self.assertIn("All checks passed.", result.stdout)
 
 

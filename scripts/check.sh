@@ -33,7 +33,13 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
   fi
 fi
 
-for skill in converge converge-plan converge-review converge-batch converge-eval converge-autonomy converge-multimodel; do
+CORE_SKILLS=(converge converge-plan converge-review converge-batch converge-eval)
+EXTENSION_SKILLS=(converge-autonomy converge-multimodel)
+SKILLS=("${CORE_SKILLS[@]}")
+if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
+  SKILLS+=("${EXTENSION_SKILLS[@]}")
+fi
+for skill in "${SKILLS[@]}"; do
   case "$skill" in
     converge) skill_path="$ROOT" ;;
     converge-autonomy|converge-multimodel) skill_path="$ROOT/extensions/$skill" ;;
@@ -46,22 +52,17 @@ done
 bash -n install.sh
 python3 scripts/test_install.py
 python3 scripts/test_delivery_next.py
-python3 scripts/test_autonomy_gate.py
-python3 scripts/test_autonomy_hook.py
-python3 scripts/test_autonomy_hook_config.py
-python3 scripts/test_autonomy_preflight.py
-python3 scripts/test_autonomy_service.py
-python3 scripts/test_autonomy_arm.py
-python3 scripts/test_autonomy_begin.py
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
+  python3 scripts/test_autonomy_gate.py
+  python3 scripts/test_autonomy_hook.py
+  python3 scripts/test_autonomy_hook_config.py
+  python3 scripts/test_autonomy_preflight.py
+  python3 scripts/test_autonomy_service.py
+  python3 scripts/test_autonomy_arm.py
+  python3 scripts/test_autonomy_begin.py
   python3 scripts/test_autonomous_delivery_eval.py
 else
-  python3 scripts/test_autonomous_delivery_eval.py \
-    AutonomousDeliveryEvalTest.test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts \
-    AutonomousDeliveryEvalTest.test_command_exits_nonzero_when_a_bound_check_fails \
-    AutonomousDeliveryEvalTest.test_trusted_execution_uses_only_a_verified_controller_snapshot \
-    AutonomousDeliveryEvalTest.test_catalog_rejects_transcript_storage_and_missing_trajectory_coverage
-  echo "Full autonomous trajectory skipped; run bash scripts/check.sh --full before release."
+  echo "Extension suite skipped; run bash scripts/check.sh --full before release."
 fi
 python3 scripts/test_delivery_lease.py
 python3 scripts/test_delivery_task_key.py
@@ -80,15 +81,17 @@ python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
 python3 scripts/test_worker_profile.py
 python3 scripts/test_runner_registry.py
-python3 scripts/test_codex_exec_runner.py
-python3 scripts/test_claude_exec_runner.py
-python3 scripts/test_runner_launch.py
-python3 scripts/test_runner_lifecycle.py
-python3 scripts/test_openai_compatible_runner.py
-python3 scripts/test_multi_model.py
-python3 scripts/test_multi_model_eval.py
-python3 scripts/test_role_flow.py
-python3 scripts/test_role_dispatch.py
+if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
+  python3 scripts/test_codex_exec_runner.py
+  python3 scripts/test_claude_exec_runner.py
+  python3 scripts/test_runner_launch.py
+  python3 scripts/test_runner_lifecycle.py
+  python3 scripts/test_openai_compatible_runner.py
+  python3 scripts/test_multi_model.py
+  python3 scripts/test_multi_model_eval.py
+  python3 scripts/test_role_flow.py
+  python3 scripts/test_role_dispatch.py
+fi
 python3 scripts/test_trigger_evals.py
 python3 skills/converge-plan/scripts/test_plan_check.py
 python3 skills/converge-review/scripts/test_review_axes_contract.py

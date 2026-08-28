@@ -48,7 +48,7 @@ class InstallTest(unittest.TestCase):
             env=os.environ | {"HOME": str(home)},
         )
 
-    def test_install_version_and_uninstall_for_both_runtimes(self):
+    def test_default_install_registers_all_skills_without_enabling_extensions(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             result = self.run_installer(home, "--target", "all")
@@ -59,6 +59,16 @@ class InstallTest(unittest.TestCase):
                     target = home / f".{runtime}/skills/{name}"
                     self.assertTrue(target.is_symlink(), target)
                     self.assertEqual(source, target.resolve())
+                for name, source in EXTENSION_SOURCES.items():
+                    target = home / f".{runtime}/skills/{name}"
+                    self.assertTrue(target.is_symlink(), target)
+                    self.assertEqual(source, target.resolve())
+
+            self.assertFalse((home / ".codex/hooks.json").exists())
+            self.assertFalse((home / ".claude/settings.json").exists())
+            self.assertFalse(
+                (home / "Library/LaunchAgents/com.convergent-delivery.autonomy.plist").exists()
+            )
 
             result = self.run_installer(home, "--version", "--offline")
             self.assertEqual(0, result.returncode, result.stderr)
@@ -68,7 +78,7 @@ class InstallTest(unittest.TestCase):
             result = self.run_installer(home, "--uninstall", "--target", "all")
             self.assertEqual(0, result.returncode, result.stderr)
             for runtime in ("codex", "claude"):
-                for name in SKILL_SOURCES:
+                for name in (*SKILL_SOURCES, *EXTENSION_SOURCES):
                     target = home / f".{runtime}/skills/{name}"
                     self.assertFalse(target.exists() or target.is_symlink())
 
@@ -110,22 +120,24 @@ class InstallTest(unittest.TestCase):
             ]
             self.assertEqual(["peer"], commands)
 
-    def test_explicit_multimodel_install_exposes_only_its_extension_skill(self):
+    def test_legacy_multimodel_install_flag_keeps_all_registered_skills_visible(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             installed = self.run_installer(home, "--target", "codex", "--multimodel")
 
             self.assertEqual(0, installed.returncode, installed.stderr)
-            target = home / ".codex/skills/converge-multimodel"
-            self.assertTrue(target.is_symlink(), target)
-            self.assertEqual(EXTENSION_SOURCES["converge-multimodel"], target.resolve())
-            self.assertFalse((home / ".codex/skills/converge-autonomy").exists())
+            for name, source in {**SKILL_SOURCES, **EXTENSION_SOURCES}.items():
+                target = home / f".codex/skills/{name}"
+                self.assertTrue(target.is_symlink(), target)
+                self.assertEqual(source, target.resolve())
+            self.assertFalse((home / ".codex/hooks.json").exists())
 
             removed = self.run_installer(home, "--target", "codex", "--multimodel-uninstall")
 
             self.assertEqual(0, removed.returncode, removed.stderr)
             self.assertTrue((home / ".codex/skills/converge").is_symlink())
-            self.assertFalse(target.exists() or target.is_symlink())
+            self.assertTrue((home / ".codex/skills/converge-autonomy").is_symlink())
+            self.assertFalse((home / ".codex/skills/converge-multimodel").exists())
 
     def test_explicit_claude_autonomy_install_is_reversible(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -216,6 +228,20 @@ class InstallTest(unittest.TestCase):
             self.assertIn("$converge", doctor.stdout)
             self.assertIn("AGENTS.md", doctor.stdout)
             self.assertNotIn('"binding"', doctor.stdout)
+
+    def test_doctor_rejects_a_registered_suite_missing_an_extension_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            installed = self.run_installer(home, "--target", "codex")
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            (home / ".codex/skills/converge-multimodel").unlink()
+
+            doctor = self.run_installer_without_source(
+                home, "--doctor", "--target", "codex", "--offline"
+            )
+
+            self.assertNotEqual(0, doctor.returncode)
+            self.assertIn("converge-multimodel", doctor.stdout)
 
     def test_doctor_warns_when_codegraph_is_unavailable_for_full_closure(self):
         with tempfile.TemporaryDirectory() as directory:

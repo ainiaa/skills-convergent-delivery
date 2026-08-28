@@ -86,7 +86,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
     def test_trusted_execution_uses_only_a_verified_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_snapshot(
-                CATALOG.parent.parent, Path(directory) / "control", extensions=("autonomy",)
+                CATALOG.parent.parent, Path(directory) / "control", extensions=("autonomy-eval",)
             )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
             result = subprocess.run(
@@ -108,7 +108,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_snapshot(
                 CATALOG.parent.parent, Path(directory) / "control",
-                extensions=("multimodel", "autonomy"),
+                extensions=("multimodel", "autonomy-eval"),
             )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
             result = subprocess.run(
@@ -128,7 +128,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
     def test_trusted_evaluation_rejects_the_mutable_workspace_evaluator(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_snapshot(
-                CATALOG.parent.parent, Path(directory) / "control", extensions=("autonomy",)
+                CATALOG.parent.parent, Path(directory) / "control", extensions=("autonomy-eval",)
             )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
 

@@ -61,8 +61,14 @@ class SkillContractTest(unittest.TestCase):
 
         self.assertEqual("0.0.21", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertIn(
-            "SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
+            "CORE_SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,
+        )
+        self.assertIn(
+            "EXTENSION_SKILL_NAMES=(converge-autonomy converge-multimodel)", installer,
+        )
+        self.assertIn(
+            'SKILL_NAMES=("${CORE_SKILL_NAMES[@]}" "${EXTENSION_SKILL_NAMES[@]}")', installer,
         )
         for path in (
             "skills/converge-eval/SKILL.md",
@@ -91,11 +97,20 @@ class SkillContractTest(unittest.TestCase):
         )
         for runtime in ("Codex", "Claude Code"):
             self.assertIn(runtime, readme)
-        self.assertIn("五个 Skill", readme)
-        self.assertIn("五个入口", usage)
-        self.assertIn("五个目标", usage)
-        self.assertIn("五个 Skill", usage)
+        self.assertIn("五个核心 Skill", readme)
+        for extension in ("converge-autonomy", "converge-multimodel"):
+            self.assertIn(extension, readme)
+        self.assertIn("七个入口", usage)
+        self.assertIn("七个目标", usage)
+        self.assertIn("五个核心 Skill", usage)
         self.assertIn("converge-eval", usage)
+
+    def test_registered_extensions_require_explicit_invocation(self):
+        for extension in ("converge-autonomy", "converge-multimodel"):
+            policy = (ROOT / "extensions" / extension / "agents/openai.yaml").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("allow_implicit_invocation: false", policy)
 
     def test_plan_v5_and_checkpoint_commit_semantics_are_integrated(self):
         root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

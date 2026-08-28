@@ -9,6 +9,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from controller_snapshot import create_snapshot
 from delivery_engine import controller_identity, selection
 from delivery_state import DEFAULT_STATE_ROOT, state_path
 from evidence_contract import workspace_source
@@ -99,7 +100,7 @@ def _task_profile(value, scope, changed_paths, risk_flags):
 
 def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None,
                   request_text="", mode="auto", task_kind="feature", full_closure_required=False,
-                  task_profile=None, extensions=("autonomy",)):
+                  task_profile=None, extensions=("autonomy",), controller=None):
     if full_closure_required:
         raise ValueError("direct autonomy full closure requires converge-plan")
     workspace = Path(workspace).expanduser().resolve()
@@ -131,7 +132,7 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         ).hexdigest(),
         "source_fingerprint": source["source_fingerprint"], "source_receipt": source,
         "execution_control": execution_control,
-        "controller": controller_identity(extensions=extensions),
+        "controller": controller or controller_identity(extensions=extensions),
         "provider_binding": provider_binding,
         "current_stage": (
             "scope" if provider_binding["binding"]["workflow_provider"]["id"] == "native-v1"
@@ -186,10 +187,16 @@ def run(arguments):
     )
     run_id, writer_id = f"run-{uuid.uuid4()}", f"writer-{uuid.uuid4()}"
     extensions = ("multimodel", "autonomy") if arguments.runtime == "service" else ("autonomy",)
+    snapshot = create_snapshot(
+        Path(__file__).resolve().parent.parent,
+        getattr(arguments, "controller_root", Path.home() / ".convergent-delivery" / "controller"),
+        extensions=extensions,
+    )
     state = initial_state(
         workspace, requirements, acceptance, scope, run_id, writer_id, arguments.risk_flag,
         arguments.request_file.read() if arguments.request_file is not None else "",
         arguments.mode, arguments.task_kind, arguments.full_closure, task_profile, extensions,
+        controller_identity(snapshot=snapshot),
     )
     state["revision"] = -1
     state = arm(
@@ -245,6 +252,7 @@ def main():
     parser.add_argument("--request-file", type=argparse.FileType("r"))
     parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))
     parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--controller-root", default=str(Path.home() / ".convergent-delivery" / "controller"))
     arguments = parser.parse_args()
     try:
         print(json.dumps(run(arguments), sort_keys=True))

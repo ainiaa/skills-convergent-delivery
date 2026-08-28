@@ -459,7 +459,8 @@ def service_paths(root):
                 or runtime.get("mode") != "service":
             continue
         try:
-            validate_state(state, SimpleNamespace(strict_evidence=True))
+            if not has_frozen_snapshot(state):
+                validate_state(state, SimpleNamespace(strict_evidence=True))
             service_runtime(state)
         except (KeyError, ValueError) as error:
             diagnostics.append(f"invalid autonomous service state {path}: {error}")
@@ -468,18 +469,60 @@ def service_paths(root):
     return paths, diagnostics
 
 
+def has_frozen_snapshot(state):
+    snapshot = state.get("controller", {}).get("snapshot") if isinstance(state, dict) else None
+    return isinstance(snapshot, dict)
+
+
+def run_frozen_service(state_path, state_root, lease_root, block_reason=None):
+    command = [
+        sys.executable, str(Path(__file__).with_name("controller_snapshot.py")), "run",
+        "--descriptor", str(state_path), "--script", "scripts/autonomy_service.py", "--",
+        "--state", str(state_path), "--state-root", str(state_root), "--frozen-runtime",
+    ]
+    if lease_root:
+        command.extend(("--lease-root", str(lease_root)))
+    if block_reason:
+        command.extend(("--block-reason", block_reason))
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "frozen autonomous service failed")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("frozen autonomous service returned invalid JSON") from error
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state")
     parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--lease-root")
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--frozen-runtime", action="store_true")
+    parser.add_argument("--block-reason")
     arguments = parser.parse_args()
     if bool(arguments.state) == arguments.serve:
         raise ValueError("provide exactly one of --state or --serve")
+    if arguments.block_reason and (not arguments.state or not arguments.frozen_runtime):
+        raise ValueError("--block-reason requires --state and --frozen-runtime")
+    if arguments.serve and arguments.frozen_runtime:
+        raise ValueError("--frozen-runtime requires --state")
     if arguments.state:
         try:
-            print(json.dumps(run_once(arguments.state, arguments.state_root, arguments.lease_root), sort_keys=True))
+            state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+            if not arguments.frozen_runtime and has_frozen_snapshot(state):
+                outcome = run_frozen_service(arguments.state, arguments.state_root, arguments.lease_root)
+            elif arguments.block_reason:
+                block(
+                    Path(arguments.state), state, Path(arguments.state_root),
+                    Path(arguments.lease_root or Path.home() / ".convergent-delivery" / "leases"),
+                    arguments.block_reason,
+                )
+                outcome = {"status": "blocked", "reason": arguments.block_reason}
+            else:
+                outcome = run_once(arguments.state, arguments.state_root, arguments.lease_root)
+            print(json.dumps(outcome, sort_keys=True))
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"autonomous service blocked: {error}", file=sys.stderr)
@@ -503,7 +546,10 @@ def main():
                 state = json.loads(path.read_text(encoding="utf-8"))
                 if state["status"] in {"complete", "blocked"}:
                     if key not in cleaned_terminals:
-                        run_once(path, arguments.state_root, arguments.lease_root)
+                        if has_frozen_snapshot(state):
+                            run_frozen_service(path, arguments.state_root, arguments.lease_root)
+                        else:
+                            run_once(path, arguments.state_root, arguments.lease_root)
                         cleaned_terminals.add(key)
                     continue
                 if key in failed_paths:
@@ -511,11 +557,17 @@ def main():
                 active_paths = True
                 limit = service_runtime(state)["max_cycles"]
                 if cycles.get(key, 0) >= limit:
-                    block(path, state, Path(arguments.state_root), arguments.lease_root or
-                          Path.home() / ".convergent-delivery" / "leases",
-                          "autonomous service exhausted its frozen cycle budget")
+                    reason = "autonomous service exhausted its frozen cycle budget"
+                    if has_frozen_snapshot(state):
+                        run_frozen_service(path, arguments.state_root, arguments.lease_root, reason)
+                    else:
+                        block(path, state, Path(arguments.state_root), arguments.lease_root or
+                              Path.home() / ".convergent-delivery" / "leases", reason)
                     continue
-                outcome = run_once(path, arguments.state_root, arguments.lease_root)
+                if has_frozen_snapshot(state):
+                    outcome = run_frozen_service(path, arguments.state_root, arguments.lease_root)
+                else:
+                    outcome = run_once(path, arguments.state_root, arguments.lease_root)
                 if outcome["status"] != "busy":
                     cycles[key] = cycles.get(key, 0) + 1
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:

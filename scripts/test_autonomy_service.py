@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +16,8 @@ import autonomy_service
 from autonomy_arm import arm
 from autonomy_begin import initial_state
 from autonomy_service import service_paths, service_runtime
+from controller_snapshot import create_snapshot
+from delivery_engine import controller_identity
 from delivery_lease import lease_paths
 from delivery_state import state_path
 from delivery_next import validate_state
@@ -24,7 +26,7 @@ from runner_contract import fingerprint, freeze_launch
 
 
 class AutonomyServiceTest(unittest.TestCase):
-    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service"):
+    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None):
         root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
@@ -34,7 +36,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 "coupling": "single", "uncertainty": "low", "verification": "local",
                 "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
                 "context_isolation_benefit": False,
-            }, extensions=("multimodel", "autonomy"),
+            }, extensions=("multimodel", "autonomy"), controller=controller,
         )
         if stage is not None:
             initial["current_stage"] = stage
@@ -66,6 +68,49 @@ class AutonomyServiceTest(unittest.TestCase):
         ], input=json.dumps(armed), text=True, capture_output=True, check=False)
         self.assertEqual(0, armed_write.returncode, armed_write.stderr)
         return state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"]), state_root, lease_root
+
+    def test_snapshot_service_state_dispatches_to_its_frozen_controller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                Path(__file__).parent.parent, root / "controller", extensions=("multimodel", "autonomy"),
+            )
+            path, state_root, lease_root = self.managed_service_state(
+                directory, controller=controller_identity(snapshot=snapshot),
+            )
+            completed = subprocess.CompletedProcess([], 0, '{"status":"terminal"}\n', "")
+            with patch.object(autonomy_service.subprocess, "run", return_value=completed) as run, \
+                    patch.object(sys, "argv", [
+                        "autonomy_service.py", "--state", str(path), "--state-root", str(state_root),
+                        "--lease-root", str(lease_root),
+                    ]), redirect_stdout(StringIO()) as output:
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual({"status": "terminal"}, json.loads(output.getvalue()))
+            command = run.call_args.args[0]
+            self.assertEqual(sys.executable, command[0])
+            self.assertTrue(command[1].endswith("controller_snapshot.py"))
+            self.assertIn(str(path), command)
+            self.assertIn("--frozen-runtime", command)
+
+    def test_service_scan_defers_snapshot_validation_to_the_frozen_controller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = create_snapshot(
+                Path(__file__).parent.parent, Path(directory) / "controller",
+                extensions=("multimodel", "autonomy"),
+            )
+            state = {
+                "status": "active",
+                "controller": controller_identity(snapshot=snapshot),
+                "execution_control": {"autonomy": {"runtime": {"mode": "service"}}},
+            }
+            path = Path(directory) / "snapshot-service.json"
+            path.write_text(json.dumps(state), encoding="utf-8")
+
+            paths, diagnostics = service_paths(directory)
+
+            self.assertEqual([path.resolve()], paths)
+            self.assertEqual([], diagnostics)
 
     def test_only_explicit_service_states_are_discoverable(self):
         with tempfile.TemporaryDirectory() as directory:

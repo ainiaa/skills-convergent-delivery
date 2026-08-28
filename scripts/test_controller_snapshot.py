@@ -1,11 +1,13 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import stat
+from unittest import mock
 from pathlib import Path
 
 from delivery_engine import controller_identity
@@ -72,7 +74,7 @@ class ControllerSnapshotTest(unittest.TestCase):
     def test_legacy_profile_maps_to_the_same_canonical_extension_set(self):
         self.assertEqual((), controller_snapshot.snapshot_extensions({"profile": "core"}))
         self.assertEqual(
-            ("multimodel", "autonomy"),
+            ("multimodel", "autonomy", "autonomy-eval"),
             controller_snapshot.snapshot_extensions({"profile": "extended"}),
         )
 
@@ -87,8 +89,106 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             self.assertEqual(["autonomy"], hook["extensions"])
             self.assertNotIn("scripts/multi_model.py", hook["files"])
+            self.assertNotIn("scripts/autonomous_delivery_eval.py", hook["files"])
             self.assertEqual(["multimodel", "autonomy"], service["extensions"])
             self.assertIn("scripts/multi_model.py", service["files"])
+
+    def test_autonomy_evaluation_files_are_frozen_only_when_explicitly_requested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control", extensions=("autonomy-eval",)
+            )
+
+            self.assertEqual(["autonomy", "autonomy-eval"], descriptor["extensions"])
+            self.assertIn("scripts/autonomous_delivery_eval.py", descriptor["files"])
+            self.assertIn("scripts/test_autonomy_hook.py", descriptor["files"])
+
+    def test_autonomy_only_snapshot_cannot_run_the_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control", extensions=("autonomy",)
+            )
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "requires autonomy and multimodel"):
+                controller_snapshot.trusted_command(
+                    descriptor_path, "scripts/autonomy_service.py", []
+                )
+
+    def test_launch_uses_a_valid_snapshot_after_the_live_protocol_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            with mock.patch.object(
+                    controller_snapshot, "PROTOCOL_VERSION", controller_snapshot.PROTOCOL_VERSION + 1):
+                command = controller_snapshot.trusted_command(
+                    descriptor_path, "scripts/delivery_engine.py", ["select"]
+                )
+
+            self.assertEqual(sys.executable, command[0])
+            self.assertEqual(str(Path(descriptor["root"]) / "scripts/delivery_engine.py"), command[1])
+
+    def test_launch_rejects_a_descriptor_that_does_not_fingerprint_its_bootstrap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            descriptor["files"].remove("scripts/controller_snapshot.py")
+            descriptor["protocol_fingerprint"] = controller_snapshot.aggregate_fingerprint(
+                descriptor["root"], descriptor["files"]
+            )
+            snapshot = Path(descriptor["root"])
+            renamed = snapshot.with_name(descriptor["protocol_fingerprint"])
+            snapshot.rename(renamed)
+            descriptor["root"] = str(renamed)
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            with mock.patch.object(controller_snapshot.subprocess, "run") as run, \
+                    self.assertRaisesRegex(ValueError, "bootstrap"):
+                controller_snapshot.trusted_command(
+                    descriptor_path, "scripts/delivery_engine.py", ["select"]
+                )
+
+            run.assert_not_called()
+
+    def legacy_descriptor(self, directory):
+        control = Path(directory) / "control"
+        temporary = control / "temporary"
+        files = [
+            *controller_snapshot.EXTENDED_CONTROLLER_FILES,
+            *controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES,
+            *controller_snapshot.provider_files(ROOT),
+        ]
+        for relative in (*files, "VERSION"):
+            target = temporary / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, target)
+        fingerprint = controller_snapshot.aggregate_fingerprint(temporary, files)
+        snapshot = control / fingerprint
+        temporary.rename(snapshot)
+        for path in (snapshot, *snapshot.rglob("*")):
+            path.chmod(0o555 if path.is_dir() else 0o444)
+        return {
+            "root": str(snapshot), "control_root": str(control), "source_root": str(ROOT),
+            "package_version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+            "protocol_version": 16, "protocol_fingerprint": fingerprint,
+            "profile": "extended", "files": files,
+        }
+
+    def test_legacy_v16_descriptor_can_launch_its_frozen_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = self.legacy_descriptor(directory)
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            command = controller_snapshot.trusted_command(
+                descriptor_path, "scripts/delivery_engine.py", ["select"]
+            )
+
+            self.assertEqual(sys.executable, command[0])
+            self.assertEqual(str(Path(descriptor["root"]) / "scripts/delivery_engine.py"), command[1])
 
     def test_writable_workspace_cannot_masquerade_as_a_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -157,7 +257,8 @@ class ControllerSnapshotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
             descriptor = controller_snapshot.create_snapshot(
-                source, Path(directory) / "control", extensions=("multimodel", "autonomy")
+                source, Path(directory) / "control",
+                extensions=("multimodel", "autonomy-eval"),
             )
             (source / controller_snapshot.CONTROLLER_FILES[0]).write_text("self modified\n", encoding="utf-8")
 
@@ -194,7 +295,7 @@ class ControllerSnapshotTest(unittest.TestCase):
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())
 
         self.assertEqual("1.0.0", identity["package_version"])
-        self.assertEqual(["multimodel", "autonomy"], identity["extensions"])
+        self.assertEqual(["multimodel", "autonomy", "autonomy-eval"], identity["extensions"])
         self.assertNotEqual(str(source), descriptor["root"])
 
     def test_core_snapshot_omits_optional_workers_and_direct_test_execution(self):

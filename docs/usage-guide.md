@@ -6,8 +6,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 | 运行时 | 安装位置 | 调用方式 |
 |---|---|---|
-| Codex | `~/.codex/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval}` | 自然语言或对应 `$skill-name` |
-| Claude Code | `~/.claude/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
+| Codex | `~/.codex/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval,converge-autonomy,converge-multimodel}` | 自然语言或对应 `$skill-name` |
+| Claude Code | `~/.claude/skills/{converge,converge-plan,converge-review,converge-batch,converge-eval,converge-autonomy,converge-multimodel}` | 自然语言或对应 `/skill-name`（以运行时发现结果为准） |
 
 ## 前置条件
 
@@ -31,15 +31,17 @@ bash install.sh --target all
 bash install.sh --upgrade --target all
 ```
 
+默认会注册全部七个 Skill，便于宿主发现和显式调用；这不会安装 Stop Hook、启动 service 或执行任何模型。`converge-autonomy` 与 `converge-multimodel` 仍只在用户明确请求时触发。只有需要自治续跑时，才执行 `bash install.sh --target <codex|claude> --autonomy` 启用对应 Stop Hook；多模型不需要额外安装步骤。
+
 安装后或排查“Skill 没触发”时，先运行只读诊断：
 
 ```bash
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 五个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
+`--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
 
-安装器先预检两个运行时的全部五个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
+安装器先预检两个运行时的全部七个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
 
@@ -86,7 +88,7 @@ PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Conve
 
 `converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 
-Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入 `--extension autonomy` 或 `--extension multimodel`。Hook 自治只选择 `autonomy`；service 自治同时选择 `multimodel` 与 `autonomy`。扩展只控制 Skill 发现和冻结执行面，安装仍保留同一个 Suite 源码 checkout。快照中不能直接执行测试脚本，受保护的自治评测由自治扩展快照内的评测器按其固定题库启动。
+Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入 `--extension autonomy` 或 `--extension multimodel`。Hook 自治只选择 `autonomy`；service 自治同时选择 `multimodel` 与 `autonomy`。完整自治轨迹只在开发/发布时额外选择内部 `--extension autonomy-eval`，不会进入普通自治 run。扩展只控制 Skill 发现和冻结执行面，安装仍保留同一个 Suite 源码 checkout。快照中不能直接执行测试脚本，受保护的自治评测只由带 `autonomy-eval` 的快照内评测器按其固定题库启动。
 
 ## 维护版本
 
@@ -94,7 +96,7 @@ Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、状态 helper、lease、Shell 语法和五个 Skill 的官方 quick_validate；例行检查只运行自治评测的快速契约用例。发布前再运行 `bash scripts/check.sh --full` 或 `python3 scripts/autonomous_delivery_eval.py --catalog references/autonomous-delivery-evaluation.json --execute` 执行完整轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
+3. 运行 `bash scripts/check.sh`，执行安装器、核心状态 helper、lease、Shell 语法和五个核心 Skill 的官方 quick_validate；默认只保留扩展边界的共享契约，不运行自治、多模型扩展的 validator 或运行时回归。发布前运行 `bash scripts/check.sh --full`，它额外验证两个扩展并执行完整自治轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
 不要为 Codex 和 Claude Code 复制两份 Skill 源码；如需调整流程，修改仓库中的对应 Skill。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

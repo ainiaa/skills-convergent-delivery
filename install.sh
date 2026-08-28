@@ -15,7 +15,8 @@ CLAUDE_SKILLS_ROOT="${HOME}/.claude/skills"
 LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
 CORE_SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)
-SKILL_NAMES=("${CORE_SKILL_NAMES[@]}")
+EXTENSION_SKILL_NAMES=(converge-autonomy converge-multimodel)
+SKILL_NAMES=("${CORE_SKILL_NAMES[@]}" "${EXTENSION_SKILL_NAMES[@]}")
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
@@ -128,13 +129,14 @@ Usage:
   bash install.sh --version [--offline]
   bash install.sh --doctor [--target codex|claude|all] [--offline]
 
-The default target is all (Codex and Claude Code). Installation creates the
-converge, converge-plan, converge-review, converge-batch, and converge-eval symlinks as one
-Suite. It never replaces an existing directory.
+The default target is all (Codex and Claude Code). Installation registers all
+seven Converge Skills as one Suite. It never replaces an existing directory.
 
-Autonomy is available for Codex and Claude Code (`--target <host> --autonomy`);
-the installer rejects hosts whose locally observed continuation capability is unavailable.
-Multi-model runner tools are installed only with `--multimodel`.
+Skill registration has no execution side effects. Autonomy Hook enablement is
+separate (`--target <host> --autonomy`); the installer rejects hosts whose
+locally observed continuation capability is unavailable. `--multimodel` is a
+compatible no-op because its Skill is already registered; model runners still
+require an explicit user request.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
@@ -219,8 +221,13 @@ suite_status() {
   }
   [[ -L "$root" ]] || missing+=(converge)
   local skill
-  for skill in converge-plan converge-review converge-batch converge-eval; do
-    if ! same_source "$(target_path "$runtime" "$skill")" "$source/skills/$skill"; then
+  for skill in "${SKILL_NAMES[@]:1}"; do
+    local expected
+    case "$skill" in
+      converge-autonomy|converge-multimodel) expected="$source/extensions/$skill" ;;
+      *) expected="$source/skills/$skill" ;;
+    esac
+    if ! same_source "$(target_path "$runtime" "$skill")" "$expected"; then
       missing+=("$skill")
     fi
   done

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -147,7 +148,7 @@ SNAPSHOT_PROFILES = {
     "core": (CORE_CONTROLLER_FILES, CORE_CONTROL_RESOURCE_FILES),
     "extended": (EXTENDED_CONTROLLER_FILES, EXTENDED_CONTROL_RESOURCE_FILES),
 }
-EXTENSION_ORDER = ("multimodel", "autonomy")
+EXTENSION_ORDER = ("multimodel", "autonomy", "autonomy-eval")
 LEGACY_PROFILE_EXTENSIONS = {
     "core": (),
     "extended": EXTENSION_ORDER,
@@ -172,6 +173,8 @@ AUTONOMY_CONTROLLER_FILES = (
     "scripts/autonomy_service.py",
     "scripts/autonomy_arm.py",
     "scripts/autonomy_begin.py",
+)
+AUTONOMY_EVALUATION_FILES = (
     "scripts/autonomous_delivery_eval.py",
     "scripts/test_autonomy_arm.py",
     "scripts/test_autonomy_begin.py",
@@ -189,11 +192,15 @@ EXTENSIONS = {
         "references/multi-model-evaluation.json",
     )),
     "autonomy": (AUTONOMY_CONTROLLER_FILES, (
-        "references/autonomous-delivery-evaluation.json",
         "references/runtime-adapters.md",
     )),
+    "autonomy-eval": (AUTONOMY_EVALUATION_FILES, (
+        "references/autonomous-delivery-evaluation.json",
+    )),
 }
-EXTENSION_DEPENDENCIES = {"multimodel": (), "autonomy": ()}
+EXTENSION_DEPENDENCIES = {
+    "multimodel": (), "autonomy": (), "autonomy-eval": ("autonomy",),
+}
 
 # Core is the default controller surface.  The historical full surface remains
 # available only to validate an already-frozen v16 descriptor.
@@ -404,6 +411,57 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     return value
 
 
+def validate_launch_snapshot(value):
+    """Validate immutable snapshot bytes without requiring the live protocol version."""
+    if isinstance(value, dict) and "profile" in value:
+        return validate_snapshot(value)
+    fields = {
+        "root", "control_root", "source_root", "package_version", "protocol_version",
+        "protocol_fingerprint", "extensions", "files",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("controller snapshot descriptor is invalid")
+    root = Path(value["root"])
+    control_root = Path(value["control_root"])
+    source_root = Path(value["source_root"])
+    files = value["files"]
+    if not all(path.is_absolute() for path in (root, control_root, source_root)) \
+            or root.parent != control_root or root.name != value["protocol_fingerprint"] \
+            or not isinstance(files, list) or not files:
+        raise ValueError("controller snapshot descriptor is invalid")
+    if any(
+        not isinstance(relative, str) or not relative or Path(relative).is_absolute()
+        or ".." in Path(relative).parts for relative in files
+    ):
+        raise ValueError("controller snapshot descriptor is invalid")
+    if "scripts/controller_snapshot.py" not in files:
+        raise ValueError("controller snapshot bootstrap is not fingerprinted")
+    try:
+        root.relative_to(source_root)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("controller snapshot must be isolated from the target workspace")
+    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    if root.stat().st_mode & writable or aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
+        raise ValueError("controller snapshot changed")
+    for directory in (root, *(path for path in root.rglob("*") if path.is_dir())):
+        if directory.is_symlink() or directory.stat().st_mode & writable:
+            raise ValueError("controller snapshot directory is writable")
+    for relative in (*files, "VERSION"):
+        if (root / relative).stat().st_mode & writable:
+            raise ValueError("controller snapshot file is writable")
+    if (root / "VERSION").read_text(encoding="utf-8").strip() != value["package_version"]:
+        raise ValueError("controller snapshot version changed")
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/controller_snapshot.py"), "validate"],
+        input=json.dumps(value), text=True, capture_output=True, check=False,
+    )
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "controller snapshot protocol changed")
+    return value
+
+
 def managed_state_snapshot(path):
     """Load the controller snapshot frozen in one managed v10/v11 state file."""
     path = Path(path).expanduser().resolve()
@@ -443,9 +501,13 @@ def trusted_command(descriptor_path, script, arguments):
             str(Path(__file__).resolve().with_name("delivery_lease.py")),
             *arguments,
         ]
-    frozen = validate_snapshot(value)
+    frozen = validate_launch_snapshot(value)
     if script not in TRUSTED_RUN_SCRIPTS or script not in frozen["files"]:
         raise ValueError("controller snapshot script is not authorized")
+    if script == "scripts/autonomy_service.py" and not {
+        "autonomy", "multimodel"
+    }.issubset(snapshot_extensions(frozen)):
+        raise ValueError("autonomous service requires autonomy and multimodel extensions")
     return [sys.executable, str(Path(frozen["root"]) / script), *arguments]
 
 

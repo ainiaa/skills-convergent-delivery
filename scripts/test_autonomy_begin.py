@@ -120,7 +120,8 @@ class AutonomyBeginTest(unittest.TestCase):
                     sys.executable, str(SCRIPT), "--workspace", str(ROOT),
                     "--scope", ".", "--requirement", "complete the frozen task",
                     "--acceptance", "targeted tests pass", "--state-root", str(state_root),
-                    "--lease-root", str(lease_root), "--mode", "native",
+                    "--lease-root", str(lease_root), "--controller-root", str(Path(directory) / "control"),
+                    "--mode", "native",
                 ], text=True, capture_output=True, check=False,
             )
 
@@ -131,6 +132,10 @@ class AutonomyBeginTest(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(11, state["schema_version"])
             self.assertEqual("active", state["status"])
+            snapshot = state["controller"]["snapshot"]
+            self.assertEqual(["autonomy"], snapshot["extensions"])
+            self.assertTrue((Path(snapshot["root"]) / "scripts/autonomy_hook.py").is_file())
+            self.assertNotIn("scripts/multi_model.py", snapshot["files"])
             self.assertTrue(state["execution_control"]["autonomy"]["enabled"])
             self.assertEqual([], state["execution_control"]["autonomy"]["action_attempts"])
             self.assertEqual("round-1-build", validate_state(state, type("Args", (), {"strict_evidence": True})()))

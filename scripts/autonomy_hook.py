@@ -132,9 +132,57 @@ def terminalize_hook_failure(state_path, state, reason):
         raise ValueError("could not release autonomous lease")
 
 
+def frozen_snapshot(state):
+    snapshot = state.get("controller", {}).get("snapshot") if isinstance(state, dict) else None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def run_frozen_hook(state_path, host, payload):
+    return subprocess.run([
+        sys.executable, str(Path(__file__).with_name("controller_snapshot.py")), "run",
+        "--descriptor", str(state_path), "--script", "scripts/autonomy_hook.py", "--",
+        "--host", host, "--frozen-runtime",
+    ], input=json.dumps(payload), text=True, capture_output=True, check=False)
+
+
+def run_hook(host, payload, active):
+    state_path, state = active
+    result = decide(state, lease_root=lease_root())
+    if result["decision"] == "allow":
+        return approve(), 0
+    runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime", {"mode": "hook"})
+    if runtime.get("mode") == "service":
+        label = "com.convergent-delivery.autonomy"
+        plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
+        if not plist.is_file():
+            raise ValueError("autonomous service is not installed")
+        subprocess.run(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"],
+            capture_output=True, text=True, check=True, timeout=10,
+        )
+        return approve(), 0
+    if host == "claude":
+        return {
+            "decision": "block",
+            "reason": continuation_message(state_path, result["next_action"]),
+        }, 0
+    current_session = session_id(payload)
+    if current_session is None:
+        error = ValueError("Codex hook payload has no session_id for autonomous continuation")
+        terminalize_hook_failure(state_path, state, str(error))
+        raise error
+    try:
+        queue_codex(current_session, state_path, state, result["next_action"])
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        terminalize_hook_failure(state_path, state, str(error))
+        raise
+    return approve(), 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", choices=("codex", "claude"), required=True)
+    parser.add_argument("--frozen-runtime", action="store_true")
     arguments = parser.parse_args()
     try:
         payload = json.load(sys.stdin)
@@ -151,40 +199,15 @@ def main():
             print(json.dumps(approve(), sort_keys=True))
             return 0
         state_path, state = active
-        result = decide(state, lease_root=lease_root())
-        if result["decision"] == "allow":
-            print(json.dumps(approve(), sort_keys=True))
+        if not arguments.frozen_runtime and frozen_snapshot(state):
+            result = run_frozen_hook(state_path, arguments.host, payload)
+            if result.returncode:
+                raise ValueError(result.stderr.strip() or "frozen autonomous hook failed")
+            print(result.stdout, end="")
             return 0
-        runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime", {"mode": "hook"})
-        if runtime.get("mode") == "service":
-            label = "com.convergent-delivery.autonomy"
-            plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
-            if not plist.is_file():
-                raise ValueError("autonomous service is not installed")
-            subprocess.run(
-                ["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"],
-                capture_output=True, text=True, check=True, timeout=10,
-            )
-            print(json.dumps(approve(), sort_keys=True))
-            return 0
-        if arguments.host == "claude":
-            print(json.dumps({
-                "decision": "block",
-                "reason": continuation_message(state_path, result["next_action"]),
-            }, sort_keys=True))
-            return 0
-        current_session = session_id(payload)
-        if current_session is None:
-            error = ValueError("Codex hook payload has no session_id for autonomous continuation")
-            terminalize_hook_failure(state_path, state, str(error))
-            raise error
-        try:
-            queue_codex(current_session, state_path, state, result["next_action"])
-        except (OSError, subprocess.SubprocessError, ValueError) as error:
-            terminalize_hook_failure(state_path, state, str(error))
-            raise
-        print(json.dumps(approve(), sort_keys=True))
-        return 0
+        decision, status = run_hook(arguments.host, payload, active)
+        print(json.dumps(decision, sort_keys=True))
+        return status
     except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
         reason = f"autonomous run is invalid: {error}"
     print(json.dumps({"decision": "block", "reason": reason}, sort_keys=True))

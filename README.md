@@ -30,6 +30,8 @@
 | 只检查当前改动，不修改代码 | `converge-review` | `使用 $converge-review 检查当前 diff，不修改代码。` |
 | 按已有的跨会话 Plan Contract 分批执行 | `converge-batch` | `使用 $converge-batch 执行 <plan>。` |
 | 修改或验收 Converge Suite 自身规则 | `converge-eval` | `使用 $converge-eval 验收这次规则变更。` |
+| 明确要求自治续跑或后台服务 | `converge-autonomy` | `使用 $converge-autonomy …` |
+| 明确要求多模型协作 | `converge-multimodel` | `使用 $converge-multimodel …` |
 
 最终回执会说明：结果、关键改动、实际验证范围和待处理项；发布、push、merge 等外发操作仍需你单独授权。更多安装与故障排查见 [使用与维护指南](docs/usage-guide.md)，两个运行时的完整调用示例见下文“调用当前 Skill”。
 
@@ -38,7 +40,7 @@
 默认不启用；只有明确说“使用多模型配合开发”时才启用。它使用固定角色、动态流程：`Terra medium` 负责路由与取证，`Terra high` 负责规格与审查，`Luna high` 在受限范围内实现，`Sol high` 只裁决高风险冲突；验证始终由工具完成。
 
 ```text
-使用 $converge 使用多模型配合开发修复支付重试问题：先按角色动态选择下一步，实施用 Luna high，遇到语义冲突再交 Sol high；运行相关测试，不要发布。
+使用 $converge-multimodel 配合开发修复支付重试问题：先按角色动态选择下一步，实施用 Luna high，遇到语义冲突再交 Sol high；运行相关测试，不要发布。
 ```
 
 可以在同一句话指定角色，或说“使用 `<profile>` 配置”。角色不等于常驻 Agent：只有上下文隔离或独立审查确有收益时才创建 Agent；同一工作区只有一个写入者。Codex 与 Claude 均从同一冻结 profile 派发，并以“持久化 launch → 执行 → 持久化 result”闭环；只读 scout/reviewer 的输出必须是受限 JSON 结论，原文不会落入状态。明确独立的只读任务可由 controller 受控 fan-out（最多三个）后确定性汇总；它不允许并行写入、成员互聊或自动重试。二者只读限制的实现不同，Claude CLI permission 不是 OS sandbox。inline/tool 与非多模型路径不会创建 runner 生命周期。多模型结论不能替代真实测试、源码证据或发布授权；宿主无法真实指定或查询 worker 时会交接，不伪造派发。配置模板、优先级和外部只读审计见 [多模型协作](references/multi-model.md)。
@@ -49,7 +51,7 @@
 
 Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付一个任务，reviewer 只找问题，scheduler 只接力，evaluator 只验收行为。每个角色都有明确输入、终态和重试上限；PDLC 可用时整体委托它的完整开发流程，不可用时仍能独立完成 TDD 与验证。
 
-## 五个 Skill
+## 五个核心 Skill 与可选扩展
 
 | Skill | 负责 | 不负责 |
 |---|---|---|
@@ -69,7 +71,7 @@ Converge Suite 将五个职责拆开：planner 只拆任务，执行者只交付
 - Codex、Claude Code 与单上下文先通过 Runtime Adapter 声明真实 dispatch/query/tree-query 或强制叶子能力；仅绑定真实 host query 原始观察的清场回执可标记 `host_observed`，普通参数永远是 `controller_attested`。父控制器直接调用当前宿主工具，worker 生命周期与无响应处理统一遵循 [执行控制](references/execution-control.md)。
 - 结束时对账计划、diff 和新鲜证据，识别未完成项、计划变化与范围漂移。
 - reviewer 的结果通过冻结请求绑定 task、验收、范围、baseline、源码和 reviewer，再由可执行 `review_contract.py normalize` 转成内部 Review v3 记录；代码变化后旧结论自动失效。
-- `converge-eval` 只接受 Sample Receipt v4：control/candidate 必须解析为 Git commit/tree；judge、catalog、evaluator 与 Single State validator 来自修改前冻结的 Controller Snapshot；worker 绑定默认 managed state root 中的正式 Single State v10、evaluator role 与 host-observed 终态 tree receipt，不建立第二套 registry；touched paths 必须是 allowed scope 内不含反斜杠或 `..` 的仓库相对路径。evidence artifact 必须是候选仓库外的绝对 JSON 文件，并明确为 `evaluator_attested`，不能伪称宿主直接签名。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。Controller Protocol v13 会阻止旧快照继续执行控制 helper，仅保留释放其自身 lease 的清场兼容。
+- `converge-eval` 只接受 Sample Receipt v4：control/candidate 必须解析为 Git commit/tree；judge、catalog、evaluator 与 Single State validator 来自修改前冻结的 Controller Snapshot；worker 绑定默认 managed state root 中的正式 Single State v10、evaluator role 与 host-observed 终态 tree receipt，不建立第二套 registry；touched paths 必须是 allowed scope 内不含反斜杠或 `..` 的仓库相对路径。evidence artifact 必须是候选仓库外的绝对 JSON 文件，并明确为 `evaluator_attested`，不能伪称宿主直接签名。缺少的验收和历史场景自动进入 `uncovered`，拒绝 `samples=["pass"]` 式自我声明。冻结运行时先校验受指纹保护的 bootstrap，再由快照自身执行协议校验；v16 的 legacy `extended` 快照保持其严格兼容语义。
 - `scripts/trigger_eval.py` 会先完整校验数据集，再把每条 prompt 交给外部 selector 命令，报告精确匹配、错误数、混淆矩阵、precision/recall/F1，并绑定 dataset、selector 与 runner 指纹；artifact 必须对应 selector 命令文件。它只产生本地观察，`--release` 会固定以 `uncovered` 阻断，直到真实宿主 bridge 能签发 receipt。`test_trigger_evals.py` 只负责离线验证 runner 与数据契约。
 - Batch 调度具备计划预检、强制 `planned_task/plan_id/task_id` 的最小胶囊、计划级 scheduler lease、幂等派发、结构化 receipt、暂停/恢复/停止和计划级验收。
 - 执行拓扑由任务画像确定为 inline、planned、delegated 或 batch；风险只控制复核强度。普通任务最多一个 fresh reviewer，只有多任务或跨服务计划增加 integration review。
@@ -102,17 +104,16 @@ bash install.sh --target claude
 bash install.sh --upgrade --target all
 ```
 
-自治续跑与多模型 runner 不随默认安装暴露，按需安装：
+默认注册全部七个 Skill，方便显式调用和宿主发现；注册本身不会安装 Hook、启动 service 或运行模型。多模型只在用户明确要求时执行；自治 Stop Hook 仍须单独启用：
 
 ```bash
 bash install.sh --target codex --autonomy
-bash install.sh --target codex --multimodel
-# 每个扩展均可单独撤销，核心 Suite 会保留：
+# 两个扩展入口均可单独撤销，其他 Skill 会保留：
 bash install.sh --target codex --autonomy-uninstall
 bash install.sh --target codex --multimodel-uninstall
 ```
 
-安装器会先预检全部五个入口，再对每个软链接做原子替换；任一已知入口冲突时不会开始安装。普通文件或目录永远不会被 `--force` 删除。
+安装器会先预检全部七个入口，再对每个软链接做原子替换；任一已知入口冲突时不会开始安装。普通文件或目录永远不会被 `--force` 删除。
 
 ### Uninstall
 
@@ -120,7 +121,7 @@ bash install.sh --target codex --multimodel-uninstall
 bash install.sh --uninstall --target all
 ```
 
-卸载只移除五个运行时软链接，保留受管理源码。
+卸载只移除七个运行时软链接，保留受管理源码；已启用的自治 Hook 或 service 可用对应的 autonomy uninstall 命令单独移除。
 
 ### Check your version
 
@@ -271,6 +272,7 @@ python3 scripts/controller_snapshot.py create --source "$CONVERGE_SKILL_DIR" \
 python3 scripts/controller_snapshot.py create --source "$CONVERGE_SKILL_DIR" \
   --root "$HOME/.convergent-delivery/controller-snapshots" --extension multimodel
 # Hook 自治只需 `--extension autonomy`；service 自治同时传入 `multimodel` 与 `autonomy`。
+# 发布时若要在快照中运行自治完整轨迹，再额外传入 `--extension autonomy-eval`。
 ```
 
 把返回的 `root` 固定为本次任务的 `CONVERGE_CONTROLLER_DIR`。Snapshot 同时包含 `SKILL.md`、控制 references、创建时动态发现的完整 Provider registry 和运行 helper；descriptor 绑定 source/control root，快照所有目录/文件按内容寻址且只读，并必须位于目标 workspace 外。
@@ -321,7 +323,10 @@ python3 "$CONVERGE_SKILL_DIR/scripts/controller_snapshot.py" run \
 ## 开发
 
 ```bash
+# 日常核心迭代：只验证五个核心 Skill 与共享控制契约。
 bash scripts/check.sh
+# 发布或修改扩展：再验证自治、多模型扩展和完整自治轨迹。
+bash scripts/check.sh --full
 ```
 
 ## 参考与鸣谢

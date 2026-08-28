@@ -12,7 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 from trigger_eval import release_gate, run_evals
-SKILLS = {"converge", "converge-plan", "converge-review", "converge-batch", "converge-eval"}
+SKILLS = {
+    "converge", "converge-plan", "converge-review", "converge-batch", "converge-eval",
+    "converge-autonomy", "converge-multimodel",
+}
 
 
 class TriggerEvalTest(unittest.TestCase):
@@ -43,6 +46,16 @@ class TriggerEvalTest(unittest.TestCase):
 
         self.assertTrue(all(count >= 2 for count in counts.values()))
         self.assertGreaterEqual(negatives, 2)
+
+    def test_dataset_covers_extension_near_misses_without_triggering_any_skill(self):
+        cases = {
+            case["id"]: case
+            for case in json.loads((ROOT / "evals/evals.json").read_text(encoding="utf-8"))["evals"]
+        }
+        for identifier in ("autonomy-explanation-near-miss", "multimodel-explanation-near-miss"):
+            self.assertIn(identifier, cases)
+            self.assertIsNone(cases[identifier]["expected_skill"])
+            self.assertFalse(cases[identifier]["should_trigger"])
 
     def test_runner_executes_a_selector_and_reports_confusion_and_f1(self):
         dataset = {
