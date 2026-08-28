@@ -69,6 +69,27 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("scripts/multi_model.py", multi["files"])
             self.assertNotIn("scripts/autonomy_begin.py", multi["files"])
 
+    def test_legacy_profile_maps_to_the_same_canonical_extension_set(self):
+        self.assertEqual((), controller_snapshot.snapshot_extensions({"profile": "core"}))
+        self.assertEqual(
+            ("multimodel", "autonomy"),
+            controller_snapshot.snapshot_extensions({"profile": "extended"}),
+        )
+
+    def test_hook_autonomy_does_not_freeze_multimodel_but_service_does(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "hook", extensions=("autonomy",)
+            )
+            service = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "service", extensions=("multimodel", "autonomy")
+            )
+
+            self.assertEqual(["autonomy"], hook["extensions"])
+            self.assertNotIn("scripts/multi_model.py", hook["files"])
+            self.assertEqual(["multimodel", "autonomy"], service["extensions"])
+            self.assertIn("scripts/multi_model.py", service["files"])
+
     def test_writable_workspace_cannot_masquerade_as_a_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
@@ -136,7 +157,7 @@ class ControllerSnapshotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
             descriptor = controller_snapshot.create_snapshot(
-                source, Path(directory) / "control", extensions=("autonomy",)
+                source, Path(directory) / "control", extensions=("multimodel", "autonomy")
             )
             (source / controller_snapshot.CONTROLLER_FILES[0]).write_text("self modified\n", encoding="utf-8")
 

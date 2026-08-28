@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 修复核心 + 按需扩展的五个边界缺口：扩展卸载仅移除对应 Skill/Hook，不再连带删除核心 Suite；v16 `extended` 快照经唯一映射得到 `multimodel + autonomy`；扩展文件改为显式归属；全量收口的 CodeGraph 收据必须使用由冻结 scope 与 closure matrix 确定生成的查询；Hook 自治不再冻结多模型，service 才显式选择它。同步补齐回归测试与安装/源码 checkout 边界说明。
 - 全量收口图谱回执现在只接受实际执行的 `codegraph` 查询；移除尚无可执行查询契约的 `codebase-memory-mcp` 放行，避免版本查询或伪造工具名冒充影响面证据。
 - Controller Snapshot 协议升级为 v17：默认只冻结核心控制面；`autonomy` 与 `multimodel` 是闭合、显式声明的扩展集合，descriptor 与非快照 controller identity 均绑定同一集合，不再存在 `core`/`extended` profile 旁路。自治依赖自动带入多模型执行集合。
 - 新增可选的 `converge-autonomy` 与 `converge-multimodel` Skill 入口；安装器仅在 `--autonomy`/`--autonomy-service` 或 `--multimodel` 时暴露对应扩展，普通安装保持核心 Suite。

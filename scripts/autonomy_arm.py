@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 from delivery_next import validate_state
-from multi_model import resolve
 
 
 def _argv(value, name):
@@ -44,14 +43,17 @@ def arm(state, requirements, acceptance, runtime="hook", service_runner=None, ve
     if runtime == "service":
         if routing["review_tier"] != "low":
             raise ValueError("service autonomy supports only low-risk routes")
-        profiles = resolve(None, workspace=updated["workspace"])
-        profile = profiles["roles"]["implementer"]
-        if service_runner is not None and profile["runner_id"] != service_runner:
-            raise ValueError("selected service runner does not match the frozen implementer profile")
         verification_argv = _argv(verification_argv, "verification")
         audit_argv = _argv(audit_argv, "independent audit")
         if audit_argv == verification_argv:
             raise ValueError("service autonomy requires an independent audit argv")
+        if "multimodel" not in updated["controller"].get("extensions", []):
+            raise ValueError("service autonomy requires the multimodel extension")
+        from multi_model import resolve
+        profiles = resolve(None, workspace=updated["workspace"])
+        profile = profiles["roles"]["implementer"]
+        if service_runner is not None and profile["runner_id"] != service_runner:
+            raise ValueError("selected service runner does not match the frozen implementer profile")
         runtime_value = {
             "mode": "service", "runner_profile": profile, "max_cycles": 5,
             "verification_argv": verification_argv, "audit_argv": audit_argv,

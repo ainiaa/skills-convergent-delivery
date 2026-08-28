@@ -99,7 +99,7 @@ def _task_profile(value, scope, changed_paths, risk_flags):
 
 def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None,
                   request_text="", mode="auto", task_kind="feature", full_closure_required=False,
-                  task_profile=None):
+                  task_profile=None, extensions=("autonomy",)):
     if full_closure_required:
         raise ValueError("direct autonomy full closure requires converge-plan")
     workspace = Path(workspace).expanduser().resolve()
@@ -131,7 +131,7 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         ).hexdigest(),
         "source_fingerprint": source["source_fingerprint"], "source_receipt": source,
         "execution_control": execution_control,
-        "controller": controller_identity(extensions=("autonomy",)),
+        "controller": controller_identity(extensions=extensions),
         "provider_binding": provider_binding,
         "current_stage": (
             "scope" if provider_binding["binding"]["workflow_provider"]["id"] == "native-v1"
@@ -185,10 +185,11 @@ def run(arguments):
         json.loads(arguments.task_profile_json) if arguments.task_profile_json is not None else None
     )
     run_id, writer_id = f"run-{uuid.uuid4()}", f"writer-{uuid.uuid4()}"
+    extensions = ("multimodel", "autonomy") if arguments.runtime == "service" else ("autonomy",)
     state = initial_state(
         workspace, requirements, acceptance, scope, run_id, writer_id, arguments.risk_flag,
         arguments.request_file.read() if arguments.request_file is not None else "",
-        arguments.mode, arguments.task_kind, arguments.full_closure, task_profile,
+        arguments.mode, arguments.task_kind, arguments.full_closure, task_profile, extensions,
     )
     state["revision"] = -1
     state = arm(

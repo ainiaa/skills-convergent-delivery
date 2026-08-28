@@ -86,7 +86,7 @@ PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Conve
 
 `converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 
-Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入 `--extension autonomy` 或 `--extension multimodel`。`autonomy` 自动包含其多模型执行依赖。快照中不能直接执行测试脚本，受保护的自治评测由自治扩展快照内的评测器按其固定题库启动。
+Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入 `--extension autonomy` 或 `--extension multimodel`。Hook 自治只选择 `autonomy`；service 自治同时选择 `multimodel` 与 `autonomy`。扩展只控制 Skill 发现和冻结执行面，安装仍保留同一个 Suite 源码 checkout。快照中不能直接执行测试脚本，受保护的自治评测由自治扩展快照内的评测器按其固定题库启动。
 
 ## 维护版本
 

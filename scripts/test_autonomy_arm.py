@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from delivery_engine import controller_identity
 from delivery_state import state_path
 from test_delivery_next import state
 
@@ -13,6 +14,11 @@ SCRIPT = Path(__file__).with_name("autonomy_arm.py")
 
 
 class AutonomyArmTest(unittest.TestCase):
+    def service_state(self):
+        payload = state()
+        payload["controller"] = controller_identity(extensions=("multimodel", "autonomy"))
+        return payload
+
     def invoke(self, payload, *arguments):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"
@@ -50,7 +56,7 @@ class AutonomyArmTest(unittest.TestCase):
 
     def test_service_arm_freezes_the_write_runner_and_cycle_limit(self):
         result = self.invoke(
-            state(), "--requirement", "fix", "--acceptance", "pass",
+            self.service_state(), "--requirement", "fix", "--acceptance", "pass",
             "--runtime", "service", "--service-runner", "codex-exec-v1",
             "--verification-argv", '["python3", "-m", "unittest"]',
             "--audit-argv", '["python3", "-c", "pass"]',
@@ -62,6 +68,17 @@ class AutonomyArmTest(unittest.TestCase):
         self.assertEqual(5, runtime["max_cycles"])
         self.assertEqual(["python3", "-m", "unittest"], runtime["verification_argv"])
         self.assertEqual(["python3", "-c", "pass"], runtime["audit_argv"])
+
+    def test_service_arm_rejects_a_hook_only_controller(self):
+        result = self.invoke(
+            state(), "--requirement", "fix", "--acceptance", "pass",
+            "--runtime", "service", "--service-runner", "codex-exec-v1",
+            "--verification-argv", '["python3", "-m", "unittest"]',
+            "--audit-argv", '["python3", "-c", "pass"]',
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("multimodel extension", result.stderr)
 
     def test_service_arm_rejects_an_unfrozen_or_shell_verifier(self):
         missing = self.invoke(

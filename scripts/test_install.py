@@ -102,6 +102,8 @@ class InstallTest(unittest.TestCase):
                 home, ROOT, "--autonomy-uninstall", "--target", "codex", path=home,
             )
             self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertTrue((home / ".codex/skills/converge").is_symlink())
+            self.assertFalse(autonomy_skill.exists() or autonomy_skill.is_symlink())
             commands = [
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
                 for item in entry["hooks"]
@@ -118,6 +120,12 @@ class InstallTest(unittest.TestCase):
             self.assertTrue(target.is_symlink(), target)
             self.assertEqual(EXTENSION_SOURCES["converge-multimodel"], target.resolve())
             self.assertFalse((home / ".codex/skills/converge-autonomy").exists())
+
+            removed = self.run_installer(home, "--target", "codex", "--multimodel-uninstall")
+
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertTrue((home / ".codex/skills/converge").is_symlink())
+            self.assertFalse(target.exists() or target.is_symlink())
 
     def test_explicit_claude_autonomy_install_is_reversible(self):
         with tempfile.TemporaryDirectory() as directory:

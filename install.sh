@@ -14,7 +14,8 @@ CODEX_SKILLS_ROOT="${HOME}/.codex/skills"
 CLAUDE_SKILLS_ROOT="${HOME}/.claude/skills"
 LEGACY_CODEX_TARGET="${HOME}/.codex/skills/convergent-delivery"
 LEGACY_CLAUDE_TARGET="${HOME}/.claude/skills/convergent-delivery"
-SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)
+CORE_SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)
+SKILL_NAMES=("${CORE_SKILL_NAMES[@]}")
 REQUIRED_SOURCE_FILES=(
   SKILL.md
   VERSION
@@ -112,6 +113,7 @@ FORCE=0
 AUTONOMY=0
 AUTONOMY_SERVICE=0
 MULTIMODEL=0
+EXTENSION_ONLY_UNINSTALL=0
 INSTALL_LOCK_HELD=0
 
 usage() {
@@ -153,8 +155,8 @@ while [[ $# -gt 0 ]]; do
     --multimodel) MULTIMODEL=1; shift ;;
     --autonomy-service) AUTONOMY_SERVICE=1; shift ;;
     --autonomy-service-uninstall) ACTION="service-uninstall"; shift ;;
-    --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; shift ;;
-    --multimodel-uninstall) ACTION="uninstall"; MULTIMODEL=1; shift ;;
+    --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
+    --multimodel-uninstall) ACTION="uninstall"; MULTIMODEL=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Error: unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -165,6 +167,9 @@ case "$TARGET" in
   *) echo "Error: --target must be codex, claude, or all." >&2; exit 1 ;;
 esac
 
+if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
+  SKILL_NAMES=()
+fi
 if [[ "$AUTONOMY" -eq 1 || "$AUTONOMY_SERVICE" -eq 1 ]]; then
   SKILL_NAMES+=(converge-autonomy)
 fi

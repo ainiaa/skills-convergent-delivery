@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from controller_snapshot import normalize_extensions, snapshot_files, validate_snapshot
+from controller_snapshot import normalize_extensions, snapshot_extensions, snapshot_files, validate_snapshot
 from provider_contract import (
     build_reference,
     canonical_fingerprint,
@@ -267,7 +267,7 @@ def controller_identity(root=None, snapshot=None, extensions=()):
             "package_version": frozen["package_version"],
             "protocol_version": frozen["protocol_version"],
             "protocol_fingerprint": frozen["protocol_fingerprint"],
-            "extensions": list(normalize_extensions(frozen.get("extensions", ()))),
+            "extensions": list(snapshot_extensions(frozen)),
             "snapshot": frozen,
         }
     controller_root = Path(root or Path(__file__).resolve().parent.parent).resolve()

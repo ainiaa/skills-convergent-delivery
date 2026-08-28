@@ -15,7 +15,7 @@ from delivery_engine import (
     validate_provider_manifest,
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
-from controller_snapshot import normalize_extensions, validate_snapshot
+from controller_snapshot import normalize_extensions, snapshot_extensions, validate_snapshot
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
@@ -250,6 +250,22 @@ def validate_closure_plan(plan, routing, baseline, provider_binding):
     return module
 
 
+def closure_graph_query(routing, plan):
+    """Build the only CodeGraph query accepted for a frozen closure gate."""
+    chains = [
+        {key: chain[key] for key in ("id", "entrypoints", "callers")}
+        for chain in plan["closure_matrix"]["chains"]
+    ]
+    frozen = {
+        "allowed_paths": routing["allowed_paths"],
+        "chains": chains,
+        "scope_fingerprint": routing["profile_fingerprint"],
+    }
+    return "Map callers, callees, and affected paths for this frozen closure: " + json.dumps(
+        frozen, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
 def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline, provider_binding):
     fields = {
         "schema_version", "status", "source_fingerprint", "scope_fingerprint",
@@ -286,8 +302,9 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
         raise ValueError("closure gate graph receipt evidence is invalid")
     argv = graph["evidence"]["argv"]
     if Path(argv[0]).name != graph["tool"] or argv[:2] != ["codegraph", "explore"] \
-            or len(argv) < 3 or not argv[2].strip() \
-            or graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
+            or argv != ["codegraph", "explore", closure_graph_query(routing, value["plan"])]:
+        raise ValueError("closure gate graph-tool query does not bind frozen scope and matrix")
+    if graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
         raise ValueError("closure gate graph receipt does not bind its graph-tool output")
     if graph["receipt_fingerprint"] != runner_fingerprint({
             key: item for key, item in graph.items() if key != "receipt_fingerprint"
@@ -781,7 +798,7 @@ def validate_state(state, arguments):
             for field in ("package_version", "protocol_version", "protocol_fingerprint")
         ):
             raise ValueError("frozen Converge controller snapshot changed")
-        frozen_extensions = normalize_extensions(frozen.get("extensions", ()))
+        frozen_extensions = snapshot_extensions(frozen)
         if "extensions" in controller and extensions != frozen_extensions:
             raise ValueError("frozen Converge controller extensions changed")
     else:

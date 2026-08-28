@@ -34,7 +34,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 "coupling": "single", "uncertainty": "low", "verification": "local",
                 "risk_flags": [], "cross_session": False, "delegable_tasks": 0,
                 "context_isolation_benefit": False,
-            },
+            }, extensions=("multimodel", "autonomy"),
         )
         if stage is not None:
             initial["current_stage"] = stage

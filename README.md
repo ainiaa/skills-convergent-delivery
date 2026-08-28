@@ -107,6 +107,9 @@ bash install.sh --upgrade --target all
 ```bash
 bash install.sh --target codex --autonomy
 bash install.sh --target codex --multimodel
+# 每个扩展均可单独撤销，核心 Suite 会保留：
+bash install.sh --target codex --autonomy-uninstall
+bash install.sh --target codex --multimodel-uninstall
 ```
 
 安装器会先预检全部五个入口，再对每个软链接做原子替换；任一已知入口冲突时不会开始安装。普通文件或目录永远不会被 `--force` 删除。
@@ -267,7 +270,7 @@ python3 scripts/controller_snapshot.py create --source "$CONVERGE_SKILL_DIR" \
 ```bash
 python3 scripts/controller_snapshot.py create --source "$CONVERGE_SKILL_DIR" \
   --root "$HOME/.convergent-delivery/controller-snapshots" --extension multimodel
-# `--extension autonomy` 自动同时冻结其多模型执行依赖。
+# Hook 自治只需 `--extension autonomy`；service 自治同时传入 `multimodel` 与 `autonomy`。
 ```
 
 把返回的 `root` 固定为本次任务的 `CONVERGE_CONTROLLER_DIR`。Snapshot 同时包含 `SKILL.md`、控制 references、创建时动态发现的完整 Provider registry 和运行 helper；descriptor 绑定 source/control root，快照所有目录/文件按内容寻址且只读，并必须位于目标 workspace 外。

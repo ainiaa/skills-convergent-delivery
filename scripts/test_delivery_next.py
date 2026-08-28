@@ -14,7 +14,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
 from delivery_next import (
     upgrade_state, validate_autonomy_completion, validate_execution_control, validate_provider_reference,
-    validate_closure_gate, validate_closure_plan, validate_state,
+    closure_graph_query, validate_closure_gate, validate_closure_plan, validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
 from role_result import review_result, result_from_output
@@ -35,7 +35,6 @@ HEAD = subprocess.run(
 ).stdout.strip()
 SOURCE = workspace_source(ROOT, HEAD)
 EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
-GRAPH_EVIDENCE = run_evidence(ROOT, HEAD, ["codegraph", "explore", "closure receipt"])
 
 
 def task_profile(**overrides):
@@ -53,16 +52,17 @@ def routing(profile=None, allowed_paths=None):
     return freeze_routing(profile or task_profile(), allowed_paths or ["."])
 
 
-def graph_receipt(source_fingerprint, scope_fingerprint, tool="codegraph"):
-    evidence = copy.deepcopy(GRAPH_EVIDENCE)
-    evidence["argv"][0] = tool
-    evidence["command"] = shlex.join(evidence["argv"])
+def graph_receipt(source_fingerprint, routing_value, plan, tool="codegraph", query=None):
+    evidence = run_evidence(ROOT, HEAD, [
+        tool, "explore", query or closure_graph_query(routing_value, plan),
+    ])
     evidence["receipt_fingerprint"] = runner_fingerprint({
         key: item for key, item in evidence.items() if key != "receipt_fingerprint"
     })
     value = {
         "schema_version": 1, "tool": tool,
-        "source_fingerprint": source_fingerprint, "scope_fingerprint": scope_fingerprint,
+        "source_fingerprint": source_fingerprint,
+        "scope_fingerprint": routing_value["profile_fingerprint"],
         "output_fingerprint": evidence["stdout_fingerprint"], "evidence": evidence,
     }
     return {**value, "receipt_fingerprint": runner_fingerprint(value)}
@@ -361,9 +361,7 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
         payload["execution_control"]["closure"] = {
             "schema_version": 1, "status": "pass", "source_fingerprint": source,
             "scope_fingerprint": payload["execution_control"]["routing"]["profile_fingerprint"],
-            "graph_receipt": graph_receipt(
-                source, payload["execution_control"]["routing"]["profile_fingerprint"],
-            ),
+            "graph_receipt": graph_receipt(source, payload["execution_control"]["routing"], plan),
             "review_request_fingerprint": closure["request_fingerprint"],
             "plan": plan,
             "audit": closure_audit(plan),
@@ -520,15 +518,14 @@ class DeliveryNextTest(unittest.TestCase):
             full_closure_required=True,
         )
         payload["execution_control"]["routing"] = routing_value
+        plan = closure_plan(routing_value["request_fingerprint"])
         payload["execution_control"]["closure"] = {
             "schema_version": 1, "status": "pass",
             "source_fingerprint": payload["source_fingerprint"],
             "scope_fingerprint": routing_value["profile_fingerprint"],
-            "graph_receipt": graph_receipt(
-                payload["source_fingerprint"], routing_value["profile_fingerprint"],
-            ),
+            "graph_receipt": graph_receipt(payload["source_fingerprint"], routing_value, plan),
             "review_request_fingerprint": "b" * 64,
-            "plan": closure_plan(routing_value["request_fingerprint"]), "audit": None,
+            "plan": plan, "audit": None,
         }
 
         with self.assertRaisesRegex(ValueError, "closure review"):
@@ -628,8 +625,7 @@ class DeliveryNextTest(unittest.TestCase):
         closure = payload["execution_control"]["closure"]
         closure["graph_receipt"] = graph_receipt(
             payload["source_fingerprint"],
-            payload["execution_control"]["routing"]["profile_fingerprint"],
-            "codebase-memory-mcp",
+            payload["execution_control"]["routing"], closure["plan"], tool="codebase-memory-mcp",
         )
 
         with self.assertRaisesRegex(ValueError, "graph receipt"):
@@ -653,7 +649,22 @@ class DeliveryNextTest(unittest.TestCase):
             key: value for key, value in graph.items() if key != "receipt_fingerprint"
         })
 
-        with self.assertRaisesRegex(ValueError, "graph-tool output"):
+        with self.assertRaisesRegex(ValueError, "graph-tool query"):
+            validate_closure_gate(
+                closure, payload["source_fingerprint"], payload["source_receipt"],
+                payload["execution_control"]["routing"], payload["baseline"],
+                payload["provider_binding"],
+            )
+
+    def test_full_closure_rejects_an_unrelated_codegraph_query(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        closure["graph_receipt"] = graph_receipt(
+            payload["source_fingerprint"], payload["execution_control"]["routing"], closure["plan"],
+            query="unrelated query",
+        )
+
+        with self.assertRaisesRegex(ValueError, "graph-tool query"):
             validate_closure_gate(
                 closure, payload["source_fingerprint"], payload["source_receipt"],
                 payload["execution_control"]["routing"], payload["baseline"],
@@ -665,8 +676,7 @@ class DeliveryNextTest(unittest.TestCase):
         closure = payload["execution_control"]["closure"]
         closure["graph_receipt"] = graph_receipt(
             payload["source_fingerprint"],
-            payload["execution_control"]["routing"]["profile_fingerprint"],
-            "unknown-graph",
+            payload["execution_control"]["routing"], closure["plan"], tool="unknown-graph",
         )
 
         with self.assertRaisesRegex(ValueError, "graph receipt"):

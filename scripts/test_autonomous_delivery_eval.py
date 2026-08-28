@@ -107,7 +107,8 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
     def test_trusted_execution_runs_the_snapshot_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_snapshot(
-                CATALOG.parent.parent, Path(directory) / "control", extensions=("autonomy",)
+                CATALOG.parent.parent, Path(directory) / "control",
+                extensions=("multimodel", "autonomy"),
             )
             descriptor_path = self.managed_snapshot_state(directory, descriptor)
             result = subprocess.run(

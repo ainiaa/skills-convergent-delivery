@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import delivery_state
+from controller_snapshot import snapshot_extensions
 from delivery_next import upgrade_state
 from role_result import result_from_output, review_result
 from runner_launch import (
@@ -51,10 +52,7 @@ def require_multimodel_extension(state):
         raise ValueError("runner lifecycle controller is invalid")
     extensions = controller.get("extensions")
     if extensions is None and isinstance(controller.get("snapshot"), dict):
-        snapshot = controller["snapshot"]
-        extensions = snapshot.get("extensions")
-        if extensions is None and snapshot.get("profile") == "extended":
-            extensions = ["multimodel"]
+        extensions = list(snapshot_extensions(controller["snapshot"]))
     if not isinstance(extensions, list) or "multimodel" not in extensions:
         raise ValueError("runner lifecycle requires the multimodel extension")
 

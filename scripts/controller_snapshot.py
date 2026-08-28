@@ -148,20 +148,40 @@ SNAPSHOT_PROFILES = {
     "extended": (EXTENDED_CONTROLLER_FILES, EXTENDED_CONTROL_RESOURCE_FILES),
 }
 EXTENSION_ORDER = ("multimodel", "autonomy")
-AUTONOMY_CONTROLLER_FILES = tuple(
-    path for path in EXTENDED_CONTROLLER_FILES
-    if path.startswith("scripts/autonomy_") or path == "scripts/autonomous_delivery_eval.py"
-    or path in {
-        "scripts/test_autonomy_arm.py", "scripts/test_autonomy_begin.py",
-        "scripts/test_autonomy_service.py", "scripts/test_autonomy_gate.py",
-        "scripts/test_autonomy_hook.py", "scripts/test_autonomy_preflight.py",
-        "scripts/test_delivery_next.py", "scripts/test_delivery_state.py",
-        "scripts/test_runtime_scenarios.py",
-    }
+LEGACY_PROFILE_EXTENSIONS = {
+    "core": (),
+    "extended": EXTENSION_ORDER,
+}
+MULTIMODEL_CONTROLLER_FILES = (
+    "scripts/runner_launch.py",
+    "scripts/runner_lifecycle.py",
+    "scripts/codex_exec_runner.py",
+    "scripts/claude_exec_runner.py",
+    "scripts/openai_compatible_runner.py",
+    "scripts/multi_model.py",
+    "scripts/multi_model_eval.py",
+    "scripts/role_flow.py",
+    "scripts/role_dispatch.py",
+    "scripts/role_fanout.py",
 )
-MULTIMODEL_CONTROLLER_FILES = tuple(
-    path for path in EXTENDED_CONTROLLER_FILES
-    if path not in CORE_CONTROLLER_FILES and path not in AUTONOMY_CONTROLLER_FILES
+AUTONOMY_CONTROLLER_FILES = (
+    "scripts/autonomy_gate.py",
+    "scripts/autonomy_hook.py",
+    "scripts/autonomy_hook_config.py",
+    "scripts/autonomy_preflight.py",
+    "scripts/autonomy_service.py",
+    "scripts/autonomy_arm.py",
+    "scripts/autonomy_begin.py",
+    "scripts/autonomous_delivery_eval.py",
+    "scripts/test_autonomy_arm.py",
+    "scripts/test_autonomy_begin.py",
+    "scripts/test_autonomy_service.py",
+    "scripts/test_autonomy_gate.py",
+    "scripts/test_autonomy_hook.py",
+    "scripts/test_autonomy_preflight.py",
+    "scripts/test_delivery_next.py",
+    "scripts/test_delivery_state.py",
+    "scripts/test_runtime_scenarios.py",
 )
 EXTENSIONS = {
     "multimodel": (MULTIMODEL_CONTROLLER_FILES, (
@@ -173,7 +193,7 @@ EXTENSIONS = {
         "references/runtime-adapters.md",
     )),
 }
-EXTENSION_DEPENDENCIES = {"multimodel": (), "autonomy": ("multimodel",)}
+EXTENSION_DEPENDENCIES = {"multimodel": (), "autonomy": ()}
 
 # Core is the default controller surface.  The historical full surface remains
 # available only to validate an already-frozen v16 descriptor.
@@ -211,6 +231,18 @@ def normalize_extensions(extensions=()):
                 enabled.add(dependency)
                 pending.append(dependency)
     return tuple(name for name in EXTENSION_ORDER if name in enabled)
+
+
+def snapshot_extensions(value):
+    """Return the one capability set represented by a current or v16 descriptor."""
+    if not isinstance(value, dict):
+        raise ValueError("controller snapshot descriptor is invalid")
+    if "extensions" in value:
+        return normalize_extensions(value["extensions"])
+    try:
+        return LEGACY_PROFILE_EXTENSIONS[value.get("profile", "extended")]
+    except KeyError as error:
+        raise ValueError("controller snapshot descriptor is invalid") from error
 
 
 def snapshot_files(root, extensions=()):
@@ -325,7 +357,7 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     source_root = Path(value["source_root"])
     files = value["files"]
     if fields == current_fields:
-        extensions = normalize_extensions(value["extensions"])
+        extensions = snapshot_extensions(value)
         expected_files = list(snapshot_files(root, extensions))
         expected_protocols = {PROTOCOL_VERSION}
     else:
