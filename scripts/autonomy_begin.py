@@ -131,7 +131,7 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         ).hexdigest(),
         "source_fingerprint": source["source_fingerprint"], "source_receipt": source,
         "execution_control": execution_control,
-        "controller": controller_identity(),
+        "controller": controller_identity(extensions=("autonomy",)),
         "provider_binding": provider_binding,
         "current_stage": (
             "scope" if provider_binding["binding"]["workflow_provider"]["id"] == "native-v1"

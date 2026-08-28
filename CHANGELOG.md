@@ -4,8 +4,9 @@
 
 ## [Unreleased]
 
-- 全量收口图谱回执现在只接受 `codegraph` 或已评估的 `codebase-memory-mcp`，并将回执声明与实际执行命令名称、当前源码和输出指纹一同绑定；未知工具或伪造命令不再能放行。未安装 CodeGraph 时可使用后者的本地 CLI 图查询，但不会接受任意 MCP/命令作为替代。
-- Controller Snapshot 协议升级为 v16：默认 `core` profile 只冻结最小控制面，`extended` profile 显式保留自治与多模型运行时；trusted runner 同时拒绝直接执行测试脚本。多模型和自治评测的快照调用已改为显式请求 `extended`，避免依赖隐式全量复制。
+- 全量收口图谱回执现在只接受实际执行的 `codegraph` 查询；移除尚无可执行查询契约的 `codebase-memory-mcp` 放行，避免版本查询或伪造工具名冒充影响面证据。
+- Controller Snapshot 协议升级为 v17：默认只冻结核心控制面；`autonomy` 与 `multimodel` 是闭合、显式声明的扩展集合，descriptor 与非快照 controller identity 均绑定同一集合，不再存在 `core`/`extended` profile 旁路。自治依赖自动带入多模型执行集合。
+- 新增可选的 `converge-autonomy` 与 `converge-multimodel` Skill 入口；安装器仅在 `--autonomy`/`--autonomy-service` 或 `--multimodel` 时暴露对应扩展，普通安装保持核心 Suite。
 - `scripts/check.sh` 默认不再重复执行完整自治轨迹，只运行快速契约集；`--full` 与 `autonomous_delivery_eval.py --execute` 仍执行完整 47 场景评测，发布前可显式使用。补齐相应命令行、快照和回归测试。
 - 删除已停用的 `fast_path` 实现及其测试、安装和文档引用；doctor 现在实际探测并报告 CodeGraph 可用性，避免仅根据命令存在与否误报。
 - 调整根 `SKILL.md` 的可读性契约：移除 2700B 的静态字节上限，恢复完整、自然的路由和自治说明；继续以行为、引用和完整检查验证功能，不用压缩措辞换取测试通过。

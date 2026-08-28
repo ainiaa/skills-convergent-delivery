@@ -704,7 +704,7 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual([], written["workers"])
             self.assertIsNone(written["worker_tree_receipt"])
             self.assertEqual(
-                {"package_version", "protocol_version", "protocol_fingerprint"},
+                {"package_version", "protocol_version", "protocol_fingerprint", "extensions"},
                 set(written["controller"]),
             )
             self.assertEqual("native-v1", written["provider_binding"]["binding"]["workflow_provider"]["id"])

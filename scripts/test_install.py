@@ -17,6 +17,10 @@ SKILL_SOURCES = {
     "converge-batch": ROOT / "skills/converge-batch",
     "converge-eval": ROOT / "skills/converge-eval",
 }
+EXTENSION_SOURCES = {
+    "converge-autonomy": ROOT / "extensions/converge-autonomy",
+    "converge-multimodel": ROOT / "extensions/converge-multimodel",
+}
 
 
 class InstallTest(unittest.TestCase):
@@ -84,6 +88,9 @@ class InstallTest(unittest.TestCase):
                 home, ROOT, "--target", "codex", "--autonomy", path=home,
             )
             self.assertEqual(0, installed.returncode, installed.stderr)
+            autonomy_skill = home / ".codex/skills/converge-autonomy"
+            self.assertTrue(autonomy_skill.is_symlink(), autonomy_skill)
+            self.assertEqual(EXTENSION_SOURCES["converge-autonomy"], autonomy_skill.resolve())
             commands = [
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
                 for item in entry["hooks"]
@@ -100,6 +107,17 @@ class InstallTest(unittest.TestCase):
                 for item in entry["hooks"]
             ]
             self.assertEqual(["peer"], commands)
+
+    def test_explicit_multimodel_install_exposes_only_its_extension_skill(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            installed = self.run_installer(home, "--target", "codex", "--multimodel")
+
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            target = home / ".codex/skills/converge-multimodel"
+            self.assertTrue(target.is_symlink(), target)
+            self.assertEqual(EXTENSION_SOURCES["converge-multimodel"], target.resolve())
+            self.assertFalse((home / ".codex/skills/converge-autonomy").exists())
 
     def test_explicit_claude_autonomy_install_is_reversible(self):
         with tempfile.TemporaryDirectory() as directory:

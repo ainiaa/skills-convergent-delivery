@@ -147,16 +147,45 @@ SNAPSHOT_PROFILES = {
     "core": (CORE_CONTROLLER_FILES, CORE_CONTROL_RESOURCE_FILES),
     "extended": (EXTENDED_CONTROLLER_FILES, EXTENDED_CONTROL_RESOURCE_FILES),
 }
-# Compatibility exports retain the complete historical controller surface.
-CONTROLLER_FILES = EXTENDED_CONTROLLER_FILES
-CONTROL_RESOURCE_FILES = EXTENDED_CONTROL_RESOURCE_FILES
+EXTENSION_ORDER = ("multimodel", "autonomy")
+AUTONOMY_CONTROLLER_FILES = tuple(
+    path for path in EXTENDED_CONTROLLER_FILES
+    if path.startswith("scripts/autonomy_") or path == "scripts/autonomous_delivery_eval.py"
+    or path in {
+        "scripts/test_autonomy_arm.py", "scripts/test_autonomy_begin.py",
+        "scripts/test_autonomy_service.py", "scripts/test_autonomy_gate.py",
+        "scripts/test_autonomy_hook.py", "scripts/test_autonomy_preflight.py",
+        "scripts/test_delivery_next.py", "scripts/test_delivery_state.py",
+        "scripts/test_runtime_scenarios.py",
+    }
+)
+MULTIMODEL_CONTROLLER_FILES = tuple(
+    path for path in EXTENDED_CONTROLLER_FILES
+    if path not in CORE_CONTROLLER_FILES and path not in AUTONOMY_CONTROLLER_FILES
+)
+EXTENSIONS = {
+    "multimodel": (MULTIMODEL_CONTROLLER_FILES, (
+        "references/worker-runners.md", "references/multi-model.md",
+        "references/multi-model-evaluation.json",
+    )),
+    "autonomy": (AUTONOMY_CONTROLLER_FILES, (
+        "references/autonomous-delivery-evaluation.json",
+        "references/runtime-adapters.md",
+    )),
+}
+EXTENSION_DEPENDENCIES = {"multimodel": (), "autonomy": ("multimodel",)}
+
+# Core is the default controller surface.  The historical full surface remains
+# available only to validate an already-frozen v16 descriptor.
+CONTROLLER_FILES = CORE_CONTROLLER_FILES
+CONTROL_RESOURCE_FILES = CORE_CONTROL_RESOURCE_FILES
 TRUSTED_RUN_SCRIPTS = frozenset((
-    *(path for path in CONTROLLER_FILES if path.startswith("scripts/") and "/test_" not in path),
+    *(path for path in EXTENDED_CONTROLLER_FILES if path.startswith("scripts/") and "/test_" not in path),
     "skills/converge-batch/scripts/batch_next.py",
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 17
 
 
 def provider_files(root):
@@ -167,12 +196,32 @@ def provider_files(root):
     )
 
 
-def snapshot_files(root, profile="core"):
-    try:
-        controller_files, resource_files = SNAPSHOT_PROFILES[profile]
-    except KeyError as error:
-        raise ValueError("controller snapshot profile is invalid") from error
-    return (*controller_files, *resource_files, *provider_files(root))
+def normalize_extensions(extensions=()):
+    if not isinstance(extensions, (list, tuple)):
+        raise ValueError("controller extensions are invalid")
+    requested = tuple(extensions)
+    if len(requested) != len(set(requested)) or any(name not in EXTENSIONS for name in requested):
+        raise ValueError("controller extensions are invalid")
+    enabled = set(requested)
+    pending = list(requested)
+    while pending:
+        name = pending.pop()
+        for dependency in EXTENSION_DEPENDENCIES[name]:
+            if dependency not in enabled:
+                enabled.add(dependency)
+                pending.append(dependency)
+    return tuple(name for name in EXTENSION_ORDER if name in enabled)
+
+
+def snapshot_files(root, extensions=()):
+    extensions = normalize_extensions(extensions)
+    controller_files = list(CORE_CONTROLLER_FILES)
+    resource_files = list(CORE_CONTROL_RESOURCE_FILES)
+    for extension in extensions:
+        files, resources = EXTENSIONS[extension]
+        controller_files.extend(files)
+        resource_files.extend(resources)
+    return (*dict.fromkeys(controller_files), *dict.fromkeys(resource_files), *provider_files(root))
 
 
 # Compatibility exports are derived from the same registry scan used at runtime.
@@ -190,14 +239,15 @@ def aggregate_fingerprint(root, files=None):
     return digest.hexdigest()
 
 
-def descriptor(root, fingerprint, version, control_root=None, source_root=None, files=None, profile="core"):
+def descriptor(root, fingerprint, version, control_root=None, source_root=None, files=None, extensions=()):
+    extensions = normalize_extensions(extensions)
     value = {
         "root": str(Path(root).resolve()),
         "package_version": version,
         "protocol_version": PROTOCOL_VERSION,
         "protocol_fingerprint": fingerprint,
-        "profile": profile,
-        "files": list(files or snapshot_files(root)),
+        "extensions": list(extensions),
+        "files": list(files or snapshot_files(root, extensions)),
     }
     if control_root is not None:
         value["control_root"] = str(Path(control_root).resolve())
@@ -206,10 +256,11 @@ def descriptor(root, fingerprint, version, control_root=None, source_root=None, 
     return value
 
 
-def create_snapshot(source, control_root, profile="core"):
+def create_snapshot(source, control_root, extensions=()):
     source = Path(source).expanduser().resolve()
     control_root = Path(control_root).expanduser().resolve()
-    files = snapshot_files(source, profile)
+    extensions = normalize_extensions(extensions)
+    files = snapshot_files(source, extensions)
     fingerprint = aggregate_fingerprint(source, files)
     try:
         version = (source / "VERSION").read_text(encoding="utf-8").strip()
@@ -220,7 +271,7 @@ def create_snapshot(source, control_root, profile="core"):
     target = control_root / fingerprint
     if target.exists():
         return validate_snapshot(
-            descriptor(target, fingerprint, version, control_root, source, files, profile)
+            descriptor(target, fingerprint, version, control_root, source, files, extensions)
         )
     control_root.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=control_root))
@@ -242,7 +293,7 @@ def create_snapshot(source, control_root, profile="core"):
         except FileExistsError:
             remove_tree(temporary)
         return validate_snapshot(
-            descriptor(target, fingerprint, version, control_root, source, files, profile)
+            descriptor(target, fingerprint, version, control_root, source, files, extensions)
         )
     except Exception:
         if temporary.exists():
@@ -259,12 +310,13 @@ def remove_tree(path):
 def validate_snapshot(value, *, allow_legacy_release=False):
     current_fields = {
         "root", "control_root", "source_root", "package_version", "protocol_version",
-        "protocol_fingerprint", "profile", "files"
+        "protocol_fingerprint", "extensions", "files"
     }
-    legacy_fields = current_fields - {"profile"}
-    valid_shape = isinstance(value, dict) and (
-        set(value) == current_fields
-        or allow_legacy_release and set(value) == legacy_fields
+    legacy_fields = (current_fields - {"extensions"}) | {"profile"}
+    legacy_release_fields = legacy_fields - {"profile"}
+    fields = set(value) if isinstance(value, dict) else set()
+    valid_shape = fields == current_fields or fields == legacy_fields or (
+        allow_legacy_release and fields == legacy_release_fields
     )
     if not valid_shape:
         raise ValueError("controller snapshot descriptor is invalid")
@@ -272,8 +324,18 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     control_root = Path(value["control_root"])
     source_root = Path(value["source_root"])
     files = value["files"]
-    profile = value.get("profile", "extended")
-    expected_files = list(snapshot_files(root, profile))
+    if fields == current_fields:
+        extensions = normalize_extensions(value["extensions"])
+        expected_files = list(snapshot_files(root, extensions))
+        expected_protocols = {PROTOCOL_VERSION}
+    else:
+        profile = value.get("profile", "extended")
+        try:
+            controller_files, resource_files = SNAPSHOT_PROFILES[profile]
+        except KeyError as error:
+            raise ValueError("controller snapshot descriptor is invalid") from error
+        expected_files = list((*controller_files, *resource_files, *provider_files(root)))
+        expected_protocols = {16}
     valid_files = files == expected_files or (
         allow_legacy_release
         and isinstance(files, list)
@@ -295,7 +357,7 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
     if root.stat().st_mode & writable:
         raise ValueError("controller snapshot root is writable")
-    if value["protocol_version"] != PROTOCOL_VERSION and not allow_legacy_release:
+    if value["protocol_version"] not in expected_protocols and not allow_legacy_release:
         raise ValueError("controller snapshot protocol changed")
     if aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
         raise ValueError("controller snapshot changed")
@@ -362,7 +424,7 @@ def main():
     parser.add_argument("--root")
     parser.add_argument("--descriptor")
     parser.add_argument("--script")
-    parser.add_argument("--profile", choices=tuple(SNAPSHOT_PROFILES), default="core")
+    parser.add_argument("--extension", action="append", default=[])
     arguments, remainder = parser.parse_known_args()
     try:
         if arguments.command != "run" and remainder:
@@ -370,7 +432,7 @@ def main():
         if arguments.command == "create":
             if not arguments.source or not arguments.root:
                 raise ValueError("create requires --source and --root")
-            result = create_snapshot(arguments.source, arguments.root, arguments.profile)
+            result = create_snapshot(arguments.source, arguments.root, arguments.extension)
         elif arguments.command == "validate":
             result = validate_snapshot(json.load(sys.stdin))
         else:

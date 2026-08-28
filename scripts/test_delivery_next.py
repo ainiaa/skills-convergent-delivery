@@ -14,7 +14,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
 from delivery_next import (
     upgrade_state, validate_autonomy_completion, validate_execution_control, validate_provider_reference,
-    validate_closure_plan, validate_state,
+    validate_closure_gate, validate_closure_plan, validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
 from role_result import review_result, result_from_output
@@ -613,12 +613,17 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_full_closure_rejects_a_tampered_graph_receipt(self):
         payload = reviewed_complete_state(full_closure=True)
-        payload["execution_control"]["closure"]["graph_receipt"]["output_fingerprint"] = "b" * 64
+        closure = payload["execution_control"]["closure"]
+        closure["graph_receipt"]["output_fingerprint"] = "b" * 64
 
         with self.assertRaisesRegex(ValueError, "graph receipt"):
-            validate_state(payload, SimpleNamespace())
+            validate_closure_gate(
+                closure, payload["source_fingerprint"], payload["source_receipt"],
+                payload["execution_control"]["routing"], payload["baseline"],
+                payload["provider_binding"],
+            )
 
-    def test_full_closure_accepts_a_codebase_memory_graph_receipt(self):
+    def test_full_closure_rejects_an_unverified_codebase_memory_graph_receipt(self):
         payload = reviewed_complete_state(full_closure=True)
         closure = payload["execution_control"]["closure"]
         closure["graph_receipt"] = graph_receipt(
@@ -627,7 +632,33 @@ class DeliveryNextTest(unittest.TestCase):
             "codebase-memory-mcp",
         )
 
-        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+        with self.assertRaisesRegex(ValueError, "graph receipt"):
+            validate_closure_gate(
+                closure, payload["source_fingerprint"], payload["source_receipt"],
+                payload["execution_control"]["routing"], payload["baseline"],
+                payload["provider_binding"],
+            )
+
+    def test_full_closure_rejects_a_codegraph_version_receipt(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        graph = closure["graph_receipt"]
+        evidence = graph["evidence"]
+        evidence["argv"] = ["codegraph", "--version"]
+        evidence["command"] = shlex.join(evidence["argv"])
+        evidence["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in evidence.items() if key != "receipt_fingerprint"
+        })
+        graph["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in graph.items() if key != "receipt_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "graph-tool output"):
+            validate_closure_gate(
+                closure, payload["source_fingerprint"], payload["source_receipt"],
+                payload["execution_control"]["routing"], payload["baseline"],
+                payload["provider_binding"],
+            )
 
     def test_full_closure_rejects_an_unknown_graph_receipt_tool(self):
         payload = reviewed_complete_state(full_closure=True)

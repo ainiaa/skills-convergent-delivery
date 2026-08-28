@@ -100,6 +100,8 @@ REQUIRED_SOURCE_FILES=(
   skills/converge-eval/scripts/test_eval_contract.py
   skills/converge-eval/scripts/test_eval_kernel.py
   skills/converge-eval/agents/openai.yaml
+  extensions/converge-autonomy/SKILL.md
+  extensions/converge-multimodel/SKILL.md
 )
 
 ACTION="install"
@@ -109,6 +111,7 @@ OFFLINE=0
 FORCE=0
 AUTONOMY=0
 AUTONOMY_SERVICE=0
+MULTIMODEL=0
 INSTALL_LOCK_HELD=0
 
 usage() {
@@ -118,7 +121,7 @@ converge installer
 Usage:
   bash install.sh [--target codex|claude|all] [--source /path/to/clone]
   bash install.sh --upgrade [--target codex|claude|all]
-  bash install.sh --uninstall [--target codex|claude|all] [--autonomy]
+  bash install.sh --uninstall [--target codex|claude|all] [--autonomy|--multimodel]
   bash install.sh --autonomy-service-uninstall
   bash install.sh --version [--offline]
   bash install.sh --doctor [--target codex|claude|all] [--offline]
@@ -129,6 +132,7 @@ Suite. It never replaces an existing directory.
 
 Autonomy is available for Codex and Claude Code (`--target <host> --autonomy`);
 the installer rejects hosts whose locally observed continuation capability is unavailable.
+Multi-model runner tools are installed only with `--multimodel`.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
@@ -146,9 +150,11 @@ while [[ $# -gt 0 ]]; do
     --offline) OFFLINE=1; shift ;;
     --force) FORCE=1; shift ;;
     --autonomy) AUTONOMY=1; shift ;;
+    --multimodel) MULTIMODEL=1; shift ;;
     --autonomy-service) AUTONOMY_SERVICE=1; shift ;;
     --autonomy-service-uninstall) ACTION="service-uninstall"; shift ;;
     --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; shift ;;
+    --multimodel-uninstall) ACTION="uninstall"; MULTIMODEL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Error: unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -158,6 +164,13 @@ case "$TARGET" in
   codex|claude|all) ;;
   *) echo "Error: --target must be codex, claude, or all." >&2; exit 1 ;;
 esac
+
+if [[ "$AUTONOMY" -eq 1 || "$AUTONOMY_SERVICE" -eq 1 ]]; then
+  SKILL_NAMES+=(converge-autonomy)
+fi
+if [[ "$MULTIMODEL" -eq 1 ]]; then
+  SKILL_NAMES+=(converge-multimodel)
+fi
 
 target_path() {
   local skill="${2:-converge}"
@@ -171,6 +184,7 @@ skill_source() {
   case "$1" in
     converge) printf '%s\n' "$SOURCE_DIR" ;;
     converge-plan|converge-review|converge-batch|converge-eval) printf '%s/skills/%s\n' "$SOURCE_DIR" "$1" ;;
+    converge-autonomy|converge-multimodel) printf '%s/extensions/%s\n' "$SOURCE_DIR" "$1" ;;
   esac
 }
 

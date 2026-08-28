@@ -33,9 +33,10 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
   fi
 fi
 
-for skill in converge converge-plan converge-review converge-batch converge-eval; do
+for skill in converge converge-plan converge-review converge-batch converge-eval converge-autonomy converge-multimodel; do
   case "$skill" in
     converge) skill_path="$ROOT" ;;
+    converge-autonomy|converge-multimodel) skill_path="$ROOT/extensions/$skill" ;;
     *) skill_path="$ROOT/skills/$skill" ;;
   esac
   "${VALIDATOR_PYTHON[@]}" "$VALIDATOR" "$skill_path"

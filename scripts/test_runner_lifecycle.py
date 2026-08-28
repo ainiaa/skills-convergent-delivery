@@ -116,6 +116,18 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertNotIn("output", result)
         self.assertNotIn("output", records[1][2])
 
+    def test_core_state_cannot_start_a_multimodel_runner(self):
+        dispatch = plan_dispatch(self.profiles, flow_state())
+
+        with self.assertRaisesRegex(ValueError, "multimodel extension"):
+            run_dispatch(
+                self.arguments, dispatch, "Collect evidence",
+                load=lambda _arguments: {
+                    "revision": 7, "workspace": str(self.workspace),
+                    "controller": {"extensions": []},
+                },
+            )
+
     def test_refuses_to_create_a_persisted_launch_without_execution_authorization(self):
         self.arguments.allow_execute = False
         with self.assertRaisesRegex(ValueError, "explicit"):

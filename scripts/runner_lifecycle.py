@@ -42,6 +42,23 @@ def _review_contract():
     return _REVIEW_CONTRACT
 
 
+def require_multimodel_extension(state):
+    """Reject persisted core runs before they create an optional runner launch."""
+    controller = state.get("controller") if isinstance(state, dict) else None
+    if controller is None:  # Small in-memory unit-test states have no persistence contract.
+        return
+    if not isinstance(controller, dict):
+        raise ValueError("runner lifecycle controller is invalid")
+    extensions = controller.get("extensions")
+    if extensions is None and isinstance(controller.get("snapshot"), dict):
+        snapshot = controller["snapshot"]
+        extensions = snapshot.get("extensions")
+        if extensions is None and snapshot.get("profile") == "extended":
+            extensions = ["multimodel"]
+    if not isinstance(extensions, list) or "multimodel" not in extensions:
+        raise ValueError("runner lifecycle requires the multimodel extension")
+
+
 def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
     """Derive a reviewer launch binding from its full frozen Review v3 request."""
     profile = dispatch.get("profile") if isinstance(dispatch, dict) else None
@@ -101,6 +118,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    require_multimodel_extension(state)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
@@ -169,6 +187,7 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     _review_request_mapping(review_request_fingerprints, tasks, "review request fingerprints")
     _review_request_mapping(review_requests, tasks, "review requests")
     state = load(arguments)
+    require_multimodel_extension(state)
     prepared = []
     for task in tasks:
         review_request, review_request_fingerprint = review_request_binding(

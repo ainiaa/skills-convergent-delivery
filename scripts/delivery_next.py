@@ -15,7 +15,7 @@ from delivery_engine import (
     validate_provider_manifest,
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
-from controller_snapshot import validate_snapshot
+from controller_snapshot import normalize_extensions, validate_snapshot
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
@@ -64,7 +64,7 @@ WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
 ROUTES = {"inline", "planned", "delegated", "batch"}
 REVIEW_TIERS = {"low", "normal", "high"}
-GRAPH_RECEIPT_TOOLS = frozenset({"codegraph", "codebase-memory-mcp"})
+GRAPH_RECEIPT_TOOLS = frozenset({"codegraph"})
 PROGRESS_EVENTS = {"heartbeat", "milestone"}
 PROGRESS_PHASES = {
     "understanding", "planning", "reproducing", "testing", "implementing",
@@ -284,7 +284,9 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
     require_sha256(graph.get("output_fingerprint"), "closure gate graph output")
     if source_receipt is None or not valid_evidence_receipts([graph.get("evidence")], source_receipt):
         raise ValueError("closure gate graph receipt evidence is invalid")
-    if Path(graph["evidence"]["argv"][0]).name != graph["tool"] \
+    argv = graph["evidence"]["argv"]
+    if Path(argv[0]).name != graph["tool"] or argv[:2] != ["codegraph", "explore"] \
+            or len(argv) < 3 or not argv[2].strip() \
             or graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
         raise ValueError("closure gate graph receipt does not bind its graph-tool output")
     if graph["receipt_fingerprint"] != runner_fingerprint({
@@ -762,10 +764,16 @@ def validate_state(state, arguments):
     controller = require_mapping(state.get("controller"), "controller")
     allowed_controller = {"package_version", "protocol_version", "protocol_fingerprint"}
     if frozenset(controller) not in {
-        frozenset(allowed_controller), frozenset((*allowed_controller, "snapshot"))
+        frozenset(allowed_controller),
+        frozenset((*allowed_controller, "extensions")),
+        frozenset((*allowed_controller, "snapshot")),
+        frozenset((*allowed_controller, "extensions", "snapshot")),
     }:
         raise ValueError("controller fields are invalid")
     require_string(controller.get("package_version"), "controller.package_version")
+    extensions = normalize_extensions(controller.get("extensions", ()))
+    if "extensions" in controller and controller["extensions"] != list(extensions):
+        raise ValueError("controller extensions are invalid")
     if "snapshot" in controller:
         frozen = validate_snapshot(controller["snapshot"])
         if any(
@@ -773,8 +781,11 @@ def validate_state(state, arguments):
             for field in ("package_version", "protocol_version", "protocol_fingerprint")
         ):
             raise ValueError("frozen Converge controller snapshot changed")
+        frozen_extensions = normalize_extensions(frozen.get("extensions", ()))
+        if "extensions" in controller and extensions != frozen_extensions:
+            raise ValueError("frozen Converge controller extensions changed")
     else:
-        current_controller = controller_identity()
+        current_controller = controller_identity(extensions=extensions)
         if any(
             controller.get(field) != current_controller[field]
             for field in ("protocol_version", "protocol_fingerprint")

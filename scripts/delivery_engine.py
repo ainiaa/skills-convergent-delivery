@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from controller_snapshot import CONTROLLER_FILES, validate_snapshot
+from controller_snapshot import normalize_extensions, snapshot_files, validate_snapshot
 from provider_contract import (
     build_reference,
     canonical_fingerprint,
@@ -52,7 +52,7 @@ REQUIRED_FORBIDDEN_ACTIONS = {
     "publish",
     "install",
 }
-CONTROLLER_PROTOCOL_VERSION = 15
+CONTROLLER_PROTOCOL_VERSION = 17
 
 
 def skill_path(root, name):
@@ -260,18 +260,20 @@ def native_result(reason, stage_provider=None, task_kind="feature"):
     )
 
 
-def controller_identity(root=None, snapshot=None):
+def controller_identity(root=None, snapshot=None, extensions=()):
     if snapshot is not None:
         frozen = validate_snapshot(snapshot)
         return {
             "package_version": frozen["package_version"],
             "protocol_version": frozen["protocol_version"],
             "protocol_fingerprint": frozen["protocol_fingerprint"],
+            "extensions": list(normalize_extensions(frozen.get("extensions", ()))),
             "snapshot": frozen,
         }
     controller_root = Path(root or Path(__file__).resolve().parent.parent).resolve()
     version_path = controller_root / "VERSION"
-    fingerprint = aggregate_fingerprint(controller_root, CONTROLLER_FILES)
+    extensions = normalize_extensions(extensions)
+    fingerprint = aggregate_fingerprint(controller_root, snapshot_files(controller_root, extensions))
     if not fingerprint:
         raise ValueError("Converge controller files are incomplete")
     try:
@@ -284,6 +286,7 @@ def controller_identity(root=None, snapshot=None):
         "package_version": version,
         "protocol_version": CONTROLLER_PROTOCOL_VERSION,
         "protocol_fingerprint": fingerprint,
+        "extensions": list(extensions),
     }
 
 

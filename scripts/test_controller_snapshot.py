@@ -8,6 +8,8 @@ import unittest
 import stat
 from pathlib import Path
 
+from delivery_engine import controller_identity
+
 
 MODULE_PATH = Path(__file__).with_name("controller_snapshot.py")
 ROOT = MODULE_PATH.parent.parent
@@ -44,6 +46,29 @@ REQUIRED_CONTROL_REFERENCES = (
 
 
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_core_identity_ignores_an_unselected_multimodel_extension(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            before = controller_identity(source)
+            optional = source / "scripts/multi_model.py"
+            optional.parent.mkdir(parents=True, exist_ok=True)
+            optional.write_text("changed optional extension\n", encoding="utf-8")
+
+            self.assertEqual(before, controller_identity(source))
+
+    def test_snapshot_freezes_only_explicitly_requested_extensions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            core = controller_snapshot.create_snapshot(ROOT, Path(directory) / "core")
+            multi = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "multi", extensions=("multimodel",)
+            )
+
+            self.assertEqual([], core["extensions"])
+            self.assertEqual(["multimodel"], multi["extensions"])
+            self.assertNotIn("scripts/multi_model.py", core["files"])
+            self.assertIn("scripts/multi_model.py", multi["files"])
+            self.assertNotIn("scripts/autonomy_begin.py", multi["files"])
+
     def test_writable_workspace_cannot_masquerade_as_a_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
@@ -88,7 +113,7 @@ class ControllerSnapshotTest(unittest.TestCase):
 
     def source(self, directory):
         source = Path(directory) / "suite"
-        for relative in controller_snapshot.CONTROLLER_FILES:
+        for relative in controller_snapshot.EXTENDED_CONTROLLER_FILES:
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{relative}\n", encoding="utf-8")
@@ -96,7 +121,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n", encoding="utf-8")
-        for relative in controller_snapshot.CONTROL_RESOURCE_FILES:
+        for relative in controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES:
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{relative}\n", encoding="utf-8")
@@ -111,7 +136,7 @@ class ControllerSnapshotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
             descriptor = controller_snapshot.create_snapshot(
-                source, Path(directory) / "control", profile="extended"
+                source, Path(directory) / "control", extensions=("autonomy",)
             )
             (source / controller_snapshot.CONTROLLER_FILES[0]).write_text("self modified\n", encoding="utf-8")
 
@@ -148,7 +173,7 @@ class ControllerSnapshotTest(unittest.TestCase):
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())
 
         self.assertEqual("1.0.0", identity["package_version"])
-        self.assertEqual("extended", identity["profile"])
+        self.assertEqual(["multimodel", "autonomy"], identity["extensions"])
         self.assertNotEqual(str(source), descriptor["root"])
 
     def test_core_snapshot_omits_optional_workers_and_direct_test_execution(self):
@@ -157,7 +182,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             descriptor_path = Path(directory) / "snapshot.json"
             descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
 
-            self.assertEqual("core", descriptor["profile"])
+            self.assertEqual([], descriptor["extensions"])
             self.assertNotIn("scripts/autonomy_begin.py", descriptor["files"])
             self.assertNotIn("scripts/multi_model.py", descriptor["files"])
             self.assertNotIn("scripts/test_delivery_next.py", descriptor["files"])

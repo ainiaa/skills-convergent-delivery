@@ -306,13 +306,13 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertFalse(json.loads(result.stdout)["closure_complete"])
 
-    def test_closure_matrix_accepts_codebase_memory_graph_receipts_only(self):
+    def test_closure_matrix_rejects_unverified_codebase_memory_graph_receipts(self):
         value = plan([task("T1", ["src"])])
         value["closure_matrix"]["graph_receipt"] = graph_receipt(
             value["baseline"]["source"], value["closure_matrix"]["chains"],
             "codebase-memory-mcp",
         )
-        self.assertEqual(0, self.run_check("validate", value).returncode)
+        self.assertNotEqual(0, self.run_check("validate", value).returncode)
 
         value["closure_matrix"]["graph_receipt"] = graph_receipt(
             value["baseline"]["source"], value["closure_matrix"]["chains"], "unknown-graph",

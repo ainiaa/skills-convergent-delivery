@@ -13,7 +13,7 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 - 使用远程安装时需要 Bash、`curl`、`git` 和可访问 GitHub 的网络。
 - 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.9 或更高版本。
-- 只有执行全量收口审计时才需要 `codegraph` 或 `codebase-memory-mcp`；`--doctor` 会显示 CodeGraph 是否可用。
+- 只有执行全量收口审计时才需要 `codegraph`；`--doctor` 会显示 CodeGraph 是否可用。
 - 安装器不需要 `codex` 或 `claude` 命令行工具，但对应运行时必须已安装才能使用 Skill。
 - 已打开的 Codex 或 Claude Code 需要重启，或按各自的 Skill 刷新机制重新加载。
 
@@ -86,7 +86,7 @@ PDLC 的 `docs/.pdlc-state/` 继续保存内部流程状态，但不接管 Conve
 
 `converge-batch` 的 scheduler lease 只保护计划调度权，不是代码 writer lease。所有 worker 登记、宿主终态、watchdog、恢复与清场规则以 [执行控制](../references/execution-control.md) 为唯一真源；Batch 只在自身协议中保留 dispatch/receipt/state 的专有字段。
 
-Controller Snapshot 默认使用最小的 `core` profile；需要自治或多模型运行时时，创建时显式传入 `--profile extended`。快照中不能直接执行测试脚本，受保护的自治评测由扩展快照内的评测器按其固定题库启动。
+Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入 `--extension autonomy` 或 `--extension multimodel`。`autonomy` 自动包含其多模型执行依赖。快照中不能直接执行测试脚本，受保护的自治评测由自治扩展快照内的评测器按其固定题库启动。
 
 ## 维护版本
 

@@ -121,7 +121,7 @@ class MultiModelEvalTest(unittest.TestCase):
 
     def test_snapshot_mode_runs_the_frozen_evaluator_and_reports_its_fingerprint(self):
         descriptor = create_snapshot(
-            EVALUATOR.parent.parent, self.workspace / "control", profile="extended"
+            EVALUATOR.parent.parent, self.workspace / "control", extensions=("multimodel",)
         )
         descriptor_path = self.managed_snapshot_state(descriptor)
         frozen = Path(descriptor["root"]) / "scripts" / "multi_model_eval.py"
@@ -140,7 +140,7 @@ class MultiModelEvalTest(unittest.TestCase):
 
     def test_snapshot_mode_rejects_an_unbound_snapshot_descriptor(self):
         descriptor = create_snapshot(
-            EVALUATOR.parent.parent, self.workspace / "control", profile="extended"
+            EVALUATOR.parent.parent, self.workspace / "control", extensions=("multimodel",)
         )
         raw = self.workspace / "snapshot.json"
         raw.write_text(json.dumps(descriptor), encoding="utf-8")
