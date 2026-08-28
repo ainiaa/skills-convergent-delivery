@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import os
@@ -12,7 +13,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
 from delivery_next import (
     upgrade_state, validate_autonomy_completion, validate_execution_control, validate_provider_reference,
-    validate_state,
+    validate_closure_plan, validate_state,
 )
 from evidence_contract import run_evidence, workspace_source
 from role_result import review_result, result_from_output
@@ -33,6 +34,7 @@ HEAD = subprocess.run(
 ).stdout.strip()
 SOURCE = workspace_source(ROOT, HEAD)
 EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+GRAPH_EVIDENCE = run_evidence(ROOT, HEAD, ["codegraph", "explore", "closure receipt"])
 
 
 def task_profile(**overrides):
@@ -54,12 +56,12 @@ def graph_receipt(source_fingerprint, scope_fingerprint):
     value = {
         "schema_version": 1, "tool": "codegraph",
         "source_fingerprint": source_fingerprint, "scope_fingerprint": scope_fingerprint,
-        "output_fingerprint": "a" * 64,
+        "output_fingerprint": GRAPH_EVIDENCE["stdout_fingerprint"], "evidence": GRAPH_EVIDENCE,
     }
     return {**value, "receipt_fingerprint": runner_fingerprint(value)}
 
 
-def closure_plan():
+def closure_plan(requirement_fingerprint=None):
     binding = {
         "controller": "converge",
         "workflow_provider": provider_reference("native-v1", "feature"),
@@ -85,9 +87,10 @@ def closure_plan():
         ).encode()).hexdigest(),
     }
     return {
-        "schema_version": 6, "plan_id": "plan-closure", "requirement_fingerprint": "a" * 64,
+        "schema_version": 6, "plan_id": "plan-closure",
+        "requirement_fingerprint": requirement_fingerprint or routing()["request_fingerprint"],
         "planner": {"name": "native-plan-v1", "source_path": None, "source_fingerprint": None},
-        "context": "short", "baseline": {"commit": HEAD, "source": SOURCE},
+        "context": "short", "baseline": {"commit": HEAD, "source": copy.deepcopy(SOURCE)},
         "tasks": [{
             "task_id": "closure", "task_kind": "vertical_slice", "outcomes": ["close scope"],
             "goal": "close scope", "owned_paths": ["."], "depends_on": [],
@@ -104,6 +107,20 @@ def closure_plan():
     }
 
 
+def closure_audit(plan):
+    return {
+        "plan": plan,
+        "task_results": {"closure": {
+            "status": "DONE", "source_before": SOURCE, "source_after": SOURCE,
+            "fresh_pass": True, "evidence": [EVIDENCE],
+        }},
+        "final_acceptance": [{
+            "criterion": "Requested behavior", "result": "pass", "freshness": "fresh",
+            "evidence": EVIDENCE,
+        }],
+    }
+
+
 def state(**overrides):
     binding = {
         "controller": "converge",
@@ -114,7 +131,7 @@ def state(**overrides):
         "schema_version": 10,
         "run_id": "run-20260818-120000",
         "workspace": str(ROOT),
-        "baseline": {"commit": HEAD, "diff_fingerprint": "base-diff"},
+        "baseline": {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
         "scope_fingerprint": "scope-123",
         "source_fingerprint": SOURCE["source_fingerprint"],
         "source_receipt": SOURCE,
@@ -333,6 +350,7 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
     payload["ledger"].update(runner_launches=launches, runner_results=results)
     if full_closure:
         closure = next(record for record in requests if record["phase"] == "closure")
+        plan = closure_plan(payload["execution_control"]["routing"]["request_fingerprint"])
         payload["execution_control"]["closure"] = {
             "schema_version": 1, "status": "pass", "source_fingerprint": source,
             "scope_fingerprint": payload["execution_control"]["routing"]["profile_fingerprint"],
@@ -340,7 +358,8 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
                 source, payload["execution_control"]["routing"]["profile_fingerprint"],
             ),
             "review_request_fingerprint": closure["request_fingerprint"],
-            "plan": closure_plan(),
+            "plan": plan,
+            "audit": closure_audit(plan),
         }
     return payload
 
@@ -481,7 +500,7 @@ class DeliveryNextTest(unittest.TestCase):
             "schema_version": 1, "status": "pending", "source_fingerprint": None,
             "scope_fingerprint": routing_value["profile_fingerprint"],
             "graph_receipt": None, "review_request_fingerprint": None,
-            "plan": closure_plan(),
+            "plan": closure_plan(routing_value["request_fingerprint"]), "audit": None,
         }
 
         with self.assertRaisesRegex(ValueError, "current passing closure gate"):
@@ -502,7 +521,7 @@ class DeliveryNextTest(unittest.TestCase):
                 payload["source_fingerprint"], routing_value["profile_fingerprint"],
             ),
             "review_request_fingerprint": "b" * 64,
-            "plan": closure_plan(),
+            "plan": closure_plan(routing_value["request_fingerprint"]), "audit": None,
         }
 
         with self.assertRaisesRegex(ValueError, "closure review"):
@@ -520,11 +539,68 @@ class DeliveryNextTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "closure gate fields are invalid"):
             validate_state(payload, SimpleNamespace())
 
+    def test_full_closure_rejects_a_plan_for_another_request(self):
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"]["closure"]["plan"]["requirement_fingerprint"] = "b" * 64
+
+        with self.assertRaisesRegex(ValueError, "closure plan requirement"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_rejects_a_plan_with_a_different_baseline_diff(self):
+        payload = reviewed_complete_state(full_closure=True)
+        plan = payload["execution_control"]["closure"]["plan"]
+        source = plan["baseline"]["source"]
+        source["diff_fingerprint"] = "b" * 64
+        source["source_fingerprint"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in source.items() if key != "source_fingerprint"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        receipt = plan["closure_matrix"]["graph_receipt"]
+        receipt["source_fingerprint"] = source["source_fingerprint"]
+        receipt["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in receipt.items() if key != "receipt_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "closure plan baseline source"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_rejects_a_matrix_narrower_than_the_frozen_scope(self):
+        payload = reviewed_complete_state(full_closure=True)
+        plan = payload["execution_control"]["closure"]["plan"]
+        plan["closure_matrix"]["chains"][0]["entrypoints"] = ["scripts/test_delivery_next.py"]
+        receipt = plan["closure_matrix"]["graph_receipt"]
+        receipt["chains_fingerprint"] = hashlib.sha256(json.dumps([{
+            "id": "main", "entrypoints": ["scripts/test_delivery_next.py"], "callers": ["external"],
+        }], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        receipt["receipt_fingerprint"] = runner_fingerprint({
+            key: value for key, value in receipt.items() if key != "receipt_fingerprint"
+        })
+
+        with self.assertRaisesRegex(ValueError, "closure plan matrix does not cover frozen scope"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_rejects_a_plan_task_outside_the_frozen_scope(self):
+        routing_value = routing(allowed_paths=["scripts"])
+        plan = closure_plan(routing_value["request_fingerprint"])
+
+        with self.assertRaisesRegex(ValueError, "closure plan task scope exceeds frozen routing"):
+            validate_closure_plan(
+                plan, routing_value,
+                {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
+            )
+
+    def test_full_closure_complete_requires_a_passing_plan_audit(self):
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"]["closure"]["audit"] = None
+
+        with self.assertRaisesRegex(ValueError, "complete state requires a passing closure plan audit"):
+            validate_state(payload, SimpleNamespace())
+
     def test_full_closure_rejects_a_tampered_graph_receipt(self):
         payload = reviewed_complete_state(full_closure=True)
         payload["execution_control"]["closure"]["graph_receipt"]["output_fingerprint"] = "b" * 64
 
-        with self.assertRaisesRegex(ValueError, "graph receipt fingerprint"):
+        with self.assertRaisesRegex(ValueError, "graph receipt"):
             validate_state(payload, SimpleNamespace())
 
     def test_full_closure_rejects_a_third_review_instead_of_looping(self):
@@ -550,7 +626,7 @@ class DeliveryNextTest(unittest.TestCase):
             "schema_version": 1, "status": "pending", "source_fingerprint": None,
             "scope_fingerprint": routing_value["profile_fingerprint"],
             "graph_receipt": None, "review_request_fingerprint": None,
-            "plan": closure_plan(),
+            "plan": closure_plan(routing_value["request_fingerprint"]), "audit": None,
         }
 
         self.assertEqual("closure-review", validate_state(payload, SimpleNamespace()))

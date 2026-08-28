@@ -215,28 +215,42 @@ def _path_contains(owner, changed):
     return owner == "." or changed == owner or changed.startswith(owner + "/")
 
 
-def validate_closure_plan(plan, routing, baseline_commit):
+def plan_check_module():
     path = Path(__file__).resolve().parents[1] / "skills/converge-plan/scripts/plan_check.py"
     spec = importlib.util.spec_from_file_location("converge_plan_check", path)
     if spec is None or spec.loader is None:
         raise ValueError("Plan v6 validator is unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def validate_closure_plan(plan, routing, baseline):
+    module = plan_check_module()
     module.validate_plan(plan)
-    if plan["baseline"]["commit"] != baseline_commit:
+    if plan["requirement_fingerprint"] != routing["request_fingerprint"]:
+        raise ValueError("closure plan requirement does not match frozen routing")
+    if plan["baseline"]["commit"] != baseline["commit"]:
         raise ValueError("closure plan baseline does not match state")
+    if plan["baseline"]["source"]["diff_fingerprint"] != baseline["diff_fingerprint"]:
+        raise ValueError("closure plan baseline source does not match state")
     entrypoints = [
         path for chain in plan["closure_matrix"]["chains"] for path in chain["entrypoints"]
     ]
-    if any(not any(_path_contains(entry, scope) or _path_contains(scope, entry)
-                   for entry in entrypoints) for scope in routing["allowed_paths"]):
+    if any(not any(_path_contains(entry, scope) for entry in entrypoints)
+           for scope in routing["allowed_paths"]):
         raise ValueError("closure plan matrix does not cover frozen scope")
+    if any(not any(_path_contains(scope, owned)
+                   for scope in routing["allowed_paths"])
+           for task in plan["tasks"] for owned in task["owned_paths"]):
+        raise ValueError("closure plan task scope exceeds frozen routing")
+    return module
 
 
-def validate_closure_gate(value, source_fingerprint, routing, baseline_commit):
+def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline):
     fields = {
         "schema_version", "status", "source_fingerprint", "scope_fingerprint",
-        "graph_receipt", "review_request_fingerprint", "plan",
+        "graph_receipt", "review_request_fingerprint", "plan", "audit",
     }
     if not isinstance(value, dict) or set(value) != fields or value.get("schema_version") != 1:
         raise ValueError("closure gate fields are invalid")
@@ -244,10 +258,10 @@ def validate_closure_gate(value, source_fingerprint, routing, baseline_commit):
         raise ValueError("closure gate status is invalid")
     if value.get("scope_fingerprint") != routing["profile_fingerprint"]:
         raise ValueError("closure gate scope does not match frozen routing")
-    validate_closure_plan(value.get("plan"), routing, baseline_commit)
+    validate_closure_plan(value.get("plan"), routing, baseline)
     if value["status"] == "pending":
         if any(value[field] is not None for field in (
-            "source_fingerprint", "graph_receipt", "review_request_fingerprint",
+            "source_fingerprint", "graph_receipt", "review_request_fingerprint", "audit",
         )):
             raise ValueError("pending closure gate cannot contain a stale receipt")
         return value
@@ -256,7 +270,7 @@ def validate_closure_gate(value, source_fingerprint, routing, baseline_commit):
     graph = value.get("graph_receipt")
     graph_fields = {
         "schema_version", "tool", "source_fingerprint", "scope_fingerprint",
-        "output_fingerprint", "receipt_fingerprint",
+        "output_fingerprint", "evidence", "receipt_fingerprint",
     }
     if not isinstance(graph, dict) or set(graph) != graph_fields \
             or graph.get("schema_version") != 1 or graph.get("tool") != "codegraph":
@@ -265,6 +279,11 @@ def validate_closure_gate(value, source_fingerprint, routing, baseline_commit):
             or graph["scope_fingerprint"] != routing["profile_fingerprint"]:
         raise ValueError("closure gate graph receipt does not match current source and scope")
     require_sha256(graph.get("output_fingerprint"), "closure gate graph output")
+    if source_receipt is None or not valid_evidence_receipts([graph.get("evidence")], source_receipt):
+        raise ValueError("closure gate graph receipt evidence is invalid")
+    if Path(graph["evidence"]["argv"][0]).name != "codegraph" \
+            or graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
+        raise ValueError("closure gate graph receipt does not bind a CodeGraph output")
     if graph["receipt_fingerprint"] != runner_fingerprint({
             key: item for key, item in graph.items() if key != "receipt_fingerprint"
     }):
@@ -273,8 +292,22 @@ def validate_closure_gate(value, source_fingerprint, routing, baseline_commit):
     return value
 
 
+def validate_closure_audit(closure, workspace, source_fingerprint, acceptance):
+    audit = closure.get("audit")
+    if not isinstance(audit, dict) or set(audit) != {
+        "plan", "task_results", "final_acceptance",
+    } or audit["plan"] != closure["plan"]:
+        raise ValueError("complete state requires a passing closure plan audit")
+    expected_acceptance = {item["criterion"] for item in acceptance}
+    if not expected_acceptance or set(closure["plan"]["final_acceptance"]) != expected_acceptance:
+        raise ValueError("closure plan final acceptance does not match state")
+    result = plan_check_module().audit(audit, workspace)
+    if not result["complete"] or result["source"]["source_fingerprint"] != source_fingerprint:
+        raise ValueError("complete state requires a passing closure plan audit")
+
+
 def validate_execution_control(value, source_fingerprint, task_key=None, schema_version=10,
-                               baseline_commit=None):
+                               baseline=None, source_receipt=None):
     value = require_mapping(value, "execution_control")
     expected_fields = {"routing", "review"}
     if schema_version == 11:
@@ -302,7 +335,7 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     if set(value) != expected_fields:
         raise ValueError("execution_control fields are invalid")
     if routing["full_closure_required"]:
-        validate_closure_gate(value["closure"], source_fingerprint, routing, baseline_commit)
+        validate_closure_gate(value["closure"], source_fingerprint, source_receipt, routing, baseline)
 
     review = require_mapping(value["review"], "execution_control.review")
     if set(review) != {
@@ -774,7 +807,7 @@ def validate_state(state, arguments):
             raise ValueError("source_receipt does not match the current workspace")
     routing, review_control = validate_execution_control(
         state.get("execution_control"), source_fingerprint, task_key, source_schema,
-        baseline["commit"],
+        baseline, source_receipt,
     )
     autonomy = validate_autonomy(
         state["execution_control"]["autonomy"], source_fingerprint, routing
@@ -1095,6 +1128,10 @@ def validate_state(state, arguments):
             acceptance, runner_launches, runner_results,
             runner_role_results_complete, state["execution_control"].get("closure"),
         )
+        if routing["full_closure_required"]:
+            validate_closure_audit(
+                state["execution_control"]["closure"], workspace, source_fingerprint, acceptance,
+            )
         if autonomy is not None:
             validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks)
         if workers and tree_receipt is None:
