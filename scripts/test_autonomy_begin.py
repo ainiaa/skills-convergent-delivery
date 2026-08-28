@@ -33,15 +33,13 @@ class AutonomyBeginTest(unittest.TestCase):
                 "service", "codex-exec-v1", ["true"], ["python3", "-c", "pass"],
             )
 
-    def test_explicit_full_closure_is_preserved_in_the_armed_routing_receipt(self):
-        state = initial_state(
-            ROOT, ["complete task"], ["tests pass"], ["."], "run-closure", "writer-closure",
-            request_text="彻底检查并修复全部已知问题", mode="native", full_closure_required=True,
-        )
-
-        routing = state["execution_control"]["routing"]
-        self.assertTrue(routing["full_closure_required"])
-        self.assertEqual("planned", routing["route"])
+    def test_direct_full_closure_requires_a_plan(self):
+        with self.assertRaisesRegex(ValueError, "converge-plan"):
+            initial_state(
+                ROOT, ["complete task"], ["tests pass"], ["."], "run-closure", "writer-closure",
+                request_text="彻底检查并修复全部已知问题", mode="native",
+                full_closure_required=True,
+            )
 
     def test_scope_risk_and_requested_task_kind_are_frozen(self):
         state = initial_state(
@@ -83,13 +81,15 @@ class AutonomyBeginTest(unittest.TestCase):
             "context_isolation_benefit": False,
         }
         state = initial_state(
-            ROOT, ["coordinate services"], ["integration passes"], ["service-a", "service-b"],
+            ROOT, ["coordinate services"], ["integration passes"], ["."],
             "run-profile", "writer-profile", mode="native", task_profile=task_profile,
         )
 
         routing = state["execution_control"]["routing"]
         self.assertEqual(task_profile, routing["profile"])
         self.assertTrue(routing["integration_required"])
+        self.assertEqual(1, state["execution_control"]["review"]["integration_budget_remaining"])
+        self.assertEqual("round-1-build", validate_state(state, SimpleNamespace()))
 
     def test_task_key_binds_the_requirements(self):
         arguments = (ROOT, "a" * 40, ["."], ["tests pass"])

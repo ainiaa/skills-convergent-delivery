@@ -207,13 +207,11 @@ def infer_path_risks(paths):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="-")
-    parser.add_argument("--request-file", type=argparse.FileType("r"))
     parser.add_argument("--full-closure", action="store_true")
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("task profile input must use stdin")
-        request_text = arguments.request_file.read() if arguments.request_file is not None else ""
         print(json.dumps(classify(json.load(sys.stdin), arguments.full_closure), sort_keys=True))
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:

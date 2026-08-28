@@ -16,9 +16,9 @@
 {"schema_version":2,"assessment_phase":"frozen","scope":"local","coupling":"single","uncertainty":"low","verification":"local","risk_flags":[],"cross_session":false,"delegable_tasks":0,"context_isolation_benefit":false}
 ```
 
-将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 可查看分类；全量收口由控制器明确传入 `--full-closure`，原始请求只用于绑定摘要，绝不能由关键词、否定词或同义表达推断。正式持久状态必须调用同模块的 `freeze_routing(profile, allowed_paths, full_closure_required=<bool>)` 生成 Routing Receipt v3。receipt 绑定完整画像、规范化 `allowed_paths`、route、review tier、integration requirement 和 fingerprint；恢复/完成时重算，调用者不得覆盖派生字段。完成门禁还会用真实 changed paths 检查 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
+将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 只查看分类；它不接收原始请求。全量收口由控制器明确传入 `--full-closure`，绝不能由关键词、否定词或同义表达推断。正式持久状态调用 `freeze_routing(profile, allowed_paths, request_text=<raw-request>, full_closure_required=<bool>)` 生成 Routing Receipt v3；receipt 绑定画像、请求摘要、规范化路径、route、review tier、integration requirement 和 fingerprint，恢复/完成时重算。完成门禁还会检查真实 changed paths 的 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
 
-`autonomy_begin.py` 应接收控制器已冻结的同形 `--task-profile-json`；省略时按 `uncertainty=high` 保守路由，不能把未知任务假定为低风险。路径和显式 `--risk-flag` 只会追加风险，绝不能降低画像声明的风险。
+`autonomy_begin.py` 应接收控制器已冻结的同形 `--task-profile-json`；省略时按 `uncertainty=high` 保守路由，不能把未知任务假定为低风险。它拒绝直接 `--full-closure`：该诉求必须先由 `converge-plan` 冻结 Plan v6 matrix。路径和显式 `--risk-flag` 只会追加风险，绝不能降低画像声明的风险。
 
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
 

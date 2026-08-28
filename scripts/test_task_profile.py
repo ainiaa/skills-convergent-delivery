@@ -46,18 +46,26 @@ class TaskProfileTest(unittest.TestCase):
             )["full_closure_required"]
         )
 
-    def test_cli_accepts_explicit_full_closure_with_a_raw_request_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            request_path = Path(temporary) / "request.txt"
-            request_path.write_text("彻底检查所有问题", encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, str(Path(__file__).with_name("task_profile.py")),
-                 "--request-file", str(request_path), "--full-closure"],
-                input=json.dumps(profile()), text=True, capture_output=True, check=False,
-            )
+    def test_cli_accepts_explicit_full_closure_without_an_unused_request_file(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("task_profile.py")), "--full-closure"],
+            input=json.dumps(profile()), text=True, capture_output=True, check=False,
+        )
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("planned", json.loads(result.stdout)["route"])
+
+    def test_cli_rejects_the_removed_request_file_argument(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            request_path = Path(temporary) / "request.txt"
+            request_path.write_text("request", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("task_profile.py")),
+                 "--request-file", str(request_path)],
+                input=json.dumps(profile()), text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(2, result.returncode)
 
     def test_unknown_or_cross_service_task_requires_plan(self):
         self.assertEqual(classify(profile(uncertainty="high"))["route"], "planned")

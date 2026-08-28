@@ -100,6 +100,8 @@ def _task_profile(value, scope, changed_paths, risk_flags):
 def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id, risk_flags=None,
                   request_text="", mode="auto", task_kind="feature", full_closure_required=False,
                   task_profile=None):
+    if full_closure_required:
+        raise ValueError("direct autonomy full closure requires converge-plan")
     workspace = Path(workspace).expanduser().resolve()
     baseline = _git(workspace, "rev-parse", "HEAD")
     source = workspace_source(workspace, baseline)
@@ -113,16 +115,11 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         "routing": routing,
         "review": {
             "protocol_version": 3, "repair_budget_remaining": 1,
-            "re_review_budget_remaining": 1, "integration_budget_remaining": 0,
+            "re_review_budget_remaining": 1,
+            "integration_budget_remaining": 1 if routing["integration_required"] else 0,
             "rounds": [{"source_fingerprint": source["source_fingerprint"], "requests": []}],
         },
     }
-    if routing["full_closure_required"]:
-        execution_control["closure"] = {
-            "schema_version": 1, "status": "pending", "source_fingerprint": None,
-            "scope_fingerprint": routing["profile_fingerprint"],
-            "graph_receipt": None, "review_request_fingerprint": None,
-        }
     return {
         "schema_version": 10, "run_id": run_id, "repo_id": str(workspace),
         "task_key": task_key, "writer_id": writer_id, "revision": 0,
@@ -241,7 +238,8 @@ def main():
     parser.add_argument("--audit-argv")
     parser.add_argument("--audit-findings-exit-code", type=int)
     parser.add_argument("--risk-flag", action="append", default=[])
-    parser.add_argument("--full-closure", action="store_true")
+    parser.add_argument("--full-closure", action="store_true",
+                        help="rejected: use converge-plan for full closure")
     parser.add_argument("--task-profile-json")
     parser.add_argument("--request-file", type=argparse.FileType("r"))
     parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))

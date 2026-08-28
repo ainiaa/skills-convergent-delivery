@@ -458,10 +458,11 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("全量收口请求", scenarios)
         self.assertIn("不得宣称全部完成", scenarios)
 
-    def test_root_routes_full_closure_claims_through_the_raw_request_classifier(self):
+    def test_root_routes_full_closure_claims_through_explicit_controller_input(self):
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 
-        self.assertIn("task_profile.py --request-file <raw-request>", root)
+        self.assertIn("task_profile.py [--full-closure]", root)
+        self.assertNotIn("--request-file <raw-request>", root)
         self.assertIn("full_closure_required=true", root)
 
 
