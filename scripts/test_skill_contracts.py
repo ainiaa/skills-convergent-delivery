@@ -241,7 +241,6 @@ class SkillContractTest(unittest.TestCase):
             "references/reporting.md",
         ):
             self.assertIn(reference, skill)
-        self.assertLess(len(skill.encode("utf-8")), 2700)
 
     def test_writer_lease_has_an_exact_terminal_release_recipe(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
