@@ -102,6 +102,10 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertEqual(["autonomy", "autonomy-eval"], descriptor["extensions"])
             self.assertIn("scripts/autonomous_delivery_eval.py", descriptor["files"])
             self.assertIn("scripts/test_autonomy_hook.py", descriptor["files"])
+            self.assertIn("scripts/autonomy_hook_config.py", descriptor["files"])
+            self.assertIn("scripts/test_autonomy_hook_config.py", descriptor["files"])
+            self.assertIn("scripts/autonomy_service_config.py", descriptor["files"])
+            self.assertIn("scripts/test_autonomy_service_config.py", descriptor["files"])
 
     def test_autonomy_only_snapshot_cannot_run_the_service(self):
         with tempfile.TemporaryDirectory() as directory:

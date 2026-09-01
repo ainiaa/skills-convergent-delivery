@@ -17,7 +17,9 @@ ALLOWED_FIELDS = {"status", "duration_ms", "usage", "receipt_fingerprint"}
 TESTS = {
     "scripts/test_autonomy_arm.py", "scripts/test_autonomy_gate.py",
     "scripts/test_autonomy_hook.py", "scripts/test_autonomy_preflight.py",
+    "scripts/test_autonomy_hook_config.py",
     "scripts/test_autonomy_begin.py", "scripts/test_autonomy_service.py",
+    "scripts/test_autonomy_service_config.py",
     "scripts/test_delivery_next.py", "scripts/test_delivery_state.py",
     "scripts/test_runtime_scenarios.py",
 }

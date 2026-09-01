@@ -27,7 +27,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-        self.assertEqual(47, len(validate(catalog)))
+        self.assertEqual(49, len(validate(catalog)))
         self.assertIn("full-fix", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("repeated-finding", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("claude-native-stop", [item["id"] for item in catalog["scenarios"]])
@@ -45,13 +45,15 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("service-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("doctor-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("begin-release-failure-visible", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
 
     def test_execute_runs_the_frozen_behavior_checks_without_returning_transcripts(self):
         report = evaluate(json.loads(CATALOG.read_text(encoding="utf-8")), execute=True)
 
         self.assertEqual("completed", report["status"])
         self.assertFalse(report["transcript_storage"])
-        self.assertEqual(47, len(report["results"]))
+        self.assertEqual(49, len(report["results"]))
         for result in report["results"].values():
             self.assertEqual({"status", "duration_ms", "usage", "receipt_fingerprint"}, set(result))
             self.assertEqual("passed", result["status"])
