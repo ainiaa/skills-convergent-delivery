@@ -27,7 +27,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-        self.assertEqual(49, len(validate(catalog)))
+        self.assertEqual(51, len(validate(catalog)))
         self.assertIn("full-fix", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("repeated-finding", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("claude-native-stop", [item["id"] for item in catalog["scenarios"]])
@@ -39,11 +39,13 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("service-hook-state-protected", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-wakeup-non-destructive", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-report-only-revision-blocked", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("hook-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-queue-failure-terminalizes", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-verifier-failure-receipt", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-reaudit-finding-receipt", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("doctor-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("doctor-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("begin-release-failure-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
@@ -53,7 +55,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
         self.assertEqual("completed", report["status"])
         self.assertFalse(report["transcript_storage"])
-        self.assertEqual(49, len(report["results"]))
+        self.assertEqual(51, len(report["results"]))
         for result in report["results"].values():
             self.assertEqual({"status", "duration_ms", "usage", "receipt_fingerprint"}, set(result))
             self.assertEqual("passed", result["status"])

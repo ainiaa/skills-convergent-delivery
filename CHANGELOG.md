@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复计划与恢复路径的两处指令/隔离偏差：`converge-plan` 仅负责可执行 Plan，简单同会话任务明确走根入口 `inline`，所有进入该 Skill 的 Plan 都读取并校验 Plan Contract；`delivery_state list/doctor` 现在只读取当前 workspace 与其 Git common-dir 的状态目录，不再因其他 workspace 的损坏 state 返回错误恢复结果。
+- 修复 Stop Hook 的跨 workspace 误阻断：状态扫描现在按当前 workspace 的既有 SHA-256 状态目录隔离；其他 workspace 的损坏状态不会阻塞无关任务，本 workspace 的损坏状态仍安全阻断并给出恢复诊断。自治冻结评测新增该隔离场景。Skill 入口同时要求按已选路径逐份读取引用，避免一次拼接多个完整协议造成不必要的上下文压力。
 - 修复自治扩展与配置交付边界：安装器现校验两个扩展的调用策略文件；service run 在持久化状态后主动唤醒 LaunchAgent，唤醒失败会先将状态收束为 `blocked/no_progress` 再释放 lease；LaunchAgent 使用安装时的 Python 解释器，不再依赖固定的 `/usr/bin/python3`。Stop Hook 与 LaunchAgent 配置行为现都进入冻结自治评测题库与快照，补齐安装、状态清场和配置回归测试。
 - 默认安装现在注册全部七个 Skill，改善宿主发现与显式调用；注册不会安装自治 Stop Hook、启动 service 或执行模型。自治 Hook 仍仅由 `--autonomy` 显式启用，多模型仍仅按用户明确请求执行；doctor 和安装预检同步校验七个入口。
 - 修复核心 + 按需扩展的五个边界缺口：扩展卸载仅移除对应 Skill/Hook，不再连带删除核心 Suite；v16 `extended` 快照经唯一映射得到 `multimodel + autonomy`；扩展文件改为显式归属；全量收口的 CodeGraph 收据必须使用由冻结 scope 与 closure matrix 确定生成的查询；Hook 自治不再冻结多模型，service 才显式选择它。同步补齐回归测试与安装/源码 checkout 边界说明。

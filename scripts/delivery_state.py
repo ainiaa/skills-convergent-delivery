@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -53,12 +54,38 @@ NATIVE_STAGE_TRANSITIONS = {
 TERMINAL_STATUSES = {"complete"}
 
 
-def state_path(root, repo, task_key, run_id):
+def repository_state_root(root, repo):
     base = Path(root).expanduser().resolve()
     repo_digest = hashlib.sha256(str(Path(repo).expanduser().resolve()).encode("utf-8")).hexdigest()
+    return base / repo_digest
+
+
+def state_path(root, repo, task_key, run_id):
+    base = repository_state_root(root, repo)
     task_digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()
     run_digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
-    return base / repo_digest / task_digest / f"{run_digest}.json"
+    return base / task_digest / f"{run_digest}.json"
+
+
+def workspace_state_roots(root, workspace):
+    root = Path(root).expanduser().resolve()
+    workspace = Path(workspace).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
+            text=True, capture_output=True, check=False, timeout=5,
+        )
+    except OSError:
+        return (root,)
+    if result.returncode:
+        return (root,)
+    common_dir = Path(result.stdout.strip())
+    if not common_dir.is_absolute():
+        common_dir = workspace / common_dir
+    return tuple({
+        repository_state_root(root, workspace),
+        repository_state_root(root, common_dir),
+    })
 
 
 def managed_state_root(arguments):
@@ -643,7 +670,12 @@ def append_runner(arguments, field):
 def discover(workspace, diagnose=False, state_root=DEFAULT_STATE_ROOT):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
-    for path in sorted(Path(state_root).expanduser().resolve().rglob("*.json")):
+    paths = (
+        path
+        for root in workspace_state_roots(state_root, workspace)
+        for path in root.rglob("*.json") if root.is_dir()
+    )
+    for path in sorted(paths):
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):

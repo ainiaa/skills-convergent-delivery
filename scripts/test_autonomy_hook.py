@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 import copy
+import hashlib
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -22,6 +23,10 @@ SCRIPT = Path(__file__).with_name("autonomy_hook.py")
 
 
 class AutonomyHookTest(unittest.TestCase):
+    @staticmethod
+    def workspace_state_dir(root, workspace):
+        return Path(root) / hashlib.sha256(str(Path(workspace).resolve()).encode("utf-8")).hexdigest()
+
     def invoke(self, host, payload, environment=None):
         return subprocess.run(
             [sys.executable, str(SCRIPT), "--host", host], input=json.dumps(payload),
@@ -98,7 +103,7 @@ class AutonomyHookTest(unittest.TestCase):
             home = Path(directory) / "home"
             workspace = Path(directory) / "workspace"
             workspace.mkdir()
-            state_dir = home / ".convergent-delivery/state/a/b"
+            state_dir = self.workspace_state_dir(home / ".convergent-delivery/state", workspace) / "a"
             state_dir.mkdir(parents=True)
             state = {
                 "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
@@ -128,7 +133,7 @@ class AutonomyHookTest(unittest.TestCase):
             home = Path(directory) / "home"
             workspace = Path(directory) / "workspace"
             workspace.mkdir()
-            state_dir = home / ".convergent-delivery/state/a"
+            state_dir = self.workspace_state_dir(home / ".convergent-delivery/state", workspace) / "a"
             state_dir.mkdir(parents=True)
             state = {
                 "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
@@ -149,7 +154,7 @@ class AutonomyHookTest(unittest.TestCase):
             root = Path(directory)
             workspace = root / "workspace"
             workspace.mkdir()
-            state_dir = root / "state/a"
+            state_dir = self.workspace_state_dir(root / "state", workspace) / "a"
             state_dir.mkdir(parents=True)
             (state_dir / "run.json").write_text("{", encoding="utf-8")
 
@@ -159,6 +164,24 @@ class AutonomyHookTest(unittest.TestCase):
 
         self.assertEqual(2, result.returncode)
         self.assertIn("unreadable managed state", json.loads(result.stdout)["reason"])
+
+    def test_unreadable_state_from_another_workspace_does_not_block_this_hook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            other_workspace = root / "other-workspace"
+            workspace.mkdir()
+            other_workspace.mkdir()
+            state_dir = self.workspace_state_dir(root / "state", other_workspace) / "a"
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text("{", encoding="utf-8")
+
+            result = self.invoke("codex", {"cwd": str(workspace)}, os.environ | {
+                "CONVERGE_STATE_ROOT": str(root / "state"),
+            })
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("approve", json.loads(result.stdout)["decision"])
 
     def test_codex_active_run_queues_exactly_one_gate_action_to_the_same_session(self):
         from test_delivery_next import autonomous_state

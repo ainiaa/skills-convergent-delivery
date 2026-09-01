@@ -9,7 +9,7 @@ metadata:
 
 只负责把已授权需求变成可执行、可验证的有限计划。**不修改业务代码**、不做代码评审、不运行实现，也不拆解 PDLC 内部阶段。
 
-先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`。详细字段和完成审计读取 [Plan Contract v6](references/plan-contract.md)。
+本 Skill 只产出可执行 Plan。先将本 `SKILL.md` 所在目录记为 `CONVERGE_PLAN_SKILL_DIR`，完成仓库发现和计划粒度判断后读取 [Plan Contract v6](references/plan-contract.md) 的详细字段和完成审计。简单同会话任务走根入口的 `inline` 路径，不调用本 Skill；只有实际进入已选路径时才逐份读取对应 contract。
 
 ## 1. 冻结输入
 

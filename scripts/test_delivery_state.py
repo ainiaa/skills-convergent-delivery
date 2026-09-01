@@ -264,7 +264,9 @@ class DeliveryStateTest(unittest.TestCase):
     def test_doctor_reports_a_non_object_managed_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "array.json").write_text("[]", encoding="utf-8")
+            state_dir = root / hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()
+            state_dir.mkdir()
+            (state_dir / "array.json").write_text("[]", encoding="utf-8")
 
             result = discover(root, diagnose=True, state_root=root)
 
@@ -422,12 +424,27 @@ class DeliveryStateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_home = Path(directory) / "home"
             state_root = state_home / ".convergent-delivery" / "state"
-            state_root.mkdir(parents=True)
-            (state_root / "truncated.json").write_text("{", encoding="utf-8")
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            initialized = subprocess.run(
+                ["git", "init", str(workspace)], text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, initialized.returncode, initialized.stderr)
+            common = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, common.returncode, common.stderr)
+            common_dir = Path(common.stdout.strip())
+            if not common_dir.is_absolute():
+                common_dir = workspace / common_dir
+            state_dir = state_root / hashlib.sha256(str(common_dir.resolve()).encode("utf-8")).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "truncated.json").write_text("{", encoding="utf-8")
             environment = self.environment(state_home)
 
             result = subprocess.run(
-                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", "/repo/worktree-a"],
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", str(workspace)],
                 text=True, capture_output=True, check=False, env=environment,
             )
 
@@ -435,6 +452,37 @@ class DeliveryStateTest(unittest.TestCase):
             state = json.loads(result.stdout)["states"][0]
             self.assertEqual("blocked", state["health"])
             self.assertIn("unreadable managed state", state["reason"])
+
+    def test_doctor_ignores_an_unreadable_state_from_another_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_home = Path(directory) / "home"
+            state_root = state_home / ".convergent-delivery" / "state"
+            workspace, other_workspace = Path(directory) / "workspace", Path(directory) / "other-workspace"
+            for path in (workspace, other_workspace):
+                path.mkdir()
+                initialized = subprocess.run(
+                    ["git", "init", str(path)], text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(0, initialized.returncode, initialized.stderr)
+            common = subprocess.run(
+                ["git", "-C", str(other_workspace), "rev-parse", "--git-common-dir"],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, common.returncode, common.stderr)
+            common_dir = Path(common.stdout.strip())
+            if not common_dir.is_absolute():
+                common_dir = other_workspace / common_dir
+            state_dir = state_root / hashlib.sha256(str(common_dir.resolve()).encode("utf-8")).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "truncated.json").write_text("{", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", str(workspace)],
+                text=True, capture_output=True, check=False, env=self.environment(state_home),
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([], json.loads(result.stdout)["states"])
 
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}

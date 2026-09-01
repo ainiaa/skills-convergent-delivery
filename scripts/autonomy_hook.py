@@ -12,6 +12,7 @@ from pathlib import Path
 
 from autonomy_gate import decide
 from delivery_lease import lock_record, replace_record
+from delivery_state import repository_state_root
 
 
 def approve():
@@ -20,7 +21,7 @@ def approve():
 
 def active_state(workspace):
     workspace = str(Path(workspace).expanduser().resolve())
-    root = state_root()
+    root = repository_state_root(state_root(), workspace)
     matches = []
     for path in root.rglob("*.json") if root.is_dir() else ():
         try:

@@ -196,6 +196,13 @@ class SkillContractTest(unittest.TestCase):
         for marker in ("--workspace", "commit_id", "tree_hash", "diff_fingerprint", "exit_code"):
             self.assertIn(marker, contract)
 
+    def test_plan_skill_keeps_inline_work_outside_its_executable_contract(self):
+        skill = (ROOT / "skills/converge-plan/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("只产出可执行 Plan", skill)
+        self.assertIn("简单同会话任务走根入口的 `inline` 路径，不调用本 Skill", skill)
+        self.assertLess(skill.index("只产出可执行 Plan"), skill.index("形成 Plan Contract"))
+
     def test_root_skill_plans_bounded_provider_runs_without_splitting_pdlc_internals(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
