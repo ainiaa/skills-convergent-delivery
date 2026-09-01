@@ -421,6 +421,27 @@ class InstallTest(unittest.TestCase):
             self.assertIn("references/review-orchestration.md", result.stderr)
             self.assertFalse((home / ".codex/skills/converge").exists())
 
+    def test_install_rejects_a_suite_missing_extension_invocation_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "source"
+            shutil.copytree(
+                ROOT,
+                source,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".claude", ".codex", ".codegraph", "__pycache__"
+                ),
+            )
+            missing = source / "extensions/converge-autonomy/agents/openai.yaml"
+            missing.unlink()
+
+            result = self.run_installer_from(home, source, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("extensions/converge-autonomy/agents/openai.yaml", result.stderr)
+            self.assertFalse((home / ".codex/skills/converge").exists())
+
     def test_install_refuses_when_another_install_is_in_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

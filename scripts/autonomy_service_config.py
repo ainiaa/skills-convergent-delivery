@@ -5,6 +5,7 @@ import argparse
 import os
 import plistlib
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -34,7 +35,7 @@ def main():
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "Label": LABEL,
-        "ProgramArguments": ["/usr/bin/python3", str(script), "--serve"],
+        "ProgramArguments": [sys.executable, str(script), "--serve"],
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 5,

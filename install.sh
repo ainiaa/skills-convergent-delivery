@@ -103,7 +103,9 @@ REQUIRED_SOURCE_FILES=(
   skills/converge-eval/scripts/test_eval_kernel.py
   skills/converge-eval/agents/openai.yaml
   extensions/converge-autonomy/SKILL.md
+  extensions/converge-autonomy/agents/openai.yaml
   extensions/converge-multimodel/SKILL.md
+  extensions/converge-multimodel/agents/openai.yaml
 )
 
 ACTION="install"

@@ -2,8 +2,10 @@
 """Create and arm the one state that a Codex Stop Hook may continue."""
 
 import argparse
+import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -60,6 +62,25 @@ def _release_lease(arguments, state):
         raise ValueError("autonomy lease cleanup returned invalid output") from error
     if outcome != {"status": "released"}:
         raise ValueError("autonomy lease cleanup failed")
+
+
+def _terminalize_service_start_failure(arguments, state, reason):
+    candidate = copy.deepcopy(state)
+    candidate["revision"] += 1
+    candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
+    write = subprocess.run(
+        [
+            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+            "--lease-root", arguments.lease_root, "--state-root", arguments.state_root,
+            "--repo-id", state["repo_id"], "--task-key", state["task_key"],
+            "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            "--expected-revision", str(state["revision"]),
+        ],
+        input=json.dumps(candidate), text=True, capture_output=True, check=False,
+    )
+    if write.returncode:
+        raise ValueError(write.stderr.strip() or "could not persist autonomous service failure")
+    _release_lease(arguments, candidate)
 
 
 def _provider_binding(mode, task_kind):
@@ -227,6 +248,19 @@ def run(arguments):
         except (OSError, ValueError, json.JSONDecodeError) as cleanup_error:
             raise ValueError(f"{error}; lease cleanup failed: {cleanup_error}") from error
         raise
+    if arguments.runtime == "service":
+        wake = subprocess.run(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/com.convergent-delivery.autonomy"],
+            text=True, capture_output=True, check=False,
+        )
+        if wake.returncode:
+            detail = wake.stderr.strip() or wake.stdout.strip() or "unknown wake failure"
+            reason = f"could not wake autonomous service: {detail}"
+            try:
+                _terminalize_service_start_failure(arguments, state, reason)
+            except (OSError, ValueError, json.JSONDecodeError) as cleanup_error:
+                raise ValueError(f"{reason}; lease cleanup failed: {cleanup_error}") from cleanup_error
+            raise ValueError(reason)
     path = state_path(arguments.state_root, state["repo_id"], state["task_key"], run_id)
     return {"status": "armed", "state_path": str(path), "run_id": run_id, "task_key": state["task_key"]}
 

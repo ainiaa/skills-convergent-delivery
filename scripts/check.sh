@@ -57,6 +57,7 @@ if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
   python3 scripts/test_autonomy_hook.py
   python3 scripts/test_autonomy_hook_config.py
   python3 scripts/test_autonomy_preflight.py
+  python3 scripts/test_autonomy_service_config.py
   python3 scripts/test_autonomy_service.py
   python3 scripts/test_autonomy_arm.py
   python3 scripts/test_autonomy_begin.py

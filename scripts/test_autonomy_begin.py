@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -225,6 +226,87 @@ class AutonomyBeginTest(unittest.TestCase):
         with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True):
             with self.assertRaisesRegex(ValueError, "default managed roots"):
                 autonomy_begin.run(arguments)
+
+    def test_service_run_wakes_the_launchagent_after_persisting_state(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        arguments = SimpleNamespace(
+            workspace="/workspace", requirement=["complete task"], acceptance=["tests pass"], scope=["."],
+            runtime="service", service_runner="codex-exec-v1", verification_argv='["true"]',
+            audit_argv='["python3", "-c", "pass"]', audit_findings_exit_code=None, risk_flag=[],
+            state_root="/state", lease_root="/.convergent-delivery/leases", controller_root="/control", request_file=None,
+            mode="native", task_kind="feature", full_closure=False, task_profile_json=None,
+        )
+        completed = subprocess.CompletedProcess([], 0, '{"status": "ok"}', "")
+
+        with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
+                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
+                patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
+                patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
+                patch.object(autonomy_begin, "controller_identity", return_value={}), \
+                patch.object(autonomy_begin, "initial_state", return_value=state), \
+                patch.object(autonomy_begin, "arm", return_value=state), \
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed, completed]) as run:
+            result = autonomy_begin.run(arguments)
+
+        self.assertEqual("armed", result["status"])
+        self.assertEqual(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/com.convergent-delivery.autonomy"],
+            run.call_args_list[2].args[0],
+        )
+
+    def test_service_launchagent_wake_failure_terminalizes_before_releasing_the_lease(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        arguments = SimpleNamespace(
+            workspace="/workspace", requirement=["complete task"], acceptance=["tests pass"], scope=["."],
+            runtime="service", service_runner="codex-exec-v1", verification_argv='["true"]',
+            audit_argv='["python3", "-c", "pass"]', audit_findings_exit_code=None, risk_flag=[],
+            state_root="/state", lease_root="/.convergent-delivery/leases", controller_root="/control", request_file=None,
+            mode="native", task_kind="feature", full_closure=False, task_profile_json=None,
+        )
+        completed = subprocess.CompletedProcess([], 0, '{"status": "ok"}', "")
+        failed = subprocess.CompletedProcess([], 2, "", "service unavailable")
+
+        with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
+                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
+                patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
+                patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
+                patch.object(autonomy_begin, "controller_identity", return_value={}), \
+                patch.object(autonomy_begin, "initial_state", return_value=state), \
+                patch.object(autonomy_begin, "arm", return_value=state), \
+                patch("autonomy_begin._terminalize_service_start_failure", create=True) as terminalize, \
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed, failed]) as run:
+            with self.assertRaisesRegex(ValueError, "could not wake autonomous service"):
+                autonomy_begin.run(arguments)
+
+        self.assertEqual(3, run.call_count)
+        terminalize.assert_called_once()
+        self.assertIn("service unavailable", terminalize.call_args.args[2])
+
+    def test_terminalize_service_start_failure_persists_blocked_state_before_release(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer", "revision": 3,
+        }
+        arguments = SimpleNamespace(state_root="/state", lease_root="/leases")
+        completed = subprocess.CompletedProcess([], 0, '{"status": "written"}', "")
+
+        with patch.object(autonomy_begin.subprocess, "run", return_value=completed) as run, \
+                patch.object(autonomy_begin, "_release_lease") as release:
+            autonomy_begin._terminalize_service_start_failure(
+                arguments, state, "autonomous service is unavailable"
+            )
+
+        candidate = json.loads(run.call_args.kwargs["input"])
+        self.assertEqual("blocked", candidate["status"])
+        self.assertEqual("no_progress", candidate["blocked_code"])
+        self.assertEqual(4, candidate["revision"])
+        release.assert_called_once_with(arguments, candidate)
 
 
 if __name__ == "__main__":
