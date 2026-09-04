@@ -25,8 +25,10 @@ class CapsuleDispatchTest(unittest.TestCase):
     def test_codex_starts_a_new_thread_and_persists_only_its_delivery_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            command = root / "command"
             codex = self.executable(
-                root, "codex", 'cat >/dev/null\nprintf \'{"type":"thread.started","thread_id":"thread-codex-1"}\\n\'\n',
+                root, "codex", f'printf "%s\\n" "$@" > "{command}"\n'
+                              'cat >/dev/null\nprintf \'{"type":"thread.started","thread_id":"thread-codex-1"}\\n\'\n',
             )
 
             result = capsule_dispatch.dispatch_codex(
@@ -34,10 +36,12 @@ class CapsuleDispatchTest(unittest.TestCase):
             )
             receipt_text = (root / "receipts" / "attempt-one.json").read_text(encoding="utf-8")
             receipt = json.loads(receipt_text)
+            arguments = command.read_text(encoding="utf-8").splitlines()
 
         self.assertEqual("delivered", result["status"])
         self.assertEqual("thread-codex-1", result["external_task_id"])
         self.assertEqual(result, receipt)
+        self.assertEqual(["exec", "--json", "-C", str(root.resolve()), "-"], arguments)
         self.assertNotIn("frozen capsule", receipt_text)
 
     def test_rejects_a_delivered_receipt_without_a_task_id(self):
@@ -125,7 +129,10 @@ class CapsuleDispatchTest(unittest.TestCase):
             first = capsule_dispatch.dispatch_codex(
                 codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
             )
-            time.sleep(0.2)
+            deadline = time.monotonic() + 0.5
+            while not capture.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(capture.exists(), "Codex process did not start within the test deadline")
             second = capsule_dispatch.dispatch_codex(
                 codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
             )
@@ -195,10 +202,10 @@ class CapsuleDispatchTest(unittest.TestCase):
                                 f'touch "{launched}"\n',
             )
             result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
             )
             repeated = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
             )
 
         self.assertEqual("indeterminate", result["status"])
