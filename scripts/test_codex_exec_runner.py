@@ -144,6 +144,12 @@ class CodexExecRunnerTest(unittest.TestCase):
         self.assertEqual(125, receipt["exit_code"])
         self.assertEqual("gpt-5.6-terra", receipt["requested_model"])
         self.assertEqual("high", receipt["requested_reasoning_effort"])
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual(
+            {"model": {"status": "requested", "observed": None},
+             "usage": {"status": "unavailable", "value": None}},
+            receipt["attestation"],
+        )
         self.assertIsNone(content)
 
     def test_reports_bounded_io_liveness_without_persisting_output(self):

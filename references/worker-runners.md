@@ -36,9 +36,9 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：它从 managed state 取得唯一 workspace，先以 `append-runner-launch` 持久化 launch，再执行，最后以 `append-runner-result` 持久化 receipt。runner 对当前 controller 额外返回 `output={status,content?}`：`content` 只在完成且成功提取最终模型文本时存在，受冻结输出预算限制，绝不写入 ledger；`unavailable` 不是可用协作结论。两个本地 runner 的 prompt 写入与 stdout/stderr drain 并发启动，随后立即进入冻结 timeout；子进程不读 stdin 时也会 kill/reap 并写入终态 receipt。输出上限是本地读取到超限后终止的保守边界，不宣称能限制远端在 pipe 中已经写出的字节。receipt 本身只含 exit code、stdout/stderr 摘要、requested model/effort 和有限 timeout/output budget；requested 字段只证明命令请求，并非远端模型观察。写权限只能指向独立 Git worktree，父 controller 仍要审查 diff 和运行独立验证。
 
-`openai_compatible_runner.execute_request(..., allow_network=True)` 才会发送 HTTPS 请求。它只从冻结的 `api_key_env` 环境变量读取 key；profile、计划和 receipt 都不保存 key 或 prompt。返回的 `model` 必须精确等于 frozen effective model，否则 adapter 阻断，避免 provider alias/回退被误当成功。
+`openai_compatible_runner.execute_request(..., allow_network=True)` 才会发送 HTTPS 请求。它只从冻结的 `api_key_env` 环境变量读取 key；profile、计划和 receipt 都不保存 key 或 prompt。返回的 `model` 必须精确等于 frozen effective model，否则 adapter 阻断，避免 provider alias/回退被误当成功。Runner Receipt v2 的 `attestation.model` 明确区分：本地 CLI 只有 `requested`，HTTPS provider 返回并匹配模型时才是 `observed`，未知或失败时为 `unavailable`；`attestation.usage` 只复制可验证的 provider usage，绝不估算 token 或成本。
 
-首次 production smoke test 是单独的外发授权：使用非生产 worktree、最小无敏感 prompt、单个 profile 和明确费用上限；其结果只证明该 provider/account 的当时配置，不能替代代码回归测试或 host-native receipt。
+首次 production smoke test 是单独的外发授权：使用非生产 worktree、最小无敏感 prompt、单个 profile 和明确费用上限；其结果只证明该 provider/account 的当时配置，不能替代代码回归测试或 host-native receipt。`multi_model_smoke.py` 默认只输出 planned；传入 `--allow-execute` 后才会创建 detached 临时 worktree、运行一个只读 scout，并返回不含 prompt/原始回答的脱敏 receipt。
 
 ## 当前接线状态
 

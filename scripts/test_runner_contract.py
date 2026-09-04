@@ -28,6 +28,58 @@ def profile(**overrides):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_v2_receipt_distinguishes_requested_and_observed_model_identity(self):
+        local = profile(
+            runner_id="codex-exec-v1",
+            requested={"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            effective={"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            permissions={"workspace": "read", "shell": False, "network": "egress"},
+        )
+        launch = freeze_launch(local, "Review", {"codex_bin": "/usr/bin/codex"})
+        result = {
+            "schema_version": 2, "runner_id": "codex-exec-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "exit_code": 0, "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+            "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "high",
+            "attestation": {
+                "model": {"status": "requested", "observed": None},
+                "usage": {"status": "unavailable", "value": None},
+            },
+        }
+        result["receipt_fingerprint"] = contract_fingerprint(result)
+
+        self.assertTrue(runner_results_complete([launch], [result]))
+
+        result["attestation"]["model"] = {"status": "observed", "observed": "gpt-5.6-terra"}
+        result["receipt_fingerprint"] = contract_fingerprint({
+            key: item for key, item in result.items() if key != "receipt_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "attestation"):
+            runner_results_complete([launch], [result])
+
+    def test_v2_provider_receipt_requires_observed_model_and_uses_only_provider_usage(self):
+        launch = freeze_launch(profile(), "Review", {"api_key_env": "GLM_API_KEY"})
+        result = {
+            "schema_version": 2, "runner_id": "openai-compatible-v1",
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": "request-1", "response_model": "glm-5.2", "usage": {"total_tokens": 12},
+            "response_fingerprint": "a" * 64,
+            "attestation": {
+                "model": {"status": "observed", "observed": "glm-5.2"},
+                "usage": {"status": "observed", "value": {"total_tokens": 12}},
+            },
+        }
+        result["receipt_fingerprint"] = contract_fingerprint(result)
+
+        self.assertTrue(runner_results_complete([launch], [result]))
+
+        result["attestation"]["usage"] = {"status": "requested", "value": {"total_tokens": 12}}
+        result["receipt_fingerprint"] = contract_fingerprint({
+            key: item for key, item in result.items() if key != "receipt_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "attestation"):
+            runner_results_complete([launch], [result])
+
     def test_claude_cli_receipt_uses_the_same_completion_shape_as_codex(self):
         claude = profile(
             runner_id="claude-code-v1",

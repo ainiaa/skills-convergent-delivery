@@ -92,6 +92,7 @@ if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
   python3 scripts/test_openai_compatible_runner.py
   python3 scripts/test_multi_model.py
   python3 scripts/test_multi_model_eval.py
+  python3 scripts/test_multi_model_smoke.py
   python3 scripts/test_role_flow.py
   python3 scripts/test_role_dispatch.py
 fi

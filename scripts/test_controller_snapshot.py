@@ -70,6 +70,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertNotIn("scripts/multi_model.py", core["files"])
             self.assertNotIn("scripts/autonomy_contract.py", core["files"])
             self.assertIn("scripts/multi_model.py", multi["files"])
+            self.assertIn("scripts/multi_model_smoke.py", multi["files"])
             self.assertNotIn("scripts/autonomy_begin.py", multi["files"])
 
     def test_legacy_profile_maps_to_the_same_canonical_extension_set(self):

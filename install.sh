@@ -58,12 +58,14 @@ REQUIRED_SOURCE_FILES=(
   scripts/openai_compatible_runner.py
   scripts/multi_model.py
   scripts/multi_model_eval.py
+  scripts/multi_model_smoke.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
   scripts/test_trigger_evals.py
   scripts/test_runner_lifecycle.py
   scripts/test_multi_model_eval.py
+  scripts/test_multi_model_smoke.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   scripts/autonomy_gate.py

@@ -272,7 +272,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         stdout_fingerprint = digests["stdout"].hexdigest()
         stderr_fingerprint = digests["stderr"].hexdigest()
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runner_id": "codex-exec-v1",
         "launch_fingerprint": launch["launch_fingerprint"],
         "status": status,
@@ -281,6 +281,10 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
         "stderr_fingerprint": stderr_fingerprint,
         "requested_model": launch["profile"]["effective"]["model"],
         "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+        "attestation": {
+            "model": {"status": "requested", "observed": None},
+            "usage": {"status": "unavailable", "value": None},
+        },
     }
     if status == "unknown":
         value["error_type"] = error_type

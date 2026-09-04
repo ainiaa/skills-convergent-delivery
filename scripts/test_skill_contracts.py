@@ -81,6 +81,7 @@ class SkillContractTest(unittest.TestCase):
             "scripts/codex_exec_runner.py",
             "scripts/openai_compatible_runner.py",
             "scripts/multi_model.py",
+            "scripts/multi_model_smoke.py",
             "references/worker-runners.md",
             "references/multi-model.md",
             "scripts/test_trigger_evals.py",

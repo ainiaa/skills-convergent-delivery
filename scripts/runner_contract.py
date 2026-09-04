@@ -95,6 +95,34 @@ def _requires_role_result(launch):
         and profile["permissions"]["workspace"] != "write" and not profile["permissions"]["shell"]
 
 
+def _validate_attestation(value, launch, result):
+    """Validate what the transport actually attests without inferring provider facts."""
+    if not isinstance(value, dict) or set(value) != {"model", "usage"}:
+        raise ValueError("runner result attestation is invalid")
+    model = value["model"]
+    usage = value["usage"]
+    if not isinstance(model, dict) or set(model) != {"status", "observed"} \
+            or not isinstance(usage, dict) or set(usage) != {"status", "value"}:
+        raise ValueError("runner result attestation is invalid")
+    runner_id = launch["runner_id"]
+    effective_model = launch["profile"]["effective"]["model"]
+    if runner_id in LOCAL_PROCESS_RUNNERS:
+        valid_model = model == {"status": "requested", "observed": None}
+        valid_usage = usage == {"status": "unavailable", "value": None}
+    elif result["status"] == "completed":
+        valid_model = model == {"status": "observed", "observed": effective_model}
+        expected_usage = result["usage"]
+        valid_usage = usage == {
+            "status": "observed" if isinstance(expected_usage, dict) else "unavailable",
+            "value": expected_usage if isinstance(expected_usage, dict) else None,
+        }
+    else:
+        valid_model = model == {"status": "unavailable", "observed": None}
+        valid_usage = usage == {"status": "unavailable", "value": None}
+    if not valid_model or not valid_usage:
+        raise ValueError("runner result attestation is invalid")
+
+
 def runner_results_complete(launches, results):
     """Validate runner receipts and report whether every frozen launch completed."""
     if not isinstance(launches, list) or not isinstance(results, list):
@@ -138,7 +166,10 @@ def runner_results_complete(launches, results):
         role_result = result.get("role_result")
         if role_result is not None:
             required |= {"role_result"}
-        if set(result) != required or result.get("schema_version") != 1 \
+        schema_version = result.get("schema_version")
+        if schema_version == 2:
+            required |= {"attestation"}
+        if set(result) != required or schema_version not in {1, 2} \
                 or result.get("status") not in statuses:
             raise ValueError("runner result fields are invalid")
         if role_result is not None:
@@ -176,6 +207,8 @@ def runner_results_complete(launches, results):
         if runner_id == "openai-compatible-v1" and result["status"] == "unknown" \
                 and not _non_empty_string(result["error_type"]):
             raise ValueError("runner result fields are invalid")
+        if schema_version == 2:
+            _validate_attestation(result["attestation"], frozen_launch, result)
         if launch_fingerprint in seen:
             raise ValueError("runner result is duplicated")
         seen.add(launch_fingerprint)

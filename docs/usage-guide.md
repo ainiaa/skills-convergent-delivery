@@ -55,6 +55,16 @@ bash install.sh --doctor --target codex --offline
 
 `--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
 
+### 多模型 live smoke
+
+多模型 runner 的默认评测不会启动模型。需要确认当前 CLI 账号、冻结 profile 和只读权限可实际工作时，在无敏感的 Git 工作区显式执行：
+
+```bash
+python3 scripts/multi_model_smoke.py --workspace "$PWD" --allow-execute
+```
+
+它会创建并清理 detached 临时 worktree，只运行无 shell 的只读 scout，并输出不含 prompt 或原始模型回答的 receipt。使用 HTTPS provider 时还须显式传入 `--allow-network`。该 smoke 只证明当时的 runner 配置，不替代业务测试、模型质量评测或宿主原生 worker lifecycle。
+
 安装器先预检两个运行时的全部七个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
 
 ### 常见问题
