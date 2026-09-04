@@ -10,7 +10,7 @@
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh \
-     | bash -s -- --target all
+     | bash -s -- --latest --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；看不到 Skill 时运行 `bash install.sh --doctor --target codex --offline` 排查。
@@ -102,6 +102,24 @@ bash install.sh --target claude
 
 ```bash
 bash install.sh --upgrade --target all
+```
+
+远程来源可明确选择，三者互斥，且不能与本地 `--source` 混用：
+
+```bash
+# 跟随 main（默认行为）
+bash install.sh --upgrade --latest --target all
+# 已发布的稳定版本：解析为 Git tag v<version>
+bash install.sh --upgrade --release <version> --target all
+# 预发布或其他精确 Git tag
+bash install.sh --upgrade --tag <tag> --target all
+```
+
+发布 tag 后，首次安装也应从同一个不可变 tag 获取 bootstrap 脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v<version>/install.sh \
+  | bash -s -- --release <version> --target all
 ```
 
 默认注册全部七个 Skill，方便显式调用和宿主发现；注册本身不会安装 Hook、启动 service 或运行模型。多模型只在用户明确要求时执行；自治 Stop Hook 仍须单独启用：

@@ -1,10 +1,12 @@
 import importlib.util
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,6 +64,15 @@ class CapsuleDispatchTest(unittest.TestCase):
                     capsule_dispatch.saved_or_new(
                         path, "codex-exec-v1", "attempt-one", capsule,
                     )
+
+    def test_codex_ignores_a_blank_thread_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "events.jsonl"
+            evidence.write_text(
+                '{"type":"thread.started","thread_id":"   "}\n', encoding="utf-8",
+            )
+
+            self.assertIsNone(capsule_dispatch.codex_thread_id(evidence))
 
     def test_rejects_a_receipt_from_an_unknown_schema(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +153,21 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(["call"], calls)
 
+    def test_rejects_non_finite_or_non_positive_startup_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capsule = Path(directory) / "capsule.md"
+            capsule.write_text("frozen capsule", encoding="utf-8")
+            for timeout in ("nan", "inf", "-inf", "0"):
+                with self.subTest(timeout=timeout), \
+                     patch.object(sys, "argv", [
+                         str(SCRIPT), "--host", "codex", "--workspace", directory,
+                         "--capsule-file", str(capsule), "--receipt-dir", str(Path(directory) / "receipts"),
+                         f"--startup-timeout-seconds={timeout}",
+                     ]), patch.object(capsule_dispatch, "executable", side_effect=AssertionError), \
+                     redirect_stderr(io.StringIO()) as error:
+                    self.assertEqual(2, capsule_dispatch.main())
+                    self.assertIn("positive finite", error.getvalue())
+
     def test_claude_snapshots_the_capsule_and_discovers_its_new_named_session(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -211,6 +237,32 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual("indeterminate", result["status"])
         self.assertIn("did not confirm", result["reason"])
         self.assertEqual(result, repeated)
+
+    def test_claude_does_not_confirm_a_preexisting_session_without_a_valid_agent_id(self):
+        workspace = "/tmp/converge-capsule-dispatch"
+        existing = {
+            "id": "   ", "name": "converge-attempt", "cwd": workspace,
+            "sessionId": "old-session",
+        }
+        with patch.object(capsule_dispatch, "claude_agents", return_value=[existing]):
+            result = capsule_dispatch.claude_session_registered(
+                "claude", workspace, "converge-attempt", set(), time.monotonic() + 0.02,
+            )
+
+        self.assertFalse(result)
+
+    def test_claude_falls_back_to_its_agent_id_when_session_id_is_blank(self):
+        workspace = "/tmp/converge-capsule-dispatch"
+        discovered = {
+            "id": "agent-1", "name": "converge-attempt", "cwd": workspace,
+            "sessionId": "   ",
+        }
+        with patch.object(capsule_dispatch, "claude_agents", return_value=[discovered]):
+            result = capsule_dispatch.claude_session_registered(
+                "claude", workspace, "converge-attempt", set(), time.monotonic() + 0.02,
+            )
+
+        self.assertEqual("agent-1", result)
 
     def test_claude_retries_a_transient_agents_query_within_one_total_deadline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -284,6 +336,32 @@ class CapsuleDispatchTest(unittest.TestCase):
                 )
 
         self.assertEqual("indeterminate", result["status"])
+
+    def test_codex_empty_os_error_produces_a_valid_failed_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(capsule_dispatch.subprocess, "Popen", side_effect=OSError()):
+                result = capsule_dispatch.dispatch_codex(
+                    "codex", root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                )
+            persisted = json.loads((root / "receipts" / "attempt-one.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("OSError", result["reason"])
+        self.assertEqual(result, persisted)
+        capsule_dispatch.validate_saved_receipt(result)
+
+    def test_persist_rejects_an_invalid_receipt_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "attempt-one.json"
+            receipt = capsule_dispatch.result(
+                "codex-exec-v1", "attempt-one", "frozen capsule", "failed", reason="   ",
+            )
+
+            with self.assertRaisesRegex(ValueError, "reason"):
+                capsule_dispatch.persist(path, receipt)
+
+            self.assertFalse(path.exists())
 
     def test_claude_records_a_definite_launch_failure(self):
         with tempfile.TemporaryDirectory() as directory:

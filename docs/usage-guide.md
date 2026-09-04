@@ -31,6 +31,13 @@ bash install.sh --target all
 bash install.sh --upgrade --target all
 ```
 
+远程来源选择三选一：`--latest` 跟随 `main`（默认），`--release <version>` 使用稳定 tag `v<version>`，`--tag <tag>` 使用任意精确 Git tag。三者不能与本地 `--source` 混用。发布 tag 后，首次安装也应从同一个 tag 下载 bootstrap：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v<version>/install.sh \
+  | bash -s -- --release <version> --target all
+```
+
 默认会注册全部七个 Skill，便于宿主发现和显式调用；这不会安装 Stop Hook、启动 service 或执行任何模型。`converge-autonomy` 与 `converge-multimodel` 仍只在用户明确请求时触发。只有需要自治续跑时，才执行 `bash install.sh --target <codex|claude> --autonomy` 启用对应 Stop Hook；多模型不需要额外安装步骤。
 
 安装后或排查“Skill 没触发”时，先运行只读诊断：

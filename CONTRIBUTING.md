@@ -14,6 +14,12 @@
    bash scripts/check.sh
    ```
 
+   修改 `extensions/**`、runner、autonomy 或其共享运行时时，改为运行：
+
+   ```bash
+   bash scripts/check.sh --full
+   ```
+
 ## 提交内容
 
 - 说明问题、改动范围和验证结果。

@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -21,6 +22,14 @@ ATTEMPT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
 
 def fingerprint(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def nonblank_string(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def error_reason(error):
+    return str(error).strip() or type(error).__name__
 
 
 def default_attempt_id(host, workspace, capsule):
@@ -49,16 +58,10 @@ def validate_saved_receipt(value):
     status = value.get("status")
     if status not in {"attempted", "delivered", "unavailable", "failed", "indeterminate"}:
         raise ValueError("dispatch receipt status is invalid")
-    if status == "delivered" and (
-            not isinstance(value.get("external_task_id"), str)
-            or not value["external_task_id"].strip()
-    ):
+    if status == "delivered" and not nonblank_string(value.get("external_task_id")):
         raise ValueError("delivered dispatch receipt requires external_task_id")
     if status in {"unavailable", "failed", "indeterminate"} \
-            and (
-                not isinstance(value.get("reason"), str)
-                or not value["reason"].strip()
-            ):
+            and not nonblank_string(value.get("reason")):
         raise ValueError("terminal dispatch receipt requires reason")
 
 
@@ -93,6 +96,7 @@ def saved_or_new(path, adapter, attempt_id, capsule):
 
 
 def persist(path, result):
+    validate_saved_receipt(result)
     replace_record(path, result)
     return result
 
@@ -119,7 +123,7 @@ def codex_thread_id(log_path):
         except json.JSONDecodeError:
             continue
         task_id = event.get("thread_id") if event.get("type") == "thread.started" else None
-        if isinstance(task_id, str) and task_id:
+        if nonblank_string(task_id):
             return task_id
     return None
 
@@ -142,7 +146,9 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                     text=True, start_new_session=True,
                 )
         except (OSError, subprocess.SubprocessError) as error:
-            return persist(path, result(adapter, attempt_id, capsule, "failed", reason=str(error)))
+            return persist(path, result(
+                adapter, attempt_id, capsule, "failed", reason=error_reason(error),
+            ))
         threading.Thread(target=process.wait, daemon=True).start()
         try:
             process.stdin.write(capsule)
@@ -221,10 +227,11 @@ def claude_session_registered(executable, workspace, agent_name, previous_agent_
                 if not isinstance(item, dict):
                     continue
                 agent_id = item.get("id")
-                if agent_id not in previous_agent_ids and item.get("name") == agent_name \
+                if nonblank_string(agent_id) and agent_id not in previous_agent_ids \
+                        and item.get("name") == agent_name \
                         and item.get("cwd") == str(workspace):
                     session_id = item.get("sessionId")
-                    return session_id if isinstance(session_id, str) and session_id else agent_id
+                    return session_id if nonblank_string(session_id) else agent_id
         except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
             pass
         time.sleep(min(0.02, max(0, deadline - time.monotonic())))
@@ -252,7 +259,7 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
         agent_name = f"converge-{fingerprint(attempt_id)[:24]}"
         previous_agent_ids = {
             item.get("id") for item in previous_agents
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
+            if isinstance(item, dict) and nonblank_string(item.get("id"))
         }
         try:
             completed = subprocess.run(
@@ -269,7 +276,9 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
                 reason="Claude Code launch timed out; do not retry it",
             ))
         except (OSError, subprocess.SubprocessError) as error:
-            return persist(path, result(adapter, attempt_id, capsule, "failed", reason=str(error)))
+            return persist(path, result(
+                adapter, attempt_id, capsule, "failed", reason=error_reason(error),
+            ))
         if completed.returncode:
             return persist(path, result(
                 adapter, attempt_id, capsule, "failed",
@@ -337,8 +346,9 @@ def main():
         capsule = Path(arguments.capsule_file).read_text(encoding="utf-8")
         if not capsule.strip():
             raise ValueError("capsule must not be empty")
-        if arguments.startup_timeout_seconds <= 0:
-            raise ValueError("startup timeout must be positive")
+        if not math.isfinite(arguments.startup_timeout_seconds) \
+                or arguments.startup_timeout_seconds <= 0:
+            raise ValueError("startup timeout must be positive finite")
         attempt_id = arguments.attempt_id or default_attempt_id(arguments.host, arguments.workspace, capsule)
         try:
             host_executable = executable(arguments.host)

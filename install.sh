@@ -111,6 +111,8 @@ REQUIRED_SOURCE_FILES=(
 ACTION="install"
 TARGET="all"
 SOURCE_OVERRIDE=""
+REMOTE_SELECTOR=""
+REMOTE_REF=""
 OFFLINE=0
 FORCE=0
 AUTONOMY=0
@@ -120,12 +122,12 @@ EXTENSION_ONLY_UNINSTALL=0
 INSTALL_LOCK_HELD=0
 
 usage() {
-  cat <<EOF
+  cat <<'EOF'
 converge installer
 
 Usage:
-  bash install.sh [--target codex|claude|all] [--source /path/to/clone]
-  bash install.sh --upgrade [--target codex|claude|all]
+  bash install.sh [--target codex|claude|all] [--source /path/to/clone] [--latest|--release <version>|--tag <tag>]
+  bash install.sh --upgrade [--target codex|claude|all] [--latest|--release <version>|--tag <tag>]
   bash install.sh --uninstall [--target codex|claude|all] [--autonomy|--multimodel]
   bash install.sh --autonomy-service-uninstall
   bash install.sh --version [--offline]
@@ -141,14 +143,38 @@ compatible no-op because its Skill is already registered; model runners still
 require an explicit user request.
 
 Remote install:
-  curl -fsSL https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/install.sh | bash -s -- --target all
+  curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh | bash -s -- --latest --target all
 EOF
+}
+
+select_remote_ref() {
+  local selector="$1"
+  local ref="$2"
+  if [[ -n "$REMOTE_SELECTOR" ]]; then
+    echo "Error: choose only one of --latest, --release, or --tag." >&2
+    exit 1
+  fi
+  if [[ -z "$ref" ]]; then
+    echo "Error: ${selector} requires a non-empty value." >&2
+    exit 1
+  fi
+  REMOTE_SELECTOR="$selector"
+  REMOTE_REF="$ref"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="${2:-}"; shift 2 ;;
     --source) SOURCE_OVERRIDE="${2:-}"; shift 2 ;;
+    --latest) select_remote_ref "--latest" "$GITHUB_BRANCH"; shift ;;
+    --release)
+      release_version="${2:-}"
+      select_remote_ref "--release" "$release_version"
+      [[ "$release_version" == v* ]] || release_version="v${release_version}"
+      REMOTE_REF="$release_version"
+      shift 2
+      ;;
+    --tag) select_remote_ref "--tag" "${2:-}"; shift 2 ;;
     --uninstall) ACTION="uninstall"; shift ;;
     --upgrade) ACTION="upgrade"; FORCE=1; shift ;;
     --version) ACTION="version"; shift ;;
@@ -170,6 +196,15 @@ case "$TARGET" in
   codex|claude|all) ;;
   *) echo "Error: --target must be codex, claude, or all." >&2; exit 1 ;;
 esac
+
+if [[ -n "$SOURCE_OVERRIDE" && -n "$REMOTE_SELECTOR" ]]; then
+  echo "Error: ${REMOTE_SELECTOR} cannot be combined with --source." >&2
+  exit 1
+fi
+if [[ -n "$REMOTE_SELECTOR" && "$ACTION" != "install" && "$ACTION" != "upgrade" ]]; then
+  echo "Error: ${REMOTE_SELECTOR} is only supported for install or upgrade." >&2
+  exit 1
+fi
 
 if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
   SKILL_NAMES=()
@@ -404,7 +439,7 @@ acquire_install_lock() {
 prepare_source() {
   if [[ -n "$SOURCE_OVERRIDE" ]]; then
     SOURCE_DIR="$SOURCE_OVERRIDE"
-  elif [[ -f "$SCRIPT_DIR/SKILL.md" && -f "$SCRIPT_DIR/VERSION" ]]; then
+  elif [[ -z "$REMOTE_SELECTOR" && -f "$SCRIPT_DIR/SKILL.md" && -f "$SCRIPT_DIR/VERSION" ]]; then
     SOURCE_DIR="$SCRIPT_DIR"
   else
     if ! command -v git >/dev/null 2>&1; then
@@ -412,13 +447,18 @@ prepare_source() {
       exit 1
     fi
     if [[ -d "$MANAGED_SOURCE/.git" ]]; then
-      git -C "$MANAGED_SOURCE" pull --ff-only
+      if [[ -z "$REMOTE_SELECTOR" || "$REMOTE_SELECTOR" == "--latest" ]]; then
+        git -C "$MANAGED_SOURCE" pull --ff-only
+      else
+        git -C "$MANAGED_SOURCE" fetch --depth 1 origin "refs/tags/${REMOTE_REF}:refs/tags/${REMOTE_REF}"
+        git -C "$MANAGED_SOURCE" checkout --detach "$REMOTE_REF"
+      fi
     elif [[ -e "$MANAGED_SOURCE" ]]; then
       echo "Error: managed source exists but is not a Git checkout: $MANAGED_SOURCE" >&2
       exit 1
     else
       mkdir -p "$(dirname "$MANAGED_SOURCE")"
-      git clone --depth 1 --branch "$GITHUB_BRANCH" \
+      git clone --depth 1 --branch "${REMOTE_REF:-$GITHUB_BRANCH}" \
         "https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git" "$MANAGED_SOURCE"
     fi
     SOURCE_DIR="$MANAGED_SOURCE"

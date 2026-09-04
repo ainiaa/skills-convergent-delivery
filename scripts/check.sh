@@ -107,4 +107,9 @@ python3 skills/converge-batch/scripts/test_batch_runtime.py
 python3 skills/converge-eval/scripts/test_eval_contract.py
 python3 skills/converge-eval/scripts/test_eval_kernel.py
 
+if [[ ${CONVERGE_CHECK_SELF_TEST:-0} != 1 ]]; then
+  CONVERGE_CHECK_SELF_TEST=1 python3 scripts/test_check.py
+  echo "Check script self-test passed."
+fi
+
 echo "All checks passed."

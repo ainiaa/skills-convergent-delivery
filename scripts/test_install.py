@@ -48,6 +48,46 @@ class InstallTest(unittest.TestCase):
             env=os.environ | {"HOME": str(home)},
         )
 
+    def run_remote_installer(self, home, *arguments):
+        bin_dir = home / "bin"
+        bin_dir.mkdir()
+        log = home / "git.log"
+        git = bin_dir / "git"
+        git.write_text(
+            """#!/usr/bin/env python3
+import os
+import shutil
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+with Path(os.environ["FAKE_GIT_LOG"]).open("a", encoding="utf-8") as log:
+    log.write(" ".join(arguments) + "\\n")
+if arguments and arguments[0] == "clone":
+    destination = Path(arguments[-1])
+    shutil.copytree(
+        os.environ["FAKE_SOURCE"], destination,
+        ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+    )
+    (destination / ".git").mkdir()
+""",
+            encoding="utf-8",
+        )
+        git.chmod(0o755)
+        result = subprocess.run(
+            ["bash", str(INSTALLER), *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=os.environ | {
+                "HOME": str(home),
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "FAKE_GIT_LOG": str(log),
+                "FAKE_SOURCE": str(ROOT),
+            },
+        )
+        return result, log.read_text(encoding="utf-8") if log.exists() else ""
+
     def test_default_install_registers_all_skills_without_enabling_extensions(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -81,6 +121,73 @@ class InstallTest(unittest.TestCase):
                 for name in (*SKILL_SOURCES, *EXTENSION_SOURCES):
                     target = home / f".{runtime}/skills/{name}"
                     self.assertFalse(target.exists() or target.is_symlink())
+
+    def test_remote_selectors_clone_the_requested_latest_release_or_tag(self):
+        cases = (
+            (("--latest",), "main"),
+            (("--release", "0.0.21"), "v0.0.21"),
+            (("--tag", "preview-202609"), "preview-202609"),
+        )
+        for arguments, expected_ref in cases:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                result, log = self.run_remote_installer(home, "--target", "codex", *arguments)
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(
+                    f"clone --depth 1 --branch {expected_ref} "
+                    "https://github.com/ainiaa/skills-convergent-delivery.git",
+                    log,
+                )
+                self.assertTrue((home / ".codex/skills/converge").is_symlink())
+
+    def test_remote_selector_cannot_be_combined_with_a_local_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_installer_from(
+                Path(directory), ROOT, "--target", "codex", "--tag", "v0.0.21"
+            )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("cannot be combined with --source", result.stderr)
+
+    def test_tagged_upgrade_fetches_and_detaches_the_requested_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            managed = home / ".convergent-delivery/source"
+            shutil.copytree(
+                ROOT,
+                managed,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            (managed / ".git").mkdir()
+
+            result, log = self.run_remote_installer(
+                home, "--upgrade", "--target", "codex", "--tag", "preview-202609"
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "-C " + str(managed) + " fetch --depth 1 origin "
+            "refs/tags/preview-202609:refs/tags/preview-202609",
+            log,
+        )
+        self.assertIn("-C " + str(managed) + " checkout --detach preview-202609", log)
+
+    def test_help_keeps_literal_markdown_options_out_of_the_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_installer(Path(directory), "--help")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stderr)
+        self.assertIn("`--target <host> --autonomy`", result.stdout)
+        self.assertIn("`--multimodel`", result.stdout)
+
+    def test_release_requires_a_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_installer(Path(directory), "--release")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("--release requires a non-empty value", result.stderr)
 
     def test_explicit_autonomy_install_is_reversible_and_preserves_peer_stop_hooks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -514,6 +621,14 @@ class InstallTest(unittest.TestCase):
         self.assertIn("## [Unreleased]", changelog)
         self.assertNotIn("三个 Skill", changelog)
         self.assertNotIn("三个入口", changelog)
+
+    def test_install_documentation_explains_latest_release_and_tag_selectors(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
+
+        for marker in ("--latest", "--release <version>", "--tag <tag>"):
+            self.assertIn(marker, readme)
+            self.assertIn(marker, usage)
 
     def test_readme_puts_newcomer_install_and_skill_choice_before_the_overview(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
