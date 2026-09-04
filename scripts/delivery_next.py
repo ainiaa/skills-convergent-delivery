@@ -25,11 +25,10 @@ from runtime_adapter import (
     validate_cleanup_barrier,
 )
 from delivery_progress import plan_projection_fingerprint
-from evidence_contract import (
-    valid_evidence_receipts, validate_source_receipt, workspace_source,
-)
+from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source
 from runner_contract import fingerprint as runner_fingerprint, role_results_complete, runner_results_complete
 from task_profile import infer_path_risks, validate_frozen_routing
+from worker_profile import ROLES as PROFILE_WORKER_ROLES
 
 
 NATIVE_ACTIVE_STAGES = {
@@ -62,6 +61,7 @@ BLOCKED_CODES = {
 DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
 WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
+WORKER_ROLES = frozenset((*PROFILE_WORKER_ROLES, "pdlc", "evaluator", "controller-delegate"))
 ROUTES = {"inline", "planned", "delegated", "batch"}
 REVIEW_TIERS = {"low", "normal", "high"}
 GRAPH_RECEIPT_TOOLS = frozenset({"codegraph"})
@@ -85,9 +85,6 @@ ACCEPTANCE_FIELDS = {
     "criterion", "evidence", "result", "freshness", "source_fingerprint", "evidence_receipts",
 }
 ACCEPTANCE_HISTORY_FIELDS = {"revision", "acceptance"}
-AUTONOMY_ITEM_KINDS = {"requirement", "scope", "acceptance"}
-AUTONOMY_BATCH_PHASES = {"initial", "re_audit"}
-AUTONOMY_BATCH_STATUSES = {"pass", "findings", "blocked"}
 
 def require_string(value, name):
     if not isinstance(value, str) or not value.strip():
@@ -455,212 +452,6 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     return routing, review
 
 
-def validate_action_attempts(value):
-    if not isinstance(value, list) or len(value) > 8:
-        raise ValueError("autonomy action attempts are invalid")
-    identifiers = set()
-    for attempt in value:
-        if not isinstance(attempt, dict) or set(attempt) != {
-            "attempt_id", "action", "status", "owner", "time_policy", "events", "observation", "commit",
-        }:
-            raise ValueError("autonomy action attempt fields are invalid")
-        identifier = require_string(attempt["attempt_id"], "autonomy action attempt id")
-        if identifier in identifiers:
-            raise ValueError("autonomy action attempt ids are duplicated")
-        identifiers.add(identifier)
-        action_value = attempt["action"]
-        if not isinstance(action_value, dict) or not isinstance(action_value.get("action"), str):
-            raise ValueError("autonomy action attempt action is invalid")
-        try:
-            if action(action_value["action"], **{
-                key: item for key, item in action_value.items() if key != "action"
-            }) != action_value:
-                raise ValueError("autonomy action attempt action is invalid")
-        except ValueError as error:
-            raise ValueError("autonomy action attempt action is invalid") from error
-        require_string(attempt["owner"], "autonomy action attempt owner")
-        policy = require_mapping(attempt["time_policy"], "autonomy action attempt time policy")
-        if set(policy) != {"startup_seconds", "idle_seconds", "absolute_seconds", "max_extensions"}:
-            raise ValueError("autonomy action attempt time policy fields are invalid")
-        for field in ("startup_seconds", "idle_seconds", "absolute_seconds", "max_extensions"):
-            item = policy[field]
-            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
-                raise ValueError("autonomy action attempt time policy is invalid")
-        if not 1 <= policy["startup_seconds"] <= policy["idle_seconds"] <= policy["absolute_seconds"] <= 3600 \
-                or policy["max_extensions"] > 3:
-            raise ValueError("autonomy action attempt time policy is invalid")
-        events = attempt["events"]
-        if not isinstance(events, list) or len(events) > 32:
-            raise ValueError("autonomy action attempt events are invalid")
-        for event in events:
-            if not isinstance(event, dict) or set(event) != {"kind", "at", "evidence_fingerprint"} \
-                    or event["kind"] not in {"started", "progress", "terminated"}:
-                raise ValueError("autonomy action attempt event is invalid")
-            require_string(event["at"], "autonomy action attempt event time")
-            require_sha256(event["evidence_fingerprint"], "autonomy action attempt event evidence")
-        observation = attempt["observation"]
-        commit = attempt["commit"]
-        if observation is not None:
-            if not isinstance(observation, dict) or set(observation) != {"outcome", "receipt_fingerprint"} \
-                    or observation["outcome"] not in {"completed", "interrupted", "failed", "unknown"}:
-                raise ValueError("autonomy action attempt observation is invalid")
-            require_sha256(observation["receipt_fingerprint"], "autonomy action attempt receipt")
-        if commit is not None:
-            if not isinstance(commit, dict) or set(commit) != {
-                "source_fingerprint", "verification_fingerprint"
-            }:
-                raise ValueError("autonomy action attempt commit is invalid")
-            require_sha256(commit["source_fingerprint"], "autonomy action attempt commit source")
-            require_sha256(commit["verification_fingerprint"], "autonomy action attempt verification")
-        if attempt["status"] == "intent":
-            valid = not events and observation is None and commit is None
-        elif attempt["status"] == "running":
-            valid = bool(events) and events[0]["kind"] == "started" and observation is None and commit is None
-        elif attempt["status"] == "observed":
-            valid = bool(events) and events[0]["kind"] == "started" and observation is not None and commit is None
-        elif attempt["status"] == "committed":
-            valid = bool(events) and events[0]["kind"] == "started" and observation is not None and commit is not None
-        else:
-            valid = False
-        if not valid:
-            raise ValueError("autonomy action attempt status is invalid")
-    return value
-
-
-def validate_autonomy(value, source_fingerprint, routing):
-    value = require_mapping(value, "execution_control.autonomy")
-    if set(value) != {
-        "schema_version", "enabled", "manifest", "audit_batches",
-        "repair_budget_remaining", "re_audit_budget_remaining", "runtime", "action_attempts",
-    } or value["schema_version"] != 1 or value["enabled"] is not True:
-        raise ValueError("autonomy fields are invalid")
-    runtime = require_mapping(value["runtime"], "autonomy runtime")
-    if runtime == {"mode": "hook"}:
-        pass
-    elif set(runtime) in ({"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv"},
-                          {"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv", "audit_findings_exit_code"}) \
-            and runtime["mode"] == "service":
-        from worker_profile import validate_worker_profile
-        profile = validate_worker_profile(runtime["runner_profile"])
-        if profile["role"] != "implementer" or profile["permissions"] != {
-            "workspace": "write", "shell": True, "network": "egress",
-        } or not isinstance(runtime["max_cycles"], int) or not 1 <= runtime["max_cycles"] <= 8:
-            raise ValueError("autonomy service runtime is invalid")
-        verifier = runtime["verification_argv"]
-        audit = runtime["audit_argv"]
-        if not isinstance(verifier, list) or not verifier or any(
-                not isinstance(item, str) or not item.strip() for item in verifier
-        ) or not isinstance(audit, list) or not audit or any(
-                not isinstance(item, str) or not item.strip() for item in audit
-        ) or audit == verifier:
-            raise ValueError("autonomy service verifier argv is invalid")
-        findings_code = runtime.get("audit_findings_exit_code")
-        if findings_code is not None and (
-                not isinstance(findings_code, int) or isinstance(findings_code, bool)
-                or not 1 <= findings_code <= 255
-        ):
-            raise ValueError("autonomy service audit findings exit code is invalid")
-        if routing["review_tier"] != "low":
-            raise ValueError("autonomy service requires a low-risk route")
-    else:
-        raise ValueError("autonomy runtime is invalid")
-    validate_action_attempts(value["action_attempts"])
-    manifest = require_mapping(value["manifest"], "autonomy manifest")
-    if set(manifest) != {"source_fingerprint", "items"}:
-        raise ValueError("autonomy manifest fields are invalid")
-    require_sha256(manifest["source_fingerprint"], "autonomy manifest source")
-    items = manifest["items"]
-    if not isinstance(items, list) or not items or len(items) > 40:
-        raise ValueError("autonomy manifest items are invalid")
-    identifiers = []
-    scope_values = set()
-    for item in items:
-        if not isinstance(item, dict) or set(item) != {"id", "kind", "value"}:
-            raise ValueError("autonomy manifest item fields are invalid")
-        identifier = require_string(item["id"], "autonomy manifest item id")
-        kind = item["kind"]
-        value_text = require_string(item["value"], "autonomy manifest item value")
-        if len(identifier) > 80 or len(value_text) > 500 or kind not in AUTONOMY_ITEM_KINDS:
-            raise ValueError("autonomy manifest item is invalid")
-        identifiers.append(identifier)
-        if kind == "scope":
-            scope_values.add(value_text)
-    if len(set(identifiers)) != len(identifiers):
-        raise ValueError("autonomy manifest item ids are invalid")
-    if not {"requirement", "scope", "acceptance"} <= {
-        item["kind"] for item in items
-    }:
-        raise ValueError("autonomy manifest must cover requirement, scope, and acceptance")
-    if scope_values != set(routing["allowed_paths"]):
-        raise ValueError("autonomy manifest scope does not match frozen routing")
-    for field in ("repair_budget_remaining", "re_audit_budget_remaining"):
-        if value[field] not in {0, 1}:
-            raise ValueError(f"autonomy {field} must be 0 or 1")
-    batches = value["audit_batches"]
-    if not isinstance(batches, list) or len(batches) > 2:
-        raise ValueError("autonomy audit batches are invalid")
-    previous = None
-    required_ids = set(identifiers)
-    for batch in batches:
-        if not isinstance(batch, dict) or set(batch) != {
-            "source_fingerprint", "phase", "status", "covered_manifest_ids", "finding_fingerprints",
-            "evidence_receipt_fingerprint",
-        }:
-            raise ValueError("autonomy audit batch fields are invalid")
-        batch_source = require_sha256(batch["source_fingerprint"], "autonomy audit source")
-        require_sha256(batch["evidence_receipt_fingerprint"], "autonomy audit evidence receipt")
-        if batch["phase"] not in AUTONOMY_BATCH_PHASES \
-                or batch["status"] not in AUTONOMY_BATCH_STATUSES:
-            raise ValueError("autonomy audit batch is invalid")
-        covered = batch["covered_manifest_ids"]
-        findings = batch["finding_fingerprints"]
-        if not isinstance(covered, list) or len(covered) != len(set(covered)) \
-                or not set(covered) <= required_ids:
-            raise ValueError("autonomy audit coverage is invalid")
-        if not isinstance(findings, list) or len(findings) != len(set(findings)) \
-                or any(require_sha256(item, "autonomy finding") is None for item in findings):
-            raise ValueError("autonomy audit findings are invalid")
-        if batch["status"] == "pass" and (set(covered) != required_ids or findings):
-            raise ValueError("autonomy audit pass requires full coverage")
-        if batch["status"] == "findings" and not findings:
-            raise ValueError("autonomy audit findings require fingerprints")
-        if previous is None and batch["phase"] != "initial":
-            raise ValueError("autonomy audit must start with initial")
-        if previous is not None:
-            if batch["phase"] != "re_audit" or previous["status"] != "findings" \
-                    or batch_source == previous["source_fingerprint"]:
-                raise ValueError("autonomy re_audit requires repaired findings and new source")
-        previous = batch
-    if len(batches) == 2 and (
-        value["repair_budget_remaining"] != 0 or value["re_audit_budget_remaining"] != 0
-    ):
-        raise ValueError("autonomy re_audit must consume both budgets")
-    return value
-
-
-def validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks):
-    batches = autonomy["audit_batches"]
-    if not batches or batches[-1]["source_fingerprint"] != source_fingerprint \
-            or batches[-1]["status"] != "pass":
-        raise ValueError("autonomy requires a current passing audit")
-    if not autonomy["action_attempts"] or autonomy["action_attempts"][-1]["status"] != "committed":
-        raise ValueError("autonomy requires a committed action")
-    if source_receipt is None or not any(
-            item.get("stage") == "autonomy-audit" and item.get("result") == "pass"
-            and valid_evidence_receipts(item.get("evidence_receipts"), source_receipt)
-            and any(
-                receipt["receipt_fingerprint"] == batches[-1]["evidence_receipt_fingerprint"]
-                and (
-                    autonomy["runtime"]["mode"] != "service"
-                    or receipt["argv"] == autonomy["runtime"]["audit_argv"]
-                )
-                for receipt in item["evidence_receipts"]
-            )
-            for item in checks
-    ):
-        raise ValueError("autonomy requires a current bound audit Evidence Receipt")
-
-
 def _external_request_matches_state(launch, review_record, *, task_key, baseline_commit,
                                     source_fingerprint, acceptance, allowed_scope):
     request = launch["configuration"].get("review_request")
@@ -687,7 +478,7 @@ def _external_request_matches_state(launch, review_record, *, task_key, baseline
     )
 
 
-def validate_review_gate(routing, review, workers, task_key, baseline_commit, source_fingerprint,
+def validate_review_gate(routing, review, task_key, baseline_commit, source_fingerprint,
                          acceptance, runner_launches, runner_results, runner_role_results_complete,
                          closure_gate=None):
     tier = routing["review_tier"]
@@ -738,14 +529,6 @@ def validate_review_gate(routing, review, workers, task_key, baseline_commit, so
             raise ValueError("review pass must be bound to the frozen review request")
         if tier != "low" and latest["spec"]["reviewer_ref"] != latest["quality"]["reviewer_ref"]:
             raise ValueError("current spec and quality axes must use one reviewer")
-        reviewer_refs = {request["reviewer_ref"] for request in required_requests}
-        workers_by_ref = {worker["ref"]: worker for worker in workers}
-        for reviewer_ref in reviewer_refs:
-            registered = workers_by_ref.get(reviewer_ref)
-            if registered is not None and (
-                    registered["role"] != "reviewer" or registered["status"] != "completed"
-            ):
-                raise ValueError("review pass requires a registered completed reviewer")
         if not runner_role_results_complete:
             raise ValueError("review pass requires a completed reviewer result")
         results_by_launch = {
@@ -844,9 +627,13 @@ def validate_state(state, arguments):
         state.get("execution_control"), source_fingerprint, task_key, source_schema,
         baseline, source_receipt, provider_binding,
     )
-    autonomy = validate_autonomy(
-        state["execution_control"]["autonomy"], source_fingerprint, routing
-    ) if source_schema == 11 else None
+    if source_schema == 11:
+        from autonomy_contract import validate_autonomy
+        autonomy = validate_autonomy(
+            state["execution_control"]["autonomy"], source_fingerprint, routing
+        )
+    else:
+        autonomy = None
     if source_receipt is not None and routing["schema_version"] == 3:
         allowed_paths = routing["allowed_paths"]
         drift = [
@@ -892,6 +679,10 @@ def validate_state(state, arguments):
             raise ValueError("workers[] fields are invalid")
         ref = require_string(worker.get("ref"), "workers[].ref")
         require_string(worker.get("role"), "workers[].role")
+        if worker["role"] not in WORKER_ROLES:
+            raise ValueError("workers[].role is invalid")
+        if worker["role"] == "reviewer":
+            raise ValueError("reviewer evidence must use the external runner")
         require_string(worker.get("task_id"), "workers[].task_id")
         if worker["task_id"] != task_key:
             raise ValueError("workers[].task_id must match task_key")
@@ -937,14 +728,18 @@ def validate_state(state, arguments):
                 raise ValueError("workers[].progress evidence_level is invalid")
             for field in ("milestone", "activity", "evidence", "next_action", "observed_at"):
                 require_string(progress.get(field), f"workers[].progress.{field}")
+    if workers and cross_session:
+        raise ValueError("cross-session workers require a manual handoff")
+    if workers and routing["route"] != "delegated":
+        raise ValueError("workers require a frozen route delegation")
     tree_receipt = state.get("worker_tree_receipt")
     if workers and runtime_binding is None:
         raise ValueError("workers require a frozen runtime binding")
     if workers and state.get("status") != "blocked" \
             and not allows_worker_lifecycle(runtime_binding, cross_session=cross_session):
         if cross_session:
-            raise ValueError("cross-session worker requires a host-observed runtime binding")
-        raise ValueError("active workers require a trusted local or host-observed runtime binding")
+            raise ValueError("cross-session workers require a manual handoff")
+        raise ValueError("active workers require a host-observed tree-query runtime binding")
     if tree_receipt is not None:
         if not isinstance(tree_receipt, dict) or set(tree_receipt) != {
             "schema_version", "observed_revision", "observed_at", "runtime_fingerprint", "mode",
@@ -991,6 +786,8 @@ def validate_state(state, arguments):
             raise ValueError("worker tree receipt does not match the registry")
         if not set(tree_receipt["active_refs"]) <= worker_refs:
             raise ValueError("worker tree receipt active_refs are invalid")
+        if tree_receipt["unexpected_refs"] and state.get("status") != "blocked":
+            raise ValueError("unexpected workers require blocked state")
     ledger = require_mapping(state.get("ledger"), "ledger")
     allowed_ledger_fields = {
         "completed_rounds", "repair_fingerprints", "autonomy_repair_fingerprints", "key_changes", "checks", "acceptance",
@@ -1158,7 +955,7 @@ def validate_state(state, arguments):
         if any(worker["status"] not in WORKER_TERMINAL_STATUSES for worker in workers):
             raise ValueError("complete state requires every current-run worker to reach host terminal status")
         validate_review_gate(
-            routing, review_control, workers, task_key, baseline["commit"], source_fingerprint,
+            routing, review_control, task_key, baseline["commit"], source_fingerprint,
             acceptance, runner_launches, runner_results,
             runner_role_results_complete, state["execution_control"].get("closure"),
         )
@@ -1167,6 +964,7 @@ def validate_state(state, arguments):
                 state["execution_control"]["closure"], workspace, source_fingerprint, acceptance,
             )
         if autonomy is not None:
+            from autonomy_contract import validate_autonomy_completion
             validate_autonomy_completion(autonomy, source_fingerprint, source_receipt, checks)
         if workers and tree_receipt is None:
             raise ValueError("complete state requires a fresh worker tree receipt")
@@ -1175,10 +973,10 @@ def validate_state(state, arguments):
             if not allows_worker_lifecycle(runtime_binding, cross_session=cross_session):
                 if cross_session:
                     raise ValueError(
-                        "complete cross-session worker cleanup requires a host-observed runtime"
+                        "complete cross-session workers require a manual handoff"
                     )
                 raise ValueError(
-                    "complete worker cleanup requires a trusted local or host-observed runtime"
+                    "complete worker cleanup requires a host-observed tree-query runtime"
                 )
         if not acceptance or not all(
             item["result"] == "pass"
@@ -1256,6 +1054,20 @@ def validate_active_lease(state, arguments):
             raise ValueError("active lease is not owned by this writer")
 
 
+def next_runtime_action(state, next_stage):
+    """Choose the one controller action after state and lease validation."""
+    if state["status"] == "blocked":
+        return delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
+    projection_fingerprint = plan_projection_fingerprint(state)
+    if state["host_sync"]["mode"] == "native" \
+            and state["host_sync"]["acknowledged_fingerprint"] != projection_fingerprint:
+        return action(
+            "sync-plan", task_id=state["task_key"],
+            projection_fingerprint=projection_fingerprint,
+        )
+    return delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
+
+
 def main():
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--state", required=True)
@@ -1281,15 +1093,7 @@ def main():
         state = upgrade_state(raw_state)
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
-        projection_fingerprint = plan_projection_fingerprint(state)
-        if state["host_sync"]["mode"] == "native" \
-                and state["host_sync"]["acknowledged_fingerprint"] != projection_fingerprint:
-            result = action(
-                "sync-plan", task_id=state["task_key"],
-                projection_fingerprint=projection_fingerprint,
-            )
-        else:
-            result = delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
+        result = next_runtime_action(state, next_stage)
         print(legacy_action(result) if arguments.format == "legacy" else json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

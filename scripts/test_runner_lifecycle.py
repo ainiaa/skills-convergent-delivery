@@ -128,6 +128,46 @@ class RunnerLifecycleTest(unittest.TestCase):
                 },
             )
 
+    def test_managed_dispatch_must_match_the_current_stage_role(self):
+        appended = []
+        dispatch = plan_dispatch(self.profiles, flow_state())
+        managed = {
+            **managed_state(self.workspace),
+            "controller": {"extensions": ["multimodel"]},
+            "current_stage": "round-1-build",
+        }
+
+        with self.assertRaisesRegex(ValueError, "current stage"):
+            run_dispatch(
+                self.arguments, dispatch, "Collect evidence",
+                load=lambda _arguments: managed,
+                append=lambda *_arguments: appended.append(_arguments),
+            )
+
+        self.assertEqual([], appended)
+
+    def test_managed_implementer_requires_an_isolated_git_worktree(self):
+        subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "config", "user.email", "test@example.com"], check=True)
+        (self.workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.workspace), "add", "seed.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
+        dispatch = plan_dispatch(self.profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "pending",
+        })
+        managed = {
+            **managed_state(self.workspace),
+            "controller": {"extensions": ["multimodel"]},
+            "current_stage": "round-1-build",
+        }
+
+        with self.assertRaisesRegex(ValueError, "isolated Git worktree"):
+            run_dispatch(
+                self.arguments, dispatch, "Implement the change",
+                load=lambda _arguments: managed,
+            )
+
     def test_refuses_to_create_a_persisted_launch_without_execution_authorization(self):
         self.arguments.allow_execute = False
         with self.assertRaisesRegex(ValueError, "explicit"):

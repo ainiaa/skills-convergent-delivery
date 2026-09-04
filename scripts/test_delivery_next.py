@@ -12,10 +12,12 @@ from unittest.mock import patch
 from pathlib import Path
 
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
+from autonomy_contract import validate_autonomy_completion
 from delivery_next import (
-    upgrade_state, validate_autonomy_completion, validate_execution_control, validate_provider_reference,
-    closure_graph_query, validate_closure_gate, validate_closure_plan, validate_state,
+    upgrade_state, validate_execution_control, validate_provider_reference, closure_graph_query,
+    validate_closure_gate, validate_closure_plan, validate_state,
 )
+from delivery_state import validate_transition
 from evidence_contract import run_evidence, workspace_source
 from role_result import review_result, result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
@@ -196,6 +198,14 @@ def state(**overrides):
     return value
 
 
+def delegated_state(**overrides):
+    value = state(**overrides)
+    value["execution_control"]["routing"] = routing(task_profile(
+        coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+    ))
+    return value
+
+
 def autonomous_state(**overrides):
     payload = state(schema_version=11)
     payload["execution_control"] = {
@@ -257,7 +267,7 @@ def desktop_binding():
     )
 
 
-def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
+def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
                             integration_budget=0, integration_status=None,
                             integration_reviewer="reviewer-a", reviewer_ref="reviewer-a",
                             full_closure=False):
@@ -370,6 +380,19 @@ def reviewed_complete_state(*, reviewer_registered=True, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_default_validator_import_does_not_load_autonomy_contract(self):
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import sys; sys.path.insert(0, 'scripts'); import delivery_next; "
+                "print('autonomy_contract' in sys.modules)",
+            ],
+            cwd=ROOT, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("False", result.stdout.strip())
+
     def test_autonomy_completion_rejects_an_uncommitted_action(self):
         autonomy = {
             "audit_batches": [{
@@ -981,6 +1004,7 @@ class DeliveryNextTest(unittest.TestCase):
             writer_id=overrides.get("writer_id", payload["writer_id"]),
             revision=overrides.get("revision", payload["revision"]),
             acquire=overrides.get("acquire", True),
+            output_format=overrides.get("output_format", "legacy"),
         )
 
     def test_low_risk_semantic_review_moves_to_final_verification(self):
@@ -988,6 +1012,15 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("verify-final\n", result.stdout)
         self.assertEqual(0, result.returncode)
+
+    def test_rejects_native_handoff_without_a_verified_host_bridge(self):
+        payload = delegated_state()
+        payload["native_handoff"] = {}
+
+        result = self.current(payload, output_format="json")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("state fields", result.stderr)
 
     def test_rejects_undocumented_ledger_data(self):
         payload = upgrade_state(state())
@@ -1027,6 +1060,36 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("sync-plan", output["action"])
         self.assertEqual(64, len(output["projection_fingerprint"]))
+
+    def test_blocked_state_prioritizes_its_terminal_action_over_pending_host_sync(self):
+        payload = delegated_state(
+            status="blocked", blocked_code="no_progress",
+            blocked_reason="manual reconciliation is required",
+        )
+        payload["host_sync"] = {
+            "mode": "native", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        }
+
+        result = self.current(payload, output_format="json")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            {"action": "block", "task_id": "task-123", "reason": "manual reconciliation is required"},
+            json.loads(result.stdout),
+        )
+
+    def test_complete_state_can_still_finish_a_pending_host_sync(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["host_sync"] = {
+            "mode": "native", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        }
+
+        result = self.current(payload, output_format="json")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("sync-plan", json.loads(result.stdout)["action"])
 
     def test_high_risk_semantic_review_moves_to_round_one_verification(self):
         result = self.current(state(requires_stability_round=True))
@@ -1087,7 +1150,7 @@ class DeliveryNextTest(unittest.TestCase):
         payload["runtime_binding"] = runtime_binding()
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": "another-task",
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "depth": 1, "may_dispatch": False, "role": "implementer",
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
@@ -1096,37 +1159,122 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("task", result.stderr)
 
-    def test_active_worker_allows_a_trusted_codex_desktop_binding(self):
+    def test_active_workers_require_frozen_delegation_or_reviewer_exemption(self):
         payload = upgrade_state(state())
         payload["runtime_binding"] = desktop_binding()
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "depth": 1, "may_dispatch": False, "role": "implementer",
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
-        self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
+        with self.assertRaisesRegex(ValueError, "frozen route"):
+            validate_state(payload, SimpleNamespace())
 
-    def test_active_worker_allows_a_trusted_claude_code_binding(self):
+    def test_worker_role_must_be_a_known_host_worker_role(self):
         payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
+        payload["runtime_binding"] = desktop_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "unrecognized",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "role"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_worker_legacy_role_aliases_are_rejected(self):
+        for role in ("implementation", "review"):
+            with self.subTest(role=role):
+                payload = upgrade_state(state())
+                payload["execution_control"]["routing"] = routing(task_profile(
+                    coupling="independent", delegable_tasks=1,
+                    context_isolation_benefit=True,
+                ))
+                payload["runtime_binding"] = desktop_binding()
+                payload["workers"] = [{
+                    "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+                    "depth": 1, "may_dispatch": False, "role": role,
+                    "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+                }]
+
+                with self.assertRaisesRegex(ValueError, "role"):
+                    validate_state(payload, SimpleNamespace())
+
+    def test_inline_route_rejects_low_risk_reviewer_and_host_only_roles(self):
+        for role in ("pdlc", "evaluator", "controller-delegate"):
+            with self.subTest(role=role):
+                payload = upgrade_state(state())
+                payload["runtime_binding"] = desktop_binding()
+                payload["workers"] = [{
+                    "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+                    "depth": 1, "may_dispatch": False, "role": role,
+                    "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+                }]
+
+                with self.assertRaisesRegex(ValueError, "frozen route"):
+                    validate_state(payload, SimpleNamespace())
+
+    def test_active_worker_rejects_a_controller_attested_codex_binding(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
+        payload["runtime_binding"] = desktop_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "implementer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "host-observed"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_delegated_worker_rejects_a_controller_attested_codex_binding(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
+        payload["runtime_binding"] = desktop_binding()
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "implementer",
+            "owner_run_id": payload["run_id"], "status": "working", "progress": None,
+        }]
+
+        with self.assertRaisesRegex(ValueError, "host-observed"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_active_worker_rejects_a_controller_attested_claude_code_binding(self):
+        payload = upgrade_state(state())
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
         payload["runtime_binding"] = negotiate(
             "claude-code", {"dispatch": True, "query": True, "tree_query": True}
         )
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "depth": 1, "may_dispatch": False, "role": "implementer",
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
-        self.assertEqual("verify-final", validate_state(payload, SimpleNamespace()))
+        with self.assertRaisesRegex(ValueError, "host-observed"):
+            validate_state(payload, SimpleNamespace())
 
     def test_cross_session_worker_requires_a_host_observed_binding(self):
         payload = upgrade_state(state())
-        payload["execution_control"]["routing"] = routing(task_profile(cross_session=True))
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+            cross_session=True,
+        ))
         payload["runtime_binding"] = desktop_binding()
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "depth": 1, "may_dispatch": False, "role": "implementer",
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
 
@@ -1176,20 +1324,16 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
 
     def test_complete_with_workers_requires_fresh_clean_tree_receipt(self):
-        worker = {
-            "ref": "worker-1", "parent_ref": None, "task_id": "task-123",
-            "depth": 1, "may_dispatch": False,
-            "role": "reviewer",
-            "owner_run_id": "run-20260818-120000",
-            "status": "completed",
-            "progress": None,
-        }
-        payload = upgrade_state(state(
-            status="complete", current_stage="verify-final", revision=3,
-            runtime_binding=runtime_binding(),
+        payload = reviewed_complete_state()
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
         ))
-        payload["workers"] = [worker]
-        payload = upgrade_state(payload)
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "implementer",
+            "owner_run_id": payload["run_id"], "status": "completed", "progress": None,
+        }]
+        payload["worker_tree_receipt"] = None
 
         missing = self.current(payload, revision=3)
         self.assertNotEqual(0, missing.returncode)
@@ -1197,7 +1341,11 @@ class DeliveryNextTest(unittest.TestCase):
 
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], ["nested-worker"],
-            "2026-08-21T00:00:00Z",
+            "2026-08-21T00:00:00Z", host_observation={
+                "query_id": "query-unexpected", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": ["worker-1"], "active_refs": [],
+                "unexpected_refs": ["nested-worker"],
+            },
         )
         unexpected = self.current(payload, revision=3)
         self.assertNotEqual(0, unexpected.returncode)
@@ -1208,7 +1356,7 @@ class DeliveryNextTest(unittest.TestCase):
             "2026-08-21T00:00:00Z",
             host_observation={
                 "query_id": "query-clean", "observed_at": "2026-08-21T00:00:00Z",
-                "registered_refs": ["worker-1"], "active_refs": [],
+            "registered_refs": ["worker-1"], "active_refs": [],
                 "unexpected_refs": [],
             },
         )
@@ -1223,7 +1371,11 @@ class DeliveryNextTest(unittest.TestCase):
         ))
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, [], [], ["unregistered-worker"],
-            "2026-08-21T00:00:00Z",
+            "2026-08-21T00:00:00Z", host_observation={
+                "query_id": "query-unexpected", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": [], "active_refs": [],
+                "unexpected_refs": ["unregistered-worker"],
+            },
         )
 
         result = self.current(payload, revision=3)
@@ -1231,15 +1383,32 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("unexpected", result.stderr)
 
-    def test_complete_with_workers_allows_trusted_codex_desktop_cleanup(self):
+    def test_active_unexpected_descendant_requires_blocked_state(self):
+        payload = upgrade_state(state(revision=3, runtime_binding=runtime_binding()))
+        payload["worker_tree_receipt"] = cleanup_receipt(
+            payload["runtime_binding"], 3, [], [], ["unregistered-worker"],
+            "2026-08-21T00:00:00Z", host_observation={
+                "query_id": "query-unexpected", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": [], "active_refs": [],
+                "unexpected_refs": ["unregistered-worker"],
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "unexpected workers require blocked state"):
+            validate_state(payload, SimpleNamespace())
+
+        payload.update(
+            status="blocked", blocked_code="environment",
+            blocked_reason="unregistered worker requires manual cleanup",
+        )
+        self.assertEqual("blocked", validate_state(payload, SimpleNamespace()))
+
+    def test_complete_with_workers_rejects_controller_attested_codex_cleanup(self):
         payload = reviewed_complete_state()
         payload["runtime_binding"] = desktop_binding()
         refs = [worker["ref"] for worker in payload["workers"]]
-        payload["worker_tree_receipt"] = cleanup_receipt(
-            payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z"
-        )
-
-        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+            cleanup_receipt(payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z")
 
     def test_high_risk_complete_requires_current_spec_and_quality_reviews(self):
         payload = state(status="complete", current_stage="verify-final")
@@ -1259,11 +1428,15 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
-    def test_normal_review_rejects_an_incomplete_registered_reviewer(self):
+    def test_normal_review_rejects_a_native_registered_reviewer(self):
         payload = reviewed_complete_state()
-        payload["workers"][0]["status"] = "interrupted"
+        payload["workers"] = [{
+            "ref": "reviewer-a", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "owner_run_id": payload["run_id"], "status": "completed", "progress": None,
+        }]
 
-        with self.assertRaisesRegex(ValueError, "registered completed reviewer"):
+        with self.assertRaisesRegex(ValueError, "external runner"):
             validate_state(payload, SimpleNamespace())
 
     def test_normal_review_requires_initial_quality_to_be_independent_and_blind(self):
@@ -1437,7 +1610,7 @@ class DeliveryNextTest(unittest.TestCase):
         worker = {
             "ref": "worker-1", "parent_ref": None, "task_id": "task-123",
             "depth": 1, "may_dispatch": False,
-            "role": "reviewer",
+            "role": "implementer",
             "owner_run_id": "run-20260818-120000",
             "status": "working",
             "progress": None,
@@ -1449,6 +1622,9 @@ class DeliveryNextTest(unittest.TestCase):
             revision=4,
             runtime_binding=runtime_binding(),
         ))
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
         payload["workers"] = [worker]
         payload = upgrade_state(payload)
 
@@ -1458,7 +1634,11 @@ class DeliveryNextTest(unittest.TestCase):
 
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 4, ["worker-1"], ["worker-1"], [],
-            "2026-08-21T00:00:00Z",
+            "2026-08-21T00:00:00Z", host_observation={
+                "query_id": "query-active", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": ["worker-1"], "active_refs": ["worker-1"],
+                "unexpected_refs": [],
+            },
         )
         recorded = self.current(payload, revision=4)
         self.assertEqual(0, recorded.returncode, recorded.stderr)

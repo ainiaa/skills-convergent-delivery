@@ -23,6 +23,23 @@ REQUIRED = (
 
 
 class DeliveryEngineTest(unittest.TestCase):
+    def test_provider_selection_import_does_not_load_snapshot_controller(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0, 'scripts'); import delivery_engine; "
+                "print('controller_snapshot' in sys.modules)",
+            ],
+            cwd=SCRIPT.parent.parent,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("False", result.stdout.strip())
+
     def provider_registry(self, directory, *manifests):
         provider_dir = Path(directory) / "providers"
         provider_dir.mkdir()

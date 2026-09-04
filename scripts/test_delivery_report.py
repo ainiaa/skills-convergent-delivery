@@ -9,7 +9,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, provider_reference
 from delivery_next import upgrade_state
 from evidence_contract import run_evidence, workspace_source
-from runtime_adapter import bind_observed, cleanup_receipt, negotiate
+from runtime_adapter import bind_observed, cleanup_receipt
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from role_result import result_from_output
@@ -236,18 +236,31 @@ class DeliveryReportTest(unittest.TestCase):
 
     def test_blocked_diagnostic_reports_active_and_unexpected_cleanup_refs(self):
         payload = upgrade_state(state("blocked"))
-        payload["runtime_binding"] = negotiate(
-            "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
-                      "tree_query": True, "restrict_dispatch": False}
+        payload["execution_control"]["routing"] = freeze_routing(
+            {
+                **payload["execution_control"]["routing"]["profile"],
+                "scope": "cross-module",
+                "coupling": "independent", "delegable_tasks": 1,
+                "context_isolation_benefit": True,
+            }, ["."],
         )
+        payload["runtime_binding"] = bind_observed("codex", {
+            "query_id": "capabilities-report", "observed_at": "2026-08-21T00:00:00Z",
+            "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+        })
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
-            "depth": 1, "may_dispatch": False, "role": "reviewer",
+            "depth": 1, "may_dispatch": False, "role": "pdlc",
             "owner_run_id": payload["run_id"], "status": "working", "progress": None,
         }]
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], payload["revision"], ["worker-1"],
             ["worker-1"], ["unexpected-1"], "2026-08-21T00:00:00Z",
+            host_observation={
+                "query_id": "query-report", "observed_at": "2026-08-21T00:00:00Z",
+                "registered_refs": ["worker-1"], "active_refs": ["worker-1"],
+                "unexpected_refs": ["unexpected-1"],
+            },
         )
 
         report = json.loads(self.run_report(payload, "json").stdout)
@@ -256,14 +269,21 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(["unexpected-1"], report["diagnostic"]["cleanup"]["unexpected_refs"])
 
     def test_text_diagnostic_includes_bounded_worker_and_check_summaries(self):
-        payload = upgrade_state(state())
+        payload = upgrade_state(state("active"))
+        payload["execution_control"]["routing"] = freeze_routing(
+            {
+                **payload["execution_control"]["routing"]["profile"],
+                "coupling": "independent", "delegable_tasks": 1,
+                "context_isolation_benefit": True,
+            }, ["."],
+        )
         payload["workers"] = [{
             "ref": "worker-1",
             "parent_ref": None,
             "task_id": "task-1",
             "depth": 1,
             "may_dispatch": False,
-            "role": "review",
+            "role": "pdlc",
             "owner_run_id": "run-1",
             "status": "completed",
             "progress": None,

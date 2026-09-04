@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- 收紧 Single State native worker registry：拒绝未登记角色、`reviewer` 与历史别名；普通 worker 必须由 `delegated` 路由授权，并且登记、清场与 complete 均要求同会话 `host_observed` tree-query 证据。normal/high review 只接受冻结 external runner 的 Review v3 role result。
+- 默认 Provider 选择不再预加载 snapshot controller；snapshot identity 仅在持久 state 操作时加载，并补充子进程回归测试与成本边界场景。
+- 自治状态契约从 core controller 提取为仅 schema 11 按需加载的扩展模块；自治快照显式冻结该模块，core 快照不再携带它。
 - 修复计划与恢复路径的两处指令/隔离偏差：`converge-plan` 仅负责可执行 Plan，简单同会话任务明确走根入口 `inline`，所有进入该 Skill 的 Plan 都读取并校验 Plan Contract；`delivery_state list/doctor` 现在只读取当前 workspace 与其 Git common-dir 的状态目录，不再因其他 workspace 的损坏 state 返回错误恢复结果。
 - 修复 Stop Hook 的跨 workspace 误阻断：状态扫描现在按当前 workspace 的既有 SHA-256 状态目录隔离；其他 workspace 的损坏状态不会阻塞无关任务，本 workspace 的损坏状态仍安全阻断并给出恢复诊断。自治冻结评测新增该隔离场景。Skill 入口同时要求按已选路径逐份读取引用，避免一次拼接多个完整协议造成不必要的上下文压力。
 - 修复自治扩展与配置交付边界：安装器现校验两个扩展的调用策略文件；service run 在持久化状态后主动唤醒 LaunchAgent，唤醒失败会先将状态收束为 `blocked/no_progress` 再释放 lease；LaunchAgent 使用安装时的 Python 解释器，不再依赖固定的 `/usr/bin/python3`。Stop Hook 与 LaunchAgent 配置行为现都进入冻结自治评测题库与快照，补齐安装、状态清场和配置回归测试。

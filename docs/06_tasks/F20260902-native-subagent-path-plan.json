@@ -1,0 +1,129 @@
+{
+  "schema_version": 6,
+  "plan_id": "F20260902-native-subagent-path",
+  "requirement_fingerprint": "db286093834f3b3c59a710c5ba0cfb3417ad0e134d29f405e6e42c50fab76231",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "bdb62eb21bdd4d18655b11d3762f2efd7f645582",
+    "source": {
+      "baseline_commit": "bdb62eb21bdd4d18655b11d3762f2efd7f645582",
+      "changed_entries": [
+        {"content_fingerprint": "cbb82b7ce2e53f9ed86d7faa09bccdf463504de75d5243097e890859259a3045", "kind": "file", "mode": "100644", "path": "CHANGELOG.md"},
+        {"content_fingerprint": "25a709e5960760ed3ddde4b876fdf2572886f39741ed378f0070ac05753d14c3", "kind": "file", "mode": "100644", "path": "README.md"},
+        {"content_fingerprint": "e9ec76e038c2f4bc9371318b0e203028ad52b637590524fa33b300fc798ec2b3", "kind": "file", "mode": "100644", "path": "references/evaluation-scenarios.md"},
+        {"content_fingerprint": "f9caf0235cdfba825af46eb35e859f9ef8d26a92479734141fee9db0de556457", "kind": "file", "mode": "100644", "path": "scripts/autonomy_contract.py"},
+        {"content_fingerprint": "20a2a47bf653d1934d482ce18dc800fe4de3c7048027ab1971cb19b0482f869d", "kind": "file", "mode": "100644", "path": "scripts/controller_snapshot.py"},
+        {"content_fingerprint": "04b5ab7707015d1cb4c7797e832ebf75c5487e3b1264f4d80f1388a56abad7a4", "kind": "file", "mode": "100644", "path": "scripts/delivery_engine.py"},
+        {"content_fingerprint": "e1f0998b8a2b43760d2efdae0ceabca838e7def5296aab779abe0e1b6f0ca421", "kind": "file", "mode": "100644", "path": "scripts/delivery_next.py"},
+        {"content_fingerprint": "17697ad54dd9efbe3a03a55aa89af902b2507864f17a06b41e8ac1865d02d63f", "kind": "file", "mode": "100644", "path": "scripts/delivery_state.py"},
+        {"content_fingerprint": "448464493d4a6735f078950f04cd7e8f75f103c4284b8ac2edf50987af372d94", "kind": "file", "mode": "100644", "path": "scripts/test_controller_snapshot.py"},
+        {"content_fingerprint": "a5d23f0c1667ae7489d871ec4f623c1eff6df8d751619b2ea042ea6025447f30", "kind": "file", "mode": "100644", "path": "scripts/test_delivery_engine.py"},
+        {"content_fingerprint": "dad060afd75b29d3dc83341cdf02dd99454c8bfd33cfb9dabeb5951aec00a5c7", "kind": "file", "mode": "100644", "path": "scripts/test_delivery_next.py"},
+        {"content_fingerprint": "d08eec28739b5f86ec90466197f1582fc0386316fa02ca3dbacf429724d04130", "kind": "file", "mode": "100644", "path": "scripts/test_delivery_state.py"}
+      ],
+      "changed_paths": ["CHANGELOG.md", "README.md", "references/evaluation-scenarios.md", "scripts/autonomy_contract.py", "scripts/controller_snapshot.py", "scripts/delivery_engine.py", "scripts/delivery_next.py", "scripts/delivery_state.py", "scripts/test_controller_snapshot.py", "scripts/test_delivery_engine.py", "scripts/test_delivery_next.py", "scripts/test_delivery_state.py"],
+      "commit_id": "bdb62eb21bdd4d18655b11d3762f2efd7f645582",
+      "diff_fingerprint": "69077a41e4c04488aec4efde6a0a43d8599e08b393ec3f0ae2793b960350a007",
+      "schema_version": 2,
+      "source_fingerprint": "a23549e933dd3b9719bfb85cae617bd8789a9d05a1f7fb85bd23e809c09a4fa1",
+      "tree_hash": "5ff888f6c3db3c8493c230791cf70e45d11a24af"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": ["A reproducible PASS/BLOCKED gate establishes whether this Codex session can create, query, and observe completion of one read-only native subagent."],
+      "goal": "Verify the only host capability on which the proposed native path depends before changing controller behavior.",
+      "owned_paths": ["references/evaluation-scenarios.md"],
+      "depends_on": [],
+      "steps": ["Create one bounded read-only native subagent with a unique smoke marker and capture its returned worker reference.", "Query or wait only for that exact reference until the host supplies a terminal result or the bounded wait expires.", "Record the observed PASS/BLOCKED rule, commands, and non-claims in the evaluation scenario without modifying runtime code."],
+      "acceptance": ["The recorded gate calls PASS only when the same session has a stable worker reference and a host-observed terminal result for that exact read-only worker; otherwise it records BLOCKED and preserves manual handoff."],
+      "verification": ["Use the current host native subagent APIs for one read-only smoke; do not infer PASS from a sent message, timeout, or natural-language reply.", "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_skill_contracts.py"],
+      "execution": "fresh",
+      "status": "pending",
+      "provider_binding": {"binding": {"controller": "converge", "stage_providers": {}, "workflow_provider": {"contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": true}, "contract_fingerprint": "36630ab70e23678f1799b0c1a1301269554f0030e0e1f9fa2bd182085e7610d1", "id": "native-v1", "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json", "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee", "role": "workflow", "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery", "sources": [{"fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e", "kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md"}], "task_kind": "refactor", "version": "1"}}, "binding_fingerprint": "39e0113a3de4d75274a351b81b56782b039c8ab59b05dfae4ad272c137750d2b", "reason": "native engine was selected", "selection": "explicit", "task_kind": "refactor"},
+      "provider_run": {"scope": "task", "recursive_planning": false}
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": ["The controller has one explicit, minimal same-session native subagent and reviewer contract, with durable cross-session execution explicitly downgraded to manual handoff."],
+      "goal": "Apply the supported native path only after T1 passes, without introducing a Python scheduler or changing the optional multi-model runner boundary.",
+      "owned_paths": ["SKILL.md", "references/execution-control.md", "skills/converge-batch/references/runtime-adapters.md", "scripts/test_skill_contracts.py"],
+      "depends_on": ["T1"],
+      "steps": ["Add the exact dispatch, registration, query, completion, review, and no-re-dispatch rules for same-session native subagents to the controller references.", "State that cross-session work remains a manual capsule unless a future host bridge proves stable creation-to-reference resolution, exact lifecycle query/interrupt, and subtree observation.", "Add contract tests that require the same-session rule and reject any claim that external_runner or a wait timeout provides a durable cross-session bridge."],
+      "acceptance": ["For an eligible same-session task, the Skill directs the controller to create a leaf native worker, register its exact reference, query only that reference, then dispatch a fresh reviewer only after the worker has a host terminal result."],
+      "verification": ["PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_skill_contracts.py", "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_role_dispatch.py", "git diff --check"],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {"binding": {"controller": "converge", "stage_providers": {}, "workflow_provider": {"contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": true}, "contract_fingerprint": "36630ab70e23678f1799b0c1a1301269554f0030e0e1f9fa2bd182085e7610d1", "id": "native-v1", "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json", "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee", "role": "workflow", "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery", "sources": [{"fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e", "kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md"}], "task_kind": "refactor", "version": "1"}}, "binding_fingerprint": "39e0113a3de4d75274a351b81b56782b039c8ab59b05dfae4ad272c137750d2b", "reason": "native engine was selected", "selection": "explicit", "task_kind": "refactor"},
+      "provider_run": {"scope": "task", "recursive_planning": false}
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": ["The native-path contract and existing runtime guards agree that same-session lifecycle is allowed only with an exact worker reference, while cross-session lifecycle remains denied without a host-observed bridge."],
+      "goal": "Close the documentation-to-runtime seam and prove that this change does not repurpose external runners or weaken cross-session safeguards.",
+      "owned_paths": ["scripts/test_runtime_adapter.py", "scripts/test_role_dispatch.py"],
+      "depends_on": ["T2"],
+      "steps": ["Add a focused runtime regression for the same-session versus cross-session lifecycle boundary.", "Keep the fixed-role external runner regression explicit and run the combined contract checks."],
+      "acceptance": ["Runtime tests preserve allows_worker_lifecycle(binding)=true only for trusted same-session bindings and false for cross_session=true, while role dispatch remains external_runner rather than native spawn."],
+      "verification": ["PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_runtime_adapter.py", "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_role_dispatch.py", "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 scripts/test_skill_contracts.py", "bash scripts/check.sh --full", "git diff --check"],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {"binding": {"controller": "converge", "stage_providers": {}, "workflow_provider": {"contract": {"closure": [], "entrypoint": "references/execution-protocol.md", "preserve_external_behavior": true}, "contract_fingerprint": "36630ab70e23678f1799b0c1a1301269554f0030e0e1f9fa2bd182085e7610d1", "id": "native-v1", "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json", "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee", "role": "workflow", "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery", "sources": [{"fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e", "kind": "entrypoint", "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md", "relative_path": "references/execution-protocol.md"}], "task_kind": "refactor", "version": "1"}}, "binding_fingerprint": "39e0113a3de4d75274a351b81b56782b039c8ab59b05dfae4ad272c137750d2b", "reason": "native engine was selected", "selection": "explicit", "task_kind": "refactor"},
+      "provider_run": {"scope": "task", "recursive_planning": false}
+    }
+  ],
+  "final_acceptance": [
+    "A fresh same-session native subagent capability smoke has an evidence-backed PASS/BLOCKED result; no code path assumes it passed.",
+    "If the smoke passes, the documented controller path uses exact-reference same-session native workers and a sequential fresh reviewer without a Python scheduler.",
+    "Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged.",
+    "All focused regressions and the full repository check pass on the final source."
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "native-session-control",
+        "description": "The controller chooses a same-session native worker only after the host smoke and falls back to a manual capsule when lifecycle evidence is absent.",
+        "entrypoints": ["SKILL.md", "references/execution-control.md", "references/evaluation-scenarios.md", "skills/converge-batch/references/runtime-adapters.md", "scripts/test_skill_contracts.py"],
+        "callers": ["external"],
+        "coverage": {
+          "input": {"status": "covered", "acceptance": ["A fresh same-session native subagent capability smoke has an evidence-backed PASS/BLOCKED result; no code path assumes it passed."]},
+          "freeze": {"status": "covered", "acceptance": ["If the smoke passes, the documented controller path uses exact-reference same-session native workers and a sequential fresh reviewer without a Python scheduler."]},
+          "effect": {"status": "covered", "acceptance": ["If the smoke passes, the documented controller path uses exact-reference same-session native workers and a sequential fresh reviewer without a Python scheduler."]},
+          "receipt": {"status": "covered", "acceptance": ["A fresh same-session native subagent capability smoke has an evidence-backed PASS/BLOCKED result; no code path assumes it passed."]},
+          "recovery": {"status": "covered", "acceptance": ["Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged."]}
+        }
+      },
+      {
+        "id": "runtime-boundary-regression",
+        "description": "Focused runtime and role-dispatch tests retain the trusted same-session boundary and leave optional external runners intact.",
+        "entrypoints": ["scripts/test_runtime_adapter.py", "scripts/test_role_dispatch.py"],
+        "callers": ["external"],
+        "coverage": {
+          "input": {"status": "covered", "acceptance": ["Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged."]},
+          "freeze": {"status": "covered", "acceptance": ["Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged."]},
+          "effect": {"status": "covered", "acceptance": ["Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged."]},
+          "receipt": {"status": "covered", "acceptance": ["All focused regressions and the full repository check pass on the final source."]},
+          "recovery": {"status": "covered", "acceptance": ["Cross-session execution remains manual unless a separately validated host-observed bridge exists, and external_runner dispatch remains unchanged."]}
+        }
+      }
+    ],
+    "graph_receipt": {"schema_version": 1, "tool": "codegraph", "source_fingerprint": "a23549e933dd3b9719bfb85cae617bd8789a9d05a1f7fb85bd23e809c09a4fa1", "chains_fingerprint": "7db6d238d0c36cf3fcaf5bd30bec1e5e22f77fa51aa2fb5e657c877142d274db", "receipt_fingerprint": "cc53c8e8abac4edff4a9ee4dcdaba18f2cc913be54b59f803a44071d2c7663b1"}
+  },
+  "decisions": [
+    {"id": "D1", "status": "resolved", "question": "Should Converge add a Python scheduler or durable bridge for Codex Desktop cross-session work?", "resolution": "No. The current host API does not expose a durable clientThreadId-to-threadId resolver, exact lifecycle query/interrupt, or subtree observation, so cross-session work stays manual until a host bridge proves those capabilities end to end.", "source": "code"},
+    {"id": "D2", "status": "resolved", "question": "Which subagent mechanism is allowed for the immediate optimization?", "resolution": "Only a native same-session leaf subagent after a real smoke confirms stable creation, exact-reference query, and a host terminal result; otherwise the plan stops without changing behavior.", "source": "user"},
+    {"id": "D3", "status": "resolved", "question": "Should the existing fixed-role external runner be repurposed to create native agents?", "resolution": "No. It remains the optional multi-model external-runner boundary; native host subagents are controlled by the root controller and are not modeled as an external runner.", "source": "code"},
+    {"id": "D4", "status": "resolved", "question": "May implementation continue after the feasibility gate returns BLOCKED?", "resolution": "No. Record the evidence and retain the current manual fallback; do not add speculative documents, tests, or runtime abstractions that claim unavailable behavior.", "source": "user"}
+  ]
+}

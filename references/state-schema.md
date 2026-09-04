@@ -61,7 +61,7 @@
 
 Schema v11 仅用于用户明确启用自治交付的 run。在既有 `execution_control` 内增加不可变 `autonomy`：它冻结需求、范围和验收 manifest，并保存至多一次 initial audit 与一次修复后的 re-audit。每批 audit 必须注明当前源码指纹、覆盖的 manifest 项、finding 指纹和产生它的 Evidence Receipt 指纹；只有覆盖全部项、finding 为空、receipt 对当前源码成功且指纹等于当前源码的 pass batch，v11 才能进入 `complete`。`action_attempts` 是同一状态内至多八条的动作记录：每条冻结 action、owner 和启动/无进展/绝对时限，且只能按 `intent → running → observed → committed` 推进；只有带运行回执和验证指纹的 observed 结果才能 committed，且 `complete` 前必须至少有一个 committed action。中断或未知结果不能推进 delivery stage，后续 controller 必须先协调真实工件。service runtime 仅支持低风险 route，必须分别冻结非空且不相同的 `verification_argv` 与 `audit_argv`；两者都按 argv 直接执行，不能接受 shell 字符串或模型生成的命令，complete 的 audit receipt 还必须精确匹配 `audit_argv`。service 的每个外部 runner 都必须先追加冻结 launch、再追加匹配 result；失败 verifier 与最终 audit 都必须作为 fail check 保留 Evidence Receipt。旧 v10 继续按原语义运行，绝不被静默改写为 v11。
 
-Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；当前 round 的 finding 必须携带 records，历史 round 可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且 spec/quality 绑定同一个 reviewer identity：若该 identity 已在 worker registry 中，它必须是 role 为 reviewer 且宿主状态为 completed 的 worker；若未登记，则必须由冻结 external runner 的同名 `profile.worker_id`、完整 canonical request 与 completed available role result 中完全相同的 Review v3 record 证明。后者不进入 worker registry，也不替代 host 清场。高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
+Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；当前 round 的 finding 必须携带 records，历史 round 可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且二者由冻结 external runner 的同名 `profile.worker_id`、完整 canonical request 与 completed available role result 中完全相同的 Review v3 record 证明。reviewer 不进入 native worker registry，也不替代 host 清场。高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
 `host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
 
@@ -85,7 +85,7 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
   "task_id": "<Plan Contract task id or task key>",
   "depth": 1,
   "may_dispatch": false,
-  "role": "implementation",
+  "role": "implementer",
   "owner_run_id": "run-<id>",
   "status": "working | completed | interrupted | blocked",
   "progress": {
@@ -119,16 +119,18 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
   "observed_revision": 4,
   "observed_at": "2026-08-21T00:00:00Z",
   "runtime_fingerprint": "<sha256>",
-  "mode": "tree_query | restrict_dispatch",
-  "evidence_level": "host_observed | controller_attested",
-  "observation_fingerprint": "<sha256-or-null>",
+  "mode": "tree_query",
+  "evidence_level": "host_observed",
+  "observation_fingerprint": "<sha256>",
   "registered_refs": ["<worker-ref>"],
   "active_refs": [],
   "unexpected_refs": []
 }
 ```
 
-首次登记 active worker 时，跨会话或非可信宿主必须冻结 `host_observed` Runtime Binding。`negotiate` 的 Binding 一律是 `controller_attested`，只说明控制器观察到什么能力，不冒充 `verified`；当前会话的可信本地宿主（Codex Desktop、Claude Code）在具备 automatic 能力时，可用该 Binding 自动派发、登记和清场，但仍只能是 `terminal-only`，不能开启自动 watchdog 或恢复。`bind()` 没有 host-observed 参数，只有具体宿主桥接器将完整原始能力观察交给 `bind_observed` 后才可能构造 `host_observed` Binding；Schema v4 同时保存该 observation 与 fingerprint，并要求 capability 列表与 observation 精确一致。profile 上限拒绝 caller 伪造不存在的能力，当前 Codex 不允许 activity/process/resume。之后 Binding 不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 生成；仅 `tree_query` 模式、Binding 已是 `host_observed` 且传入与 refs/时间完全一致的原始 host observation 时，才写入 `observation_fingerprint` 并标记 `host_observed`。可信本地当前会话的 `controller_attested` 清场回执可支撑 complete；跨会话、其他宿主和 evaluator 仍要求 `host_observed`。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致（顺序不具有语义）；`active_refs` 只能引用 registry 中 worker。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
+`role` 只能是冻结 profile 的 `router|scout|specifier|implementer|verifier|adjudicator`，或 host registry 专用的 `pdlc|evaluator|controller-delegate`；`reviewer`、`implementation`、`review` 等别名不进入 native registry。普通 worker 必须由 `delegated` 路由授权。
+
+首次登记 active worker 必须冻结同会话、含 `tree_query` 的 `host_observed` Runtime Binding；跨会话一律手工交接。`negotiate` 的 Binding 一律是 `controller_attested`，只说明控制器观察到什么能力，不能派发、登记或清场。`bind()` 没有 host-observed 参数，只有具体宿主桥接器将完整原始能力观察交给 `bind_observed` 后才可能构造 `host_observed` Binding；Schema v4 同时保存该 observation 与 fingerprint，并要求 capability 列表与 observation 精确一致。之后 Binding 不可替换。清场回执只能由 `runtime_adapter.py receipt` 根据该 Binding 和与 refs/时间完全一致的原始 host tree query 生成；否则 helper 拒绝生成回执。`runtime_fingerprint` 必须匹配。`registered_refs` 必须与 registry 完全一致（顺序不具有语义）；`active_refs` 只能引用 registry 中 worker；任何非空 `unexpected_refs` 必须立即处于 `blocked` state。complete 时两类未清场引用都必须为空；blocked 若存在 worker 或树回执，也必须使用同 revision 回执并精确列出所有仍 working 的引用。blocked 后仍允许用后续 revision 只更新既有 worker 的宿主生命周期和清场回执，不能登记新 worker、改写任务事实或恢复 active。
 
 生成和展示：
 

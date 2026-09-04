@@ -8,7 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-from controller_snapshot import normalize_extensions, snapshot_extensions, snapshot_files, validate_snapshot
 from provider_contract import (
     build_reference,
     canonical_fingerprint,
@@ -261,6 +260,10 @@ def native_result(reason, stage_provider=None, task_kind="feature"):
 
 
 def controller_identity(root=None, snapshot=None, extensions=()):
+    from controller_snapshot import (
+        normalize_extensions, snapshot_extensions, snapshot_files, validate_snapshot,
+    )
+
     if snapshot is not None:
         frozen = validate_snapshot(snapshot)
         return {

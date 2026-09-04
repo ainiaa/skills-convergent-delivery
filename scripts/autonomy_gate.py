@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from delivery_next import upgrade_state, validate_active_lease, validate_state
-from run_contract import delivery_action
+from delivery_next import next_runtime_action, upgrade_state, validate_active_lease, validate_state
 
 
 def allow(terminal):
@@ -32,7 +31,7 @@ def decide(payload, lease_root=None):
     ))
     return {
         "decision": "block",
-        "next_action": delivery_action(stage, state["task_key"], state.get("blocked_reason")),
+        "next_action": next_runtime_action(state, stage),
     }
 
 

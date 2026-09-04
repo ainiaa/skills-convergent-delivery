@@ -14,11 +14,11 @@ worker 的登记、归属、宿主终态、watchdog、一次恢复和退出清�
 python3 "$CONVERGE_BATCH_SKILL_DIR/../../scripts/runtime_adapter.py" negotiate --profile codex
 ```
 
-automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生 create/query/wait/interrupt 工具，以及 Claude Code 当前会话的 `Agent` / task list，都是可信本地宿主：`negotiate --profile codex|claude-code` 产生的 automatic `controller_attested` Binding 可自动派发和清场，不需要额外 receipt 协议。控制器必须保存工具返回的 `worker_ref`，只查询该 ref，派发不确定时不重派。该信任只适用于当前会话；`checkpoint=cross_session` 仍要求具体桥接的 `host_observed` Binding。其他宿主同样只有在具体桥接冻结为 `host_observed` 时才能自动派发。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用：父控制器必须执行 `watchdog_action` 返回且绑定精确 `task_id + worker_ref` 的 `query|wait|interrupt|block`。`terminal-only` 禁止自动探测、中断和恢复；没有 wait capability 时 action 退回 query。持有状态和 registry 的父控制器直接调用当前会话真实暴露的宿主工具；terminal worker 可 query 核实，但必须拒绝 wait/interrupt。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
+automatic lifecycle 需要同会话稳定 `dispatch + query + tree_query`，以及具体 bridge 绑定的 `host_observed` capability observation 与每次原始 tree-query cleanup observation。`negotiate --profile codex|claude-code` 只产生 controller-attested Binding，不能自动派发或清场。没有 bridge 时所有路径都必须手工交接。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用；terminal-only 只能查询/等待，不能作为完成或清场证据。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
 
 ## Bridge release gate
 
-`bind_observed()` 仍是外部宿主 bridge 的内部入口，不是把 JSON 从普通 stdin 传入就能取得的来源声明。Codex Desktop 不把它作为默认路径：控制器直接使用宿主工具并记录返回的 ref 与终态。若将来接入其他宿主，必须完成真实 dispatch → query 同一 `worker_ref` 至终态 → tree query 的端到端验证，才能使用 `host_observed`。
+`bind_observed()` 仍是外部宿主 bridge 的内部入口，不是把 JSON 从普通 stdin 传入就能取得的来源声明。Codex Desktop 不把它作为默认路径；若将来接入 bridge，必须完成真实 dispatch → query 同一 `worker_ref` 至终态 → tree query 的端到端验证，才能使用 `host_observed`。
 
 1. 先将 Batch 状态写为 `dispatching` 并固定 `dispatch_id`。
 2. 创建调用携带当前 capsule并显式要求执行者使用 `$converge`；按 Batch state 原子保存 worker lifecycle 和 `recovery_count=0` 后进入 `running`。
@@ -27,10 +27,12 @@ automatic 至少要求稳定 `dispatch + query`。当前 Codex Desktop 的原生
 
 ## Codex
 
-- 当前 Codex Desktop 直接使用会话原生的 `spawn_agent`、`list_agents`、`wait_agent`、`interrupt_agent`，将返回的 task/thread id 记为 `worker_ref`；没有稳定 ref 或查询能力时才手工交接。
+- 当前 Codex Desktop 的直接 `spawn_agent`、`list_agents`、`wait_agent`、`interrupt_agent` 调用只能形成 controller-attested 观察；没有 bridge 时一律手工交接，不能登记 Batch 或 `workers[]` lifecycle。
+- **原生同会话子代理自动 lifecycle**只有 bridge 已提供同会话 `host_observed` `tree_query` Binding 后才先做一次只读 smoke：`spawn_agent` 返回精确 `worker_ref`，父控制器在运行时以 `list_agents(path_prefix=worker_ref)` 观察路径；`wait_agent` 只是 wake-up signal，醒来后必须以同一路径和带该 ref 的终态消息复查。Codex 不接受 `restrict_dispatch`。审查仍由 `external_runner` 的冻结 Review v3 request 完成。任何派发不确定、无 ref、非终态或 timeout 都不得重派，改为手工 capsule。
+- 该 smoke 只证明当前会话。`create_thread` worktree 返回的 `clientThreadId` 不能作为 `worker_ref`；当前宿主没有可验证的 client-id 解析、跨会话精确 lifecycle query/interrupt 与 subtree observation 时，`checkpoint=cross_session` 必须维持手工 capsule，不得把 `external_runner` 或 queued message 伪称为 bridge。
 - 用有界的 wait 跟进；超时只表示继续查询，不表示重新派发、无进展或可中断。
 - 当前 Codex 若只能等待最终状态，`activity_query` 和 `process_query` 必须协商为 false，因此 Binding 为 `terminal-only`；重复 timeout 不能触发 `interrupt=true` 或消耗恢复预算。
-- `send_input(interrupt=false)` 只是排队，不能当作软探测；`interrupt=true` 仅用于用户 stop 或 `observed` Binding 已确认停滞后的收口。
+- 排队消息只是消息，不是软探测；中断只用于用户 stop 或 `observed` Binding 已确认停滞后的收口。
 - wait timeout 规范化为 `working`；宿主 `done/cancelled/failed` 分别规范化为 `completed/interrupted/blocked`。
 - 恢复时按执行控制查询原任务，验证 receipt 后再推进状态。
 

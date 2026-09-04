@@ -4,6 +4,7 @@
 import argparse
 import importlib.util
 import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,6 +56,46 @@ def require_multimodel_extension(state):
         extensions = list(snapshot_extensions(controller["snapshot"]))
     if not isinstance(extensions, list) or "multimodel" not in extensions:
         raise ValueError("runner lifecycle requires the multimodel extension")
+
+
+_STAGE_ROLES = {
+    "scope": {"router", "scout", "specifier", "adjudicator"},
+    "round-1-build": {"implementer"},
+    "round-1-semantic-review": {"reviewer"},
+    "round-2-risk-review": {"reviewer"},
+    "closure-review": {"reviewer"},
+    "closure-final-review": {"reviewer"},
+    "closure-repair": {"implementer"},
+    "autonomy-repair": {"implementer"},
+}
+
+
+def _is_isolated_git_worktree(workspace):
+    result = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "--git-dir", "--git-common-dir"],
+        capture_output=True, text=True, check=False,
+    )
+    paths = result.stdout.splitlines()
+    if result.returncode or len(paths) != 2:
+        return False
+    git_dir, common_dir = (
+        (Path(value) if Path(value).is_absolute() else Path(workspace) / value).resolve()
+        for value in paths
+    )
+    return git_dir != common_dir
+
+
+def authorize_dispatch(state, dispatch):
+    """Bind managed external dispatches to the one state stage that permits them."""
+    if not isinstance(state.get("controller"), dict):
+        return
+    profile = dispatch.get("profile") if isinstance(dispatch, dict) else None
+    role = profile.get("role") if isinstance(profile, dict) else None
+    allowed = _STAGE_ROLES.get(state.get("current_stage"), set())
+    if role not in allowed:
+        raise ValueError("runner dispatch role does not match the current stage")
+    if role == "implementer" and not _is_isolated_git_worktree(state["workspace"]):
+        raise ValueError("implementer requires an isolated Git worktree")
 
 
 def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
@@ -117,6 +158,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
     require_multimodel_extension(state)
+    authorize_dispatch(state, dispatch)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
@@ -188,6 +230,7 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     require_multimodel_extension(state)
     prepared = []
     for task in tasks:
+        authorize_dispatch(state, task["dispatch"])
         review_request, review_request_fingerprint = review_request_binding(
             state, task["dispatch"], (review_requests or {}).get(task["task_id"]),
             (review_request_fingerprints or {}).get(task["task_id"]),

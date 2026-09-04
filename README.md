@@ -223,7 +223,7 @@ worker 登记、宿主终态、清场和 watchdog 规则只在 [执行控制](re
 
 调度器不读业务代码、不 review、不替任务决定技术方案。每批使用最小 context capsule；Batch Protocol v1 只承接跨会话 checkpoint 并逐项执行。派发结果不确定时查询原任务，不重复创建任务。
 
-Codex Desktop 直接信任本会话原生的创建、查询、等待和中断能力；Claude Code 直接信任当前会话的 `Agent` 与 task list。两者记录 `worker_ref` 后可自动派发，推进前必须复查同一 ref，派发不确定时不重派。Claude 普通 subagent 不承诺跨会话恢复；单上下文始终手工交接。详见 [Runtime Adapters](skills/converge-batch/references/runtime-adapters.md)。
+Codex Desktop 与 Claude Code 的 `workers[]` 自动 lifecycle 仍要求 bridge 提供同会话 `host_observed` tree query。没有 bridge 时，单任务、Batch 与跨会话均走手工 capsule 交接；普通 subagent 不承诺跨会话恢复。详见 [执行控制](references/execution-control.md)。
 
 Suite 的所有委托和独立 evaluator 同样遵循上述唯一执行控制规则。普通 worker 永远是叶子；Batch 只派发新的 `controller-delegate` run，新 run 完成自己的子树清场后才能回传 receipt。
 
@@ -339,10 +339,10 @@ Converge Suite 没有复制上游完整流程；它吸收公开实践后，用�
 - [GitHub Spec Kit](https://github.com/github/spec-kit)：Spec → Plan → Tasks → Implement 的追溯结构。
 - [gstack](https://github.com/garrytan/gstack)：计划就绪检查、决策记录和 plan-vs-diff 完成审计。
 - [mattpocock/skills](https://github.com/mattpocock/skills)：公共行为 seam、垂直切片和避免测试实现细节。
-- Grill Me：一次一个问题并给出推荐，用于暴露真正需要用户决定的假设；不把无限追问放进执行循环。
+- [grill-with-docs](https://www.skills.sh/mattpocock/skills/grill-with-docs)：逐一追问并结合代码库、领域词汇、`CONTEXT.md` 与 ADR 形成必要决策；本 Suite 只采用“未闭合决策先澄清”的边界，不默认生成文档或 issue。
 - Builder.io 的 planning/review Skills 与公开的 delegate/taskflow 实践：启发了高风险计划仲裁、fresh worker、依赖 wave 和结构化交接。
 - [skills.sh](https://skills.sh/) 上公开的 Skill 结构与触发实践。
-- 石头关于“审查—修复—再审查”和独立 Batch 调度器的实践文章：启发了 reviewer/scheduler 职责拆分、最小上下文和分批交接。
+- [石头关于“审查—修复—再审查”和独立 Batch 调度器的实践文章](https://mp.weixin.qq.com/s/Ea8g3uH5f7kPKR0B-39cTg)：启发了 reviewer/scheduler 职责拆分、最小上下文和分批交接。
 - Codex `skill-creator`：渐进式加载、可执行校验和界面元数据规范。
 
 ## 许可与反馈

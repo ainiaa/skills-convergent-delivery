@@ -25,9 +25,7 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import (
-    WORKER_TERMINAL_STATUSES, upgrade_state, validate_action_attempts, validate_state,
-)
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
 from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
@@ -186,6 +184,8 @@ def next_native_stage(stage, state):
 
 def validate_action_attempt_transition(previous, candidate):
     """Allow one durable autonomous action to advance by one observed lifecycle step."""
+    from autonomy_contract import validate_action_attempts
+
     validate_action_attempts(previous)
     validate_action_attempts(candidate)
     if len(candidate) == len(previous) + 1:

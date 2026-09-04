@@ -12,7 +12,7 @@ from delivery_state import validate_transition
 from autonomy_gate import decide as autonomy_decide
 from provider_contract import canonical_fingerprint
 from run_contract import action
-from runtime_adapter import cleanup_receipt, negotiate
+from runtime_adapter import bind_observed, cleanup_receipt
 from task_profile import classify, freeze_routing
 
 
@@ -33,10 +33,10 @@ def blocked_worker_state():
         "workflow_provider": provider_reference("native-v1", "fix"),
         "stage_providers": {},
     }
-    runtime = negotiate(
-        "codex", {"dispatch": True, "query": True, "wait": True, "interrupt": True,
-                  "tree_query": True, "restrict_dispatch": False}
-    )
+    runtime = bind_observed("codex", {
+        "query_id": "capabilities-runtime", "observed_at": "2026-08-21T00:00:00Z",
+        "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
+    })
     value = {
         "schema_version": 10,
         "run_id": "run-runtime", "repo_id": "/repo/common.git", "task_key": "T1",
@@ -50,7 +50,10 @@ def blocked_worker_state():
             "evidence_level": "controller_attested",
         },
         "execution_control": {
-            "routing": freeze_routing(profile(scope="cross-module"), ["."]),
+            "routing": freeze_routing(profile(
+                scope="cross-module", coupling="independent", delegable_tasks=1,
+                context_isolation_benefit=True,
+            ), ["."]),
             "review": {
                 "protocol_version": 3,
                 "repair_budget_remaining": 1, "re_review_budget_remaining": 1,
@@ -66,7 +69,7 @@ def blocked_worker_state():
         "blocked_code": "environment", "blocked_reason": "worker cleanup required",
         "workers": [{
             "ref": "worker-1", "parent_ref": None, "task_id": "T1", "depth": 1,
-            "may_dispatch": False, "role": "reviewer", "owner_run_id": "run-runtime",
+            "may_dispatch": False, "role": "pdlc", "owner_run_id": "run-runtime",
             "status": "working", "progress": None,
         }],
         "ledger": {
@@ -83,7 +86,11 @@ def blocked_worker_state():
         },
     }
     value["worker_tree_receipt"] = cleanup_receipt(
-        runtime, 0, ["worker-1"], ["worker-1"], [], "2026-08-21T00:00:00Z"
+        runtime, 0, ["worker-1"], ["worker-1"], [], "2026-08-21T00:00:00Z",
+        host_observation={
+            "query_id": "query-working", "observed_at": "2026-08-21T00:00:00Z",
+            "registered_refs": ["worker-1"], "active_refs": ["worker-1"], "unexpected_refs": [],
+        },
     )
     return value
 
@@ -133,7 +140,10 @@ class RuntimeScenarioTest(unittest.TestCase):
         candidate["workers"][0]["status"] = "interrupted"
         candidate["worker_tree_receipt"] = cleanup_receipt(
             candidate["runtime_binding"], 1, ["worker-1"], [], [],
-            "2026-08-21T00:01:00Z",
+            "2026-08-21T00:01:00Z", host_observation={
+                "query_id": "query-clean", "observed_at": "2026-08-21T00:01:00Z",
+                "registered_refs": ["worker-1"], "active_refs": [], "unexpected_refs": [],
+            },
         )
         self.assertEqual("blocked", validate_state(candidate, SimpleNamespace()))
         validate_transition(previous, candidate)

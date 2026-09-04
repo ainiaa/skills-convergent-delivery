@@ -142,6 +142,20 @@ def action_attempt(status="intent", *, events=None, observation=None, commit=Non
 
 class DeliveryStateTest(unittest.TestCase):
 
+    def test_default_state_writer_import_does_not_load_autonomy_contract(self):
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import sys; sys.path.insert(0, 'scripts'); import delivery_state; "
+                "print('autonomy_contract' in sys.modules)",
+            ],
+            cwd=Path(__file__).resolve().parent.parent,
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("False", result.stdout.strip())
+
     def test_legacy_autonomy_state_upgrades_with_no_action_attempts(self):
         armed = arm(state(), ["fix requested behavior"], ["targeted test passes"])
         self.assertEqual([], armed["execution_control"]["autonomy"]["action_attempts"])
@@ -844,13 +858,24 @@ class DeliveryStateTest(unittest.TestCase):
                 blocked_reason="worker cleanup required", runtime_binding=self.runtime_binding(),
                 workers=[{
                     "ref": "worker-1", "parent_ref": None, "task_id": "task-payment",
-                    "depth": 1, "may_dispatch": False, "role": "reviewer",
+                    "depth": 1, "may_dispatch": False, "role": "pdlc",
                     "owner_run_id": "run-1", "status": "working", "progress": None,
                 }],
             )
+            initial["execution_control"]["routing"] = freeze_routing(
+                {
+                    **initial["execution_control"]["routing"]["profile"],
+                    "scope": "cross-module", "coupling": "independent",
+                    "delegable_tasks": 1, "context_isolation_benefit": True,
+                }, ["."],
+            )
             initial["worker_tree_receipt"] = cleanup_receipt(
                 initial["runtime_binding"], 0, ["worker-1"], ["worker-1"], [],
-                "2026-08-21T00:00:00Z",
+                "2026-08-21T00:00:00Z", host_observation={
+                    "query_id": "query-working", "observed_at": "2026-08-21T00:00:00Z",
+                    "registered_refs": ["worker-1"], "active_refs": ["worker-1"],
+                    "unexpected_refs": [],
+                },
             )
             self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
 
@@ -859,7 +884,10 @@ class DeliveryStateTest(unittest.TestCase):
             cleaned["workers"][0]["status"] = "interrupted"
             cleaned["worker_tree_receipt"] = cleanup_receipt(
                 cleaned["runtime_binding"], 1, ["worker-1"], [], [],
-                "2026-08-21T00:01:00Z",
+                "2026-08-21T00:01:00Z", host_observation={
+                    "query_id": "query-clean", "observed_at": "2026-08-21T00:01:00Z",
+                    "registered_refs": ["worker-1"], "active_refs": [], "unexpected_refs": [],
+                },
             )
             result = self.write(root, state_home, cleaned, 0)
 
@@ -870,7 +898,10 @@ class DeliveryStateTest(unittest.TestCase):
             rewritten["handoff"]["goal"] = "silently changed"
             rewritten["worker_tree_receipt"] = cleanup_receipt(
                 rewritten["runtime_binding"], 2, ["worker-1"], [], [],
-                "2026-08-21T00:02:00Z",
+                "2026-08-21T00:02:00Z", host_observation={
+                    "query_id": "query-clean", "observed_at": "2026-08-21T00:02:00Z",
+                    "registered_refs": ["worker-1"], "active_refs": [], "unexpected_refs": [],
+                },
             )
             rejected = self.write(root, state_home, rewritten, 1)
             self.assertNotEqual(0, rejected.returncode)
@@ -915,14 +946,22 @@ class DeliveryStateTest(unittest.TestCase):
             state_home = Path(directory) / "home"
             state_path = self.state_path(state_home)
             self.acquire(root)
-            self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
+            initial = state()
+            initial["execution_control"]["routing"] = freeze_routing(
+                {
+                    **initial["execution_control"]["routing"]["profile"],
+                    "coupling": "independent", "delegable_tasks": 1,
+                    "context_isolation_benefit": True,
+                }, ["."],
+            )
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
             registered = json.loads(state_path.read_text(encoding="utf-8"))
             registered["revision"] = 1
             registered["runtime_binding"] = self.runtime_binding()
             registered["workers"] = [{
                 "ref": "worker-1", "parent_ref": None, "task_id": "task-payment",
                 "depth": 1, "may_dispatch": False,
-                "role": "implementation",
+                "role": "implementer",
                 "owner_run_id": "run-1",
                 "status": "working",
                 "progress": None,

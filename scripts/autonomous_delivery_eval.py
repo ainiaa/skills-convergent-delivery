@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from controller_snapshot import managed_state_snapshot
@@ -62,6 +63,26 @@ def receipt(command, result, duration_ms):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def execute_scenario(scenario, root, workspace):
+    command = [
+        sys.executable, "-I", "-c", ISOLATED_TEST_RUNNER, str(root / "scripts"),
+        str(root / scenario["check"][0]), scenario["check"][1],
+    ]
+    started = time.monotonic_ns()
+    result = subprocess.run(
+        command, cwd=workspace, capture_output=True, check=False, timeout=60,
+        env={**os.environ, "CONVERGE_EVAL_WORKSPACE": str(workspace),
+             "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    duration_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
+    return scenario["id"], {
+        "status": "passed" if result.returncode == 0 else "failed",
+        "duration_ms": duration_ms,
+        "usage": None,
+        "receipt_fingerprint": receipt(command, result, duration_ms),
+    }
+
+
 def _trusted_controller(path):
     try:
         snapshot = managed_state_snapshot(path)
@@ -79,28 +100,15 @@ def evaluate(catalog, execute=False, controller_fingerprint=None, workspace=None
     results = {}
     root = Path(__file__).resolve().parent.parent
     workspace = Path(workspace or Path.cwd()).expanduser().resolve()
-    for scenario in scenarios:
-        if not execute:
+    if not execute:
+        for scenario in scenarios:
             results[scenario["id"]] = {"status": "planned", "duration_ms": None, "usage": None,
                                        "receipt_fingerprint": None}
-            continue
-        command = [
-            sys.executable, "-I", "-c", ISOLATED_TEST_RUNNER, str(root / "scripts"),
-            str(root / scenario["check"][0]), scenario["check"][1],
-        ]
-        started = time.monotonic_ns()
-        result = subprocess.run(
-            command, cwd=workspace, capture_output=True, check=False, timeout=60,
-            env={**os.environ, "CONVERGE_EVAL_WORKSPACE": str(workspace),
-                 "PYTHONDONTWRITEBYTECODE": "1"},
-        )
-        duration_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
-        results[scenario["id"]] = {
-            "status": "passed" if result.returncode == 0 else "failed",
-            "duration_ms": duration_ms,
-            "usage": None,
-            "receipt_fingerprint": receipt(command, result, duration_ms),
-        }
+    else:
+        with ThreadPoolExecutor(max_workers=min(4, len(scenarios))) as pool:
+            for scenario_id, result in pool.map(
+                    lambda scenario: execute_scenario(scenario, root, workspace), scenarios):
+                results[scenario_id] = result
     completed = all(result["status"] == "passed" for result in results.values())
     return {
         "status": "completed" if completed else "failed" if execute else "planned",

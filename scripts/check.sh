@@ -82,6 +82,9 @@ python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
 python3 scripts/test_worker_profile.py
 python3 scripts/test_runner_registry.py
+python3 scripts/test_runner_contract.py
+python3 scripts/test_role_result.py
+python3 scripts/test_role_fanout.py
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
   python3 scripts/test_codex_exec_runner.py
   python3 scripts/test_claude_exec_runner.py

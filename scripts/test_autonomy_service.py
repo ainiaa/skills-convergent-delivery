@@ -125,6 +125,21 @@ class AutonomyServiceTest(unittest.TestCase):
             self.assertEqual([], diagnostics)
             self.assertEqual("service", service_runtime(service)["mode"])
 
+    def test_service_blocks_instead_of_executing_a_host_controller_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            host_action = {
+                "decision": "block",
+                "next_action": {"action": "sync-plan", "task_id": "task-service", "projection_fingerprint": "a" * 64},
+            }
+            with patch.object(autonomy_service, "decide", return_value=host_action), \
+                    patch.object(autonomy_service, "execute") as execute:
+                result = autonomy_service.run_once(path, state_root, lease_root)
+
+            self.assertEqual({"status": "blocked", "reason": "host_action_required"}, result)
+            execute.assert_not_called()
+            self.assertEqual("blocked", json.loads(path.read_text(encoding="utf-8"))["status"])
+
     def test_service_scan_rejects_a_recognized_invalid_active_state(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "invalid-service.json"

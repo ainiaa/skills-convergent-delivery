@@ -21,7 +21,7 @@ AUTOMATIC_WATCHDOG_CAPABILITIES = frozenset((
 ))
 PROFILE_CAPABILITY_CEILINGS = {
     "codex": frozenset((
-        "dispatch", "query", "wait", "interrupt", "tree_query", "restrict_dispatch",
+        "dispatch", "query", "wait", "interrupt", "tree_query",
     )),
     "claude-code": frozenset(CAPABILITIES),
     "single-context": frozenset(),
@@ -133,14 +133,14 @@ def negotiate(profile, observed):
         raise ValueError("observed capabilities must be booleans")
     if profile == "single-context":
         return bind(profile, "manual", [], "single context has no recoverable worker")
-    if not observed.get("dispatch") or not observed.get("query"):
-        return bind(profile, "manual", [], "automatic workers require dispatch and stable query")
-    if not observed.get("tree_query") and not observed.get("restrict_dispatch"):
-        return bind(profile, "manual", [], "automatic workers require subtree query or enforced leaf workers")
     capabilities = [
         name for name in CAPABILITIES
         if observed.get(name) and name in PROFILE_CAPABILITY_CEILINGS[profile]
     ]
+    if not {"dispatch", "query"} <= set(capabilities):
+        return bind(profile, "manual", [], "automatic workers require dispatch and stable query")
+    if not {"tree_query", "restrict_dispatch"} & set(capabilities):
+        return bind(profile, "manual", [], "automatic workers require subtree query or enforced leaf workers")
     return bind(
         profile,
         "automatic",
@@ -205,17 +205,15 @@ def can_auto_watchdog(binding):
 
 
 def allows_worker_lifecycle(binding, *, cross_session=False):
-    """Allow trusted local workers only while their host session remains available."""
+    """Allow only a same-session lifecycle backed by a host tree observation."""
     if not isinstance(cross_session, bool):
         raise ValueError("cross_session must be boolean")
     binding = validate_binding(binding)
-    if binding["evidence_level"] == "host_observed":
-        return True
     return (
         not cross_session
-        and binding["profile"] in TRUSTED_LOCAL_PROFILES
         and binding["mode"] == "automatic"
-        and binding["evidence_level"] == "controller_attested"
+        and binding["evidence_level"] == "host_observed"
+        and "tree_query" in binding["capabilities"]
     )
 
 
@@ -278,35 +276,33 @@ def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
         ):
             raise ValueError(f"{name} is invalid")
     mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
-    observation_fingerprint = None
-    if host_observation is not None:
-        if binding["evidence_level"] != "host_observed":
-            raise ValueError("host observation requires a host-observed runtime binding")
-        expected_fields = {
-            "query_id", "observed_at", "registered_refs", "active_refs", "unexpected_refs"
-        }
-        if mode != "tree_query" or not isinstance(host_observation, dict) \
-                or set(host_observation) != expected_fields:
-            raise ValueError("host observation is invalid")
-        if not isinstance(host_observation["query_id"], str) \
-                or not host_observation["query_id"].strip():
-            raise ValueError("host observation query_id is invalid")
-        expected_observation = {
-            "observed_at": observed_at,
-            "registered_refs": registered_refs,
-            "active_refs": active_refs,
-            "unexpected_refs": unexpected_refs,
-        }
-        if any(host_observation[field] != value for field, value in expected_observation.items()):
-            raise ValueError("host observation does not match cleanup refs")
-        observation_fingerprint = fingerprint(host_observation)
+    if binding["evidence_level"] != "host_observed" or mode != "tree_query" \
+            or host_observation is None:
+        raise ValueError("cleanup receipt requires a host-observed tree query")
+    expected_fields = {
+        "query_id", "observed_at", "registered_refs", "active_refs", "unexpected_refs"
+    }
+    if not isinstance(host_observation, dict) or set(host_observation) != expected_fields:
+        raise ValueError("host observation is invalid")
+    if not isinstance(host_observation["query_id"], str) \
+            or not host_observation["query_id"].strip():
+        raise ValueError("host observation query_id is invalid")
+    expected_observation = {
+        "observed_at": observed_at,
+        "registered_refs": registered_refs,
+        "active_refs": active_refs,
+        "unexpected_refs": unexpected_refs,
+    }
+    if any(host_observation[field] != value for field, value in expected_observation.items()):
+        raise ValueError("host observation does not match cleanup refs")
+    observation_fingerprint = fingerprint(host_observation)
     return {
         "schema_version": 2,
         "observed_revision": observed_revision,
         "observed_at": observed_at,
         "runtime_fingerprint": binding["binding_fingerprint"],
         "mode": mode,
-        "evidence_level": "host_observed" if observation_fingerprint else "controller_attested",
+        "evidence_level": "host_observed",
         "observation_fingerprint": observation_fingerprint,
         "registered_refs": registered_refs,
         "active_refs": active_refs,

@@ -70,6 +70,16 @@ def continuation_message(state_path, next_action):
     )
 
 
+def continuation_identity(state, next_action):
+    identity = {
+        "stage": state["current_stage"],
+        "action_fingerprint": hashlib.sha256(
+            json.dumps(next_action, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    return identity
+
+
 def continuation_receipt_path(state_path):
     root = Path(os.environ.get(
         "CONVERGE_AUTONOMY_RECEIPT_ROOT",
@@ -82,12 +92,7 @@ def continuation_receipt_path(state_path):
 
 def queue_codex(session, state_path, state, next_action):
     receipt_path = continuation_receipt_path(state_path)
-    identity = {
-        "stage": state["current_stage"],
-        "action_fingerprint": hashlib.sha256(
-            json.dumps(next_action, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-    }
+    identity = continuation_identity(state, next_action)
     with lock_record(receipt_path):
         if receipt_path.exists():
             try:

@@ -53,6 +53,7 @@ EXTENDED_CONTROLLER_FILES = (
     "scripts/autonomy_service.py",
     "scripts/autonomy_arm.py",
     "scripts/autonomy_begin.py",
+    "scripts/autonomy_contract.py",
     "scripts/autonomous_delivery_eval.py",
     "scripts/test_autonomy_arm.py",
     "scripts/test_autonomy_begin.py",
@@ -176,6 +177,7 @@ AUTONOMY_CONTROLLER_FILES = (
     "scripts/autonomy_service.py",
     "scripts/autonomy_arm.py",
     "scripts/autonomy_begin.py",
+    "scripts/autonomy_contract.py",
 )
 AUTONOMY_EVALUATION_FILES = (
     "scripts/autonomous_delivery_eval.py",

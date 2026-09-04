@@ -46,7 +46,7 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 `role_dispatch.py` 是 runner 与动态角色流之间的确定性派发计划器。它对所有 agent profile 都输出 `external_runner`，`runner_lifecycle.py` 消费该冻结 profile 并通过 `runner_launch.py` 构造 launch/本地命令或批准的 HTTPS request；因此不会继承父代理模型，也不会把计划冒充为宿主任务树或完成回执。
 
-reviewer 执行某个冻结 Review v3 请求时，controller 必须以单任务 `--review-request-file` 或 fan-out `--review-requests-file` 提供完整 canonical request，避免将验收或范围置入 argv。lifecycle 使用同一 `review_contract.py` 归一化并重算 SHA-256，且要求 task、baseline commit 与 source fingerprint 均匹配当前 managed run；可选的 `--review-request-fingerprint(s)` 只作为相等性断言。三个 runner 将完整 request 和其指纹冻结在 launch configuration，命令与 HTTPS body 不消费该 configuration；非 reviewer、缺 request 或不匹配值确定性拒绝。模型输出只在内存中归一化为 Review v3 record，并作为完成 receipt 的 role result 保存；完成门禁要求其与当前 state request 完全一致。identity 可为已完成的 host worker，或为外部 runner 的冻结 `profile.worker_id`，后者绝不声称为 host-native worker。
+reviewer 执行某个冻结 Review v3 请求时，controller 必须以单任务 `--review-request-file` 或 fan-out `--review-requests-file` 提供完整 canonical request，避免将验收或范围置入 argv。lifecycle 使用同一 `review_contract.py` 归一化并重算 SHA-256，且要求 task、baseline commit 与 source fingerprint 均匹配当前 managed run；可选的 `--review-request-fingerprint(s)` 只作为相等性断言。三个 runner 将完整 request 和其指纹冻结在 launch configuration，命令与 HTTPS body 不消费该 configuration；非 reviewer、缺 request 或不匹配值确定性拒绝。模型输出只在内存中归一化为 Review v3 record，并作为完成 receipt 的 role result 保存；完成门禁要求其与当前 state request 完全一致。identity 必须是外部 runner 的冻结 `profile.worker_id`，绝不声称为 host-native worker。
 
 所有 runner 都以相同的低层 `output` 语义把响应文本即时返回给当前调用者；它不是 receipt、持久状态或通过依据。`runner_lifecycle.py` 不向 controller 暴露该原文：只读 scout/reviewer 必须经 `role_result.py` 转为与 launch 绑定的受限 JSON 结论，其他角色或不合规输出只返回明确状态。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥、原文或审计 transcript。见 [多模型协作](multi-model.md)。
 

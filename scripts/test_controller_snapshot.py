@@ -68,6 +68,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertEqual([], core["extensions"])
             self.assertEqual(["multimodel"], multi["extensions"])
             self.assertNotIn("scripts/multi_model.py", core["files"])
+            self.assertNotIn("scripts/autonomy_contract.py", core["files"])
             self.assertIn("scripts/multi_model.py", multi["files"])
             self.assertNotIn("scripts/autonomy_begin.py", multi["files"])
 
@@ -88,6 +89,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             )
 
             self.assertEqual(["autonomy"], hook["extensions"])
+            self.assertIn("scripts/autonomy_contract.py", hook["files"])
             self.assertNotIn("scripts/multi_model.py", hook["files"])
             self.assertNotIn("scripts/autonomous_delivery_eval.py", hook["files"])
             self.assertEqual(["multimodel", "autonomy"], service["extensions"])

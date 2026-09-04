@@ -99,4 +99,6 @@ Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入
 3. 运行 `bash scripts/check.sh`，执行安装器、核心状态 helper、lease、Shell 语法和五个核心 Skill 的官方 quick_validate；默认只保留扩展边界的共享契约，不运行自治、多模型扩展的 validator 或运行时回归。发布前运行 `bash scripts/check.sh --full`，它额外验证两个扩展并执行完整自治轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
 4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
 
+升级 Codex Desktop 或协作工具契约后，额外运行一次无写入 native worker smoke：只有原始 tree query 能绑定为 `host_observed` 时，才允许 `workers[]` 自动 lifecycle。没有 bridge 时一律使用手工 capsule；不得把 `spawn_agent`、查询、wait 或消息回执解释为可恢复或跨会话能力，也不添加 Python bridge。
+
 不要为 Codex 和 Claude Code 复制两份 Skill 源码；如需调整流程，修改仓库中的对应 Skill。旧的 `convergent-delivery` 安装软链接只要指向同一源码，就会在下次安装或升级时自动迁移为 `converge`。

@@ -92,6 +92,12 @@ class SkillContractTest(unittest.TestCase):
         self.assertNotIn("fast_path.py", installer)
         self.assertNotIn("test_fast_path.py", checks)
         self.assertIn("scripts/test_runner_registry.py", checks)
+        for test in (
+            "scripts/test_runner_contract.py",
+            "scripts/test_role_result.py",
+            "scripts/test_role_fanout.py",
+        ):
+            self.assertIn(test, checks)
         self.assertIn(
             "skills/converge-review/scripts/test_review_axes_contract.py", checks
         )
@@ -128,6 +134,30 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("checkpoint=cross_session", combined)
         self.assertIn("跨会话", combined)
         self.assertIn("本地 commit 授权", combined)
+
+    def test_native_subagent_requires_a_host_observed_bridge_and_keeps_external_runner_separate(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
+            encoding="utf-8"
+        )
+        dispatch = (ROOT / "scripts/role_dispatch.py").read_text(encoding="utf-8")
+        combined = root + control + runtime
+
+        for marker in (
+            "spawn_agent",
+            "精确 `worker_ref`",
+            "external_runner",
+            "手工 capsule",
+            "wake-up signal",
+            "host_observed",
+            "frozen route 为 `delegated`",
+            "unexpected_refs",
+        ):
+            self.assertIn(marker, combined)
+        self.assertIn('"executor": "external_runner"', dispatch)
+        self.assertNotIn("send_input(interrupt", runtime)
+        self.assertNotIn("Native Handoff", combined)
 
     def test_planned_capsule_guard_precedes_task_profile_routing(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -317,16 +347,16 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn('"$CONVERGE_SKILL_DIR/scripts/delivery_state.py"', state)
         self.assertIn('"$CONVERGE_BATCH_SKILL_DIR/../../scripts/runtime_adapter.py"', runtime)
 
-    def test_state_schema_matches_trusted_local_runtime_completion_policy(self):
+    def test_state_schema_requires_host_observed_runtime_completion_policy(self):
         state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
         runtime = (ROOT / "skills/converge-batch/references/runtime-adapters.md").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("当前会话的可信本地宿主", state)
+        self.assertIn("同会话、含 `tree_query` 的 `host_observed`", state)
         self.assertIn("controller_attested", state)
-        self.assertIn("可自动派发和清场", runtime)
-        self.assertNotIn("只能支撑 blocked 清场，不能支撑带 worker 的 complete", state)
+        self.assertIn("不能自动派发或清场", runtime)
+        self.assertIn("不能派发、登记或清场", state)
 
     def test_risk_and_metric_references_keep_inference_and_observation_honest(self):
         routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
@@ -360,7 +390,7 @@ class SkillContractTest(unittest.TestCase):
 
         self.assertIn("`independent=true` 和全新上下文", protocol)
         self.assertIn("而不是为 spec 与 quality 各派一个 reviewer", protocol)
-        self.assertIn("同一个已登记", orchestration)
+        self.assertIn("同一个有冻结 profile", orchestration)
 
     def test_model_self_report_cannot_replace_real_execution_evidence(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

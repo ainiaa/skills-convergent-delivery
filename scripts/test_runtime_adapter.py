@@ -28,7 +28,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertIsNone(result["capability_observation"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
 
-    def test_only_trusted_local_hosts_allow_controller_attested_worker_lifecycle(self):
+    def test_worker_lifecycle_requires_a_bound_host_observation(self):
         codex = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
@@ -36,10 +36,35 @@ class RuntimeAdapterTest(unittest.TestCase):
             "claude-code", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        self.assertTrue(runtime_adapter.allows_worker_lifecycle(codex))
-        self.assertTrue(runtime_adapter.allows_worker_lifecycle(claude))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(codex))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(claude))
         self.assertFalse(runtime_adapter.allows_worker_lifecycle(codex, cross_session=True))
         self.assertFalse(runtime_adapter.allows_worker_lifecycle(claude, cross_session=True))
+
+        observed = runtime_adapter.bind_observed("codex", {
+            "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",
+            "profile": "codex", "capabilities": ["dispatch", "query", "tree_query"],
+        })
+        self.assertTrue(runtime_adapter.allows_worker_lifecycle(observed))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(observed, cross_session=True))
+
+    def test_same_session_native_worker_boundary_does_not_authorize_cross_session_fallback(self):
+        binding = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "wait": True, "tree_query": True}
+        )
+
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(binding))
+        self.assertFalse(runtime_adapter.allows_worker_lifecycle(binding, cross_session=True))
+        self.assertEqual("terminal-only", runtime_adapter.watchdog_mode(binding))
+
+    def test_codex_requires_tree_visibility_and_never_claims_restrict_dispatch(self):
+        result = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "restrict_dispatch": True}
+        )
+
+        self.assertEqual("manual", result["mode"])
+        self.assertEqual([], result["capabilities"])
+        self.assertIn("tree", result["reason"])
 
     def test_only_a_bound_host_capability_observation_can_enable_auto_watchdog(self):
         controller_attested = runtime_adapter.negotiate(
@@ -114,7 +139,7 @@ class RuntimeAdapterTest(unittest.TestCase):
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        with self.assertRaisesRegex(ValueError, "host-observed runtime binding"):
+        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
             runtime_adapter.cleanup_receipt(
                 binding, 1, [], [], [], "2026-08-21T00:00:00Z",
                 host_observation={
@@ -169,7 +194,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertEqual("manual", result["mode"])
         self.assertIn("subtree", result["reason"])
 
-    def test_restrict_dispatch_cleanup_is_controller_attested_not_verified(self):
+    def test_cleanup_requires_a_bound_tree_query_observation(self):
         binding = runtime_adapter.negotiate(
             "claude-code", {
                 "dispatch": True, "query": True, "wait": True, "interrupt": True,
@@ -177,25 +202,20 @@ class RuntimeAdapterTest(unittest.TestCase):
             }
         )
 
-        receipt = runtime_adapter.cleanup_receipt(
-            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
-        )
+        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+            runtime_adapter.cleanup_receipt(
+                binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
+            )
 
-        self.assertEqual("restrict_dispatch", receipt["mode"])
-        self.assertEqual("controller_attested", receipt["evidence_level"])
-        self.assertIsNone(receipt["observation_fingerprint"])
-
-    def test_tree_query_arguments_alone_are_controller_attested(self):
+    def test_tree_query_arguments_alone_cannot_clear_workers(self):
         binding = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        receipt = runtime_adapter.cleanup_receipt(
-            binding, 1, [], [], [], "2026-08-21T00:00:00Z"
-        )
-
-        self.assertEqual("controller_attested", receipt["evidence_level"])
-        self.assertIsNone(receipt["observation_fingerprint"])
+        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+            runtime_adapter.cleanup_receipt(
+                binding, 1, [], [], [], "2026-08-21T00:00:00Z"
+            )
 
     def test_cleanup_receipt_requires_a_real_timestamp(self):
         binding = runtime_adapter.negotiate(

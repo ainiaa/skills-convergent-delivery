@@ -15,7 +15,7 @@ def state():
         "workers": [
             {
                 "ref": "worker-1",
-                "role": "implementation",
+                "role": "implementer",
                 "owner_run_id": "run-1",
                 "status": "working",
                 "progress": None,

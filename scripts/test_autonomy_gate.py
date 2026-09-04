@@ -4,9 +4,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
 from autonomy_gate import decide
-from test_delivery_next import EVIDENCE, SOURCE, autonomous_state, committed_attempt
+from test_delivery_next import (
+    EVIDENCE, SOURCE, autonomous_state, committed_attempt,
+)
 
 
 SCRIPT = Path(__file__).with_name("autonomy_gate.py")

@@ -386,16 +386,26 @@ def _run_once(state_path, state_root, lease_root):
         return _finalize_observed(state_path, state_root, lease_root)
     if attempts and attempts[-1]["status"] == "observed":
         return _finalize_observed(state_path, state_root, lease_root)
+    next_action = action["next_action"]
+    executable = next_action["action"] == "execute-inline" or (
+        next_action["action"] == "verify" and "phase" in next_action
+    )
+    if not executable:
+        block(
+            state_path, state, state_root, lease_root,
+            f"autonomous service requires a host controller action: {next_action['action']}",
+        )
+        return {"status": "blocked", "reason": "host_action_required"}
     if attempts and attempts[-1]["status"] == "intent":
-        if _latest(state)["action"] != action["next_action"]:
+        if _latest(state)["action"] != next_action:
             block(state_path, state, state_root, lease_root, "pending autonomous action no longer matches the gate")
             return {"status": "blocked", "reason": "stale_intent"}
     elif not attempts or attempts[-1]["status"] == "committed":
-        _append_intent(state_path, state_root, lease_root, action["next_action"])
+        _append_intent(state_path, state_root, lease_root, next_action)
     else:
         raise ValueError("autonomous action lifecycle is invalid")
     started = _start(state_path, state_root, lease_root)
-    receipt = execute(state_path, started, action["next_action"], state_root, lease_root)
+    receipt = execute(state_path, started, next_action, state_root, lease_root)
     _observe(state_path, state_root, lease_root, receipt)
     return _finalize_observed(state_path, state_root, lease_root)
 

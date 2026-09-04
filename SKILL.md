@@ -27,6 +27,8 @@ Provider Schema v2；pdlc-v1/native-v1，`engine` 只由 binding 派生，不能
 
 按已选路径渐进读取引用：一次只读一个必要 reference，不得在单个命令中拼接多个完整协议。`inline` 或普通同会话计划不读 worker、恢复、自治或全量收口资料；只有实际进入对应路径时才读取其 contract。
 
+没有宿主 bridge 时，原生子代理一律使用手工 capsule 交接；不得把 `spawn_agent`、wait timeout、消息投递或模型自述当作可恢复的 lifecycle 证据。只有具体宿主 bridge 完成无写入 smoke 并生成 `host_observed` tree-query Binding 后，才可走 worker registry 的自动 lifecycle。
+
 复杂、未知或长任务用 `converge-plan`，按独立可验收的业务切片执行；仅 `cross_session` 进 `converge-batch` 并先获 commit 授权。全量收口必须先用 `converge-plan` 建矩阵，终态须当前源码的 closure gate；缺项标 `uncovered`，不得宣称全部完成；见 [Plan Contract](skills/converge-plan/references/plan-contract.md)。
 
 ## 终态

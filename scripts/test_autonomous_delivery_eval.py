@@ -60,6 +60,36 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             self.assertEqual({"status", "duration_ms", "usage", "receipt_fingerprint"}, set(result))
             self.assertEqual("passed", result["status"])
 
+    def test_execute_uses_a_bounded_pool_without_sharing_test_processes(self):
+        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        created_workers, commands = [], []
+
+        class Pool:
+            def __init__(self, max_workers):
+                created_workers.append(max_workers)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_arguments):
+                return False
+
+            def map(self, function, scenarios):
+                return [function(scenario) for scenario in scenarios]
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch("autonomous_delivery_eval.ThreadPoolExecutor", Pool), \
+                patch("autonomous_delivery_eval.subprocess.run", side_effect=run):
+            report = evaluate(catalog, execute=True)
+
+        self.assertEqual([4], created_workers)
+        self.assertEqual(len(catalog["scenarios"]), len(commands))
+        self.assertTrue(all(command[1:3] == ["-I", "-c"] for command in commands))
+        self.assertTrue(all(item["status"] == "passed" for item in report["results"].values()))
+
     def test_execute_marks_the_evaluation_failed_when_a_bound_check_fails(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
         catalog["scenarios"][0]["check"] = [
