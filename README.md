@@ -2,7 +2,7 @@
 
 一套面向 Codex 与 Claude Code 的软件交付 Skill：先把复杂工作拆成有限短任务，再让单任务有限收敛、独立审查保持只读、长计划稳定接力。
 
-当前开发版本：[0.0.21](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
+当前发布版本：[0.1.0](VERSION)。尚未创建 Git tag 的改动记录在 [Unreleased](CHANGELOG.md) 中。
 
 ## 3 步快速开始
 

@@ -125,7 +125,7 @@ if arguments and arguments[0] == "clone":
     def test_remote_selectors_clone_the_requested_latest_release_or_tag(self):
         cases = (
             (("--latest",), "main"),
-            (("--release", "0.0.21"), "v0.0.21"),
+            (("--release", VERSION), f"v{VERSION}"),
             (("--tag", "preview-202609"), "preview-202609"),
         )
         for arguments, expected_ref in cases:
@@ -144,7 +144,7 @@ if arguments and arguments[0] == "clone":
     def test_remote_selector_cannot_be_combined_with_a_local_source(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_installer_from(
-                Path(directory), ROOT, "--target", "codex", "--tag", "v0.0.21"
+                Path(directory), ROOT, "--target", "codex", "--tag", f"v{VERSION}"
             )
 
         self.assertNotEqual(0, result.returncode)
@@ -608,7 +608,7 @@ if arguments and arguments[0] == "clone":
     def test_readme_current_version_matches_version_file(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn(f"当前开发版本：[{VERSION}](VERSION)", readme)
+        self.assertIn(f"当前发布版本：[{VERSION}](VERSION)", readme)
 
     def test_readme_links_to_the_usage_guide_and_changelog(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

@@ -18,11 +18,11 @@
   "source_fingerprint": "<current Source Receipt fingerprint>",
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
   "controller": {
-    "package_version": "0.0.21",
+    "package_version": "0.1.0",
     "protocol_version": 17,
     "protocol_fingerprint": "<sha256>",
     "extensions": ["multimodel"],
-    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.0.21", "protocol_version": 17, "protocol_fingerprint": "<sha256>", "extensions": ["multimodel"], "files": []}
+    "snapshot": {"root": "/absolute/control-root/<hash>", "control_root": "/absolute/control-root", "source_root": "/absolute/original-suite", "package_version": "0.1.0", "protocol_version": 17, "protocol_fingerprint": "<sha256>", "extensions": ["multimodel"], "files": []}
   },
   "provider_binding": {
     "selection": "auto | explicit",
