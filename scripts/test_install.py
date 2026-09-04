@@ -528,6 +528,26 @@ if arguments and arguments[0] == "clone":
             self.assertIn("references/review-orchestration.md", result.stderr)
             self.assertFalse((home / ".codex/skills/converge").exists())
 
+    def test_install_rejects_a_suite_missing_capsule_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "source"
+            shutil.copytree(
+                ROOT,
+                source,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".claude", ".codex", ".codegraph", "__pycache__"
+                ),
+            )
+            (source / "scripts/capsule_dispatch.py").unlink()
+
+            result = self.run_installer_from(home, source, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("scripts/capsule_dispatch.py", result.stderr)
+            self.assertFalse((home / ".codex/skills/converge").exists())
+
     def test_install_rejects_a_suite_missing_extension_invocation_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -610,6 +630,15 @@ if arguments and arguments[0] == "clone":
 
         self.assertIn(f"当前发布版本：[{VERSION}](VERSION)", readme)
 
+    def test_readme_leads_with_a_tagged_stable_install(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            f"https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v{VERSION}/install.sh",
+            readme,
+        )
+        self.assertIn(f"--release {VERSION} --target all", readme)
+
     def test_readme_links_to_the_usage_guide_and_changelog(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -674,8 +703,7 @@ if arguments and arguments[0] == "clone":
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
-        self.assertIn("--writer-id <writer-id>", readme)
-        self.assertIn("--revision <revision>", readme)
+        self.assertIn("[单任务状态 Schema](references/state-schema.md)", readme)
         self.assertIn("~/.convergent-delivery/state/", usage)
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("pdlc-v1", skill)

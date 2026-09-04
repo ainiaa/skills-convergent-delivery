@@ -75,6 +75,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/autonomy_arm.py
   scripts/autonomy_begin.py
   scripts/autonomous_delivery_eval.py
+  scripts/capsule_dispatch.py
   scripts/test_autonomy_arm.py
   scripts/test_autonomy_begin.py
   scripts/test_autonomy_gate.py

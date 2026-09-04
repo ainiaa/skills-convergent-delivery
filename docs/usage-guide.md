@@ -19,6 +19,13 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 
 ## 安装与升级
 
+安装当前发布的稳定版本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.1.0/install.sh \
+  | bash -s -- --release 0.1.0 --target all
+```
+
 从本地 clone 安装：
 
 ```bash

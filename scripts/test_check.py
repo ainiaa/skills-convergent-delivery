@@ -9,6 +9,17 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):
+    def test_ci_runs_the_full_release_gate_without_a_fixed_python_minor(self):
+        check = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+        workflow = ROOT / ".github/workflows/ci.yml"
+
+        self.assertNotIn("--python 3.13", check)
+        self.assertTrue(workflow.is_file())
+        content = workflow.read_text(encoding="utf-8")
+        self.assertIn("pull_request:", content)
+        self.assertIn('\"v*\"', content)
+        self.assertIn("bash scripts/check.sh --full", content)
+
     def test_runtime_lock_files_are_not_tracked(self):
         result = subprocess.run(
             ["git", "ls-files"], cwd=ROOT, text=True, capture_output=True, check=True

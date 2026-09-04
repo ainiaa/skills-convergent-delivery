@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- 修复安装完整性漏检：`install.sh` 将 `scripts/capsule_dispatch.py` 纳入运行时必需文件；源码副本缺失该脚本时安装会明确失败，不再生成表面成功、实际无法投递 successor task 的 Skill 链接。
+- 为上述安装边界补充回归测试，覆盖缺少 Capsule Dispatch 脚本的隔离源码安装失败场景。
+- 稳定安装文档现在固定指向已发布的 `v0.1.0` tag，并使用 `--release 0.1.0`；需要跟随开发分支时必须显式传入 `--latest`，避免无意安装浮动的 `main`。
+- 修复完整检查的解释器漂移：移除 `uv` 路径中硬编码的 Python 3.13；系统 `python3` 不具备 PyYAML 时，改为使用项目 `.venv`，并明确提示创建 Python 3.9+ 虚拟环境。
+- 新增 GitHub Actions 质量门禁：PR、推送至 `main` 和 `v*` tag 均安装开发依赖并执行 `bash scripts/check.sh --full`。
+- 精简 README：移除重复的协议、状态命令和调度细节，保留快速开始、入口选择、安装来源与授权边界，并链接到对应的权威参考文档。
+
 ## [0.1.0] - 2026-09-04
 
 - 安装器现在支持 `--latest`、`--release <version>` 与 `--tag <tag>` 三种远程来源选择；release 版本确定性映射到 `v<version>` tag，tag 安装/升级均使用精确 ref。`--source` 不能与远程选择混用；同时修复帮助文本中的 Markdown 反引号被 Shell 误执行的问题。
