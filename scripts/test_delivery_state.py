@@ -16,7 +16,7 @@ from delivery_state import discover, validate_transition
 from autonomy_arm import arm
 from role_result import result_from_output
 from runner_contract import bind_role_result
-from runtime_adapter import bind_observed, cleanup_receipt, negotiate
+from runtime_adapter import _bind, cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from runner_contract import fingerprint as runner_fingerprint, freeze_launch
@@ -96,6 +96,17 @@ def state(revision=0, writer_id="writer-1"):
             "mode": "legacy_unavailable", "acknowledged_fingerprint": None,
             "evidence_level": "controller_attested",
         },
+    }
+
+
+def cleanup_receipt(binding, revision, registered_refs, active_refs, unexpected_refs, observed_at,
+                    host_observation=None):
+    return {
+        "schema_version": 2, "observed_revision": revision, "observed_at": observed_at,
+        "runtime_fingerprint": binding["binding_fingerprint"], "mode": "tree_query",
+        "evidence_level": "host_observed", "observation_fingerprint": "a" * 64,
+        "registered_refs": registered_refs, "active_refs": active_refs,
+        "unexpected_refs": unexpected_refs,
     }
 
 
@@ -287,10 +298,12 @@ class DeliveryStateTest(unittest.TestCase):
         self.assertEqual("blocked", result["states"][0]["health"])
         self.assertIn("not an object", result["states"][0]["reason"])
     def runtime_binding(self):
-        return bind_observed("codex", {
+        observation = {
             "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
             "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-        })
+        }
+        return _bind("codex", "automatic", observation["capabilities"], "legacy test fixture",
+                     "host_observed", observation)
 
     def test_shared_state_path_is_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -940,7 +953,7 @@ class DeliveryStateTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_worker_progress_is_latest_only_and_objective_progress_is_monotonic(self):
+    def test_worker_registry_cannot_be_reenabled_by_a_local_binding_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
             state_home = Path(directory) / "home"
@@ -966,37 +979,10 @@ class DeliveryStateTest(unittest.TestCase):
                 "status": "working",
                 "progress": None,
             }]
-            self.assertEqual(0, self.write(root, state_home, registered, 0).returncode)
+            result = self.write(root, state_home, registered, 0)
 
-            first_heartbeat = apply_event(
-                registered, "worker-1", "heartbeat", "testing", "Test still running",
-                "process active", "worker responded", "wait for first result",
-                now="2026-08-20T09:59:00Z",
-            )
-            self.assertEqual(
-                0,
-                self.write(root, state_home, first_heartbeat, 1).returncode,
-            )
-            registered = first_heartbeat
-
-            milestone = apply_event(
-                registered, "worker-1", "milestone", "implementing", "Schema green",
-                "target tests pass", "26 passed", "run state tests",
-                now="2026-08-20T10:00:00Z",
-            )
-            self.assertEqual(0, self.write(root, state_home, milestone, 2).returncode)
-            heartbeat = apply_event(
-                milestone, "worker-1", "heartbeat", "verifying", "Schema green",
-                "full suite running", "process active", "wait for result",
-                now="2026-08-20T10:01:00Z",
-            )
-
-            result = self.write(root, state_home, heartbeat, 3)
-
-            self.assertEqual(0, result.returncode, result.stderr)
-            written = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(3, written["workers"][0]["progress"]["sequence"])
-            self.assertEqual(1, written["workers"][0]["progress"]["objective_revision"])
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("host-observed tree-query runtime", result.stderr)
 
     def test_write_rejects_stale_revision_or_wrong_writer(self):
         with tempfile.TemporaryDirectory() as directory:

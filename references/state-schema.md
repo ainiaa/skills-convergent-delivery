@@ -65,7 +65,7 @@ Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不
 
 `host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
 
-异模型 worker 采用 [Worker Runner](worker-runners.md) 的冻结 profile。它的 `runner` receipt 不属于本节 `runtime_binding`、`workers[]` 或 `worker_tree_receipt`：这些字段只接受真实宿主 bridge 的原始观察。没有宿主 selector/tree receipt 时，runner 结果只能作为待主 controller 复核的外部工作产物，不能把 `runner` 标成 `host_observed` 或用来直接完成状态。
+异模型 worker 采用 [Worker Runner](worker-runners.md) 的冻结 profile。它的 `runner` receipt 不属于本节 `runtime_binding`、`workers[]` 或 `worker_tree_receipt`：这些字段只接受真实宿主 bridge 的原始观察。当前 package 没有该 bridge，普通 JSON 不会生成 `host_observed` binding。没有宿主 selector/tree receipt 时，runner 结果只能作为待主 controller 复核的外部工作产物，不能把 `runner` 标成 `host_observed` 或用来直接完成状态；需要新上下文时使用 [Capsule Dispatch v1](capsule-dispatch.md)，其 delivery ack 同样不属于这些字段。
 
 ## 2. Provider Binding
 

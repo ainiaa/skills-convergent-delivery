@@ -254,6 +254,80 @@ class DeliveryLeaseTest(unittest.TestCase):
 
             self.assertEqual(2, release.returncode)
 
+    def test_release_rejects_direct_controller_attested_cleanup_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_root = Path(directory) / "state"
+            acquired = self.run_lease(
+                root, "acquire", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+            path = (
+                state_root
+                / __import__("hashlib").sha256("/repo/common.git".encode()).hexdigest()
+                / __import__("hashlib").sha256("payment".encode()).hexdigest()
+                / f"{__import__('hashlib').sha256('run-1'.encode()).hexdigest()}.json"
+            )
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "run_id": "run-1", "writer_id": "writer-1", "repo_id": "/repo/common.git",
+                "workspace": "/repo/a", "task_key": "payment", "revision": 2,
+                "status": "complete", "workers": [{"ref": "worker-1", "status": "completed"}],
+                "worker_tree_receipt": {
+                    "schema_version": 2, "observed_revision": 2,
+                    "observed_at": "2026-08-21T00:00:00Z", "runtime_fingerprint": "a" * 64,
+                    "mode": "tree_query", "evidence_level": "controller_attested",
+                    "observation_fingerprint": None, "registered_refs": ["worker-1"],
+                    "active_refs": [], "unexpected_refs": [],
+                },
+            }), encoding="utf-8")
+
+            release = self.run_lease(
+                root, "release", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1", state_root=state_root,
+            )
+
+            self.assertEqual(2, release.returncode)
+            self.assertEqual("blocked_cleanup", json.loads(release.stdout)["status"])
+
+    def test_release_rejects_worker_registry_even_with_a_claimed_host_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_root = Path(directory) / "state"
+            acquired = self.run_lease(
+                root, "acquire", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1",
+            )
+            self.assertEqual(0, acquired.returncode, acquired.stderr)
+            path = (
+                state_root
+                / __import__("hashlib").sha256("/repo/common.git".encode()).hexdigest()
+                / __import__("hashlib").sha256("payment".encode()).hexdigest()
+                / f"{__import__('hashlib').sha256('run-1'.encode()).hexdigest()}.json"
+            )
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "run_id": "run-1", "writer_id": "writer-1", "repo_id": "/repo/common.git",
+                "workspace": "/repo/a", "task_key": "payment", "revision": 2,
+                "status": "blocked", "workers": [{"ref": "worker-1", "status": "completed"}],
+                "worker_tree_receipt": {
+                    "schema_version": 2, "observed_revision": 2,
+                    "observed_at": "2026-08-21T00:00:00Z", "runtime_fingerprint": "a" * 64,
+                    "mode": "tree_query", "evidence_level": "host_observed",
+                    "observation_fingerprint": "a" * 64, "registered_refs": ["worker-1"],
+                    "active_refs": [], "unexpected_refs": [],
+                },
+            }), encoding="utf-8")
+
+            release = self.run_lease(
+                root, "release", workspace="/repo/a", task_key="payment",
+                run_id="run-1", writer_id="writer-1", state_root=state_root,
+            )
+
+            self.assertEqual(2, release.returncode)
+            self.assertIn("concrete host bridge", json.loads(release.stdout)["reason"])
+
     def test_move_releases_the_previous_worktree_lease(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,6 +1,6 @@
 # Runtime Adapters
 
-Runtime Adapter 只把 Batch Protocol 映射到当前宿主已有的任务能力，不实现第二套调度器。
+Runtime Adapter 只把 Batch Protocol 映射到当前宿主已有的任务能力，不实现第二套调度器。独立 task 的创建与 capsule 投递采用 [Capsule Dispatch v1](../../../references/capsule-dispatch.md)，它不构成 Batch worker lifecycle。
 
 Skill 规则本身不能创建、计时、中断或恢复宿主任务。下列动作只有在宿主本次会话实际提供对应 API 时才可执行；否则必须走手工交接，不能把协议目标写成已发生的宿主行为。
 
@@ -14,11 +14,11 @@ worker 的登记、归属、宿主终态、watchdog、一次恢复和退出清�
 python3 "$CONVERGE_BATCH_SKILL_DIR/../../scripts/runtime_adapter.py" negotiate --profile codex
 ```
 
-automatic lifecycle 需要同会话稳定 `dispatch + query + tree_query`，以及具体 bridge 绑定的 `host_observed` capability observation 与每次原始 tree-query cleanup observation。`negotiate --profile codex|claude-code` 只产生 controller-attested Binding，不能自动派发或清场。没有 bridge 时所有路径都必须手工交接。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用；terminal-only 只能查询/等待，不能作为完成或清场证据。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
+automatic lifecycle 需要 concrete host bridge 的同会话稳定 `dispatch + query + tree_query`，以及 bridge 产生的原始 tree-query observation。`negotiate --profile codex|claude-code` 只产生 controller-attested Binding；当前 package 不提供这种 bridge，不能自动派发或清场 Batch worker lifecycle。没有 bridge 时可使用 Capsule Dispatch 的两个实际 adapter 自动创建 successor；不能把 delivery ack 登记成 Batch worker。ChatGPT Desktop 的原生 child 当前因缺少强制 leaf 能力而 `unavailable`，见 [Desktop Native Subagent v1](../../../references/chatgpt-desktop-subagent.md)。Runtime Adapter 返回可执行的 Runtime Action，不代理宿主调用；terminal-only 只能查询/等待，不能作为完成或清场证据。每个操作都先由父控制器校验当前 `run_id + worker_ref`，不得用全局列表猜测。
 
 ## Bridge release gate
 
-`bind_observed()` 仍是外部宿主 bridge 的内部入口，不是把 JSON 从普通 stdin 传入就能取得的来源声明。Codex Desktop 不把它作为默认路径；若将来接入 bridge，必须完成真实 dispatch → query 同一 `worker_ref` 至终态 → tree query 的端到端验证，才能使用 `host_observed`。
+`bind_observed()` 拒绝调用者提供的 JSON；它不会作为 bridge 的占位符。若将来接入 bridge，必须让 bridge 自身在宿主边界内完成真实 dispatch → query 同一 `worker_ref` 至终态 → tree query 的端到端验证，并以单独的、不经本 helper 的受保护接口写入 lifecycle state。
 
 1. 先将 Batch 状态写为 `dispatching` 并固定 `dispatch_id`。
 2. 创建调用携带当前 capsule并显式要求执行者使用 `$converge`；按 Batch state 原子保存 worker lifecycle 和 `recovery_count=0` 后进入 `running`。

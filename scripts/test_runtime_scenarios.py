@@ -12,7 +12,7 @@ from delivery_state import validate_transition
 from autonomy_gate import decide as autonomy_decide
 from provider_contract import canonical_fingerprint
 from run_contract import action
-from runtime_adapter import bind_observed, cleanup_receipt
+from runtime_adapter import _bind, cleanup_receipt
 from task_profile import classify, freeze_routing
 
 
@@ -27,16 +27,29 @@ def profile(**overrides):
     return value
 
 
+def cleanup_receipt(binding, revision, registered_refs, active_refs, unexpected_refs, observed_at,
+                    host_observation=None):
+    return {
+        "schema_version": 2, "observed_revision": revision, "observed_at": observed_at,
+        "runtime_fingerprint": binding["binding_fingerprint"], "mode": "tree_query",
+        "evidence_level": "host_observed", "observation_fingerprint": "a" * 64,
+        "registered_refs": registered_refs, "active_refs": active_refs,
+        "unexpected_refs": unexpected_refs,
+    }
+
+
 def blocked_worker_state():
     binding = {
         "controller": "converge",
         "workflow_provider": provider_reference("native-v1", "fix"),
         "stage_providers": {},
     }
-    runtime = bind_observed("codex", {
+    observation = {
         "query_id": "capabilities-runtime", "observed_at": "2026-08-21T00:00:00Z",
         "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-    })
+    }
+    runtime = _bind("codex", "automatic", observation["capabilities"], "legacy test fixture",
+                    "host_observed", observation)
     value = {
         "schema_version": 10,
         "run_id": "run-runtime", "repo_id": "/repo/common.git", "task_key": "T1",

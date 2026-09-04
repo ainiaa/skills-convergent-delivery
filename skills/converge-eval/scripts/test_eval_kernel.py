@@ -17,7 +17,7 @@ from eval_contract import evaluate
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 from delivery_next import upgrade_state  # noqa: E402
-from runtime_adapter import bind_observed, cleanup_receipt  # noqa: E402
+from runtime_adapter import _bind  # noqa: E402
 from task_profile import freeze_routing  # noqa: E402
 from test_delivery_state import state as legacy_state  # noqa: E402
 
@@ -82,6 +82,10 @@ def secure(request):
     request["judge_source"] = str(JUDGE_SOURCE)
     state = upgrade_state(legacy_state())
     state["workspace"] = str(ROOT)
+    state.update(
+        status="blocked", blocked_code="environment",
+        blocked_reason="legacy evaluation worker fixture",
+    )
     state["execution_control"]["routing"] = freeze_routing(
         {
             **state["execution_control"]["routing"]["profile"],
@@ -90,10 +94,14 @@ def secure(request):
         }, ["."],
     )
     state["execution_control"]["review"]["integration_budget_remaining"] = 1
-    state["runtime_binding"] = bind_observed("codex", {
+    capability_observation = {
         "query_id": "host-capabilities-eval", "observed_at": "2026-08-24T00:00:00Z",
         "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-    })
+    }
+    state["runtime_binding"] = _bind(
+        "codex", "automatic", capability_observation["capabilities"], "legacy test fixture",
+        "host_observed", capability_observation,
+    )
     state["workers"] = [{
             "ref": ref,
             "parent_ref": None,
@@ -105,10 +113,14 @@ def secure(request):
             "status": "completed",
             "progress": None,
         } for ref in WORKER_REFS]
-    state["worker_tree_receipt"] = cleanup_receipt(
-        state["runtime_binding"], state["revision"], WORKER_REFS, [], [],
-        HOST_OBSERVATION["observed_at"], HOST_OBSERVATION,
-    )
+    state["worker_tree_receipt"] = {
+        "schema_version": 2, "observed_revision": state["revision"],
+        "observed_at": HOST_OBSERVATION["observed_at"],
+        "runtime_fingerprint": state["runtime_binding"]["binding_fingerprint"],
+        "mode": "tree_query", "evidence_level": "host_observed",
+        "observation_fingerprint": HOST_OBSERVATION_FINGERPRINT,
+        "registered_refs": WORKER_REFS, "active_refs": [], "unexpected_refs": [],
+    }
     artifact = Path(ARTIFACTS.name) / f"state-{next(ARTIFACT_SEQUENCE)}.json"
     artifact.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
     request["worker_state_source"] = str(artifact)

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 新增 Capsule Dispatch v1：Codex CLI 与 Claude Code 可将冻结 capsule 幂等投递到独立 successor task，并以 `delivered | unavailable | failed | indeterminate` 回执区分创建结果；回执校验稳定 task id、非空失败原因和 schema，崩溃恢复会持久化 `indeterminate`，绝不自动重派。ChatGPT Desktop 当前缺少强制 leaf 能力，原生 child 保持 `unavailable`，不进入 worker lifecycle 或 Batch receipt。
 - 收紧 Single State native worker registry：拒绝未登记角色、`reviewer` 与历史别名；普通 worker 必须由 `delegated` 路由授权，并且登记、清场与 complete 均要求同会话 `host_observed` tree-query 证据。normal/high review 只接受冻结 external runner 的 Review v3 role result。
 - 默认 Provider 选择不再预加载 snapshot controller；snapshot identity 仅在持久 state 操作时加载，并补充子进程回归测试与成本边界场景。
 - 自治状态契约从 core controller 提取为仅 schema 11 按需加载的扩展模块；自治快照显式冻结该模块，core 快照不再携带它。

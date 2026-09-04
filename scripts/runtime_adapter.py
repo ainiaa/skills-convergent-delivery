@@ -11,7 +11,6 @@ from run_contract import action
 
 
 PROFILES = {"codex", "claude-code", "single-context"}
-TRUSTED_LOCAL_PROFILES = {"codex", "claude-code"}
 CAPABILITIES = (
     "dispatch", "query", "activity_query", "process_query", "wait", "interrupt",
     "resume", "tree_query", "restrict_dispatch",
@@ -150,17 +149,13 @@ def negotiate(profile, observed):
 
 
 def bind_observed(profile, observation):
-    """Bind a raw capability observation supplied by a concrete host bridge."""
-    if profile not in PROFILES:
-        raise ValueError("unknown runtime profile")
-    capabilities = _capability_observation(profile, observation)
-    if profile == "single-context" or not {"dispatch", "query"} <= set(capabilities) \
-            or not {"tree_query", "restrict_dispatch"} & set(capabilities):
-        raise ValueError("capability observation cannot support automatic workers")
-    return _bind(
-        profile, "automatic", capabilities, "host capability observation is bound to this session",
-        "host_observed", observation,
-    )
+    """Reject provenance claimed through the public JSON helper.
+
+    A real bridge must live at the host boundary; this package has none.  Treating
+    an ordinary mapping as host evidence previously let a controller fabricate a
+    worker cleanup proof and release its lease while a worker could still run.
+    """
+    raise ValueError("a concrete host bridge is required for host-observed bindings")
 
 
 def _capability_observation(profile, observation):
@@ -205,16 +200,11 @@ def can_auto_watchdog(binding):
 
 
 def allows_worker_lifecycle(binding, *, cross_session=False):
-    """Allow only a same-session lifecycle backed by a host tree observation."""
+    """This package has no concrete host bridge for worker lifecycle control."""
     if not isinstance(cross_session, bool):
         raise ValueError("cross_session must be boolean")
-    binding = validate_binding(binding)
-    return (
-        not cross_session
-        and binding["mode"] == "automatic"
-        and binding["evidence_level"] == "host_observed"
-        and "tree_query" in binding["capabilities"]
-    )
+    validate_binding(binding)
+    return False
 
 
 def watchdog_action(binding, *, task_id, worker_ref, wait_timed_out, activity_observed,
@@ -252,67 +242,19 @@ def watchdog_action(binding, *, task_id, worker_ref, wait_timed_out, activity_ob
 
 def cleanup_receipt(binding, observed_revision, registered_refs, active_refs,
                     unexpected_refs, observed_at, host_observation=None):
-    binding = validate_binding(binding)
-    if binding["mode"] != "automatic":
-        raise ValueError("cleanup receipt requires an automatic runtime binding")
-    if not isinstance(observed_revision, int) or isinstance(observed_revision, bool) \
-            or observed_revision < 0:
-        raise ValueError("observed_revision must be non-negative")
-    if not isinstance(observed_at, str) or not observed_at.strip():
-        raise ValueError("observed_at must be a non-empty string")
-    try:
-        parsed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError("observed_at must be an ISO timestamp") from error
-    if parsed.tzinfo is None:
-        raise ValueError("observed_at timestamp must include a timezone")
-    for name, refs in (
-        ("registered_refs", registered_refs),
-        ("active_refs", active_refs),
-        ("unexpected_refs", unexpected_refs),
-    ):
-        if not isinstance(refs, list) or len(refs) != len(set(refs)) or any(
-            not isinstance(ref, str) or not ref.strip() for ref in refs
-        ):
-            raise ValueError(f"{name} is invalid")
-    mode = "tree_query" if "tree_query" in binding["capabilities"] else "restrict_dispatch"
-    if binding["evidence_level"] != "host_observed" or mode != "tree_query" \
-            or host_observation is None:
-        raise ValueError("cleanup receipt requires a host-observed tree query")
-    expected_fields = {
-        "query_id", "observed_at", "registered_refs", "active_refs", "unexpected_refs"
-    }
-    if not isinstance(host_observation, dict) or set(host_observation) != expected_fields:
-        raise ValueError("host observation is invalid")
-    if not isinstance(host_observation["query_id"], str) \
-            or not host_observation["query_id"].strip():
-        raise ValueError("host observation query_id is invalid")
-    expected_observation = {
-        "observed_at": observed_at,
-        "registered_refs": registered_refs,
-        "active_refs": active_refs,
-        "unexpected_refs": unexpected_refs,
-    }
-    if any(host_observation[field] != value for field, value in expected_observation.items()):
-        raise ValueError("host observation does not match cleanup refs")
-    observation_fingerprint = fingerprint(host_observation)
-    return {
-        "schema_version": 2,
-        "observed_revision": observed_revision,
-        "observed_at": observed_at,
-        "runtime_fingerprint": binding["binding_fingerprint"],
-        "mode": mode,
-        "evidence_level": "host_observed",
-        "observation_fingerprint": observation_fingerprint,
-        "registered_refs": registered_refs,
-        "active_refs": active_refs,
-        "unexpected_refs": unexpected_refs,
-    }
+    raise ValueError("a concrete host bridge is required for worker cleanup receipts")
 
 
 def validate_cleanup_barrier(receipt, observed_revision, registered_refs):
     if not isinstance(receipt, dict) or receipt.get("observed_revision") != observed_revision:
         raise ValueError("worker cleanup receipt is not fresh")
+    observation_fingerprint = receipt.get("observation_fingerprint")
+    if receipt.get("schema_version") != 2 or receipt.get("mode") != "tree_query" \
+            or receipt.get("evidence_level") != "host_observed" \
+            or not isinstance(observation_fingerprint, str) \
+            or len(observation_fingerprint) != 64 \
+            or any(character not in "0123456789abcdef" for character in observation_fingerprint):
+        raise ValueError("worker cleanup receipt requires a host-observed tree query")
     values = [receipt.get(field) for field in (
         "registered_refs", "active_refs", "unexpected_refs"
     )]

@@ -159,6 +159,23 @@ class SkillContractTest(unittest.TestCase):
         self.assertNotIn("send_input(interrupt", runtime)
         self.assertNotIn("Native Handoff", combined)
 
+    def test_codex_cli_successor_and_chatgpt_desktop_subagent_are_distinct_adapters(self):
+        dispatch = (ROOT / "references/capsule-dispatch.md").read_text(encoding="utf-8")
+        desktop = (ROOT / "references/chatgpt-desktop-subagent.md").read_text(encoding="utf-8")
+        root_skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+        for marker in ("codex exec --json", "thread.started.thread_id", "claude --background"):
+            self.assertIn(marker, dispatch)
+        for marker in (
+            "spawn_agent", "wait_agent", "interrupt_agent", "当前会话", "不得降级", "leaf",
+        ):
+            self.assertIn(marker, desktop)
+        self.assertIn("当前 package 将原生 child 视为 `unavailable`", desktop)
+        self.assertIn("不能强制 child 作为 leaf", desktop)
+        self.assertNotIn("spawn_agent({", desktop)
+        self.assertNotIn("codex exec", desktop)
+        self.assertIn("chatgpt-desktop-subagent.md", root_skill)
+
     def test_planned_capsule_guard_precedes_task_profile_routing(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertLess(text.index("planned_task=true"), text.index("task_profile.py"))

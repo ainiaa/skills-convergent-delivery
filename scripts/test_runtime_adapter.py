@@ -28,7 +28,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertIsNone(result["capability_observation"])
         self.assertEqual(64, len(result["binding_fingerprint"]))
 
-    def test_worker_lifecycle_requires_a_bound_host_observation(self):
+    def test_worker_lifecycle_is_disabled_without_a_concrete_host_bridge(self):
         codex = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
@@ -41,12 +41,11 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertFalse(runtime_adapter.allows_worker_lifecycle(codex, cross_session=True))
         self.assertFalse(runtime_adapter.allows_worker_lifecycle(claude, cross_session=True))
 
-        observed = runtime_adapter.bind_observed("codex", {
-            "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",
-            "profile": "codex", "capabilities": ["dispatch", "query", "tree_query"],
-        })
-        self.assertTrue(runtime_adapter.allows_worker_lifecycle(observed))
-        self.assertFalse(runtime_adapter.allows_worker_lifecycle(observed, cross_session=True))
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
+            runtime_adapter.bind_observed("codex", {
+                "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",
+                "profile": "codex", "capabilities": ["dispatch", "query", "tree_query"],
+            })
 
     def test_same_session_native_worker_boundary_does_not_authorize_cross_session_fallback(self):
         binding = runtime_adapter.negotiate(
@@ -66,14 +65,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.assertEqual([], result["capabilities"])
         self.assertIn("tree", result["reason"])
 
-    def test_only_a_bound_host_capability_observation_can_enable_auto_watchdog(self):
-        controller_attested = runtime_adapter.negotiate(
-            "claude-code", {
-                "dispatch": True, "query": True, "activity_query": True,
-                "process_query": True, "wait": True, "interrupt": True,
-                "resume": True, "tree_query": True,
-            },
-        )
+    def test_public_observation_input_cannot_enable_an_auto_watchdog(self):
         observation = {
             "query_id": "capabilities-123",
             "observed_at": "2026-08-25T00:00:00Z",
@@ -83,13 +75,8 @@ class RuntimeAdapterTest(unittest.TestCase):
                 "interrupt", "resume", "tree_query",
             ],
         }
-        host_observed = runtime_adapter.bind_observed("claude-code", observation)
-
-        self.assertEqual("terminal-only", runtime_adapter.watchdog_mode(controller_attested))
-        self.assertEqual("host_observed", host_observed["evidence_level"])
-        self.assertEqual("observed", runtime_adapter.watchdog_mode(host_observed))
-        self.assertEqual(64, len(host_observed["capability_observation_fingerprint"]))
-        self.assertEqual(observation, host_observed["capability_observation"])
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
+            runtime_adapter.bind_observed("claude-code", observation)
 
     def test_generic_bind_cannot_construct_a_host_observed_runtime_binding(self):
         with self.assertRaises(TypeError):
@@ -109,37 +96,20 @@ class RuntimeAdapterTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
                     runtime_adapter.validate_binding(binding)
 
-    def test_cleanup_receipt_only_becomes_host_observed_with_bound_host_observation(self):
-        binding = runtime_adapter.bind_observed("codex", {
+    def test_public_observation_input_cannot_mint_a_cleanup_receipt(self):
+        observation = {
             "query_id": "capabilities-123", "observed_at": "2026-08-21T00:00:00Z",
             "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-        })
-
-        observation = {
-            "query_id": "query-123",
-            "observed_at": "2026-08-21T00:00:00Z",
-            "registered_refs": ["worker-1"],
-            "active_refs": [],
-            "unexpected_refs": [],
         }
-        receipt = runtime_adapter.cleanup_receipt(
-            binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z",
-            host_observation=observation,
-        )
-
-        self.assertEqual("tree_query", receipt["mode"])
-        self.assertEqual(2, receipt["schema_version"])
-        self.assertEqual("host_observed", receipt["evidence_level"])
-        self.assertEqual(64, len(receipt["observation_fingerprint"]))
-        self.assertEqual(binding["binding_fingerprint"], receipt["runtime_fingerprint"])
-        self.assertEqual(3, receipt["observed_revision"])
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
+            runtime_adapter.bind_observed("codex", observation)
 
     def test_controller_attested_binding_cannot_claim_a_host_observed_cleanup(self):
         binding = runtime_adapter.negotiate(
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
             runtime_adapter.cleanup_receipt(
                 binding, 1, [], [], [], "2026-08-21T00:00:00Z",
                 host_observation={
@@ -154,7 +124,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         )
         binding["capabilities"] = ["dispatch", "query", "restrict_dispatch"]
 
-        with self.assertRaisesRegex(ValueError, "fingerprint"):
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
             runtime_adapter.cleanup_receipt(
                 binding, 1, [], [], [], "2026-08-21T00:00:00Z"
             )
@@ -202,7 +172,7 @@ class RuntimeAdapterTest(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
             runtime_adapter.cleanup_receipt(
                 binding, 3, ["worker-1"], [], [], "2026-08-21T00:00:00Z"
             )
@@ -212,7 +182,7 @@ class RuntimeAdapterTest(unittest.TestCase):
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
             runtime_adapter.cleanup_receipt(
                 binding, 1, [], [], [], "2026-08-21T00:00:00Z"
             )
@@ -222,7 +192,7 @@ class RuntimeAdapterTest(unittest.TestCase):
             "codex", {"dispatch": True, "query": True, "tree_query": True}
         )
 
-        with self.assertRaisesRegex(ValueError, "timestamp"):
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
             runtime_adapter.cleanup_receipt(
                 binding, 1, [], [], [], "caller-claims-this-is-host-observed"
             )
@@ -260,46 +230,17 @@ class RuntimeAdapterTest(unittest.TestCase):
             ),
         )
 
-    def test_only_observable_and_recoverable_workers_allow_automatic_watchdog(self):
-        binding = runtime_adapter.bind_observed("claude-code", {
+    def test_public_observation_input_cannot_enable_recovery(self):
+        observation = {
             "query_id": "capabilities-456", "observed_at": "2026-08-25T00:00:00Z",
             "profile": "claude-code",
             "capabilities": [
                 "dispatch", "query", "activity_query", "process_query", "wait",
                 "interrupt", "resume", "restrict_dispatch",
             ],
-        })
-
-        self.assertEqual("observed", runtime_adapter.watchdog_mode(binding))
-        self.assertTrue(runtime_adapter.can_auto_watchdog(binding))
-        self.assertEqual(
-            {"action": "query", "task_id": "task-1", "worker_ref": "worker-1"},
-            runtime_adapter.watchdog_action(
-                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
-                activity_observed=False, process_running=False, soft_probe_complete=False,
-            ),
-        )
-        self.assertEqual(
-            {"action": "interrupt", "task_id": "task-1", "worker_ref": "worker-1"},
-            runtime_adapter.watchdog_action(
-                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
-                activity_observed=False, process_running=False, soft_probe_complete=True,
-            ),
-        )
-        self.assertEqual(
-            {"action": "wait", "task_id": "task-1", "worker_ref": "worker-1"},
-            runtime_adapter.watchdog_action(
-                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
-                activity_observed=True, process_running=False, soft_probe_complete=True,
-            ),
-        )
-        self.assertEqual(
-            {"action": "wait", "task_id": "task-1", "worker_ref": "worker-1"},
-            runtime_adapter.watchdog_action(
-                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
-                activity_observed=False, process_running=True, soft_probe_complete=True,
-            ),
-        )
+        }
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
+            runtime_adapter.bind_observed("claude-code", observation)
 
     def test_watchdog_falls_back_to_query_when_wait_is_not_supported(self):
         binding = runtime_adapter.negotiate(

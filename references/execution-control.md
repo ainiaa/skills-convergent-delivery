@@ -52,9 +52,17 @@ worker 只在阶段切换、客观产物产生及长命令前后发送 objective
 
 回答后继续同一 `plan_id/task_id`，不要重新开始规划。
 
+## 3.1 Capsule Dispatch
+
+跨上下文但不需要父控制器跟踪旧 worker 时，按 [Capsule Dispatch v1](capsule-dispatch.md) 使用宿主实际创建的新 task 自动投递冻结 capsule。成功创建只得到 `delivered` 和宿主 task id；successor 是独立 controller，不属于父 run 的 `workers[]`，也不让父 run 因此 complete。调用结果为 `indeterminate` 时不得再次创建 task；保留 capsule 并 `blocked`。宿主未暴露创建 API 时才由用户启动该 capsule。
+
+这条路径不替代 Batch 的 receipt 链，也不能恢复或终止任何旧 worker。当前 package 不提供 concrete host bridge，因此下面的 worker registry 只描述将来由宿主 bridge 单独实现的能力，不能由普通 Python helper 或 JSON 输入启用。
+
+ChatGPT Desktop 当前会话的原生 child 另见 [Desktop Native Subagent v1](chatgpt-desktop-subagent.md)：它经宿主 `spawn_agent` 创建、只在当前会话内由控制器等待或停止，不是 Capsule Dispatch 的独立 successor，不能进入 worker registry。
+
 ## 4. 宿主 watchdog 能力边界
 
-以下是宿主实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。先用 `runtime_adapter.py negotiate` 固定本会话观察到的能力；它只能生成 `controller_attested` Binding，即使调用方传入的布尔值声称具备全部能力，也只能是 `terminal-only`。只有具体宿主桥接器把带 `query_id/observed_at/profile/capabilities` 的原始能力观察交给 `bind_observed`，且其能力位于已支持的 profile 上限内，Binding 才能成为 `host_observed` 并进入 `observed`。当前 Codex profile 明确不支持 `activity_query/process_query/resume/restrict_dispatch`，不能通过输入布尔值越过该上限；Codex 自动 worker 必须具备稳定 dispatch/query 和完整 `tree_query`。其他宿主可在实际强制 leaf dispatch 时使用 `restrict_dispatch`。
+以下是 concrete host bridge 将来实现 watchdog 时必须遵守的协议，不是 `SKILL.md` 自带的后台计时器或强杀能力。`runtime_adapter.py negotiate` 只能生成 `controller_attested` Binding；公共 `bind_observed` 明确拒绝普通 JSON 输入，当前 package 没有可启用 lifecycle 的 bridge。不能因输入布尔值、profile 名称或消息投递而越过该边界。Capsule Dispatch 的 delivery ack 不参与本节。
 
 `watchdog_action` 返回的不是自然语言建议，而是带精确 `task_id/worker_ref` 的 `query|wait|interrupt|block` Runtime Action；控制器只能执行该动作。没有 `wait` capability 时它返回 `query`，不会生成无法执行的 wait。只有 `host_observed` Binding 同时具备 `activity_query`、`process_query`、计时 `wait`、`interrupt` 和同一任务 `resume` 时才是 `observed`，执行者才能自动完成软探测、硬中断与恢复。其他 automatic Binding 一律是 `terminal-only`：可等待和查询终态，但 `wait` 超时只表示结果未知且仍可能在运行，不能累积为无进展、触发探测/中断或消耗恢复预算。manual 和 terminal-only 只能保持可见进度、保存 capsule/receipt 并阻塞或交给用户手工恢复，不能声称已经中断、恢复或清场。
 

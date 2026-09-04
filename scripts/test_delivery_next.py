@@ -22,7 +22,7 @@ from evidence_contract import run_evidence, workspace_source
 from role_result import review_result, result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from run_contract import action
-from runtime_adapter import bind_observed, cleanup_receipt, negotiate
+from runtime_adapter import _bind, cleanup_receipt as runtime_cleanup_receipt, negotiate
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from worker_profile import fingerprint as worker_profile_fingerprint
@@ -254,10 +254,24 @@ def committed_attempt():
 
 
 def runtime_binding():
-    return bind_observed("codex", {
+    observation = {
         "query_id": "capabilities-codex", "observed_at": "2026-08-21T00:00:00Z",
         "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-    })
+    }
+    return _bind("codex", "automatic", observation["capabilities"], "legacy test fixture",
+                 "host_observed", observation)
+
+
+def cleanup_receipt(binding, revision, registered_refs, active_refs, unexpected_refs, observed_at,
+                    host_observation=None):
+    """Legacy state fixture; production helpers cannot mint host observations."""
+    return {
+        "schema_version": 2, "observed_revision": revision, "observed_at": observed_at,
+        "runtime_fingerprint": binding["binding_fingerprint"], "mode": "tree_query",
+        "evidence_level": "host_observed", "observation_fingerprint": "a" * 64,
+        "registered_refs": registered_refs, "active_refs": active_refs,
+        "unexpected_refs": unexpected_refs,
+    }
 
 
 def desktop_binding():
@@ -1013,7 +1027,7 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("verify-final\n", result.stdout)
         self.assertEqual(0, result.returncode)
 
-    def test_rejects_native_handoff_without_a_verified_host_bridge(self):
+    def test_rejects_unknown_state_fields(self):
         payload = delegated_state()
         payload["native_handoff"] = {}
 
@@ -1323,7 +1337,7 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
 
-    def test_complete_with_workers_requires_fresh_clean_tree_receipt(self):
+    def test_complete_with_workers_requires_a_concrete_host_bridge(self):
         payload = reviewed_complete_state()
         payload["execution_control"]["routing"] = routing(task_profile(
             coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
@@ -1337,7 +1351,7 @@ class DeliveryNextTest(unittest.TestCase):
 
         missing = self.current(payload, revision=3)
         self.assertNotEqual(0, missing.returncode)
-        self.assertIn("tree receipt", missing.stderr)
+        self.assertIn("host-observed tree-query runtime", missing.stderr)
 
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], ["nested-worker"],
@@ -1349,7 +1363,7 @@ class DeliveryNextTest(unittest.TestCase):
         )
         unexpected = self.current(payload, revision=3)
         self.assertNotEqual(0, unexpected.returncode)
-        self.assertIn("unexpected", unexpected.stderr)
+        self.assertIn("host-observed tree-query runtime", unexpected.stderr)
 
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], [],
@@ -1361,8 +1375,8 @@ class DeliveryNextTest(unittest.TestCase):
             },
         )
         clean = self.current(payload, revision=3)
-        self.assertEqual(0, clean.returncode, clean.stderr)
-        self.assertEqual("complete\n", clean.stdout)
+        self.assertNotEqual(0, clean.returncode)
+        self.assertIn("host-observed tree-query runtime", clean.stderr)
 
     def test_complete_rejects_unexpected_descendants_even_with_empty_registry(self):
         payload = upgrade_state(state(
@@ -1407,8 +1421,32 @@ class DeliveryNextTest(unittest.TestCase):
         payload = reviewed_complete_state()
         payload["runtime_binding"] = desktop_binding()
         refs = [worker["ref"] for worker in payload["workers"]]
-        with self.assertRaisesRegex(ValueError, "host-observed tree query"):
-            cleanup_receipt(payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z")
+        with self.assertRaisesRegex(ValueError, "concrete host bridge"):
+            runtime_cleanup_receipt(payload["runtime_binding"], 3, refs, [], [], "2026-08-21T00:00:00Z")
+
+    def test_complete_rejects_direct_controller_attested_cleanup_receipt(self):
+        payload = reviewed_complete_state()
+        payload["execution_control"]["routing"] = routing(task_profile(
+            coupling="independent", delegable_tasks=1, context_isolation_benefit=True,
+        ))
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
+            "depth": 1, "may_dispatch": False, "role": "implementer",
+            "owner_run_id": payload["run_id"], "status": "completed", "progress": None,
+        }]
+        payload["worker_tree_receipt"] = {
+            "schema_version": 2, "observed_revision": 3,
+            "observed_at": "2026-08-21T00:00:00Z",
+            "runtime_fingerprint": payload["runtime_binding"]["binding_fingerprint"],
+            "mode": "tree_query", "evidence_level": "controller_attested",
+            "observation_fingerprint": None, "registered_refs": ["worker-1"],
+            "active_refs": [], "unexpected_refs": [],
+        }
+
+        result = self.current(payload, revision=3)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("host-observed", result.stderr)
 
     def test_high_risk_complete_requires_current_spec_and_quality_reviews(self):
         payload = state(status="complete", current_stage="verify-final")

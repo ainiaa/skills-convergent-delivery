@@ -9,7 +9,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, provider_reference
 from delivery_next import upgrade_state
 from evidence_contract import run_evidence, workspace_source
-from runtime_adapter import bind_observed, cleanup_receipt
+from runtime_adapter import _bind, cleanup_receipt
 from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from role_result import result_from_output
@@ -25,6 +25,26 @@ HEAD = subprocess.run(
 ).stdout.strip()
 SOURCE = workspace_source(ROOT, HEAD)
 EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+
+
+def legacy_runtime_binding(query_id, capabilities):
+    observation = {
+        "query_id": query_id, "observed_at": "2026-08-21T00:00:00Z",
+        "profile": "codex", "capabilities": capabilities,
+    }
+    return _bind("codex", "automatic", capabilities, "legacy test fixture",
+                 "host_observed", observation)
+
+
+def cleanup_receipt(binding, revision, registered_refs, active_refs, unexpected_refs, observed_at,
+                    host_observation=None):
+    return {
+        "schema_version": 2, "observed_revision": revision, "observed_at": observed_at,
+        "runtime_fingerprint": binding["binding_fingerprint"], "mode": "tree_query",
+        "evidence_level": "host_observed", "observation_fingerprint": "a" * 64,
+        "registered_refs": registered_refs, "active_refs": active_refs,
+        "unexpected_refs": unexpected_refs,
+    }
 
 
 def routing():
@@ -244,10 +264,9 @@ class DeliveryReportTest(unittest.TestCase):
                 "context_isolation_benefit": True,
             }, ["."],
         )
-        payload["runtime_binding"] = bind_observed("codex", {
-            "query_id": "capabilities-report", "observed_at": "2026-08-21T00:00:00Z",
-            "profile": "codex", "capabilities": ["dispatch", "query", "wait", "interrupt", "tree_query"],
-        })
+        payload["runtime_binding"] = legacy_runtime_binding(
+            "capabilities-report", ["dispatch", "query", "wait", "interrupt", "tree_query"]
+        )
         payload["workers"] = [{
             "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"],
             "depth": 1, "may_dispatch": False, "role": "pdlc",
@@ -269,7 +288,8 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(["unexpected-1"], report["diagnostic"]["cleanup"]["unexpected_refs"])
 
     def test_text_diagnostic_includes_bounded_worker_and_check_summaries(self):
-        payload = upgrade_state(state("active"))
+        payload = upgrade_state(state("blocked"))
+        payload.update(blocked_code="environment", blocked_reason="legacy worker diagnostic")
         payload["execution_control"]["routing"] = freeze_routing(
             {
                 **payload["execution_control"]["routing"]["profile"],
@@ -288,10 +308,9 @@ class DeliveryReportTest(unittest.TestCase):
             "status": "completed",
             "progress": None,
         }]
-        payload["runtime_binding"] = bind_observed("codex", {
-            "query_id": "capabilities-detail", "observed_at": "2026-08-21T00:00:00Z",
-            "profile": "codex", "capabilities": ["dispatch", "query", "tree_query"],
-        })
+        payload["runtime_binding"] = legacy_runtime_binding(
+            "capabilities-detail", ["dispatch", "query", "tree_query"]
+        )
         payload["worker_tree_receipt"] = cleanup_receipt(
             payload["runtime_binding"], 3, ["worker-1"], [], [],
             "2026-08-21T00:00:00Z",

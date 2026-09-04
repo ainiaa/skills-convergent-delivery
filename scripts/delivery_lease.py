@@ -297,6 +297,8 @@ def validate_cleanup_for_release(state, arguments):
     if state.get("status") not in {"complete", "blocked"}:
         raise ValueError("formal state is not terminal")
     workers = state.get("workers", [])
+    if workers:
+        raise ValueError("worker lifecycle release requires a concrete host bridge")
     if any(worker.get("status") == "working" for worker in workers):
         raise ValueError("worker cleanup is incomplete")
     receipt = state.get("worker_tree_receipt")
