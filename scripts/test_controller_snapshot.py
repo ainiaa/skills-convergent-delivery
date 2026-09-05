@@ -273,6 +273,7 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             identity = controller_snapshot.validate_snapshot(descriptor)
             self.assertTrue((Path(descriptor["root"]) / "scripts/delivery_next.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/tdd_impact_guard.py").is_file())
             self.assertFalse((Path(descriptor["root"]) / "scripts/fast_path.py").exists())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_registry.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_flow.py").is_file())
@@ -293,6 +294,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "references/worker-runners.md").is_file())
             self.assertNotIn("scripts/fast_path.py", descriptor["files"])
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
+            self.assertIn("scripts/tdd_impact_guard.py", descriptor["files"])
             self.assertIn("scripts/role_flow.py", descriptor["files"])
             self.assertIn("scripts/role_dispatch.py", descriptor["files"])
             self.assertIn("scripts/role_fanout.py", descriptor["files"])

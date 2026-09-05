@@ -13,15 +13,15 @@
   "task_contracts": {
     "feature": {
       "entrypoint_candidates": ["tdd/SKILL.md", "skills/engineering/tdd/SKILL.md"],
-      "source_fingerprint": "6875cbca6b7d17be635dc9b457cc6363125f85cef26f443991b77c7d9eb430d2"
+      "required_terms": ["name: tdd", "test", "red", "green"]
     },
     "fix": {
       "entrypoint_candidates": ["tdd/SKILL.md", "skills/engineering/tdd/SKILL.md"],
-      "source_fingerprint": "6875cbca6b7d17be635dc9b457cc6363125f85cef26f443991b77c7d9eb430d2"
+      "required_terms": ["name: tdd", "test", "red", "green"]
     },
     "refactor": {
       "entrypoint_candidates": ["tdd/SKILL.md", "skills/engineering/tdd/SKILL.md"],
-      "source_fingerprint": "6875cbca6b7d17be635dc9b457cc6363125f85cef26f443991b77c7d9eb430d2"
+      "required_terms": ["name: tdd", "test", "red", "green"]
     }
   },
   "authorization": {

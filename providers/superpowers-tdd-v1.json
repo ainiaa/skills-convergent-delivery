@@ -13,15 +13,15 @@
   "task_contracts": {
     "feature": {
       "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
-      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+      "required_terms": ["name: test-driven-development", "test first", "red", "green"]
     },
     "fix": {
       "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
-      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+      "required_terms": ["name: test-driven-development", "test first", "red", "green"]
     },
     "refactor": {
       "entrypoint_candidates": ["test-driven-development/SKILL.md", "skills/test-driven-development/SKILL.md"],
-      "source_fingerprint": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54"
+      "required_terms": ["name: test-driven-development", "test first", "red", "green"]
     }
   },
   "authorization": {

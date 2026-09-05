@@ -10,9 +10,17 @@
 
 `generic-tdd-v1` 仅允许显式选择：用户或上层控制器必须同时传入 `--provider generic-tdd-v1 --tdd-skill <exact-SKILL.md>`，且该文件位于允许的 `--tdd-root` 内。auto 不扫描通用 Skill；缺少精确路径时即使只有一个候选也阻塞，不按目录或字典序猜选。显式选择后仍执行下述通用预检并冻结来源。
 
-已适配提供者必须位于 `--tdd-root`、`CONVERGE_TDD_ROOT`、`~/.codex/skills`、`~/.claude/skills` 或 `~/.agents/skills`，且内容摘要与已登记的上游版本完全一致；同名文件或相似措辞不能冒充已适配提供者。上游更新后需重新审查并发布新的适配版本。通用提供者仅接受名称含 `tdd` 或 `test`、说明包含“test first”及红绿循环的非编排 Skill；`pdlc-*`、名称含 `orchestrator`，或声明发布、部署、删除文件、worktree、递归/循环重试的 Skill 不能显式绑定。
+已适配提供者必须位于 `--tdd-root`、`CONVERGE_TDD_ROOT`、`~/.codex/skills`、`~/.claude/skills` 或 `~/.agents/skills`，并同时匹配登记的入口路径和 TDD 语义；内容升级只要保持该接口即可用于新任务。同名文件或相似措辞不能冒充已适配提供者。通用提供者仅接受名称含 `tdd` 或 `test`、说明包含“test first”及红绿循环的非编排 Skill；`pdlc-*`、名称含 `orchestrator`，或声明发布、部署、删除文件、worktree、递归/循环重试的 Skill 不能显式绑定。
 
 所有已适配执行者使用 Provider Schema v2。共享 Provider Contract 校验身份、role、task kind/stage capability、canonical task contract、实际 entrypoint、显式 closure、授权边界、Progress Receipt 和证据要求；Binding fingerprint 覆盖 manifest、task contract 与真实来源。auto 首次解析可在写入前说明并降级，`--provider <id>` 或已冻结 Provider 不可用时阻塞。
+
+## TDD/Impact Trace v1
+
+运行时功能、修复和重构在最终验证前都生成一次短生命周期 trace，并以 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" validate --input -` 校验；它不运行命令、不保存状态，最终证据仍进入现有 Evidence Receipt/ledger。
+
+- `acceptance[]`：每个 `criterion` 至少一个测试，测试含唯一 `id`、`kind`（`unit|integration|e2e|contract`）、覆盖的 `scenarios`、实际运行的红灯和绿灯命令/退出码；红灯额外只能写 `cause=missing_behavior`。
+- 所有 trace 合计覆盖 `normal`、`boundary`、`error`。冻结风险会增加必测场景：权限/并发/幂等；事务；SQL、Mapper 与迁移的 integration；公共 API、跨服务与发布契约的 contract；安全与敏感数据。契约、事务和数据访问还要求对应 `kind`。
+- `impacts[]`：每条影响链含唯一 `id`、`relation`（`entrypoint|caller|shared-effect|external-contract`）和引用的测试 id。至少一条为改动入口；契约风险另须 `external-contract`。调用方或共享副作用未能验证时如实标为 `uncovered`，不得以局部绿灯宣称关联功能未受影响。
 
 ## 委托契约
 
@@ -22,6 +30,8 @@
 - 最小实现；
 - 通过测试及实际命令、退出码；
 - 未覆盖或无法验证的验收项。
+
+第三方仅提供红绿方法；Converge 负责把其实际结果写入 TDD/Impact Trace，并在最终验证时重跑该 trace 绑定的影响测试。
 
 不得让提供者自行创建第二套状态、递归重试、发布、删除文件、切换 worktree 或绕过项目测试命令。`converge` 后续仍执行语义审查、风险审查、最终验收和用户回执；第三方的文字结论不能替代命令证据。
 

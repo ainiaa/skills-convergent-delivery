@@ -43,6 +43,7 @@ REQUIRED_SOURCE_FILES=(
   providers/pdlc-v1.json
   providers/superpowers-tdd-v1.json
   scripts/delivery_engine.py
+  scripts/tdd_impact_guard.py
   scripts/delivery_lease.py
   scripts/delivery_next.py
   scripts/delivery_progress.py

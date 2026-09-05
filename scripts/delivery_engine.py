@@ -203,14 +203,12 @@ def adapted_provider_contracts(task_kind="feature"):
             manifest["provider"]["role"] != "stage"
             or "tdd" not in manifest["capabilities"]["stages"]
             or "entrypoint_candidates" not in contract
-            or "source_fingerprint" not in contract
         ):
             continue
         providers.append(
             (
                 provider_id,
                 tuple(contract["entrypoint_candidates"]),
-                contract["source_fingerprint"],
             )
         )
     order = {"superpowers-tdd-v1": 0, "mattpocock-tdd-v1": 1}
@@ -314,11 +312,13 @@ def provider_path(root, relative_paths):
 
 
 def adapted_tdd_provider(roots, task_kind):
-    for engine, relative_paths, expected_fingerprint in adapted_provider_contracts(task_kind):
+    registry = load_provider_registry()
+    for engine, relative_paths in adapted_provider_contracts(task_kind):
+        contract = registry[engine]["task_contracts"][task_kind]
         for root in tdd_roots(roots):
             path = provider_path(root, relative_paths)
-            if path and file_fingerprint(path) == expected_fingerprint:
-                return engine, path.resolve(), expected_fingerprint
+            if path and compatible_stage_source(contract, path):
+                return engine, path.resolve(), file_fingerprint(path)
     return None, None, None
 
 
@@ -339,17 +339,19 @@ def exact_tdd_provider(provider_id, roots, task_kind, explicit_skill=None):
                 or not compatible_stage_source(contract, path):
             return None, None, None
         return provider_id, path, file_fingerprint(path)
-    for engine, relative_paths, expected_fingerprint in adapted_provider_contracts(task_kind):
+    registry = load_provider_registry()
+    for engine, relative_paths in adapted_provider_contracts(task_kind):
         if engine != provider_id:
             continue
+        contract = registry[engine]["task_contracts"][task_kind]
         for root in tdd_roots(roots):
             path = provider_path(root, relative_paths)
-            if path and file_fingerprint(path) == expected_fingerprint:
-                return engine, path.resolve(), expected_fingerprint
+            if path and compatible_stage_source(contract, path):
+                return engine, path.resolve(), file_fingerprint(path)
     return None, None, None
 
 
-def compatible_tdd_provider(engine, path, expected_fingerprint):
+def compatible_tdd_provider(engine, path, expected_fingerprint, task_kind):
     if not path or not expected_fingerprint:
         return False
     path = Path(path).expanduser().resolve()
@@ -360,10 +362,8 @@ def compatible_tdd_provider(engine, path, expected_fingerprint):
     manifest = registry.get(engine)
     if not manifest or manifest["provider"]["role"] != "stage":
         return False
-    for expected_engine, _paths, registered_fingerprint in adapted_provider_contracts():
-        if engine == expected_engine:
-            return expected_fingerprint == registered_fingerprint
-    return any(compatible_stage_source(contract, path) for contract in manifest["task_contracts"].values())
+    contract = manifest["task_contracts"].get(task_kind)
+    return bool(contract) and compatible_stage_source(contract, path)
 
 
 def provider_file(root, relative_path):
@@ -413,17 +413,17 @@ def pdlc_metadata(root, task_kind, manifest=None):
         raise ValueError(f"PDLC adapter manifest does not authorize task kind: {task_kind}")
     entrypoint = contract.get("entrypoint")
     closure = contract.get("closure")
-    expected = contract.get("source_fingerprint")
     if not isinstance(entrypoint, str) or not entrypoint.strip():
         raise ValueError("PDLC adapter manifest entrypoint is invalid")
     if not isinstance(closure, list) or not all(
         isinstance(item, str) and item.strip() for item in closure
     ):
         raise ValueError("PDLC adapter manifest closure is invalid")
-    if not isinstance(expected, str) or len(expected) != 64 or any(
-        character not in "0123456789abcdef" for character in expected
+    required_terms = contract.get("required_terms", [])
+    if not isinstance(required_terms, list) or not all(
+        isinstance(term, str) and term.strip() for term in required_terms
     ):
-        raise ValueError("PDLC adapter manifest source_fingerprint is invalid")
+        raise ValueError("PDLC adapter manifest required interface terms are invalid")
     authorization = manifest.get("authorization")
     if not isinstance(authorization, dict):
         raise ValueError("PDLC adapter manifest authorization is missing")
@@ -442,9 +442,18 @@ def pdlc_metadata(root, task_kind, manifest=None):
     if task_kind == "refactor" and contract.get("preserve_external_behavior") is not True:
         raise ValueError("PDLC refactor adapter must preserve external behavior")
     relative_paths = [entrypoint, *closure]
+    source_paths = [provider_file(root, relative_path) for relative_path in relative_paths]
+    if any(path is None for path in source_paths):
+        raise ValueError("PDLC adapter source closure is unavailable")
+    try:
+        source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_paths).casefold()
+    except (OSError, UnicodeError) as error:
+        raise ValueError("PDLC adapter source closure is unavailable") from error
     actual = provider_source_fingerprint(root, relative_paths)
-    if actual != expected:
-        raise ValueError("PDLC adapter manifest source closure is incompatible or changed")
+    if not actual:
+        raise ValueError("PDLC adapter source closure is unavailable")
+    if any(term.casefold() not in source_text for term in required_terms):
+        raise ValueError("PDLC adapter is missing required interface terms")
     return {
         "provider_id": provider_id,
         "provider_version": provider_version,
@@ -626,7 +635,9 @@ def selection(
                     "status": "blocked", "code": "environment",
                     "reason": "generic-tdd-v1 requires one exact --tdd-skill path",
                 }
-        if not compatible_tdd_provider(requested, selected_path, selected_fingerprint):
+        if not compatible_tdd_provider(
+            requested, selected_path, selected_fingerprint, task_kind
+        ):
             return {
                 "status": "blocked",
                 "code": "environment",

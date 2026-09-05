@@ -17,6 +17,12 @@ Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-rev
 
 Skill 根目录记为 `CONVERGE_SKILL_DIR`。冻结验收、路径和基线，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown` 失败，走完整路径。
 
+验证纪律：沿用项目已有的检查命令并保存实际 argv、退出码和当前源码回执；命令不存在、超时或无权限时标为 `uncovered`，不得以替换、删除或放松检查命令取得通过。仅当任务明确包含用户流程时，才将 P0 用户流程列为验收项；每项必须关联实际 E2E 标识和本次运行回执，否则保持 `uncovered`。
+
+TDD 覆盖：涉及运行时行为的功能或修复，先将每条验收项至少映射一个测试，再改生产代码；测试至少覆盖正常、边界和异常场景，权限、并发或幂等风险按任务语义加入。先按实际调用链列出入口、调用方、共享副作用或外部契约等影响链，并把每条链绑定到本次回归测试。红灯与绿灯回执来自实际执行的命令；只有缺失业务行为导致的失败才是有效红灯，编译、Mock 或环境错误不能当作有效红灯。最终将验收、测试标识、场景、红绿回执、冻结 `risk_flags` 与影响链按 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v1) 输入 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" validate --input -`；失败或无法证明的验收范围保持 `uncovered`，不得声称关联功能未受影响。
+
+变更记录：修改 Converge Suite 自身的行为、入口、契约或兼容性时，必须更新本仓 `CHANGELOG.md` 的 `Unreleased`。执行目标项目的写入任务时，必须更新对应的 changelog；不存在时在目标项目根目录创建 `CHANGELOG.md`。优先沿用项目已有位置和格式，记录所有当前任务变更，并标注破坏性变化；不得根据最近 Git 提交混入其他任务的变更。
+
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```

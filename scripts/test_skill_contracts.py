@@ -433,6 +433,27 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不能只凭模型自述", control)
         self.assertIn("不为恶意篡改", control)
 
+    def test_root_skill_preserves_honest_check_and_p0_e2e_boundaries(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "命令不存在、超时或无权限时标为 `uncovered`",
+            "不得以替换、删除或放松检查命令取得通过",
+            "P0 用户流程",
+            "实际 E2E 标识和本次运行回执",
+            "每条验收项至少映射一个测试",
+            "正常、边界和异常场景",
+            "权限、并发或幂等",
+            "编译、Mock 或环境错误不能当作有效红灯",
+            "tdd_impact_guard.py",
+            "影响链",
+            "入口、调用方、共享副作用或外部契约",
+            "修改 Converge Suite 自身的行为、入口、契约或兼容性时，必须更新本仓 `CHANGELOG.md` 的 `Unreleased`",
+            "必须更新对应的 changelog；不存在时在目标项目根目录创建 `CHANGELOG.md`",
+            "所有当前任务变更",
+        ):
+            self.assertIn(marker, skill)
+
     def test_activation_is_discoverable_but_never_edits_user_configuration(self):
         skill, header = frontmatter(ROOT / "SKILL.md")
         activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")

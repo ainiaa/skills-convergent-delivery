@@ -3,7 +3,7 @@
   "provider": {
     "id": "pdlc-v1",
     "source_id": "kanfu-panda/pdlc-skills",
-    "version": "1.6.0",
+    "version": "compatible-pdlc-v1",
     "role": "workflow"
   },
   "capabilities": {
@@ -14,19 +14,19 @@
     "feature": {
       "entrypoint": "pdlc-feature/SKILL.md",
       "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
-      "source_fingerprint": "f24888e1f27b8b539de45ef658e503105d692fcd26cc438c3052cd324b857268",
+      "required_terms": ["name: pdlc-feature", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "TDD", "测试", "评审"],
       "preserve_external_behavior": false
     },
     "fix": {
       "entrypoint": "pdlc-fix/SKILL.md",
       "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
-      "source_fingerprint": "c90807f8e02ba4331b87cfaa77e70908ffdb2949ef3e4452df3258bdc04cdb75",
+      "required_terms": ["name: pdlc-fix", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "复现", "修复", "测试", "评审"],
       "preserve_external_behavior": false
     },
     "refactor": {
       "entrypoint": "pdlc-refactor/SKILL.md",
       "closure": ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"],
-      "source_fingerprint": "f38edaedbd50ff4c1fdb918c6ab421ed35c4ce745c6725dca3787dcaef293ca4",
+      "required_terms": ["name: pdlc-refactor", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "重构", "行为不变", "测试", "评审"],
       "preserve_external_behavior": true
     }
   },

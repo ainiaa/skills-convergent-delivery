@@ -127,6 +127,8 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 
+所有运行时变更还须通过 [TDD/Impact Trace](tdd-providers.md#tddimpact-trace-v1)：它以一条改动入口和已知关联链绑定实际红绿与最终回归测试，不建立第二状态机。只有明确要求全量收口时，才升级为下述 Plan v6 矩阵。
+
 ### 6.1 全量收口矩阵
 
 “修复全部已知问题”“还有没有其他问题”“深度审查”“彻底检查”“不留遗漏”以及“全部完成”都要求控制器明确决定是否为全量收口；该决定必须作为 `full_closure_required=true` 冻结，不能交给关键词匹配。开始修改前必须调用 `converge-plan`，以 CodeGraph/实际调用链冻结有限矩阵；已带 `planned_task=true` 的 capsule 也必须携带该矩阵，缺失即 `blocked`，不能借递归保护跳过。
