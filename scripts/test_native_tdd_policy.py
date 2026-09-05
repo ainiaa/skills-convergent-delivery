@@ -38,15 +38,120 @@ class NativeTddPolicyTest(unittest.TestCase):
             policy = native_tdd_policy.resolve(workspace)
 
         self.assertEqual("quality-targets.yml", policy["source"])
+        self.assertEqual("uncovered", policy["status"])
         self.assertEqual(92, policy["threshold"])
         self.assertEqual("quality-targets.yml", policy["threshold_source"])
         self.assertIsNone(policy["argv"])
+
+    def test_pytest_and_vitest_commands_receive_the_resolved_threshold(self):
+        for command, expected in (
+            ("python3 -m pytest --cov", "--cov-fail-under=92"),
+            ("npx vitest run --coverage", "--coverage.thresholds.lines=92"),
+        ):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                standard = workspace / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text(
+                    f"coverage: {command}\n", encoding="utf-8"
+                )
+                (standard / "quality-targets.yml").write_text("coverage: 92\n", encoding="utf-8")
+
+                policy = native_tdd_policy.resolve(workspace)
+
+            self.assertEqual("adapter", policy["threshold_source"])
+            self.assertEqual(expected, policy["argv"][-1])
+
+    def test_unadaptable_command_without_an_explicit_gate_stays_uncovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: mvn test\n", encoding="utf-8"
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+        self.assertIn("cannot enforce", policy["reason"])
+
+    def test_runner_without_coverage_collection_is_not_adapted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: python3 -m pytest\n", encoding="utf-8"
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+        self.assertIn("cannot enforce", policy["reason"])
+
+    def test_existing_jacoco_gate_is_accepted_only_when_its_project_threshold_is_sufficient(self):
+        for command, config, content in (
+            ("mvn test jacoco:check", "pom.xml", "<counter>LINE</counter><minimum>0.92</minimum>\n"),
+            ("gradle test jacocoTestCoverageVerification", "build.gradle", "counter = 'LINE'\nminimum = 0.92\n"),
+        ):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                standard = workspace / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text(
+                    f"coverage: {command}\n", encoding="utf-8"
+                )
+                (workspace / config).write_text(content, encoding="utf-8")
+
+                policy = native_tdd_policy.resolve(workspace)
+
+            self.assertEqual("ready", policy["status"])
+            self.assertEqual(92, policy["threshold"])
+            self.assertEqual("project-coverage-config", policy["threshold_source"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: mvn test jacoco:check\n", encoding="utf-8"
+            )
+            (standard / "quality-targets.yml").write_text("coverage: 90\n", encoding="utf-8")
+            (workspace / "pom.xml").write_text(
+                "<counter>LINE</counter><minimum>0.85</minimum>\n", encoding="utf-8"
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+        self.assertIn("below", policy["reason"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: mvn test jacoco:check\n", encoding="utf-8"
+            )
+            (standard / "quality-targets.yml").write_text("coverage: 90\n", encoding="utf-8")
+            (workspace / "pom.xml").write_text(
+                "<counter>BRANCH</counter><minimum>0.95</minimum>"
+                "<counter>LINE</counter><minimum>0.85</minimum>\n",
+                encoding="utf-8",
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+        self.assertIn("below", policy["reason"])
 
     def test_no_project_configuration_uses_the_85_percent_default(self):
         with tempfile.TemporaryDirectory() as directory:
             policy = native_tdd_policy.resolve(Path(directory))
 
         self.assertEqual("default", policy["source"])
+        self.assertEqual("uncovered", policy["status"])
         self.assertEqual(85, policy["threshold"])
         self.assertEqual("default", policy["threshold_source"])
         self.assertIsNone(policy["argv"])

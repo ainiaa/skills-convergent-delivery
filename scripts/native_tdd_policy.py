@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import shlex
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
@@ -51,6 +52,53 @@ def resolved_threshold(command_threshold, target):
     return DEFAULT_THRESHOLD, "default"
 
 
+def adapt_coverage_argv(argv, threshold_value):
+    runners = {Path(argument).name.lower() for argument in argv}
+    coverage_enabled = any(argument == "--cov" or argument.startswith("--cov=") for argument in argv)
+    if {"pytest", "py.test"} & runners and coverage_enabled:
+        return [*argv, f"--cov-fail-under={threshold_value}"]
+    if "vitest" in runners and any(argument.startswith("--coverage") for argument in argv):
+        return [*argv, f"--coverage.thresholds.lines={threshold_value}"]
+    return None
+
+
+def percentage(value):
+    try:
+        candidate = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    if Decimal("0") < candidate <= Decimal("1"):
+        candidate *= 100
+    if not Decimal("1") <= candidate <= Decimal("100"):
+        return None
+    return int(candidate)
+
+
+def project_gate_threshold(workspace, argv):
+    runners = {Path(argument).name.lower() for argument in argv}
+    gate_files = ()
+    pattern = None
+    if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
+        gate_files = (workspace / "pom.xml",)
+        pattern = r"<counter>\s*(?:LINE|INSTRUCTION)\s*</counter>.*?<minimum>\s*([0-9.]+)\s*</minimum>"
+    elif {"gradle", "gradlew"} & runners and "jacocoTestCoverageVerification" in argv:
+        gate_files = (workspace / "build.gradle", workspace / "build.gradle.kts")
+        pattern = r"counter\s*=\s*['\"](?:LINE|INSTRUCTION)['\"].*?minimum\s*=\s*([0-9.]+)"
+    if pattern is None:
+        return None
+    for path in gate_files:
+        if path.is_file():
+            thresholds = [
+                candidate for candidate in (
+                    percentage(match.group(1))
+                    for match in re.finditer(pattern, path.read_text(encoding="utf-8"), re.DOTALL)
+                ) if candidate is not None
+            ]
+            if thresholds:
+                return min(thresholds)
+    return None
+
+
 def resolve(workspace):
     workspace = Path(workspace).expanduser().resolve()
     configured = scalar(workspace / COMMAND_FILE, ("coverage",))
@@ -74,13 +122,38 @@ def resolve(workspace):
                 "threshold": threshold_value, "threshold_source": threshold_source,
                 "reason": "coverage command is not a non-empty argv",
             }
+        if configured_threshold:
+            return {
+                "status": "ready", "source": "test-commands.yml", "argv": argv,
+                "threshold": threshold_value, "threshold_source": threshold_source,
+            }
+        adapted = adapt_coverage_argv(argv, threshold_value)
+        if adapted:
+            return {
+                "status": "ready", "source": "test-commands.yml", "argv": adapted,
+                "threshold": threshold_value, "threshold_source": "adapter",
+            }
+        project_gate = project_gate_threshold(workspace, argv)
+        if project_gate is not None and project_gate >= threshold_value:
+            return {
+                "status": "ready", "source": "test-commands.yml", "argv": argv,
+                "threshold": project_gate, "threshold_source": "project-coverage-config",
+            }
+        if project_gate is not None:
+            return {
+                "status": "uncovered", "source": "test-commands.yml", "argv": None,
+                "threshold": threshold_value, "threshold_source": threshold_source,
+                "reason": "project coverage gate is below the resolved threshold",
+            }
         return {
-            "status": "ready", "source": "test-commands.yml", "argv": argv,
+            "status": "uncovered", "source": "test-commands.yml", "argv": None,
             "threshold": threshold_value, "threshold_source": threshold_source,
+            "reason": "coverage command cannot enforce the resolved threshold",
         }
     return {
-        "status": "ready", "source": "quality-targets.yml" if target else "default", "argv": None,
+        "status": "uncovered", "source": "quality-targets.yml" if target else "default", "argv": None,
         "threshold": threshold_value, "threshold_source": threshold_source,
+        "reason": "no executable coverage command is configured",
     }
 
 

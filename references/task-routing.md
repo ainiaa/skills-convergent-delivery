@@ -10,7 +10,7 @@
 - 高风险只提高 review/verification 强度，不单独触发代理。
 - 路由冻结后只能因新证据升级；不得反复降级、重新规划或用路由扩大授权。
 
-风险枚举与根 Skill 的审查触发器一致：金额/支付、时间/时区、SQL/Mapper、数据库迁移、事务、并发、幂等、公共 API、安全/权限、敏感日志、跨服务、发布契约及不可逆操作。`risk_flags` 是控制器在冻结前按需求、调用链和行为语义作出的**语义风险声明**：即使文件名普通，也必须列出金额、权限、公共兼容等受影响语义；不能等路径扫描猜中。运行时变更将同一冻结风险带入 [TDD 追溯](tdd-providers.md#tddimpact-trace-v3)：权限、并发、幂等、事务、数据访问、契约、安全和敏感日志必须有相应场景与测试类型，契约风险还必须绑定外部契约影响链。路径标记只能作为风险下限：实际 changed paths 命中标记而未声明时完成门禁阻塞；未命中不构成低风险证明。语义无法确认时提高 `uncertainty` 或转为决策阻塞。
+风险枚举与根 Skill 的审查触发器一致：金额/支付、时间/时区、SQL/Mapper、数据库迁移、事务、并发、幂等、公共 API、安全/权限、敏感日志、跨服务、发布契约及不可逆操作。`risk_flags` 是控制器在冻结前按需求、调用链和行为语义作出的**语义风险声明**：即使文件名普通，也必须列出金额、权限、公共兼容等受影响语义；不能等路径扫描猜中。运行时变更将同一冻结风险带入 [TDD 追溯](tdd-providers.md#tddimpact-trace-v4)：权限、并发、幂等、事务、数据访问、契约、安全和敏感日志必须有相应场景与测试类型，契约风险还必须绑定外部契约影响链。路径标记只能作为风险下限：实际 changed paths 命中标记而未声明时完成门禁阻塞；未命中不构成低风险证明。语义无法确认时提高 `uncertainty` 或转为决策阻塞。
 
 ```json
 {"schema_version":2,"assessment_phase":"frozen","scope":"local","coupling":"single","uncertainty":"low","verification":"local","risk_flags":[],"cross_session":false,"delegable_tasks":0,"context_isolation_benefit":false}
