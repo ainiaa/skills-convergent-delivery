@@ -1,5 +1,7 @@
 # Review Orchestration Contract v1
 
+Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读 reviewer（Codex CLI 或 Claude Code）：冻结 profile、完整 Review v3 request，并显式提供 `--allow-execute`。该路径不要求启用多模型扩展，也不授予写入、shell 或扇出权限。其他角色、并发扇出和 OpenAI-compatible API runner 仍要求冻结 `multimodel` 扩展；无可用 CLI 或无执行授权时明确交接，不伪造独立审查回执。
+
 控制器按风险选择复核成本。需求符合性与实现质量仍分别保存结论；普通任务由同一个有冻结 profile、request binding 与 completed role result 的外部只读 fresh reviewer 接收两个有序单轴请求，先 `spec`，通过后再独立盲审 `quality`；它只是外部证据身份，不能伪称宿主 worker。低风险任务使用实现者自检和新鲜验证，不创建 reviewer。高风险任务使用一个 blind reviewer，同样按单轴顺序执行。只有多任务或跨服务计划才增加一次 integration review。任何源码变化都会使旧结果 stale。
 
 ```json

@@ -34,6 +34,7 @@ REQUIRED_SOURCE_FILES=(
   references/worker-runners.md
   references/multi-model.md
   references/multi-model-evaluation.json
+  references/multi-model-repository-evaluation.json
   references/autonomous-delivery-evaluation.json
   references/runtime-adapters.md
   providers/generic-tdd-v1.json
@@ -59,6 +60,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/multi_model.py
   scripts/multi_model_eval.py
   scripts/multi_model_smoke.py
+  scripts/multi_model_repo_eval.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
@@ -66,6 +68,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/test_runner_lifecycle.py
   scripts/test_multi_model_eval.py
   scripts/test_multi_model_smoke.py
+  scripts/test_multi_model_repo_eval.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   scripts/autonomy_gate.py

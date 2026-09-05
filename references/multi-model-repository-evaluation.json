@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "task_id": "normalize-slug",
+      "prompt": "Implement normalize_slug in app.py. It must trim whitespace, lowercase letters, collapse every run of whitespace to one hyphen, and preserve letters and digits. Empty or whitespace-only input returns an empty string. Non-string input must raise TypeError or AttributeError.",
+      "files": {
+        "app.py": "def normalize_slug(value):\n    return value\n",
+        "test_app.py": "import unittest\nfrom app import normalize_slug\n\nclass NormalizeSlugTest(unittest.TestCase):\n    def test_normalizes_words_and_preserves_digits(self):\n        for value, expected in [(\"  Hello   World  \", \"hello-world\"), (\"A1 B2\", \"a1-b2\"), (\"One\\tTwo\\nThree\", \"one-two-three\"), (\"MiXeD\", \"mixed\")]:\n            with self.subTest(value=value):\n                self.assertEqual(expected, normalize_slug(value))\n\n    def test_empty_and_whitespace(self):\n        for value in (\"\", \" \", \"\\t\\n\"):\n            self.assertEqual(\"\", normalize_slug(value))\n\n    def test_invalid_input(self):\n        for value in (None, 123):\n            with self.assertRaises((TypeError, AttributeError)):\n                normalize_slug(value)\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "owned_paths": [
+        "app.py"
+      ],
+      "verify_argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "-q"
+      ]
+    },
+    {
+      "task_id": "positive-total",
+      "prompt": "Implement positive_total in app.py. It must return the sum of the positive integers in values and ignore zero and negative integers. Empty input returns zero; do not mutate the input. None and non-numeric elements must raise TypeError.",
+      "files": {
+        "app.py": "def positive_total(values):\n    return 0\n",
+        "test_app.py": "import unittest\nfrom app import positive_total\n\nclass PositiveTotalTest(unittest.TestCase):\n    def test_sums_only_positive_values(self):\n        for values, expected in [([-3, 0, 5, 7], 12), ([1, 2, 3], 6), ([-4, -1, 0], 0), ([10**20, 1], 10**20 + 1), ([], 0)]:\n            with self.subTest(values=values):\n                before = list(values)\n                self.assertEqual(expected, positive_total(values))\n                self.assertEqual(before, values)\n\n    def test_invalid_input(self):\n        for values in (None, [\"1\"], [None]):\n            with self.assertRaises(TypeError):\n                positive_total(values)\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "owned_paths": [
+        "app.py"
+      ],
+      "verify_argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "-q"
+      ]
+    }
+  ]
+}

@@ -556,7 +556,7 @@ def validate_review_gate(routing, review, task_key, baseline_commit, source_fing
                 raise ValueError("review pass requires a completed reviewer result bound to its request")
 
 
-def validate_state(state, arguments):
+def validate_state(state, arguments, *, check_workspace=True):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
     strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
     state = upgrade_state(state)
@@ -619,7 +619,7 @@ def validate_state(state, arguments):
         if source_receipt["source_fingerprint"] != source_fingerprint \
                 or source_receipt["baseline_commit"] != baseline["commit"]:
             raise ValueError("source_receipt does not match state source and baseline")
-        if workspace_source(workspace, baseline["commit"]) != source_receipt:
+        if check_workspace and workspace_source(workspace, baseline["commit"]) != source_receipt:
             raise ValueError("source_receipt does not match the current workspace")
     provider_binding = state.get("provider_binding")
     workflow_provider = validate_provider_binding(provider_binding)

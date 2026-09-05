@@ -102,7 +102,8 @@ class ClaudeExecRunnerTest(unittest.TestCase):
             pid = 123
 
             def wait(self, timeout=None):
-                if timeout is not None:
+                if not getattr(self, "waited", False):
+                    self.waited = True
                     raise __import__("subprocess").TimeoutExpired("claude", timeout)
                 return 124
 

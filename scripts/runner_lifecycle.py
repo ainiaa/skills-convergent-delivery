@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persist and execute one explicit multi-model external runner lifecycle."""
+"""Persist an authorized local review or optional multi-model runner lifecycle."""
 
 import argparse
 import importlib.util
@@ -17,7 +17,6 @@ from runner_launch import (
     command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch,
 )
 from runner_contract import bind_role_result
-from role_fanout import fan_in, tasks_for_fanout
 
 
 def _arguments(arguments, revision):
@@ -44,8 +43,8 @@ def _review_contract():
     return _REVIEW_CONTRACT
 
 
-def require_multimodel_extension(state):
-    """Reject persisted core runs before they create an optional runner launch."""
+def require_multimodel_extension(state, dispatch=None):
+    """Core supports one local read-only reviewer; other dispatches need the extension."""
     controller = state.get("controller") if isinstance(state, dict) else None
     if controller is None:  # Small in-memory unit-test states have no persistence contract.
         return
@@ -54,6 +53,15 @@ def require_multimodel_extension(state):
     extensions = controller.get("extensions")
     if extensions is None and isinstance(controller.get("snapshot"), dict):
         extensions = list(snapshot_extensions(controller["snapshot"]))
+    profile = dispatch.get("profile", {}) if isinstance(dispatch, dict) else {}
+    if not isinstance(profile, dict):
+        raise ValueError("runner dispatch profile is invalid")
+    permissions = profile.get("permissions")
+    if extensions == [] and profile.get("role") == "reviewer" \
+            and profile.get("runner_id") in {"codex-exec-v1", "claude-code-v1"} \
+            and isinstance(permissions, dict) and permissions.get("workspace") == "read" \
+            and permissions.get("shell") is False:
+        return
     if not isinstance(extensions, list) or "multimodel" not in extensions:
         raise ValueError("runner lifecycle requires the multimodel extension")
 
@@ -157,7 +165,7 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
-    require_multimodel_extension(state)
+    require_multimodel_extension(state, dispatch)
     authorize_dispatch(state, dispatch)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
@@ -221,13 +229,14 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     """Persist all bounded read-only launches before concurrently executing and merging them."""
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
+    state = load(arguments)
+    require_multimodel_extension(state)
+    from role_fanout import fan_in, tasks_for_fanout
     tasks = tasks_for_fanout(dispatch)
     if not isinstance(prompts, dict) or set(prompts) != {task["task_id"] for task in tasks}:
         raise ValueError("fan-out prompts must match the frozen task ids")
     _review_request_mapping(review_request_fingerprints, tasks, "review request fingerprints")
     _review_request_mapping(review_requests, tasks, "review requests")
-    state = load(arguments)
-    require_multimodel_extension(state)
     prepared = []
     for task in tasks:
         authorize_dispatch(state, task["dispatch"])

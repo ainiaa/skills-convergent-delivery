@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
@@ -214,71 +215,75 @@ def _response_from_jsonl(stdout):
     return response
 
 
+def _join_io(threads, deadline):
+    for thread in threads:
+        thread.join(max(0, deadline - time.monotonic()))
+    return not any(thread.is_alive() for thread in threads)
+
+
+def _execute_process(command, workspace, prompt, budget, process_factory, on_progress):
+    threads = []
+    digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    process = None
+    error_type = None
+    deadline = time.monotonic() + budget["timeout_seconds"]
+    try:
+        process = process_factory(
+            command, cwd=workspace, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+        threads, exceeded, digests, captured = _capture_bounded(
+            process, budget["max_output_chars"], on_progress
+        )
+        writer, write_errors = _start_prompt_writer(process, prompt)
+        threads.append(writer)
+        exit_code = process.wait(timeout=max(0, deadline - time.monotonic()))
+        if not _join_io(threads, deadline):
+            raise subprocess.TimeoutExpired(command, budget["timeout_seconds"])
+        if exceeded.is_set():
+            status, exit_code = "output_exceeded", 125
+        elif write_errors:
+            raise write_errors[0]
+        else:
+            status = "completed" if exit_code == 0 else "failed"
+    except (subprocess.TimeoutExpired, OSError) as error:
+        status, exit_code = ("timed_out", 124) if isinstance(error, subprocess.TimeoutExpired) else ("unknown", 127)
+        error_type = type(error).__name__
+        if process is not None:
+            _terminate_process(process)
+            cleanup_deadline = time.monotonic() + 1
+            try:
+                process.wait(timeout=max(0, cleanup_deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                status, exit_code, error_type = "unknown", 127, "TimeoutExpired"
+            if not _join_io(threads, cleanup_deadline):
+                status, exit_code, error_type = "unknown", 127, "TimeoutExpired"
+    finally:
+        if process is not None and not any(thread.is_alive() for thread in threads):
+            for name in ("stdin", "stdout", "stderr"):
+                getattr(process, name).close()
+    return status, exit_code, error_type, digests, captured
+
+
 def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
                    capture_content=False, on_progress=None):
     """Start only the exact frozen local process after explicit caller opt-in."""
     if allow_execute is not True:
         raise ValueError("real Codex execution requires explicit allow_execute=True")
     command = command_for_launch(launch, prompt)
-    configuration = launch["configuration"]
-    threads = []
-    digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
-    process = None
-    writer = None
-    write_errors = []
-    error_type = None
-    try:
-        process = process_factory(
-            command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        )
-        threads, exceeded, digests, captured = _capture_bounded(
-            process, launch["profile"]["budget"]["max_output_chars"], on_progress
-        )
-        writer, write_errors = _start_prompt_writer(process, prompt)
-        exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
-        for thread in threads:
-            thread.join()
-        writer.join()
-        if exceeded.is_set():
-            status, exit_code = "output_exceeded", 125
-        else:
-            if write_errors:
-                raise write_errors[0]
-            status = "completed" if exit_code == 0 else "failed"
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
-    except subprocess.TimeoutExpired as error:
-        _terminate_process(process)
-        for thread in threads:
-            thread.join()
-        if writer is not None:
-            writer.join()
-        process.wait()
-        status, exit_code = "timed_out", 124
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
-    except OSError as error:
-        error_type = type(error).__name__
-        if process is not None:
-            _terminate_process(process)
-            for thread in threads:
-                thread.join()
-            if writer is not None:
-                writer.join()
-            process.wait()
-        status, exit_code = "unknown", 127
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
+    status, exit_code, error_type, digests, captured = _execute_process(
+        command, launch["configuration"]["workspace"], prompt, launch["profile"]["budget"],
+        process_factory, on_progress,
+    )
     value = {
         "schema_version": 2,
         "runner_id": "codex-exec-v1",
         "launch_fingerprint": launch["launch_fingerprint"],
         "status": status,
         "exit_code": exit_code,
-        "stdout_fingerprint": stdout_fingerprint,
-        "stderr_fingerprint": stderr_fingerprint,
+        "stdout_fingerprint": digests["stdout"].hexdigest(),
+        "stderr_fingerprint": digests["stderr"].hexdigest(),
         "requested_model": launch["profile"]["effective"]["model"],
         "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
         "attestation": {

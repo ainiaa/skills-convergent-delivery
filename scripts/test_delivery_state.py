@@ -12,6 +12,7 @@ from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state
+from evidence_contract import workspace_source
 from delivery_state import discover, validate_transition
 from autonomy_arm import arm
 from role_result import result_from_output
@@ -451,7 +452,7 @@ class DeliveryStateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_home = Path(directory) / "home"
             state_root = state_home / ".convergent-delivery" / "state"
-            workspace = Path(directory) / "workspace"
+            workspace = (Path(directory) / "workspace").resolve()
             workspace.mkdir()
             initialized = subprocess.run(
                 ["git", "init", str(workspace)], text=True, capture_output=True, check=False,
@@ -643,6 +644,83 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
 
+    def test_write_advances_from_historical_source_but_rejects_stale_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            workspace = (Path(directory) / "workspace").resolve()
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty",
+            ], check=True)
+            baseline = subprocess.check_output(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True,
+            ).strip()
+            initial = state()
+            initial["workspace"] = str(workspace)
+            initial["baseline"]["commit"] = baseline
+            initial["source_receipt"] = workspace_source(workspace, baseline)
+            initial["source_fingerprint"] = initial["source_receipt"]["source_fingerprint"]
+            initial["execution_control"]["review"]["rounds"] = [
+                {"source_fingerprint": initial["source_fingerprint"], "requests": []}
+            ]
+            self.acquire(root, str(workspace))
+            written = self.write(root, state_home, initial, -1)
+            self.assertEqual(0, written.returncode, written.stderr)
+
+            (workspace / "app.py").write_text("value = 1\n")
+            candidate = copy.deepcopy(initial)
+            candidate["revision"] += 1
+            stale = self.write(root, state_home, candidate, 0)
+            self.assertNotEqual(0, stale.returncode)
+            self.assertIn("current workspace", stale.stderr)
+            candidate["source_receipt"] = workspace_source(workspace, baseline)
+            candidate["source_fingerprint"] = candidate["source_receipt"]["source_fingerprint"]
+            candidate["execution_control"]["review"]["rounds"].append(
+                {"source_fingerprint": candidate["source_fingerprint"], "requests": []}
+            )
+            written = self.write(root, state_home, candidate, 0)
+            self.assertEqual(0, written.returncode, written.stderr)
+            self.assertEqual(candidate["source_receipt"], json.loads(
+                self.state_path(state_home).read_text()
+            )["source_receipt"])
+
+    def test_runner_result_can_be_recorded_after_workspace_changes_without_refreshing_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            workspace = (Path(directory) / "workspace").resolve()
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty",
+            ], check=True)
+            baseline = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+            initial = state()
+            initial["workspace"] = str(workspace)
+            initial["baseline"]["commit"] = baseline
+            initial["source_receipt"] = workspace_source(workspace, baseline)
+            initial["source_fingerprint"] = initial["source_receipt"]["source_fingerprint"]
+            initial["execution_control"]["review"]["rounds"] = [
+                {"source_fingerprint": initial["source_fingerprint"], "requests": []}
+            ]
+            self.acquire(root, str(workspace))
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(str(workspace))
+            self.assertEqual(0, self.append_runner(root, state_home, "append-runner-launch", launch, 0).returncode)
+            (workspace / "app.py").write_text("value = 1\n")
+            result = self.append_runner(root, state_home, "append-runner-result", self.local_result(launch), 1)
+            self.assertEqual(0, result.returncode, result.stderr)
+            stored = json.loads(self.state_path(state_home).read_text())
+            self.assertEqual(initial["source_receipt"], stored["source_receipt"])
+            self.assertEqual(1, len(stored["ledger"]["runner_results"]))
+            rejected = self.append_runner(root, state_home, "append-runner-launch", self.local_launch(str(workspace), "Next"), 2)
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("current workspace", rejected.stderr)
+
     def test_runner_records_append_atomically_and_bind_to_the_run_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -669,6 +747,33 @@ class DeliveryStateTest(unittest.TestCase):
             rejected = self.append_runner(root, state_home, "append-runner-launch", wrong_workspace, 2)
             self.assertNotEqual(0, rejected.returncode)
             self.assertIn("workspace", rejected.stderr)
+
+    def test_single_implementer_launch_is_allowed_but_write_fanout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+            profile = launch["profile"]
+            profile["role"] = "implementer"
+            profile["permissions"].update(workspace="write", shell=True)
+            profile.pop("profile_fingerprint")
+            profile["profile_fingerprint"] = profile_fingerprint(profile)
+            launch = freeze_launch(profile, "Implement the fix", {
+                **launch["configuration"], "sandbox": "workspace-write",
+            })
+            rejected = self.append_runner(
+                root, state_home, "append-runner-launches", [launch], 0,
+            )
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("read-only", rejected.stderr)
+            written = self.append_runner(root, state_home, "append-runner-launch", launch, 0)
+            self.assertEqual(0, written.returncode, written.stderr)
+            retry = self.append_runner(root, state_home, "append-runner-launch", launch, 1)
+            self.assertNotEqual(0, retry.returncode)
+            self.assertIn("unknown", retry.stderr)
 
     def test_persisted_runner_launch_without_a_result_cannot_be_retried(self):
         with tempfile.TemporaryDirectory() as directory:

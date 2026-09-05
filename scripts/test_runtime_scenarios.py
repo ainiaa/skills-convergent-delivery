@@ -109,6 +109,90 @@ def blocked_worker_state():
 
 
 class RuntimeScenarioTest(unittest.TestCase):
+    def test_core_review_cli_records_both_axes_and_reaches_completion(self):
+        import json
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+        from evidence_contract import run_evidence, workspace_source
+        from test_delivery_state import DeliveryStateTest, state as initial_state
+        from worker_profile import fingerprint
+
+        harness = DeliveryStateTest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run(["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                            "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty"], check=True)
+            baseline = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+            current = initial_state()
+            current.update(workspace=str(workspace), source_receipt=workspace_source(workspace, baseline))
+            current["baseline"]["commit"] = baseline
+            current["source_fingerprint"] = current["source_receipt"]["source_fingerprint"]
+            current["execution_control"]["routing"] = freeze_routing(profile(scope="cross-module"), ["."])
+            current["execution_control"]["review"]["rounds"] = [
+                {"source_fingerprint": current["source_fingerprint"], "requests": []}
+            ]
+            evidence = run_evidence(workspace, baseline, [sys.executable, "-c", "assert 1 + 1 == 2"])
+            current["ledger"]["acceptance"][0].update(
+                source_fingerprint=current["source_fingerprint"], evidence_receipts=[evidence],
+            )
+            home, leases = root / "home", root / "leases"
+            harness.acquire(leases, str(workspace))
+            written = harness.write(leases, home, current, -1)
+            self.assertEqual(0, written.returncode, written.stderr)
+
+            request_path = root / "request.json"
+            binary = root / "fake-codex"
+            binary.write_text(
+                f"#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\nsys.stdin.read()\n"
+                f"request=json.loads(Path({str(request_path)!r}).read_text())\n"
+                "result={k:request[k] for k in ('protocol_version','axis','phase','mode','source_fingerprint')}\n"
+                "result.update(independent=True,status='pass',findings=[])\n"
+                "print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(result)}}))\n"
+            )
+            binary.chmod(0o700)
+            worker = harness.local_launch(str(workspace))["profile"]
+            worker.update(role="reviewer", worker_id="reviewer-1")
+            worker.pop("profile_fingerprint")
+            worker["profile_fingerprint"] = fingerprint(worker)
+            dispatch = {"status": "next", "role": "reviewer", "mode": "agent", "reason": "review",
+                        "profile": worker, "profile_fingerprint": worker["profile_fingerprint"],
+                        "runner_id": worker["runner_id"], "executor": "external_runner"}
+            dispatch_path = root / "dispatch.json"
+            dispatch_path.write_text(json.dumps(dispatch))
+            prompt_path = root / "prompt.txt"
+            prompt_path.write_text("Review the frozen change")
+            for axis in ("spec", "quality"):
+                request_path.write_text(json.dumps({
+                    "protocol_version": 3, "task_id": current["task_key"], "axis": axis,
+                    "phase": "initial", "mode": "blind", "acceptance": ["Requested behavior"],
+                    "allowed_scope": ["."], "baseline_commit": baseline,
+                    "source_fingerprint": current["source_fingerprint"], "prior_findings": [],
+                }))
+                result = subprocess.run([
+                    sys.executable, str(Path(__file__).with_name("runner_lifecycle.py")),
+                    "--dispatch", str(dispatch_path), "--input", str(prompt_path),
+                    "--review-request-file", str(request_path), "--codex-bin", str(binary),
+                    "--allow-execute", "--lease-root", str(leases), "--run-id", current["run_id"],
+                    "--writer-id", current["writer_id"], "--repo-id", current["repo_id"],
+                    "--task-key", current["task_key"], "--expected-revision", str(current["revision"]),
+                ], env=harness.environment(home), text=True, capture_output=True, check=False, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+                current = json.loads(harness.state_path(home).read_text())
+                record = json.loads(result.stdout)["role_result"]["review_record"]
+                current["execution_control"]["review"]["rounds"][-1]["requests"].append(record)
+                current["revision"] += 1
+                written = harness.write(leases, home, current, current["revision"] - 1)
+                self.assertEqual(0, written.returncode, written.stderr)
+            current.update(status="complete", current_stage="verify-final", revision=current["revision"] + 1)
+            written = harness.write(leases, home, current, current["revision"] - 1)
+            self.assertEqual(0, written.returncode, written.stderr)
+            self.assertEqual("complete", json.loads(harness.state_path(home).read_text())["status"])
+
 
     def test_autonomous_gate_to_terminal_report_uses_one_state_derived_path(self):
         from test_autonomy_gate import completed_state

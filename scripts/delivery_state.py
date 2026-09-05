@@ -136,8 +136,8 @@ def renew_locked_leases(paths):
         replace_record(path, record)
 
 
-def validate_candidate(candidate, arguments):
-    validate_state(candidate, arguments)
+def validate_candidate(candidate, arguments, *, check_workspace=True):
+    validate_state(candidate, arguments, check_workspace=check_workspace)
     if candidate["run_id"] != arguments.run_id or candidate["writer_id"] != arguments.writer_id:
         raise ValueError("candidate owner does not match")
     if candidate["repo_id"] != arguments.repo_id or candidate["task_key"] != arguments.task_key:
@@ -509,7 +509,8 @@ def write(arguments):
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
                 current = upgrade_state(stored)
-                validate_candidate(current, arguments)
+                # The stored revision describes the workspace before this transition.
+                validate_candidate(current, arguments, check_workspace=False)
                 current_revision = current["revision"]
             if current_revision != arguments.expected_revision:
                 raise ValueError("expected revision does not match current state")
@@ -620,29 +621,29 @@ def append_runner_records(arguments, field, records):
 
 
 def append_runner_record(arguments, field, record):
-    if field == "runner_launches":
-        return append_runner_records(arguments, field, [record])
     arguments.strict_evidence = True
+    # Results record an already-started effect; only a new dispatch needs fresh source.
+    check_workspace = field != "runner_results"
     managed_path = state_path(
         managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     if not managed_path.is_file():
         raise ValueError("runner append requires an existing managed state")
     current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
-    validate_candidate(current, arguments)
+    validate_candidate(current, arguments, check_workspace=check_workspace)
     with active_lease(
         current, arguments.lease_root, arguments.run_id, arguments.writer_id
     ) as (paths, lease_records):
         with lock_record(managed_path):
             current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
-            validate_candidate(current, arguments)
+            validate_candidate(current, arguments, check_workspace=check_workspace)
             if current["revision"] != arguments.expected_revision:
                 raise ValueError("expected revision does not match current state")
             _validate_runner_record(current, field, record)
             candidate = copy.deepcopy(current)
             candidate["revision"] += 1
             candidate["ledger"].setdefault(field, []).append(record)
-            validate_candidate(candidate, arguments)
+            validate_candidate(candidate, arguments, check_workspace=check_workspace)
             validate_transition(current, candidate)
             write_private(managed_path, candidate)
             try:

@@ -47,6 +47,15 @@ for skill in "${SKILLS[@]}"; do
   echo "Official validator passed: $skill"
 done
 
+# Unit tests inspect CLI identities and inject process execution; never use live clients.
+TEST_BIN="$(mktemp -d "${TMPDIR:-/tmp}/converge-test-bin.XXXXXX")"
+trap 'rm -rf "$TEST_BIN"' EXIT
+for client in codex claude; do
+  printf '#!/bin/sh\nexit 127\n' > "$TEST_BIN/$client"
+  chmod +x "$TEST_BIN/$client"
+done
+export PATH="$TEST_BIN:$PATH"
+
 bash -n install.sh
 python3 scripts/test_install.py
 python3 scripts/test_delivery_next.py
@@ -84,15 +93,16 @@ python3 scripts/test_runner_registry.py
 python3 scripts/test_runner_contract.py
 python3 scripts/test_role_result.py
 python3 scripts/test_role_fanout.py
+python3 scripts/test_codex_exec_runner.py
+python3 scripts/test_claude_exec_runner.py
+python3 scripts/test_runner_launch.py
+python3 scripts/test_runner_lifecycle.py
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
-  python3 scripts/test_codex_exec_runner.py
-  python3 scripts/test_claude_exec_runner.py
-  python3 scripts/test_runner_launch.py
-  python3 scripts/test_runner_lifecycle.py
   python3 scripts/test_openai_compatible_runner.py
   python3 scripts/test_multi_model.py
   python3 scripts/test_multi_model_eval.py
   python3 scripts/test_multi_model_smoke.py
+  python3 scripts/test_multi_model_repo_eval.py
   python3 scripts/test_role_flow.py
   python3 scripts/test_role_dispatch.py
 fi

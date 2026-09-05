@@ -128,6 +128,41 @@ class RunnerLifecycleTest(unittest.TestCase):
                 },
             )
 
+    def test_core_can_persist_a_bound_read_only_local_review(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home", role_overrides={
+            "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        })
+        dispatch = plan_dispatch(profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        managed = {**managed_state(self.workspace), "controller": {"extensions": []},
+                   "current_stage": "round-1-semantic-review"}
+        self.arguments.review_request = review_request()
+        recorded = []
+
+        def execute(launch, prompt, **_kwargs):
+            self.assertEqual("runner_launches", recorded[0][0])
+            value = {
+                "schema_version": 1, "runner_id": launch["runner_id"],
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "high",
+            }
+            return {"receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+                    "output": {"status": "available", "content": review_response(self.arguments.review_request)}}
+
+        result = run_dispatch(self.arguments, dispatch, "Review", load=lambda _: managed,
+                              append=lambda args, field, record: (
+                                  recorded.append((field, record)) or args.expected_revision + 1
+                              ), execute=execute)
+        self.assertEqual("available", result["role_result"]["status"])
+        self.assertEqual(review_fingerprint(self.arguments.review_request),
+                         result["role_result"]["review_record"]["request_fingerprint"])
+        self.arguments.review_request = None
+        with self.assertRaisesRegex(ValueError, "frozen review request"):
+            run_dispatch(self.arguments, dispatch, "Review", load=lambda _: managed)
+
     def test_managed_dispatch_must_match_the_current_stage_role(self):
         appended = []
         dispatch = plan_dispatch(self.profiles, flow_state())

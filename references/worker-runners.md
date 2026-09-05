@@ -40,6 +40,10 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 首次 production smoke test 是单独的外发授权：使用非生产 worktree、最小无敏感 prompt、单个 profile 和明确费用上限；其结果只证明该 provider/account 的当时配置，不能替代代码回归测试或 host-native receipt。`multi_model_smoke.py` 默认只输出 planned；传入 `--allow-execute` 后才会创建 detached 临时 worktree、运行一个只读 scout，并返回不含 prompt/原始回答的脱敏 receipt。
 
+`multi_model_repo_eval.py` 是冻结的两题 Git 小型代码评测。默认只输出 planned；显式 `--allow-execute` 后，它在内部临时 Git 仓库为每题创建 candidate worktree，只让 implementer 写入，先冻结模型改动范围、再以固定 argv 运行 unittest。`--mode multi` 仅在实现与独立验证都通过且范围未越界后增加一个只读 reviewer；review 不会替代确定性验证或改变通过结论。报告只保留 task id、profile/receipt 指纹、验证状态、耗时、变更路径和受限 review 结论，不保留 prompt、源码、原始回答、密钥或成本估算。
+
+`--compare-report` 只能比较同一 task/evaluator fingerprint 的 single 与 multi 报告；它只汇总通过数、失败数与验证耗时，拒绝跨题库、跨 evaluator 或重复模式，也不会推断 token 或价格。
+
 ## 当前接线状态
 
 `codex-exec-v1` 与 `claude-code-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。三者当前都是受限叶子执行器，不是宿主原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。

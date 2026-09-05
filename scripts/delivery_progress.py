@@ -244,8 +244,19 @@ PHASE_LABELS = {
 }
 
 
+def _controller_status(state):
+    handoff = state.get("handoff", {})
+    return (
+        f"[{state.get('task_key', '?')}] 状态={state.get('status', '?')}；"
+        f"阶段={state.get('current_stage', '?')}；目标：{handoff.get('goal', '未记录')}；"
+        f"最近验证记录：{handoff.get('last_verification', '未记录')}；"
+        f"待处理：{'；'.join(handoff.get('open_issues', [])) or '无记录'}；"
+        f"下一步：{handoff.get('next_action', '未记录')}"
+    )
+
+
 def render_status_update(state, previous_fingerprint=None):
-    lines = []
+    lines = [] if state.get("workers") else [_controller_status(state)]
     for worker in state.get("workers", []):
         receipt = worker.get("progress") or {}
         phase = PHASE_LABELS.get(receipt.get("phase"), "等待进度")
@@ -262,7 +273,7 @@ def render_status_update(state, previous_fingerprint=None):
 
 
 def render_status(state):
-    rows = []
+    rows = [] if state.get("workers") else [_controller_status(state)]
     for worker in state.get("workers", []):
         progress = worker.get("progress") or {}
         rows.append(

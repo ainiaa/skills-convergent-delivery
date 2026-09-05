@@ -140,7 +140,7 @@ class RunnerLaunchTest(unittest.TestCase):
         }
         receipt = {**value, "receipt_fingerprint": fingerprint(value)}
 
-        with patch("runner_launch.execute_request", return_value=(receipt, "Review finding")):
+        with patch("openai_compatible_runner.execute_request", return_value=(receipt, "Review finding")):
             execution = execute_dispatch_launch(launch, "Review", allow_network=True)
 
         self.assertEqual(receipt, execution["receipt"])

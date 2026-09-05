@@ -17,7 +17,7 @@
 
 1. 将 runner receipt 升级为兼容的可信度结构：模型为 `requested|observed|unavailable`，usage 只在 provider 回执可验证时标为 `observed`。
 2. 新增显式 live smoke：在临时 detached worktree 中运行一个只读真实 CLI 角色，输出脱敏 receipt，并始终清理临时 worktree。
-3. 新增冻结的真实 Git 任务评测：对同一任务分别运行单模型与多模型 profile，由独立、冻结 evaluator 比较测试结果、范围与受控指标；默认只计划，显式执行才调用 runner。
+3. 已新增冻结的真实 Git 任务评测：对同一任务分别运行 single/multi 拓扑，由独立、冻结 evaluator 比较 unittest 结果与改动范围；默认只计划，显式执行才调用 runner。
 4. 将预算结果统一写入 receipt/report：时间、输出与调用次数本地强制；没有可信 provider usage 时不推断 token 成本。
 
 ## 验收

@@ -55,9 +55,15 @@ def routing(profile=None, allowed_paths=None):
 
 
 def graph_receipt(source_fingerprint, routing_value, plan, tool="codegraph", query=None):
-    evidence = run_evidence(ROOT, HEAD, [
-        tool, "explore", query or closure_graph_query(routing_value, plan),
-    ])
+    # Test receipt binding independently of a locally installed graph service.
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / tool
+        executable.write_text(f"#!{sys.executable}\nprint('fixture graph output')\n", encoding="utf-8")
+        executable.chmod(0o700)
+        with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ.get("PATH", "")}):
+            evidence = run_evidence(ROOT, HEAD, [
+                tool, "explore", query or closure_graph_query(routing_value, plan),
+            ])
     evidence["receipt_fingerprint"] = runner_fingerprint({
         key: item for key, item in evidence.items() if key != "receipt_fingerprint"
     })

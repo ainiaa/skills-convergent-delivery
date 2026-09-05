@@ -6,6 +6,7 @@
 
 - 多模型 runner receipt 升级为 v2：本地 CLI 只声明冻结的 `requested` 模型，provider 返回且匹配模型时才标为 `observed`；usage 仅接受 provider 回执，不再将请求参数或估算当作事实。
 - 新增 `multi_model_smoke.py`：默认只计划；显式 `--allow-execute` 后在 detached 临时 Git worktree 中运行一个只读 scout，并输出不含 prompt 或原始回答的脱敏 receipt。临时 worktree 会在成功、失败或超时后清理。
+- 新增 `multi_model_repo_eval.py` 与两题冻结 Git 代码任务：默认只计划；显式执行时在内部临时仓库中比较 single/multi 拓扑。通过结论由固定 unittest 与模型改动范围决定；multi 只有在两项通过后追加只读 reviewer。
 - 修复安装完整性漏检：`install.sh` 将 `scripts/capsule_dispatch.py` 纳入运行时必需文件；源码副本缺失该脚本时安装会明确失败，不再生成表面成功、实际无法投递 successor task 的 Skill 链接。
 - 为上述安装边界补充回归测试，覆盖缺少 Capsule Dispatch 脚本的隔离源码安装失败场景。
 - 稳定安装文档现在固定指向已发布的 `v0.1.0` tag，并使用 `--release 0.1.0`；需要跟随开发分支时必须显式传入 `--latest`，避免无意安装浮动的 `main`。

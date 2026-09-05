@@ -82,6 +82,8 @@ class SkillContractTest(unittest.TestCase):
             "scripts/openai_compatible_runner.py",
             "scripts/multi_model.py",
             "scripts/multi_model_smoke.py",
+            "scripts/multi_model_repo_eval.py",
+            "references/multi-model-repository-evaluation.json",
             "references/worker-runners.md",
             "references/multi-model.md",
             "scripts/test_trigger_evals.py",
@@ -90,6 +92,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("converge-eval", checks)
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
         self.assertIn("scripts/test_trigger_evals.py", checks)
+        self.assertIn("scripts/test_multi_model_repo_eval.py", checks)
         self.assertIn("CONVERGE_CHECK_SELF_TEST=1 python3 scripts/test_check.py", checks)
         self.assertNotIn("fast_path.py", installer)
         self.assertNotIn("test_fast_path.py", checks)

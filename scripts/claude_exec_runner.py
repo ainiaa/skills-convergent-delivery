@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Execute one frozen, ephemeral Claude Code CLI launch."""
 
-import hashlib
 import json
 import subprocess
 from pathlib import Path
 
 from codex_exec_runner import (
-    _binary_identity, _capture_bounded, _is_isolated_worktree, _start_prompt_writer, _terminate_process,
+    _binary_identity, _execute_process, _is_isolated_worktree,
 )
 from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
 
@@ -91,50 +90,10 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     if allow_execute is not True:
         raise ValueError("real Claude execution requires explicit allow_execute=True")
     command = command_for_launch(launch, prompt)
-    configuration = launch["configuration"]
-    threads = []
-    digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
-    process = None
-    writer = None
-    write_errors = []
-    error_type = None
-    try:
-        process = process_factory(
-            command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        )
-        threads, exceeded, digests, captured = _capture_bounded(
-            process, launch["profile"]["budget"]["max_output_chars"], on_progress
-        )
-        writer, write_errors = _start_prompt_writer(process, prompt)
-        exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
-        for thread in threads:
-            thread.join()
-        writer.join()
-        status = "output_exceeded" if exceeded.is_set() else "completed" if exit_code == 0 else "failed"
-        if exceeded.is_set():
-            exit_code = 125
-        elif write_errors:
-            raise write_errors[0]
-    except subprocess.TimeoutExpired:
-        _terminate_process(process)
-        for thread in threads:
-            thread.join()
-        if writer is not None:
-            writer.join()
-        process.wait()
-        status, exit_code = "timed_out", 124
-    except OSError as error:
-        error_type = type(error).__name__
-        if process is not None:
-            _terminate_process(process)
-            for thread in threads:
-                thread.join()
-            if writer is not None:
-                writer.join()
-            process.wait()
-        status, exit_code = "unknown", 127
+    status, exit_code, error_type, digests, captured = _execute_process(
+        command, launch["configuration"]["workspace"], prompt, launch["profile"]["budget"],
+        process_factory, on_progress,
+    )
     value = {
         "schema_version": 2,
         "runner_id": "claude-code-v1",

@@ -15,3 +15,12 @@ Create the controller snapshot with `--extension multimodel` before executing
 its runner or evaluation helpers. The frozen descriptor is the authority for
 the selected extension set. Read [multi-model guidance](../../references/multi-model.md)
 only when this extension is selected.
+
+Use `multi_model_repo_eval.py` for an explicit frozen Git-task comparison.
+It defaults to a plan; `--allow-execute` creates only disposable fixtures and
+worktrees, with one implementer and an optional read-only reviewer.
+Reports separate `implementation_status` (frozen tests and scope) from
+`execution_status` (all requested roles returned usable results). A missing or
+failed reviewer makes the multi-role run incomplete without changing a passing
+implementation verdict. `duration_ms` includes role execution; verifier time alone
+does not measure model efficiency. These reports remain diagnostic.

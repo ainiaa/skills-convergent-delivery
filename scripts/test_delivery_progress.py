@@ -25,6 +25,27 @@ def state():
 
 
 class DeliveryProgressTest(unittest.TestCase):
+    def test_single_context_status_uses_existing_handoff_and_deduplicates_after_reload(self):
+        current = {
+            "task_key": "fix-state", "current_stage": "round-1-build", "status": "active",
+            "revision": 1, "workers": [],
+            "handoff": {"goal": "修复状态推进", "last_verification": "回归测试失败",
+                        "open_issues": ["历史源码被误判"], "next_action": "修复历史校验"},
+        }
+        before = copy.deepcopy(current)
+        first, fingerprint = delivery_progress.render_status_update(current)
+        for rendered in (first, delivery_progress.render_status(current)):
+            for value in ("fix-state", "round-1-build", "active", "修复状态推进", "回归测试失败", "历史源码被误判", "修复历史校验"):
+                self.assertIn(value, rendered)
+        self.assertEqual(before, current)
+        reloaded = json.loads(json.dumps(current))
+        reloaded["revision"] += 1
+        self.assertEqual(("", fingerprint), delivery_progress.render_status_update(reloaded, fingerprint))
+        reloaded["handoff"]["next_action"] = "运行全量验证"
+        changed, changed_fingerprint = delivery_progress.render_status_update(reloaded, fingerprint)
+        self.assertIn("运行全量验证", changed)
+        self.assertNotEqual(fingerprint, changed_fingerprint)
+
     def test_plan_projection_is_stable_across_revision_and_acknowledgement(self):
         current = {
             "task_key": "task-1", "current_stage": "round-1-build", "status": "active",

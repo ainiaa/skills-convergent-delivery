@@ -63,6 +63,31 @@ bash install.sh --doctor --target codex --offline
 python3 scripts/multi_model_smoke.py --workspace "$PWD" --allow-execute
 ```
 
+## 冻结 Git 任务评测
+
+先只查看固定两题代码任务的评测计划：
+
+```bash
+python3 scripts/multi_model_repo_eval.py --workspace "$PWD" --mode single
+python3 scripts/multi_model_repo_eval.py --workspace "$PWD" --mode multi
+```
+
+明确允许调用 runner 后，才会在内部临时仓库中真实运行：
+
+```bash
+python3 scripts/multi_model_repo_eval.py --workspace "$PWD" --mode multi --allow-execute
+```
+
+它不会修改传入的业务仓库。每题只有 implementer 可写 candidate worktree；固定 unittest 与变更路径检查决定通过与否。`multi` 仅在这两个门槛都通过后运行只读 reviewer，review 不会放行失败代码。
+
+要比较两次同一冻结题库的报告，可保存 JSON 后离线汇总；比较命令不会启动 runner：
+
+```bash
+python3 scripts/multi_model_repo_eval.py --workspace "$PWD" --mode single --allow-execute > /tmp/converge-single.json
+python3 scripts/multi_model_repo_eval.py --workspace "$PWD" --mode multi --allow-execute > /tmp/converge-multi.json
+python3 scripts/multi_model_repo_eval.py --compare-report /tmp/converge-single.json --compare-report /tmp/converge-multi.json
+```
+
 它会创建并清理 detached 临时 worktree，只运行无 shell 的只读 scout，并输出不含 prompt 或原始模型回答的 receipt。使用 HTTPS provider 时还须显式传入 `--allow-network`。该 smoke 只证明当时的 runner 配置，不替代业务测试、模型质量评测或宿主原生 worker lifecycle。
 
 安装器先预检两个运行时的全部七个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。

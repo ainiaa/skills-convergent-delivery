@@ -4,6 +4,10 @@
 import io
 import shutil
 import threading
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -30,6 +34,39 @@ def profile(**overrides):
 
 
 class CodexExecRunnerTest(unittest.TestCase):
+    def test_timeout_includes_inherited_output_pipes_for_both_runners(self):
+        import claude_exec_runner
+        from test_claude_exec_runner import profile as claude_profile
+
+        for planner, executor, worker_profile, binary_option in (
+            (plan_launch, execute_launch, profile(
+                permissions={"workspace": "read", "shell": True, "network": "egress"},
+                budget={"max_turns": 1, "timeout_seconds": 1, "max_output_chars": 1000},
+            ), "codex_bin"),
+            (claude_exec_runner.plan_launch, claude_exec_runner.execute_launch, claude_profile(
+                budget={"max_turns": 1, "timeout_seconds": 1, "max_output_chars": 1000},
+            ), "claude_bin"),
+        ):
+            with self.subTest(runner=worker_profile["runner_id"]), tempfile.TemporaryDirectory() as directory:
+                launch = planner(worker_profile, "probe", workspace=directory, **{binary_option: sys.executable})
+                processes = []
+
+                def factory(_command, **kwargs):
+                    process = subprocess.Popen([
+                        sys.executable, "-c",
+                        "import subprocess,sys; sys.stdin.read(); "
+                        "subprocess.Popen([sys.executable,'-c','import time; time.sleep(4)'])",
+                    ], **kwargs)
+                    processes.append(process)
+                    return process
+
+                start = time.monotonic()
+                receipt = executor(launch, "probe", allow_execute=True, process_factory=factory)
+                elapsed = time.monotonic() - start
+                self.assertEqual("timed_out", receipt["status"])
+                self.assertLess(elapsed, 3)
+                self.assertIsNotNone(processes[0].poll())
+
     def test_freezes_model_effort_and_workspace_without_storing_the_command_prompt(self):
         read_profile = profile(permissions={"workspace": "read", "shell": True, "network": "egress"})
         launch = plan_launch(
@@ -221,7 +258,8 @@ class CodexExecRunnerTest(unittest.TestCase):
             reaped = False
 
             def wait(self, timeout=None):
-                if timeout is not None:
+                if not getattr(self, "waited", False):
+                    self.waited = True
                     raise __import__("subprocess").TimeoutExpired("codex", timeout)
                 self.reaped = True
                 return 124
@@ -248,7 +286,8 @@ class CodexExecRunnerTest(unittest.TestCase):
             pid = 123
 
             def wait(self, timeout=None):
-                if timeout is not None:
+                if not getattr(self, "waited", False):
+                    self.waited = True
                     raise __import__("subprocess").TimeoutExpired("codex", timeout)
                 return 124
 
@@ -289,7 +328,7 @@ class CodexExecRunnerTest(unittest.TestCase):
                 self.stdin = Input()
 
             def wait(self, timeout=None):
-                if timeout is not None:
+                if not self.killed:
                     self.stdin.writing.wait(timeout)
                     if self.stdin.release.is_set():
                         raise AssertionError("prompt writing completed before timeout started")
