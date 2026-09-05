@@ -91,11 +91,22 @@ class StepTraceEvalTest(unittest.TestCase):
                 evaluate(value)
 
     def test_native_blocked_report_has_no_running_step(self):
+        from delivery_progress import PLAN_STEPS, plan_projection
+
         value = native_trace()
         value["events"] = value["events"][:4]
+        value["steps"] = list(PLAN_STEPS)
+        for event in value["events"]:
+            event["step"] = PLAN_STEPS[0]
+        value["events"][0]["plan"]["projection"] = plan_projection({
+            "task_key": "task-1", "current_stage": "scope", "status": "active",
+        })["items"]
         value["events"][2]["result"] = "fail"
         value["events"][3]["result"] = "blocked"
-        value["events"][3]["plan"]["projection"][0]["status"] = "pending"
+        value["events"][3]["plan"]["projection"] = plan_projection({
+            "task_key": "task-1", "current_stage": "scope", "status": "blocked",
+            "blocked_reason": "等待用户决策",
+        })["items"]
         self.assertEqual("pass", evaluate(value)["status"])
         value["events"][3]["plan"]["projection"][0]["status"] = "in_progress"
         self.assertEqual("fail", evaluate(value)["status"])

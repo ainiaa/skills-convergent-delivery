@@ -90,7 +90,7 @@ class DeliveryProgressTest(unittest.TestCase):
         self.assertFalse(any(item["status"] == "in_progress" for item in projection["items"]))
         self.assertEqual("completed", projection["items"][0]["status"])
         self.assertEqual("pending", projection["items"][1]["status"])
-        self.assertIn("等待用户决策", projection["items"][1]["step"])
+        self.assertEqual(delivery_progress.PLAN_STEPS[1], projection["items"][1]["step"])
         for _ in range(2):
             self.assertEqual("block", next_runtime_action(current, "blocked")["action"])
         self.assertEqual(before, current)

@@ -55,8 +55,6 @@ def plan_projection(state):
             status = "completed"
         elif position == index:
             status = "pending" if blocked else "in_progress"
-            if blocked:
-                step = f"{step}（已阻塞：{state.get('blocked_reason') or '原因未记录'}）"
         else:
             status = "pending"
         items.append({"step": step, "status": status})
