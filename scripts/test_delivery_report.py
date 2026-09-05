@@ -14,6 +14,7 @@ from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from role_result import result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
+from test_delivery_next import tdd_trace
 from worker_profile import fingerprint as worker_profile_fingerprint
 
 
@@ -94,6 +95,7 @@ def state(status="complete"):
         "ledger": {
             "completed_rounds": 2,
             "repair_fingerprints": ["issue-a", "issue-b"],
+            "tdd_trace": tdd_trace(SOURCE),
             "key_changes": ["统一 Provider 契约", "增加可见进度"],
             "checks": [{"stage": "final", "command": "check", "result": "pass"}],
             "acceptance": [

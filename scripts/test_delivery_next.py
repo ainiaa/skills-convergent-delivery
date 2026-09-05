@@ -39,6 +39,79 @@ SOURCE = workspace_source(ROOT, HEAD)
 EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
 
 
+def trace_receipt(source, argv, exit_code=0):
+    receipt = copy.deepcopy(EVIDENCE)
+    receipt.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=source)
+    receipt["receipt_fingerprint"] = runner_fingerprint({
+        key: value for key, value in receipt.items() if key != "receipt_fingerprint"
+    })
+    return receipt
+
+
+def tdd_trace(source, risks=()):
+    previous_source = copy.deepcopy(source)
+    previous_source["diff_fingerprint"] = "0" * 64
+    previous_source["source_fingerprint"] = runner_fingerprint({
+        key: value for key, value in previous_source.items() if key != "source_fingerprint"
+    })
+    tests = []
+    for identifier, scenario in (
+        ("requested-normal", "normal"),
+        ("requested-boundary", "boundary"),
+        ("requested-error", "error"),
+    ):
+        tests.append({
+            "id": identifier, "selector": identifier, "kind": "unit", "scenarios": [scenario],
+            "red": {
+                "receipt": trace_receipt(
+                    previous_source, [sys.executable, "-c", "raise SystemExit(1)", identifier], 1,
+                ),
+                "failure_class": "assertion",
+            },
+            "green": {"receipts": [
+                trace_receipt(source, [sys.executable, "-c", "pass", identifier]),
+                trace_receipt(source, [sys.executable, "-c", "pass", identifier]),
+            ]},
+            "mutation": None,
+        })
+    impacts = [{
+        "id": "requested-entrypoint", "relation": "entrypoint",
+        "test_ids": [test["id"] for test in tests],
+    }]
+    if risks:
+        for test in tests:
+            test["green"]["receipts"].append(
+                trace_receipt(source, [sys.executable, "-c", "pass", test["selector"]])
+            )
+        primary = tests[0]
+        primary["mutation"] = {
+            "tool": "mutmut",
+            "receipt": trace_receipt(source, ["mutmut", primary["selector"]]),
+        }
+    if {"public-api", "cross-service", "release-contract"} & set(risks):
+        primary = tests[0]
+        primary.update(kind="contract", scenarios=["normal", "contract"])
+        impacts.append({
+            "id": "requested-contract", "relation": "external-contract",
+            "test_ids": [primary["id"]],
+        })
+    if {"money", "payment"} & set(risks):
+        primary = tests[0]
+        primary.update(kind="integration", scenarios=["normal", "property"])
+    return {
+        "schema_version": 4, "source": source, "risk_flags": list(risks),
+        "acceptance": [{"criterion": "Requested behavior", "tests": tests}],
+        "impacts": impacts,
+        "graph": {
+            "status": "covered",
+            "receipt": trace_receipt(source, ["codegraph", "explore", "requested-entrypoint"]),
+            "impacts_fingerprint": hashlib.sha256(json.dumps(
+                impacts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest(),
+        },
+    }
+
+
 def task_profile(**overrides):
     value = {
         "schema_version": 2, "assessment_phase": "frozen", "scope": "local",
@@ -174,6 +247,7 @@ def state(**overrides):
         "ledger": {
             "completed_rounds": 0,
             "repair_fingerprints": [],
+            "tdd_trace": tdd_trace(SOURCE),
             "checks": [],
             "acceptance": [
                 {
@@ -303,6 +377,9 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
         scope="cross-service" if integration_required else "cross-module",
         risk_flags=["cross-service"] if integration_required else [],
     ), ["."], request_text=closure_request_text, full_closure_required=full_closure)
+    payload["ledger"]["tdd_trace"] = tdd_trace(
+        SOURCE, payload["execution_control"]["routing"]["profile"]["risk_flags"],
+    )
     review = payload["execution_control"]["review"]
     review["integration_budget_remaining"] = integration_budget
     base = {
@@ -828,6 +905,7 @@ class DeliveryNextTest(unittest.TestCase):
             payload["ledger"]["acceptance"][0]["evidence_receipts"] = [
                 run_evidence(workspace, baseline, [sys.executable, "-c", "pass"])
             ]
+            payload["ledger"]["tdd_trace"] = tdd_trace(receipt)
             self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
             profile = {
@@ -1122,6 +1200,13 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("complete\n", result.stdout)
         self.assertEqual(0, result.returncode)
+
+    def test_native_complete_state_requires_a_passing_tdd_trace(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"].pop("tdd_trace")
+
+        with self.assertRaisesRegex(ValueError, "passing TDD trace"):
+            validate_state(payload, SimpleNamespace())
 
     def test_应该_当终态缺少阶段必需字段时_拒绝恢复(self):
         for status in ("complete", "blocked"):

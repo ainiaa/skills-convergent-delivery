@@ -14,7 +14,7 @@ from delivery_engine import provider_reference
 from delivery_next import upgrade_state
 from delivery_state import state_path as delegate_state_path
 from provider_contract import canonical_fingerprint
-from test_delivery_next import state as single_state
+from test_delivery_next import state as single_state, tdd_trace
 from evidence_contract import run_evidence, workspace_source
 
 
@@ -94,6 +94,7 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
         except ValueError:
             child["source_receipt"] = workspace_source(workspace, "HEAD")
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
+        child["ledger"]["tdd_trace"] = tdd_trace(child["source_receipt"])
         child["execution_control"]["review"]["rounds"] = []
         child["ledger"]["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
         child["ledger"]["acceptance"][0]["evidence_receipts"] = [run_evidence(

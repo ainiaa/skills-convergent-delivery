@@ -37,10 +37,9 @@ def trace(workspace, baseline, *, risks=None):
         })
 
     (workspace / "implementation.txt").write_text("implemented\n", encoding="utf-8")
+    green_runs = 3 if set(risks or []) & tdd_impact_guard.MUTATION_RISKS else 2
     for test in tests:
-        test["green"] = {"receipts": [
-            evidence(0, test["selector"]), evidence(0, test["selector"]),
-        ]}
+        test["green"] = {"receipts": [evidence(0, test["selector"]) for _ in range(green_runs)]}
     source = evidence_contract.workspace_source(workspace, baseline)
 
     impacts = [{
@@ -209,10 +208,28 @@ class TddImpactGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "rerun"):
             tdd_impact_guard.validate(value)
 
+    def test_high_risk_requires_a_second_stability_rerun_and_property_coverage(self):
+        value = self.trace(risks=["payment"])
+        test = value["acceptance"][0]["tests"][0]
+        test["kind"] = "integration"
+        test["mutation"] = self.mutation(test["selector"])
+        test["green"]["receipts"].pop()
+
+        with self.assertRaisesRegex(ValueError, "stability reruns"):
+            tdd_impact_guard.validate(value)
+
+        test["green"]["receipts"].append(test["green"]["receipts"][0])
+        with self.assertRaisesRegex(ValueError, "property"):
+            tdd_impact_guard.validate(value)
+
+        test["scenarios"].append("property")
+        self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
+
     def test_high_risk_requires_a_mutation_checked_integration_or_contract_test(self):
         value = self.trace(risks=["payment"])
         test = value["acceptance"][0]["tests"][0]
         test["kind"] = "integration"
+        test["scenarios"].append("property")
         self.assertEqual("uncovered", tdd_impact_guard.validate(value)["status"])
 
         test["mutation"] = self.mutation(test["selector"])

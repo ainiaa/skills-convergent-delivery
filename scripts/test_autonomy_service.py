@@ -1,5 +1,7 @@
+import copy
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,6 +27,51 @@ from evidence_contract import run_evidence
 from runner_contract import fingerprint, freeze_launch
 
 
+def native_tdd_trace(workspace, baseline, source):
+    def receipt(receipt_source, argv, exit_code=0):
+        value = run_evidence(workspace, baseline, [sys.executable, "-c", f"raise SystemExit({exit_code})"])
+        value.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=receipt_source)
+        value["receipt_fingerprint"] = fingerprint({
+            key: item for key, item in value.items() if key != "receipt_fingerprint"
+        })
+        return value
+
+    previous = copy.deepcopy(source)
+    previous["diff_fingerprint"] = "0" * 64
+    previous["source_fingerprint"] = fingerprint({
+        key: item for key, item in previous.items() if key != "source_fingerprint"
+    })
+    tests = []
+    for identifier, scenario in (
+        ("service-normal", "normal"),
+        ("service-boundary", "boundary"),
+        ("service-error", "error"),
+    ):
+        tests.append({
+            "id": identifier, "selector": identifier, "kind": "unit", "scenarios": [scenario],
+            "red": {"receipt": receipt(previous, [sys.executable, "-c", "raise SystemExit(1)", identifier], 1),
+                    "failure_class": "assertion"},
+            "green": {"receipts": [
+                receipt(source, [sys.executable, "-c", "pass", identifier]),
+                receipt(source, [sys.executable, "-c", "pass", identifier]),
+            ]},
+            "mutation": None,
+        })
+    impacts = [{
+        "id": "service-entrypoint", "relation": "entrypoint",
+        "test_ids": [test["id"] for test in tests],
+    }]
+    return {
+        "schema_version": 4, "source": source, "risk_flags": [],
+        "acceptance": [{"criterion": "tests pass", "tests": tests}], "impacts": impacts,
+        "graph": {
+            "status": "covered",
+            "receipt": receipt(source, ["codegraph", "explore", "service-entrypoint"]),
+            "impacts_fingerprint": fingerprint(impacts),
+        },
+    }
+
+
 class AutonomyServiceTest(unittest.TestCase):
     def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None):
         root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
@@ -40,6 +87,9 @@ class AutonomyServiceTest(unittest.TestCase):
         )
         if stage is not None:
             initial["current_stage"] = stage
+        initial["ledger"]["tdd_trace"] = native_tdd_trace(
+            root, initial["baseline"]["commit"], initial["source_receipt"],
+        )
         acquired = subprocess.run([
             sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
             "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],

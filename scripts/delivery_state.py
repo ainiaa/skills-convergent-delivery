@@ -482,6 +482,10 @@ def validate_transition(previous, candidate):
         new_ledger.get("key_changes", []),
         "ledger.key_changes",
     )
+    old_tdd_trace = old_ledger.get("tdd_trace")
+    new_tdd_trace = new_ledger.get("tdd_trace")
+    if old_tdd_trace is not None and new_tdd_trace != old_tdd_trace:
+        raise ValueError("ledger.tdd_trace is immutable once recorded")
     validate_acceptance_transition(
         old_ledger["acceptance"],
         new_ledger["acceptance"],

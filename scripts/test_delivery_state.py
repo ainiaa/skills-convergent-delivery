@@ -174,6 +174,19 @@ class DeliveryStateTest(unittest.TestCase):
         del armed["execution_control"]["autonomy"]["action_attempts"]
         self.assertEqual([], upgrade_state(armed)["execution_control"]["autonomy"]["action_attempts"])
 
+    def test_tdd_trace_may_be_added_once_but_cannot_be_replaced(self):
+        current = state()
+        candidate = copy.deepcopy(current)
+        candidate["revision"] += 1
+        candidate["ledger"]["tdd_trace"] = {"trace": "first"}
+        validate_transition(current, candidate)
+
+        replaced = copy.deepcopy(candidate)
+        replaced["revision"] += 1
+        replaced["ledger"]["tdd_trace"] = {"trace": "replacement"}
+        with self.assertRaisesRegex(ValueError, "tdd_trace"):
+            validate_transition(candidate, replaced)
+
     def test_autonomous_attempt_must_progress_intent_running_observed_committed(self):
         current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
 
@@ -972,7 +985,7 @@ class DeliveryStateTest(unittest.TestCase):
             result = self.write(root, state_home, candidate, 0)
 
             self.assertNotEqual(0, result.returncode)
-            self.assertRegex(result.stderr, "source_receipt|canonical routing")
+        self.assertRegex(result.stderr, "source_receipt|canonical routing|TDD trace")
 
     def test_state_write_renews_the_owned_lease(self):
         with tempfile.TemporaryDirectory() as directory:

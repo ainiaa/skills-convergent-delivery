@@ -14,7 +14,7 @@ from task_profile import RISK_FLAGS
 TEST_KINDS = {"unit", "integration", "e2e", "contract"}
 SCENARIOS = {
     "normal", "boundary", "error", "authorization", "concurrency", "idempotency", "contract",
-    "integration", "security", "sensitive-data", "transaction",
+    "integration", "security", "sensitive-data", "transaction", "property",
 }
 RELATIONS = {"entrypoint", "caller", "shared-effect", "external-contract"}
 RISK_REQUIREMENTS = {
@@ -40,6 +40,7 @@ MUTATION_RISKS = {
     "idempotency", "public-api", "cross-service", "release-contract", "sql", "mapper",
     "database-migration",
 }
+PROPERTY_RISKS = {"money", "payment"}
 
 
 def require_string(value, name):
@@ -96,12 +97,12 @@ def red_receipt(value, source, selector):
         raise ValueError("red receipt must use the runner selector syntax")
 
 
-def green_receipts(value, source, selector):
+def green_receipts(value, source, selector, required_runs):
     if not isinstance(value, dict) or set(value) != {"receipts"}:
         raise ValueError("green receipt fields are invalid")
     receipts = value["receipts"]
-    if not isinstance(receipts, list) or len(receipts) != 2:
-        raise ValueError("green receipt requires one stability rerun")
+    if not isinstance(receipts, list) or len(receipts) != required_runs:
+        raise ValueError(f"green receipt requires {required_runs - 1} stability reruns")
     for item in receipts:
         observed = observed_receipt(item, "green receipt", source, selector, passing=True)
         if not runner_selector_matches(observed["argv"], selector):
@@ -162,6 +163,7 @@ def validate(value):
     test_references = []
     mutation_checked = {}
     missing_mutation = False
+    required_green_runs = 3 if MUTATION_RISKS & set(risks) else 2
     for index, item in enumerate(acceptance):
         if not isinstance(item, dict) or set(item) != {"criterion", "tests"}:
             raise ValueError(f"acceptance[{index}] fields are invalid")
@@ -193,7 +195,7 @@ def validate(value):
                 raise ValueError("test reference scenarios are invalid")
             scenarios.update(test_scenarios)
             red_receipt(test.get("red"), source, selector)
-            green_receipts(test.get("green"), source, selector)
+            green_receipts(test.get("green"), source, selector, required_green_runs)
             mutation_checked[test_id] = mutation_receipt(test.get("mutation"), source, selector)
             test_references.append(test)
 
@@ -212,6 +214,8 @@ def validate(value):
             raise ValueError(f"TDD impact trace is missing {scenario}{suffix} coverage for {risk}")
         if risk in MUTATION_RISKS and not any(mutation_checked[test["id"]] for test in matching):
             missing_mutation = True
+        if risk in PROPERTY_RISKS and not any("property" in test["scenarios"] for test in test_references):
+            raise ValueError(f"TDD impact trace is missing property coverage for {risk}")
 
     impacts = value.get("impacts")
     if not isinstance(impacts, list) or not impacts:

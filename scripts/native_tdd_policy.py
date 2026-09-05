@@ -29,7 +29,11 @@ def scalar(path, names):
 def threshold(value):
     if value is None:
         return None
-    match = re.search(r"(?:fail-under|thresholds\.lines)\s*(?:=|\s)\s*(\d{1,3})\b", value)
+    match = re.search(
+        r"(?:fail-under|thresholds\.lines|threshold)\s*(?:=|\s)\s*(\d{1,3})\b",
+        value,
+        re.IGNORECASE,
+    )
     if not match:
         return None
     candidate = int(match.group(1))

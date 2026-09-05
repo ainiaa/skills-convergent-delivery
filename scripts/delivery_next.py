@@ -98,6 +98,24 @@ def require_mapping(value, name):
     return value
 
 
+def validate_native_tdd_trace(value, source_receipt, risk_flags, *, required):
+    if value is None:
+        if required:
+            raise ValueError("native complete state requires a passing TDD trace")
+        return
+    if source_receipt is None:
+        raise ValueError("TDD trace requires a current source receipt")
+    from tdd_impact_guard import validate as validate_tdd_trace
+
+    result = validate_tdd_trace(value)
+    if value["source"] != source_receipt:
+        raise ValueError("TDD trace source does not match the current state")
+    if set(value["risk_flags"]) != set(risk_flags):
+        raise ValueError("TDD trace risk flags do not match frozen routing")
+    if required and result["status"] != "pass":
+        raise ValueError("native complete state requires a passing TDD trace")
+
+
 def normalize_open_issues(value):
     if isinstance(value, str):
         issue = value.strip()
@@ -803,7 +821,7 @@ def validate_state(state, arguments, *, check_workspace=True):
     ledger = require_mapping(state.get("ledger"), "ledger")
     allowed_ledger_fields = {
         "completed_rounds", "repair_fingerprints", "autonomy_repair_fingerprints", "key_changes", "checks", "acceptance",
-        "acceptance_history", "runner_launches", "runner_results", "report_history",
+        "acceptance_history", "runner_launches", "runner_results", "report_history", "tdd_trace",
     }
     if not set(ledger) <= allowed_ledger_fields:
         raise ValueError("ledger fields are invalid")
@@ -1002,6 +1020,10 @@ def validate_state(state, arguments, *, check_workspace=True):
             for item in acceptance
         ):
             raise ValueError("complete state requires a passing Evidence Receipt for every acceptance")
+        validate_native_tdd_trace(
+            ledger.get("tdd_trace"), source_receipt, routing["profile"]["risk_flags"],
+            required=workflow_provider == "native-v1",
+        )
         if runner_launches and not runner_complete:
             raise ValueError("complete state requires every frozen runner launch to complete")
         if runner_launches and not runner_role_results_complete:

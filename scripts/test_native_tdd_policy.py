@@ -170,6 +170,22 @@ class NativeTddPolicyTest(unittest.TestCase):
         self.assertEqual("uncovered", policy["status"])
         self.assertIn("shell syntax", policy["reason"])
 
+    def test_dotnet_explicit_threshold_is_an_executable_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: dotnet test /p:CollectCoverage=true /p:Threshold=90\n",
+                encoding="utf-8",
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("ready", policy["status"])
+        self.assertEqual(90, policy["threshold"])
+        self.assertEqual("argv", policy["threshold_source"])
+
 
 if __name__ == "__main__":
     unittest.main()

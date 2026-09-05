@@ -117,6 +117,7 @@ class RuntimeScenarioTest(unittest.TestCase):
         from pathlib import Path
         from evidence_contract import run_evidence, workspace_source
         from test_delivery_state import DeliveryStateTest, state as initial_state
+        from test_delivery_next import tdd_trace
         from worker_profile import fingerprint
 
         harness = DeliveryStateTest()
@@ -140,6 +141,7 @@ class RuntimeScenarioTest(unittest.TestCase):
             current["ledger"]["acceptance"][0].update(
                 source_fingerprint=current["source_fingerprint"], evidence_receipts=[evidence],
             )
+            current["ledger"]["tdd_trace"] = tdd_trace(current["source_receipt"])
             home, leases = root / "home", root / "leases"
             harness.acquire(leases, str(workspace))
             written = harness.write(leases, home, current, -1)
