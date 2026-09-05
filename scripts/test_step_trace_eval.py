@@ -13,19 +13,19 @@ from step_trace_eval import evaluate
 
 def step_events(step):
     return [
-        {"step": step, "kind": "start", "visible": True, "plan": {
+        {"step": step, "kind": "start", "visible": True, "message_ref": f"message-{step}-start", "plan": {
             "capability": "unavailable", "result": "not_called", "receipt_ref": None,
             "fallback_disclosed": True}},
         {"step": step, "kind": "edit"},
         {"step": step, "kind": "verify", "result": "pass"},
-        {"step": step, "kind": "report", "visible": True, "result": "done", "plan": {
+        {"step": step, "kind": "report", "visible": True, "message_ref": f"message-{step}-report", "result": "done", "plan": {
             "capability": "unavailable", "result": "not_called", "receipt_ref": None,
             "fallback_disclosed": True}},
     ]
 
 
 def trace():
-    return {"schema_version": 1, "evidence_level": "fixture", "steps": ["T1", "T2"],
+    return {"schema_version": 2, "evidence_level": "fixture", "steps": ["T1", "T2"],
             "completed_before": [], "events": step_events("T1") + step_events("T2")}
 
 
@@ -272,6 +272,22 @@ class StepTraceEvalTest(unittest.TestCase):
         for value in (hidden, early, skipped_start):
             with self.subTest(events=value["events"]):
                 self.assertEqual("fail", evaluate(value)["status"])
+
+    def test_visible_start_and_report_need_distinct_observed_message_references(self):
+        value = trace()
+        value["events"][4]["message_ref"] = value["events"][3]["message_ref"]
+        self.assertEqual("fail", evaluate(value)["status"])
+        value = trace()
+        value["events"][0]["message_ref"] = ""
+        with self.assertRaises(ValueError):
+            evaluate(value)
+
+    def test_legacy_trace_cannot_accept_independent_message_boundaries(self):
+        value = trace()
+        value["schema_version"] = 1
+        for event in value["events"]:
+            event.pop("message_ref", None)
+        self.assertEqual("uncovered", evaluate(value)["status"])
 
     def test_failed_verification_cannot_be_reported_done_or_advance(self):
         failed = trace()

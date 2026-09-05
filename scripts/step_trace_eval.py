@@ -12,7 +12,7 @@ def evaluate(trace):
     """Check ordering and plan synchronization; annotations cannot prove UI rendering."""
     fields = {"schema_version", "evidence_level", "steps", "completed_before", "events"}
     if not isinstance(trace, dict) or set(trace) != fields \
-            or type(trace["schema_version"]) is not int or trace["schema_version"] != 1 \
+            or type(trace["schema_version"]) is not int or trace["schema_version"] not in (1, 2) \
             or trace["evidence_level"] not in ("fixture", "evaluator_attested"):
         raise ValueError("invalid step trace envelope")
     steps, completed, events = trace["steps"], trace["completed_before"], trace["events"]
@@ -24,6 +24,9 @@ def evaluate(trace):
         raise ValueError("invalid steps, completed prefix, or events")
     extra = {"start": {"visible"}, "edit": set(), "verify": {"result"},
              "report": {"visible", "result"}}
+    if trace["schema_version"] == 2:
+        extra["start"].add("message_ref")
+        extra["report"].add("message_ref")
     for event in events:
         if not isinstance(event, dict) or not isinstance(event.get("kind"), str) \
                 or event["kind"] not in extra \
@@ -31,7 +34,12 @@ def evaluate(trace):
                 or event["step"] not in steps \
                 or "visible" in event and type(event["visible"]) is not bool \
                 or event["kind"] == "verify" and event["result"] not in ("pass", "fail", "unknown") \
-                or event["kind"] == "report" and event["result"] not in ("done", "blocked"):
+                or event["kind"] == "report" and event["result"] not in ("done", "blocked") \
+                or trace["schema_version"] == 2 and event["kind"] in ("start", "report") and (
+                    event["message_ref"] is not None and (
+                        not isinstance(event["message_ref"], str) or not event["message_ref"].strip()
+                    ) or event["visible"] and event["message_ref"] is None
+                ):
             raise ValueError("invalid step event")
         if "plan" in event:
             plan = event["plan"]
@@ -67,6 +75,7 @@ def evaluate(trace):
     failed_sync_fallback = False
     persistent_fallback = None
     native_receipts = {}
+    visible_messages = {}
 
     def result(status, violation=None):
         return {"status": status, "violations": [] if violation is None else [violation],
@@ -77,6 +86,13 @@ def evaluate(trace):
     cursor, active, verified, blocked = len(completed), None, False, False
     for index, event in enumerate(events):
         step, kind = event["step"], event["kind"]
+        if trace["schema_version"] == 2 and kind in ("start", "report") and event["visible"]:
+            message_ref = event["message_ref"]
+            if message_ref in visible_messages:
+                return result(
+                    "fail", f"event {index}: visible step message duplicates event {visible_messages[message_ref]}"
+                )
+            visible_messages[message_ref] = index
         if kind in ("start", "report"):
             plan = event.get("plan")
             if plan is not None and "fallback" in plan:
@@ -143,7 +159,7 @@ def evaluate(trace):
                 cursor, active = cursor + 1, None
             else:
                 blocked = True
-    if not events or display_uncovered:
+    if trace["schema_version"] == 1 or not events or display_uncovered:
         return result("uncovered")
     return result("pass" if blocked or cursor == len(steps) else "uncovered")
 

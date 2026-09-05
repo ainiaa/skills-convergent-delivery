@@ -335,6 +335,17 @@ class SkillContractTest(unittest.TestCase):
         for marker in ("runner_launches", "runner_results", "completed"):
             self.assertIn(marker, state)
 
+    def test_stepwise_requests_require_separate_visible_progress_messages(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "独立的 commentary 消息",
+            "不得与下一步的开始合并",
+            "不依赖原生计划面板",
+        ):
+            self.assertIn(marker, skill + control)
+
     def test_root_skill_no_longer_owns_plan_or_review_modes(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("使用 `plan`", text)

@@ -1,0 +1,318 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-text-step-delivery",
+  "requirement_fingerprint": "9c40da4894db33f83aff12f0788ee863706410daa67df92390fb036a2450e1ff",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "9939531bbb87fab370715c50eaa2bd2d595eef37",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "9939531bbb87fab370715c50eaa2bd2d595eef37",
+      "commit_id": "9939531bbb87fab370715c50eaa2bd2d595eef37",
+      "tree_hash": "314a3fba97ac8e5f7f485ec150beef05c76a38dc",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "b9c3f60f9fdad8cdffad2114e4b6506e20bcf233810332903f56aa373c4d57ff"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。"
+      ],
+      "goal": "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+      "owned_paths": [
+        "SKILL.md",
+        "references/execution-control.md",
+        "docs/06_tasks/F20260905-text-step-delivery-plan.json",
+        "docs/06_tasks/F20260905-text-step-delivery-plan.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "定义独立文字进度消息的强制顺序与原生面板降级边界。"
+      ],
+      "acceptance": [
+        "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest scripts.test_skill_contracts"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。"
+      ],
+      "goal": "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+      "owned_paths": [
+        "scripts/step_trace_eval.py",
+        "scripts/test_step_trace_eval.py",
+        "scripts/test_skill_contracts.py",
+        "evals/step-visibility.json"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "让行为检查区分文字分步声明与宿主可观察的原生 UI 回执。"
+      ],
+      "acceptance": [
+        "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest scripts.test_step_trace_eval scripts.test_skill_contracts"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": [
+        "变更日志和全量检查与最终实现一致。"
+      ],
+      "goal": "变更日志和全量检查与最终实现一致。",
+      "owned_paths": [
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "记录边界并运行最终完整验证。"
+      ],
+      "acceptance": [
+        "变更日志和全量检查与最终实现一致。"
+      ],
+      "verification": [
+        "bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+    "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+    "变更日志和全量检查与最终实现一致。"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "text-step-delivery",
+        "description": "用户触发 → Skill 的独立文字进度规则 → 轨迹证据边界 → 回归检查",
+        "entrypoints": [
+          "CHANGELOG.md",
+          "SKILL.md",
+          "docs/06_tasks/F20260905-text-step-delivery-plan.json",
+          "docs/06_tasks/F20260905-text-step-delivery-plan.md",
+          "evals/step-visibility.json",
+          "references/execution-control.md",
+          "scripts/step_trace_eval.py",
+          "scripts/test_skill_contracts.py",
+          "scripts/test_step_trace_eval.py"
+        ],
+        "callers": [
+          "external",
+          "scripts/check.sh"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+              "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+              "变更日志和全量检查与最终实现一致。"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+              "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+              "变更日志和全量检查与最终实现一致。"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+              "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+              "变更日志和全量检查与最终实现一致。"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+              "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+              "变更日志和全量检查与最终实现一致。"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "逐步触发后，Skill 明确要求每个任务的开始和结果以独立 commentary 消息呈现，且不得把原生面板缺失当作文字分步缺失。",
+              "行为检查覆盖触发、独立消息边界、失败停止和原生 UI 证据边界；缺少宿主回执时保持 uncovered。",
+              "变更日志和全量检查与最终实现一致。"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "b9c3f60f9fdad8cdffad2114e4b6506e20bcf233810332903f56aa373c4d57ff",
+      "chains_fingerprint": "98fa0ab358f5929469f9da9c6f6f97084e0d69b9755e0aba83ae40a04a036c3d",
+      "receipt_fingerprint": "c96eadfe4c88dff6d3c0479bf3d10ad14d0522560a7ff274beea53ae347925d4"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "原生面板不可用时是否新增伪造消息回执或持久状态",
+      "resolution": "不新增；宿主未暴露消息或计划 UI 回执时，文字分步是 controller 指令，原生 UI 维持 uncovered。",
+      "source": "code"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "如何保证用户要求的分步体验",
+      "resolution": "把独立的开始和结果 commentary 消息提升为触发后的最高优先级规则，并为其行为契约补测试；不依赖 Agent、MCP 或递归执行。",
+      "source": "user"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "是否增加新的 runner 或代理拓扑",
+      "resolution": "不增加；该问题属于同一控制器的输出纪律，现有顺序执行路径足够。",
+      "source": "reversible-default"
+    }
+  ]
+}
