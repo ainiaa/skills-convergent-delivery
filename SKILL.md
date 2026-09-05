@@ -2,7 +2,7 @@
 name: converge
 description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Excludes read-only review, autonomous continuation, multi-model execution, and multi-Batch."
 metadata:
-  compatibility: Requires Git and Python 3.9+; full-closure audits require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
+  compatibility: Requires Git and Python 3.9+; native runtime tasks require an indexed CodeGraph CLI and configured coverage; full-closure audits also require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge：单任务闭环执行
@@ -32,6 +32,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 ```
 
 Provider Schema v2；pdlc-v1/native-v1，`engine` 只由 binding 派生，不能成为第二真相；见 [TDD](references/tdd-providers.md)、[控制](references/execution-control.md)。
+
+选中 native workflow（含第三方 TDD stage）的运行时任务，在第一次业务写入前运行 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" preflight --workspace <workspace>`。缺少 CodeGraph CLI、已有索引或 coverage 配置时，提前说明 `uncovered`；不自动安装、建索引或降低门槛。`ready` 只证明前置条件可发现，最终仍须真实 rerun。PDLC 使用自身预检。
 
 ## 路由
 

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from delivery_lease import lock_record, replace_record, write_exclusive
+from codex_exec_runner import _start_prompt_writer
 
 
 ATTEMPT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
@@ -138,29 +139,30 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
         previous = saved_or_new(path, adapter, attempt_id, capsule)
         if previous is not None:
             return previous
+        deadline = time.monotonic() + startup_timeout_seconds
         try:
             with evidence.open("w", encoding="utf-8") as output:
                 process = subprocess.Popen(
                     [executable, "exec", "--json", "-C", str(workspace), "-"],
                     cwd=workspace, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
-                    text=True, start_new_session=True,
+                    start_new_session=True,
                 )
         except (OSError, subprocess.SubprocessError) as error:
             return persist(path, result(
                 adapter, attempt_id, capsule, "failed", reason=error_reason(error),
             ))
         threading.Thread(target=process.wait, daemon=True).start()
-        try:
-            process.stdin.write(capsule)
-            process.stdin.close()
-        except OSError:
-            return persist(path, result(
-                adapter, attempt_id, capsule, "indeterminate",
-                reason="Codex process started but the capsule write was not confirmed; do not retry it",
-                evidence_path=str(evidence),
-            ))
-        deadline = time.monotonic() + startup_timeout_seconds
+        writer, write_errors = _start_prompt_writer(process, capsule)
         while time.monotonic() < deadline:
+            if writer.is_alive():
+                time.sleep(0.02)
+                continue
+            if write_errors:
+                return persist(path, result(
+                    adapter, attempt_id, capsule, "indeterminate",
+                    reason="Codex process started but the capsule write was not confirmed; do not retry it",
+                    evidence_path=str(evidence),
+                ))
             task_id = codex_thread_id(evidence)
             if task_id is not None:
                 return persist(path, result(

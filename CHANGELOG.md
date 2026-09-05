@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- 修复全量 closure 初审提前耗尽复核预算的问题；初审不扣额度，修复后的最终复核扣一次，仍禁止第三次审查。最终存在 finding 时允许保存 blocked 终态。
+- 正式 Eval 增加无副作用能力预检：缺少真实 evaluator bridge 时直接返回 uncovered/退出码 2，不再要求构造不可生成的 worker 证据；离线 bookkeeping 显式标为 diagnostic，不能用于发布放行。此变更不表示真实 Eval bridge 已实现。
+- Codex Capsule 复用现有异步 stdin writer，把大 capsule 写入纳入启动期限；写入未完成时不能以提前出现的 thread id 宣告投递成功，未知结果仍禁止重派。
+- 修复 Maven/mvnw 的 `-Dtest=...` 在完整 TDD Trace 中被误拒绝，统一由 runner-aware selector 校验参数绑定。
+- 公共 Evidence Receipt 对执行前后的源码作比较；验证期间源码改变时拒绝签发回执，避免把旧源码验证结果绑定给未检查的新版本。
+- 对齐 native 运行时对 CodeGraph CLI/索引与 coverage 的依赖声明，增加写入前只读预检；统一旧 Review Protocol 的拒绝规则。记录本轮机制借鉴及真实成本评测的未覆盖边界。
+
 - 修复任务模式越界：根入口现在以最新用户请求为准；最新请求明确为只读审查、检查、对比或仅报告时，必须转入 `converge-review` 并禁止沿用历史写入授权。只读路径只能报告 finding、证据和建议修复，后续明确要求修复才可重新进入写入流程。
 - TDD/Impact Trace 升级为 v5：trace criterion 必须精确覆盖当前验收项，状态拒绝重复验收项；coverage 也以最终源码 observed receipt 和阈值进入 completion gate，native rerun 还必须与项目解析出的 coverage argv/阈值一致；CodeGraph 必须执行由 impacts 派生的精确查询。新增无副作用 rerun，在 complete 前实际重跑最终绿灯、coverage、mutation 与图谱命令并拒绝生成工件污染源码；time、timezone、不可逆操作加入对应 integration 覆盖要求。Evidence Receipt 拒绝敏感 argv（含 Authorization/Bearer）并限制参数与 trace 总大小，trace CLI 在 JSON 解析前限制输入字节；最终复跑对每条冻结命令默认限时 600 秒、最多可调至 3600 秒。明确本地回执不提供同一工作区用户对抗篡改的密码学保证。修复 .NET coverage parser 误把任意 `threshold` 参数当作 gate 的问题，拒绝由任意命令伪造显式 coverage 阈值，并避免 native coverage 策略误拦截 PDLC。
 - TDD/Impact Trace 升级为 v2：红绿测试必须引用 `evidence_contract.py` 真实执行生成的 observed Evidence Receipt，红灯绑定不同于最终版本的源码、绿灯绑定最终源码；补充公共 seam、单一可观察行为和外部边界 mock 规则。原生 `native-v1` TDD coverage 默认门槛为 >=85%，项目配置优先使用 `docs/00_standards/test-commands.yml` 的 coverage 命令和 `quality-targets.yml` 阈值，无法运行时保持 `uncovered`。

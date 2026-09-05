@@ -98,6 +98,10 @@ Codex 使用 `$skill-name`，Claude Code 使用 `/skill-name`；两者都可使�
 
 简单任务不创建正式状态；持久任务使用共享状态、writer lease 和内容寻址快照，以支持有限恢复和单写入者约束。详细字段、恢复命令和多窗口规则见 [单任务状态 Schema](references/state-schema.md)、[执行控制](references/execution-control.md) 与 [使用与维护指南](docs/usage-guide.md)。
 
+native 运行时任务需要可执行的 CodeGraph CLI、目标仓库已有 `.codegraph/` 索引和项目 coverage 配置；执行前运行 `tdd_impact_guard.py preflight --workspace <项目路径>`（脚本位于已安装 Converge 的 `scripts/`）。缺口在写入前报告，安装器不会自动建索引或增加 coverage 依赖。PDLC 使用自身验证配置。
+
+正式 `converge-eval` 当前缺少 evaluator lifecycle bridge，预检会返回 `uncovered`。离线回归和统计测试可运行，但不能声明 locked differential 或真实宿主验收已通过；详见 [Eval 当前能力](skills/converge-eval/SKILL.md)。
+
 最终报告只说明结果、关键改动、验证覆盖与待处理项，并展示工作区累计的 Git 真值；Codex 单步角标不代表任务累计规模。不会把“未发现任何问题”当作全仓库保证。
 
 ## 文档

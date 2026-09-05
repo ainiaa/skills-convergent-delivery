@@ -92,6 +92,26 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertEqual(1, evidence_contract.validate_observed_evidence_receipt(receipt)["exit_code"])
         self.assertFalse(evidence_contract.valid_evidence_receipts([receipt], receipt["source"]))
 
+    def test_source_changed_after_assertion_cannot_receive_a_fresh_receipt(self):
+        command = [sys.executable, "-c", (
+            "from pathlib import Path; p=Path('seed.txt'); "
+            "assert p.read_text() == 'seed\\n'; p.write_text('broken\\n')"
+        )]
+        with self.assertRaisesRegex(ValueError, "changed.*source"):
+            evidence_contract.run_evidence(self.workspace, self.baseline, command)
+        self.assertEqual("broken\n", (self.workspace / "seed.txt").read_text())
+
+    def test_cli_rejects_source_drift_instead_of_returning_a_pass_receipt(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(evidence_contract.__file__)), "run",
+             "--workspace", str(self.workspace), "--baseline", self.baseline, "--",
+             sys.executable, "-c", "from pathlib import Path; Path('seed.txt').unlink()"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertIn("source", result.stderr)
+
     def test_nonexistent_command_cannot_be_turned_into_a_passing_receipt(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
 
@@ -111,7 +131,7 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertEqual(124, receipt["exit_code"])
 
     def test_cli_executes_the_command_without_a_shell(self):
-        marker = self.workspace / "marker.txt"
+        marker = self.workspace / ".git" / "marker.txt"
         result = subprocess.run(
             [
                 sys.executable,

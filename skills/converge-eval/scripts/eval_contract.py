@@ -245,7 +245,23 @@ def _sample_receipt(value, control_source, candidate_source, artifact_root,
     return value
 
 
+def preflight():
+    """No concrete host bridge can produce this contract's evaluator registry yet."""
+    return {
+        "status": "uncovered", "eligible": False,
+        "stop_reason": "unavailable_host_bridge",
+        "uncovered": ["locked_differential", "host_evaluator_lifecycle"],
+        "reason": "This package cannot create host-observed evaluator workers; do not fabricate a registry.",
+    }
+
+
 def evaluate(request, repository_root):
+    # ponytail: fail before collecting samples until a concrete host bridge exists.
+    return preflight()
+
+
+def _evaluate_receipts(request, repository_root):
+    """Offline bookkeeping only; legacy fixtures cannot attest a live evaluation."""
     if not isinstance(request, dict) or set(request) != REQUIRED:
         raise ValueError("evaluation request fields are invalid")
     acceptance = _string_list(request["acceptance"], "acceptance")
@@ -385,6 +401,7 @@ def evaluate(request, repository_root):
             break
 
     return {
+        "evidence_level": "diagnostic", "release_status": "uncovered",
         "control_source": request["control_source"],
         "candidate_source": request["candidate_source"],
         "control_identity": control_identity,
@@ -413,16 +430,14 @@ def evaluate(request, repository_root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--repository", required=True)
+    parser.add_argument("--input")
+    parser.add_argument("--repository")
+    parser.add_argument("--preflight", action="store_true")
     arguments = parser.parse_args()
-    try:
-        request = json.loads(Path(arguments.input).read_text(encoding="utf-8"))
-        print(json.dumps(evaluate(request, arguments.repository), ensure_ascii=False, sort_keys=True))
-        return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-        print(f"evaluation blocked: {error}", file=sys.stderr)
-        return 2
+    if not arguments.preflight and (not arguments.input or not arguments.repository):
+        parser.error("evaluation requires --input and --repository, or --preflight")
+    print(json.dumps(preflight(), ensure_ascii=False, sort_keys=True))
+    return 2
 
 
 if __name__ == "__main__":

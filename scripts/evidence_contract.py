@@ -119,6 +119,7 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         raise ValueError("evidence argv must be a non-empty string list")
     if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
         raise ValueError("evidence argv must not contain sensitive command arguments")
+    source_before = workspace_source(workspace, baseline_commit)
     try:
         result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False,
                                 timeout=timeout_seconds)
@@ -128,6 +129,9 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         stdout, stderr = error.stdout or b"", error.stderr or b"verification timed out"
     except FileNotFoundError as error:
         exit_code, stdout, stderr = 127, b"", str(error).encode("utf-8")
+    source_after = workspace_source(workspace, baseline_commit)
+    if source_after != source_before:
+        raise ValueError("verification changed the workspace source; rerun on the final source")
     receipt = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "argv": argv,
@@ -137,7 +141,7 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         "stderr_fingerprint": hashlib.sha256(stderr).hexdigest(),
         "runner_fingerprint": _runner_fingerprint(),
         "evidence_level": "observed",
-        "source": workspace_source(workspace, baseline_commit),
+        "source": source_after,
     }
     return {**receipt, "receipt_fingerprint": _fingerprint(receipt)}
 

@@ -149,5 +149,17 @@
     "differential",
     "revisions_used",
     "stop_reason"
-  ]
+  ],
+  "availability": {
+    "status": "unavailable",
+    "preflight": "eval_contract.py --preflight",
+    "reason": "No concrete host evaluator lifecycle bridge is available.",
+    "on_unavailable": {
+      "status": "uncovered",
+      "eligible": false,
+      "stop_reason": "unavailable_host_bridge",
+      "exit_code": 2
+    },
+    "offline_receipt_bookkeeping": "diagnostic only; release_status remains uncovered"
+  }
 }

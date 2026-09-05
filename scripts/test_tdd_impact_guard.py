@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import evidence_contract
@@ -124,6 +125,28 @@ class TddImpactGuardTest(unittest.TestCase):
         self.assertEqual("pass", result["status"])
         self.assertEqual(64, len(result["trace_fingerprint"]))
 
+    def test_preflight_reports_graph_and_coverage_gaps_without_creating_an_index(self):
+        with patch("shutil.which", return_value=None):
+            result = tdd_impact_guard.preflight(self.workspace)
+        self.assertEqual("uncovered", result["status"])
+        self.assertIn("codegraph_cli", result["uncovered"])
+        self.assertIn("codegraph_index", result["uncovered"])
+        self.assertFalse((self.workspace / ".codegraph").exists())
+        (self.workspace / ".codegraph").mkdir()
+        with patch("shutil.which", return_value=str(self.workspace / "codegraph")):
+            self.assertEqual("ready", tdd_impact_guard.preflight(self.workspace)["status"])
+            (self.workspace / "docs/00_standards/test-commands.yml").unlink()
+            result = tdd_impact_guard.preflight(self.workspace)
+        self.assertEqual(["coverage"], result["uncovered"])
+
+    def test_preflight_cli_needs_no_trace_and_returns_nonzero_for_gaps(self):
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "preflight", "--workspace", str(self.workspace)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(2, result.returncode)
+        self.assertIn('"status": "uncovered"', result.stdout)
+
     def test_every_acceptance_requires_a_test_reference(self):
         value = self.trace()
         value["acceptance"][0]["tests"] = []
@@ -176,6 +199,31 @@ class TddImpactGuardTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertEqual(expected, tdd_impact_guard.runner_selector_matches(argv, selector))
 
+    def test_maven_embedded_selector_passes_the_full_trace_and_rejects_mismatch(self):
+        for name in ("mvn", "mvnw"):
+            with self.subTest(runner=name):
+                tool = self.workspace / name
+                tool.write_text("#!/bin/sh\ntest -f implementation.txt\n", encoding="utf-8")
+                tool.chmod(0o755)
+                value = self.trace()
+                test = value["acceptance"][0]["tests"][0]
+                test["selector"] = "PaymentTest"
+                argv = [str(tool), "test", "-Dtest=PaymentTest"]
+                implementation = self.workspace / "implementation.txt"
+                contents = implementation.read_bytes()
+                implementation.unlink()
+                test["red"]["receipt"] = evidence_contract.run_evidence(self.workspace, self.baseline, argv)
+                self.assertNotEqual(0, test["red"]["receipt"]["exit_code"])
+                implementation.write_bytes(contents)
+                green = evidence_contract.run_evidence(self.workspace, self.baseline, argv)
+                self.assertEqual(0, green["exit_code"])
+                test["green"]["receipts"] = [green, green]
+                self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
+                test["selector"] = "OtherTest"
+                with self.assertRaisesRegex(ValueError, "selector"):
+                    tdd_impact_guard.validate(value)
+
+    def test_python_module_runner_requires_pytest_selection_syntax(self):
         value = self.trace()
         test = value["acceptance"][0]["tests"][0]
         selector = test["selector"]

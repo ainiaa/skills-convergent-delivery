@@ -8,10 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import eval_contract
-from eval_contract import evaluate
+from eval_contract import _evaluate_receipts as evaluate
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -127,6 +128,25 @@ def secure(request):
     return request
 
 
+class EvalAvailabilityTest(unittest.TestCase):
+    def test_public_evaluation_reports_missing_bridge_before_reading_artifacts(self):
+        with patch.object(eval_contract, "_worker_state", side_effect=AssertionError("read artifacts")):
+            result = eval_contract.evaluate({}, ROOT)
+        self.assertEqual("uncovered", result["status"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual("unavailable_host_bridge", result["stop_reason"])
+
+    def test_cli_preflight_and_evaluation_cannot_claim_success(self):
+        for arguments in (["--preflight"], ["--input", "/missing/request", "--repository", str(ROOT)]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [sys.executable, str(Path(eval_contract.__file__)), *arguments],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(2, result.returncode)
+                self.assertEqual("uncovered", json.loads(result.stdout)["status"])
+
+
 class EvalKernelTest(unittest.TestCase):
     def test_selects_all_matching_history_and_computes_distribution(self):
         request = {
@@ -164,6 +184,8 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         result = evaluate(secure(request), ROOT)
+        self.assertEqual("diagnostic", result["evidence_level"])
+        self.assertEqual("uncovered", result["release_status"])
 
         self.assertEqual(10, result["sample_distribution"]["sample_count"])
         self.assertEqual(9, result["sample_distribution"]["pass_count"])

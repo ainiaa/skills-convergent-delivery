@@ -5,6 +5,7 @@ import argparse
 import copy
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -72,8 +73,8 @@ def observed_receipt(value, name, source, selector, *, passing):
         observed = validate_observed_evidence_receipt(value)
     except ValueError as error:
         raise ValueError(f"{name} must reference an observed Evidence Receipt: {error}") from error
-    if selector not in observed["argv"]:
-        raise ValueError(f"{name} must execute the test selector")
+    if not runner_selector_matches(observed["argv"], selector):
+        raise ValueError(f"{name} must execute the test selector using the runner selector syntax")
     if passing and (observed["exit_code"] != 0 or observed["source"] != source):
         if observed["source"] != source:
             raise ValueError(f"{name} must bind the final trace source")
@@ -83,6 +84,10 @@ def observed_receipt(value, name, source, selector, *, passing):
 
 def runner_selector_matches(argv, selector):
     runners = {Path(argument).name.lower() for argument in argv}
+    if {"mvn", "mvnw"} & runners:
+        return f"-Dtest={selector}" in argv
+    if selector not in argv:
+        return False
     if {"pytest", "py.test"} & runners:
         index = argv.index(selector)
         return "::" in selector or "/" in selector or index > 0 and argv[index - 1] in {"-k", "--keyword"}
@@ -91,8 +96,6 @@ def runner_selector_matches(argv, selector):
             index + 1 < len(argv) and argument == "--tests" and argv[index + 1] == selector
             for index, argument in enumerate(argv)
         )
-    if {"mvn", "mvnw"} & runners:
-        return f"-Dtest={selector}" in argv
     if {"vitest", "jest"} & runners:
         return any(
             index + 1 < len(argv) and argument in {"-t", "--testNamePattern"}
@@ -111,8 +114,6 @@ def red_receipt(value, source, selector):
         raise ValueError("red receipt must show a target behavior failure")
     if observed["source"]["source_fingerprint"] == source["source_fingerprint"]:
         raise ValueError("red receipt must precede the final trace source")
-    if not runner_selector_matches(observed["argv"], selector):
-        raise ValueError("red receipt must use the runner selector syntax")
 
 
 def green_receipts(value, source, selector, required_runs):
@@ -122,9 +123,7 @@ def green_receipts(value, source, selector, required_runs):
     if not isinstance(receipts, list) or len(receipts) != required_runs:
         raise ValueError(f"green receipt requires {required_runs - 1} stability reruns")
     for item in receipts:
-        observed = observed_receipt(item, "green receipt", source, selector, passing=True)
-        if not runner_selector_matches(observed["argv"], selector):
-            raise ValueError("green receipt must use the runner selector syntax")
+        observed_receipt(item, "green receipt", source, selector, passing=True)
 
 
 def mutation_receipt(value, source, selector):
@@ -354,16 +353,39 @@ def rerun(value, workspace, baseline, *, native_coverage=False,
     return refreshed
 
 
+def preflight(workspace):
+    """Check native prerequisites before implementation; do not install or index."""
+    from native_tdd_policy import resolve as resolve_coverage
+
+    workspace = Path(workspace).expanduser().resolve()
+    uncovered = []
+    if shutil.which("codegraph") is None:
+        uncovered.append("codegraph_cli")
+    if not (workspace / ".codegraph").is_dir():
+        uncovered.append("codegraph_index")
+    coverage = resolve_coverage(workspace)
+    if coverage["status"] != "ready":
+        uncovered.append("coverage")
+    return {"status": "uncovered" if uncovered else "ready",
+            "uncovered": uncovered, "coverage": coverage}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("validate", "rerun"))
-    parser.add_argument("--input", required=True)
+    parser.add_argument("command", choices=("validate", "rerun", "preflight"))
+    parser.add_argument("--input")
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--native-coverage", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_RERUN_TIMEOUT_SECONDS)
     arguments = parser.parse_args()
     try:
+        if arguments.command == "preflight":
+            if not arguments.workspace:
+                raise ValueError("TDD preflight requires --workspace")
+            output = preflight(arguments.workspace)
+            print(json.dumps(output, ensure_ascii=False, sort_keys=True))
+            return 0 if output["status"] == "ready" else 2
         if arguments.input != "-":
             raise ValueError("TDD impact guard only accepts stdin input")
         raw = sys.stdin.buffer.read(MAX_TRACE_BYTES + 1)

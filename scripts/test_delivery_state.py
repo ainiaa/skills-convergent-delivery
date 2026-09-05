@@ -1488,6 +1488,76 @@ class DeliveryStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integration_budget"):
             validate_transition(integration_previous, integration_without_budget)
 
+    def test_full_closure_initial_preserves_budget_for_one_final_review(self):
+        previous = state()
+        routing = previous["execution_control"]["routing"]
+        previous["execution_control"]["routing"] = freeze_routing(
+            routing["profile"], ["."], full_closure_required=True,
+        )
+        previous["current_stage"] = "closure-review"
+        previous["execution_control"]["closure"] = {"status": "pending"}
+        initial = copy.deepcopy(previous)
+        initial["revision"] += 1
+        initial["execution_control"]["closure"]["status"] = "findings"
+        record = {
+            "axis": "quality", "phase": "closure", "source_fingerprint": "a" * 64,
+            "status": "findings", "reviewer_ref": "reviewer-1", "mode": "blind",
+            "independent": True, "finding_fingerprints": ["b" * 64],
+        }
+        initial["execution_control"]["review"]["rounds"][0]["requests"].append(record)
+        validate_transition(previous, initial)
+        self.assertEqual(1, initial["execution_control"]["review"]["re_review_budget_remaining"])
+
+        repaired = copy.deepcopy(initial)
+        repaired["revision"] += 1
+        repaired["current_stage"] = "closure-repair"
+        validate_transition(initial, repaired)
+        verified = copy.deepcopy(repaired)
+        verified["revision"] += 1
+        verified["current_stage"] = "closure-final-review"
+        verified["source_fingerprint"] = "c" * 64
+        verified["execution_control"]["review"]["rounds"].append({
+            "source_fingerprint": "c" * 64, "requests": [],
+        })
+        verified["ledger"]["repair_fingerprints"].append("repair-1")
+        verified["execution_control"]["review"]["repair_budget_remaining"] = 0
+        validate_transition(repaired, verified)
+        final = copy.deepcopy(verified)
+        final["revision"] += 1
+        final["execution_control"]["closure"]["status"] = "pass"
+        final["execution_control"]["review"]["rounds"][-1]["requests"].append({
+            **record, "status": "pass", "source_fingerprint": "c" * 64,
+            "finding_fingerprints": [],
+        })
+        with self.assertRaisesRegex(ValueError, "re_review_budget"):
+            validate_transition(verified, final)
+        final["execution_control"]["review"]["re_review_budget_remaining"] = 0
+        validate_transition(verified, final)
+        extra = copy.deepcopy(final)
+        extra["revision"] += 1
+        extra["execution_control"]["review"]["rounds"][-1]["requests"].append(dict(record))
+        with self.assertRaisesRegex(ValueError, "re_review_budget"):
+            validate_transition(final, extra)
+
+    def test_final_closure_findings_can_be_saved_as_blocked(self):
+        from types import SimpleNamespace
+        from delivery_next import validate_state
+        from test_delivery_next import reviewed_complete_state
+
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"] = copy.deepcopy(payload["execution_control"])
+        payload.update(status="blocked", current_stage="closure-final-review",
+                       blocked_code="budget_exhausted", blocked_reason="closure findings remain")
+        payload["execution_control"]["closure"]["status"] = "findings"
+        requests = payload["execution_control"]["review"]["rounds"][-1]["requests"]
+        closure = next(item for item in requests if item["phase"] == "closure")
+        closure.update(status="findings", finding_fingerprints=["b" * 64], finding_records=[{
+            "fingerprint": "b" * 64, "evidence": "test remains red", "impact": "cannot complete",
+            "root_cause": "known behavior", "scope": "current", "classification": "defect",
+        }])
+        requests.append(copy.deepcopy(closure))
+        self.assertEqual("blocked", validate_state(payload, SimpleNamespace()))
+
     def test_应该_当终态候选删除字段时_对称比较并拒绝(self):
         terminal = upgrade_state(state())
         terminal.update(status="complete", current_stage="verify-final")

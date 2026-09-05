@@ -472,10 +472,8 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     if routing["full_closure_required"]:
         if len(closure_history) > 2:
             raise ValueError("full closure review budget is exhausted")
-        if len(closure_history) == 2 and (
-                closure_history[0]["status"] != "findings" or closure_history[1]["status"] != "pass"
-        ):
-            raise ValueError("full closure review may only repair once before the final pass")
+        if len(closure_history) == 2 and closure_history[0]["status"] != "findings":
+            raise ValueError("full closure review may only repair once after initial findings")
     return routing, review
 
 

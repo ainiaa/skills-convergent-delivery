@@ -9,6 +9,12 @@ metadata:
 
 只负责有限、可复现的行为评估。不得实现候选规则、修改被测工作区、替代 `converge-review` 做代码审查，或直接执行外部副作用。
 
+## 当前能力预检
+
+开始收集样本前运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`；本目录变量按下一节解析。当前 Suite 没有 concrete evaluator lifecycle bridge，公共 API 与 CLI 固定返回 `status=uncovered`、`eligible=false`、`stop_reason=unavailable_host_bridge`，CLI 退出码为 2，且不读取样本工件。不得要求用户构造不可生成的 worker registry，不能把 blocked legacy fixture 或离线统计测试当作正式 Eval 通过。
+
+此时停止正式 Eval，保留 locked differential 为 `uncovered`；已授权的本地实现、修复与回归测试可继续，但它们不能替代正式验收或发布门禁。以下是冻结的目标证据契约及离线统计规则，只有以后落地真实 bridge 并通过入口行为测试，才可启用采样。私有 `_evaluate_receipts` 仅用于离线 bookkeeping，输出 `evidence_level=diagnostic`、`release_status=uncovered`，不是替代入口。修改判定器时继续保留旧快照，不能用本次候选自证通过。
+
 ## 输入与冻结
 
 先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_EVAL_SKILL_DIR`；Suite helper 从其上两级目录解析，不能依赖被测仓库的 `scripts/`。

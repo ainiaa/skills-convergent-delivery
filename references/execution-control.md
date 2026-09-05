@@ -117,7 +117,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 ### 风险复核循环
 
-低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；repair fingerprint 必须与 repair budget 的 1→0 同步，`re_review|closure` 请求必须与 re-review budget 的 1→0 同步。重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、绑定请求和剩余预算写入 Single State v10，不能只留在提示词中。
+低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；repair fingerprint 必须与 repair budget 的 1→0 同步，普通 `re_review|closure` 请求必须与 re-review budget 的 1→0 同步。全量收口的首次 closure 是初审，不扣复核额度；其修复后的最终 closure 扣一次，不能重置耗尽预算。重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、绑定请求和剩余预算写入 Single State v10，不能只留在提示词中。
 
 ### 全局集成审查循环
 

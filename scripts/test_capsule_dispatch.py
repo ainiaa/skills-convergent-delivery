@@ -8,7 +8,7 @@ import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).with_name("capsule_dispatch.py")
@@ -45,6 +45,43 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual(result, receipt)
         self.assertEqual(["exec", "--json", "-C", str(root.resolve()), "-"], arguments)
         self.assertNotIn("frozen capsule", receipt_text)
+
+    def test_codex_large_capsule_timeout_includes_stdin_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex = self.executable(
+                root, "codex", 'printf \'{"type":"thread.started","thread_id":"early"}\\n\'\n'
+                               'exec sleep 1\n',
+            )
+            started = time.monotonic()
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "x" * (1024 * 1024), root / "receipts", "large", 0.05,
+            )
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual("indeterminate", result["status"])
+            with patch.object(capsule_dispatch.subprocess, "Popen", side_effect=AssertionError("redispatch")):
+                replay = capsule_dispatch.dispatch_codex(
+                    codex, root, "x" * (1024 * 1024), root / "receipts", "large", 0.05,
+                )
+            self.assertEqual(result, replay)
+
+    def test_codex_checks_write_error_after_observing_writer_completion(self):
+        errors = []
+        writer = Mock()
+        def finished():
+            errors.append(BrokenPipeError("stdin closed"))
+            return False
+        writer.is_alive.side_effect = finished
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(capsule_dispatch.subprocess, "Popen"), \
+                patch.object(capsule_dispatch, "_start_prompt_writer", return_value=(writer, errors)), \
+                patch.object(capsule_dispatch, "codex_thread_id", return_value="early"):
+            result = capsule_dispatch.dispatch_codex(
+                "codex", directory, "capsule", Path(directory) / "receipts", "write-error", 1,
+            )
+        self.assertEqual("indeterminate", result["status"])
+        self.assertNotIn("external_task_id", result)
 
     def test_rejects_a_delivered_receipt_without_a_task_id(self):
         for task_id in (None, ""):

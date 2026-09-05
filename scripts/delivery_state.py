@@ -369,6 +369,14 @@ def validate_transition(previous, candidate):
     rechecks = [
         request for request in added_requests if request["phase"] in {"re_review", "closure"}
     ]
+    if previous["execution_control"]["routing"]["full_closure_required"] and not any(
+        request["phase"] == "closure"
+        for round_value in old_rounds for request in round_value["requests"]
+    ):
+        # The first full-scope audit is initial work, not the repair recheck.
+        initial_closure = next((item for item in rechecks if item["phase"] == "closure"), None)
+        if initial_closure is not None:
+            rechecks.remove(initial_closure)
     integrations = [request for request in added_requests if request["axis"] == "integration"]
     if len(rechecks) > 1 or len(integrations) > 1:
         raise ValueError("review transition may consume each finite budget only once")
