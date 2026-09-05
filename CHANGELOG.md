@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 修复任务模式越界：根入口现在以最新用户请求为准；最新请求明确为只读审查、检查、对比或仅报告时，必须转入 `converge-review` 并禁止沿用历史写入授权。只读路径只能报告 finding、证据和建议修复，后续明确要求修复才可重新进入写入流程。
 - TDD/Impact Trace 升级为 v5：trace criterion 必须精确覆盖当前验收项，状态拒绝重复验收项；coverage 也以最终源码 observed receipt 和阈值进入 completion gate，native rerun 还必须与项目解析出的 coverage argv/阈值一致；CodeGraph 必须执行由 impacts 派生的精确查询。新增无副作用 rerun，在 complete 前实际重跑最终绿灯、coverage、mutation 与图谱命令并拒绝生成工件污染源码；time、timezone、不可逆操作加入对应 integration 覆盖要求。Evidence Receipt 拒绝敏感 argv（含 Authorization/Bearer）并限制参数与 trace 总大小，trace CLI 在 JSON 解析前限制输入字节；最终复跑对每条冻结命令默认限时 600 秒、最多可调至 3600 秒。明确本地回执不提供同一工作区用户对抗篡改的密码学保证。修复 .NET coverage parser 误把任意 `threshold` 参数当作 gate 的问题，拒绝由任意命令伪造显式 coverage 阈值，并避免 native coverage 策略误拦截 PDLC。
 - TDD/Impact Trace 升级为 v2：红绿测试必须引用 `evidence_contract.py` 真实执行生成的 observed Evidence Receipt，红灯绑定不同于最终版本的源码、绿灯绑定最终源码；补充公共 seam、单一可观察行为和外部边界 mock 规则。原生 `native-v1` TDD coverage 默认门槛为 >=85%，项目配置优先使用 `docs/00_standards/test-commands.yml` 的 coverage 命令和 `quality-targets.yml` 阈值，无法运行时保持 `uncovered`。
 - TDD/Impact Trace 升级为 v3：每个测试以 selector 绑定红绿回执的实际 argv，红灯只接受 `missing_behavior` 或 `assertion`，拒绝编译、Mock 和环境失败；新增无副作用的原生 coverage 策略解析器，安全 argv 优先、配置阈值其次、默认 >=85%，无法解析或执行时保持 `uncovered`。

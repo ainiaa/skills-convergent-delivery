@@ -9,6 +9,10 @@ metadata:
 
 Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-review`；见 `references/activation.md`。
 
+## 本轮模式锁
+
+最新用户请求优先。若最新请求明确为只读审查、检查、对比或仅报告 finding，立即交给 `converge-review` 并锁定只读审查；历史写入授权不得延续到本轮。锁定后不得写入代码、测试、文档、状态、Git 历史或外部系统，只输出 finding、证据和建议修复。只有用户后续明确要求修复，才重新进入本 Skill 的写入路径。
+
 需要持久状态的显式闭环使用 arm v11；终态只认新鲜证据。简单 `inline` 不创建 run。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
 
 用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，按 [分步可见交付](references/execution-control.md#分步可见交付) 先探测当前原生计划工具：可用则调用并核对成功回执；不可用或同步失败则明确说明降级，逐项显示文字清单。文字分步不依赖原生计划面板。计划文件、投影 JSON 和文字汇报不代表原生面板已显示。每步开始和结束都必须各用一条独立的 commentary 消息：开始说明步骤编号、目标和范围，结束展示实际改动、验证和状态；结束消息不得与下一步的开始合并，再进入下一步。

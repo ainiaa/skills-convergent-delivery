@@ -4,7 +4,7 @@
 
 最可靠的方式是显式说“使用 `$converge` 实现/修复/重构这个任务”。自然语言中的“按方案修改”、“修复已知问题”、“实现后验证”也应命中。
 
-只要计划使用 `$converge-plan`；只读检查使用 `$converge-review`；有限多 Batch 计划使用 `$converge-batch`；只要方案、解释或状态时不启动写入流程。
+只要计划使用 `$converge-plan`；只读检查使用 `$converge-review`；有限多 Batch 计划使用 `$converge-batch`；只要方案、解释或状态时不启动写入流程。最新请求明确为只读时，不得沿用更早的写入授权；发现问题只报告，等待后续明确的修复请求。
 
 用户明确说“使用多模型配合开发”时使用已安装的 `$converge-multimodel`，并按 [多模型协作](multi-model.md) 启用固定角色与动态下一步选择；这不是 Batch 触发词。
 

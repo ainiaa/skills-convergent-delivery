@@ -497,6 +497,22 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不自动修改", activation)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
+    def test_latest_read_only_request_overrides_prior_write_authorization(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "最新用户请求优先",
+            "只读审查",
+            "历史写入授权",
+            "不得写入代码、测试、文档、状态、Git 历史或外部系统",
+            "finding、证据和建议修复",
+            "明确要求修复",
+        ):
+            self.assertIn(marker, skill)
+        self.assertIn("最新请求明确为只读", activation)
+        self.assertIn("不得沿用更早的写入授权", activation)
+
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
         contract = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
