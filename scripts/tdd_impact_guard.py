@@ -309,13 +309,13 @@ def validate(value):
     }
 
 
-def rerun(value, workspace, baseline):
+def rerun(value, workspace, baseline, *, native_coverage=False):
     """Re-execute final-source checks and return a refreshed trace; never writes state."""
     validate(value)
     expected_source = workspace_source(workspace, baseline)
     if value["source"] != expected_source:
         raise ValueError("TDD trace source is not the current workspace source")
-    if value["coverage"]["status"] == "covered":
+    if native_coverage and value["coverage"]["status"] == "covered":
         from native_tdd_policy import resolve as resolve_coverage
 
         coverage_policy = resolve_coverage(workspace)
@@ -354,6 +354,7 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
+    parser.add_argument("--native-coverage", action="store_true")
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
@@ -364,7 +365,10 @@ def main():
         else:
             if not arguments.workspace or not arguments.baseline:
                 raise ValueError("TDD rerun requires --workspace and --baseline")
-            output = rerun(value, arguments.workspace, arguments.baseline)
+            output = rerun(
+                value, arguments.workspace, arguments.baseline,
+                native_coverage=arguments.native_coverage,
+            )
         print(json.dumps(output, ensure_ascii=False, sort_keys=True))
         return 0
     except (ValueError, json.JSONDecodeError) as error:

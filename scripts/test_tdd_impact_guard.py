@@ -235,7 +235,9 @@ class TddImpactGuardTest(unittest.TestCase):
             tdd_impact_guard.validate(value)
 
     def test_rerun_refreshes_final_checks_without_changing_the_workspace_source(self):
-        refreshed = tdd_impact_guard.rerun(self.trace(), self.workspace, self.baseline)
+        refreshed = tdd_impact_guard.rerun(
+            self.trace(), self.workspace, self.baseline, native_coverage=True
+        )
 
         self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
 
@@ -246,7 +248,10 @@ class TddImpactGuardTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "coverage receipt does not match"):
-            tdd_impact_guard.rerun(value, self.workspace, self.baseline)
+            tdd_impact_guard.rerun(value, self.workspace, self.baseline, native_coverage=True)
+
+        refreshed = tdd_impact_guard.rerun(value, self.workspace, self.baseline)
+        self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
 
     def test_graph_query_is_derived_from_and_executed_for_the_impact_list(self):
         value = self.trace()
