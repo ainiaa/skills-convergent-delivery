@@ -120,15 +120,29 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
         raise ValueError("evidence argv must not contain sensitive command arguments")
     source_before = workspace_source(workspace, baseline_commit)
+    process = None
     try:
-        result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False,
-                                timeout=timeout_seconds)
-        exit_code, stdout, stderr = result.returncode, result.stdout, result.stderr
-    except subprocess.TimeoutExpired as error:
-        exit_code = 124
-        stdout, stderr = error.stdout or b"", error.stderr or b"verification timed out"
+        from codex_exec_runner import _terminate_process
+        process = subprocess.Popen(argv, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            exit_code = process.returncode
+        except subprocess.TimeoutExpired:
+            _terminate_process(process)
+            stdout, stderr = process.communicate(timeout=1)
+            exit_code = 124
+            stderr = stderr or b'verification timed out'
     except FileNotFoundError as error:
         exit_code, stdout, stderr = 127, b"", str(error).encode("utf-8")
+    finally:
+        if process is not None:
+            try:
+                _terminate_process(process)
+                process.wait(timeout=1)
+            finally:
+                process.stdout.close()
+                process.stderr.close()
     source_after = workspace_source(workspace, baseline_commit)
     if source_after != source_before:
         raise ValueError("verification changed the workspace source; rerun on the final source")

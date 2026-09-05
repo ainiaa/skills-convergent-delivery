@@ -60,7 +60,7 @@ def explicit_threshold(argv):
     value = threshold(shlex.join(argv))
     if value is None:
         return None
-    runners = {Path(argument).name.lower() for argument in argv}
+    runners = {coverage_runner(argv)}
     arguments = " ".join(argv).casefold()
     if "/p:threshold" in arguments:
         return value if "dotnet" in runners else None
@@ -75,13 +75,48 @@ def explicit_threshold(argv):
 
 
 def adapt_coverage_argv(argv, threshold_value):
-    runners = {Path(argument).name.lower() for argument in argv}
+    runners = {coverage_runner(argv)}
     coverage_enabled = any(argument == "--cov" or argument.startswith("--cov=") for argument in argv)
     if {"pytest", "py.test"} & runners and coverage_enabled:
         return [*argv, f"--cov-fail-under={threshold_value}"]
     if "vitest" in runners and any(argument.startswith("--coverage") for argument in argv):
         return [*argv, f"--coverage.thresholds.lines={threshold_value}"]
     return None
+
+
+def coverage_runner(argv):
+    """Resolve only supported executable/module launch forms, never arbitrary arguments."""
+    runner = Path(argv[0]).name.lower()
+    if re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', runner):
+        return argv[2] if len(argv) > 2 and argv[1] == '-m' else None
+    if runner in {'npx', 'pnpm', 'npm'}:
+        offset = 2 if len(argv) > 1 and argv[1] == 'exec' else 1
+        if runner == 'npm' and offset != 2:
+            return None
+        return argv[offset] if len(argv) > offset and argv[offset] == 'vitest' else None
+    return runner
+
+
+def collection_disabled(argv):
+    runner = coverage_runner(argv)
+    lowered = [item.casefold() for item in argv]
+    if runner in {'pytest', 'py.test'}:
+        return '--no-cov' in argv or not any(item == '--cov' or item.startswith('--cov=') for item in argv)
+    if runner == 'dotnet':
+        return (len(argv) < 2 or argv[1] != 'test'
+                or '/p:collectcoverage=true' not in lowered
+                or '/p:collectcoverage=false' in lowered)
+    if runner == 'vitest':
+        return any(item in lowered for item in ('--no-coverage', '--coverage=false', '--coverage.enabled=false'))
+    if runner in {'mvn', 'mvnw'}:
+        return any(item in lowered for item in ('-djacoco.skip=true', '-dskiptests', '-dskiptests=true', '-dmaven.test.skip=true'))
+    if runner in {'gradle', 'gradlew'}:
+        return '--dry-run' in argv or '-m' in argv or any(
+            item in {'-x', '--exclude-task'} and index + 1 < len(argv)
+            and argv[index + 1] in {'test', 'jacocoTestCoverageVerification'}
+            for index, item in enumerate(argv)
+        )
+    return False
 
 
 def percentage(value):
@@ -97,7 +132,7 @@ def percentage(value):
 
 
 def project_gate_threshold(workspace, argv):
-    runners = {Path(argument).name.lower() for argument in argv}
+    runners = {coverage_runner(argv)}
     gate_files = ()
     pattern = None
     if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
@@ -143,6 +178,12 @@ def resolve(workspace):
                 "threshold": threshold_value, "threshold_source": threshold_source,
                 "reason": "coverage command is not a non-empty argv",
             }
+        if collection_disabled(argv):
+            return {
+                'status': 'uncovered', 'source': 'test-commands.yml', 'argv': None,
+                'threshold': threshold_value, 'threshold_source': threshold_source,
+                'reason': 'coverage command cannot enforce coverage: collection or verification is disabled',
+            }
         configured_threshold = explicit_threshold(argv)
         threshold_value, threshold_source = resolved_threshold(configured_threshold, target)
         if configured_threshold:
@@ -178,6 +219,14 @@ def resolve(workspace):
         "threshold": threshold_value, "threshold_source": threshold_source,
         "reason": "no executable coverage command is configured",
     }
+
+
+def require_matching_coverage(coverage, workspace):
+    policy = resolve(workspace)
+    if policy['status'] != 'ready':
+        raise ValueError('native coverage policy is not ready')
+    if coverage['threshold'] != policy['threshold'] or coverage['receipt']['argv'] != policy['argv']:
+        raise ValueError('coverage receipt does not match the resolved native coverage command')
 
 
 def main():

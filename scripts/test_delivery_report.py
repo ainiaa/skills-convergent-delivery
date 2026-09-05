@@ -14,18 +14,12 @@ from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from role_result import result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
-from test_delivery_next import tdd_trace
+from test_delivery_next import tdd_trace, WORKSPACE, HEAD, SOURCE, EVIDENCE
 from worker_profile import fingerprint as worker_profile_fingerprint
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts/delivery_report.py"
-HEAD = subprocess.run(
-    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
-    capture_output=True, text=True,
-).stdout.strip()
-SOURCE = workspace_source(ROOT, HEAD)
-EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
 
 
 def legacy_runtime_binding(query_id, capabilities):
@@ -70,7 +64,7 @@ def state(status="complete"):
         "task_key": "task-1",
         "writer_id": "writer-1",
         "revision": 3,
-        "workspace": str(ROOT),
+        "workspace": str(WORKSPACE),
         "baseline": {"commit": HEAD, "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-1",
         "source_fingerprint": SOURCE["source_fingerprint"],

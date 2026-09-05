@@ -1,4 +1,5 @@
 import copy
+import atexit
 import hashlib
 import json
 import os
@@ -32,12 +33,30 @@ from worker_profile import fingerprint as worker_profile_fingerprint
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
 ROOT = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).resolve().parent.parent)).resolve()
+COVERAGE_ARGV = ['coverage', 'report', '--fail-under=85']
+
+
+def configure_coverage_fixture(workspace):
+    """State-contract fixtures declare a project policy; runner tests execute coverage separately."""
+    path = Path(workspace) / 'docs/00_standards/test-commands.yml'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('coverage: ' + shlex.join(COVERAGE_ARGV) + '\n')
+
+
+_workspace_fixture = tempfile.TemporaryDirectory()
+atexit.register(_workspace_fixture.cleanup)
+WORKSPACE = Path(_workspace_fixture.name).resolve()
+configure_coverage_fixture(WORKSPACE)
+subprocess.run(['git', 'init', '-q', str(WORKSPACE)], check=True)
+subprocess.run(['git', '-C', str(WORKSPACE), 'add', '.'], check=True)
+subprocess.run(['git', '-C', str(WORKSPACE), '-c', 'user.name=Test', '-c',
+                'user.email=test@example.invalid', 'commit', '-qm', 'fixture'], check=True)
 HEAD = subprocess.run(
-    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    ["git", "-C", str(WORKSPACE), "rev-parse", "HEAD"], check=True,
     capture_output=True, text=True,
 ).stdout.strip()
-SOURCE = workspace_source(ROOT, HEAD)
-EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+SOURCE = workspace_source(WORKSPACE, HEAD)
+EVIDENCE = run_evidence(WORKSPACE, HEAD, [sys.executable, "-c", "pass"])
 
 
 def trace_receipt(source, argv, exit_code=0):
@@ -113,7 +132,7 @@ def tdd_trace(source, risks=(), criterion="Requested behavior"):
         },
         "coverage": {
             "status": "covered", "threshold": 85,
-            "receipt": trace_receipt(source, [sys.executable, "-c", "pass", "coverage"]),
+            "receipt": trace_receipt(source, COVERAGE_ARGV),
         },
     }
 
@@ -140,7 +159,7 @@ def graph_receipt(source_fingerprint, routing_value, plan, tool="codegraph", que
         executable.write_text(f"#!{sys.executable}\nprint('fixture graph output')\n", encoding="utf-8")
         executable.chmod(0o700)
         with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ.get("PATH", "")}):
-            evidence = run_evidence(ROOT, HEAD, [
+            evidence = run_evidence(WORKSPACE, HEAD, [
                 tool, "explore", query or closure_graph_query(routing_value, plan),
             ])
     evidence["receipt_fingerprint"] = runner_fingerprint({
@@ -224,7 +243,7 @@ def state(**overrides):
     value = {
         "schema_version": 10,
         "run_id": "run-20260818-120000",
-        "workspace": str(ROOT),
+        "workspace": str(WORKSPACE),
         "baseline": {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
         "scope_fingerprint": "scope-123",
         "source_fingerprint": SOURCE["source_fingerprint"],
@@ -882,7 +901,8 @@ class DeliveryNextTest(unittest.TestCase):
             subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
             subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
             (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
-            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            configure_coverage_fixture(workspace)
+            subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
             subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True)
             baseline = subprocess.run(
                 ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True,
@@ -1213,6 +1233,15 @@ class DeliveryNextTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "passing TDD trace"):
             validate_state(payload, SimpleNamespace())
+
+    def test_complete_cli_rejects_a_real_receipt_from_the_wrong_coverage_command(self):
+        payload = state(status='complete', current_stage='verify-final')
+        payload['ledger']['tdd_trace']['coverage']['receipt'] = run_evidence(
+            WORKSPACE, HEAD, [sys.executable, '-c', 'pass'],
+        )
+        result = self.current(payload)
+        self.assertEqual(2, result.returncode)
+        self.assertIn('coverage receipt does not match', result.stderr)
 
     def test_native_complete_state_requires_trace_acceptance_to_match_the_state(self):
         payload = state(status="complete", current_stage="verify-final")

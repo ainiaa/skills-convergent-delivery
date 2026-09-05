@@ -11,6 +11,28 @@ SPEC.loader.exec_module(native_tdd_policy)
 
 
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_runner_arguments_and_disabled_collection_cannot_claim_coverage(self):
+        commands = (
+            'echo pytest --cov-fail-under=85',
+            'python3 -c pass pytest --cov-fail-under=85',
+            'pytest --cov --cov-fail-under=85 --no-cov',
+            'pytest --cov-fail-under=85',
+            'dotnet build /p:Threshold=85',
+            'dotnet test /p:CollectCoverage=false /p:Threshold=85',
+            'npx vitest run --coverage=false --coverage.thresholds.lines=85',
+            'mvn test jacoco:check -Djacoco.skip=true',
+            'gradle test jacocoTestCoverageVerification --dry-run',
+        )
+        for command in commands:
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                standard = workspace / 'docs/00_standards'
+                standard.mkdir(parents=True)
+                (standard / 'test-commands.yml').write_text(f'coverage: {command}\n')
+                (workspace / 'pom.xml').write_text('<counter>LINE</counter><minimum>0.85</minimum>')
+                (workspace / 'build.gradle').write_text("counter = 'LINE'\nminimum = 0.85")
+                self.assertEqual('uncovered', native_tdd_policy.resolve(workspace)['status'])
+
     def test_coverage_command_has_priority_and_is_split_into_argv(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

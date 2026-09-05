@@ -26,6 +26,7 @@ from delivery_next import validate_state
 from evidence_contract import run_evidence
 from runner_contract import fingerprint, freeze_launch
 from tdd_impact_guard import graph_query
+from test_delivery_next import WORKSPACE, COVERAGE_ARGV
 
 
 def native_tdd_trace(workspace, baseline, source):
@@ -73,14 +74,14 @@ def native_tdd_trace(workspace, baseline, source):
         },
         "coverage": {
             "status": "covered", "threshold": 85,
-            "receipt": receipt(source, [sys.executable, "-c", "pass", "coverage"]),
+            "receipt": receipt(source, COVERAGE_ARGV),
         },
     }
 
 
 class AutonomyServiceTest(unittest.TestCase):
     def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None):
-        root = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).parent.parent)).resolve()
+        root = WORKSPACE
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
             root, ["complete task"], ["tests pass"], ["."], "run-service", "writer-service",

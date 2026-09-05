@@ -99,7 +99,7 @@ def require_mapping(value, name):
     return value
 
 
-def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required):
+def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required, workspace):
     if value is None:
         if required:
             raise ValueError("native complete state requires a passing TDD trace")
@@ -123,6 +123,9 @@ def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_crit
         raise ValueError("TDD trace acceptance does not match the current state")
     if required and result["status"] != "pass":
         raise ValueError("native complete state requires a passing TDD trace")
+    if required:
+        from native_tdd_policy import require_matching_coverage
+        require_matching_coverage(value['coverage'], workspace)
 
 
 def normalize_open_issues(value):
@@ -1034,6 +1037,7 @@ def validate_state(state, arguments, *, check_workspace=True):
             ledger.get("tdd_trace"), source_receipt, routing["profile"]["risk_flags"],
             [item["criterion"] for item in acceptance],
             required=workflow_provider == "native-v1",
+            workspace=workspace,
         )
         if runner_launches and not runner_complete:
             raise ValueError("complete state requires every frozen runner launch to complete")

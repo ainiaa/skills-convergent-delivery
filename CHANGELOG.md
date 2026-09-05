@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+- native 完成入口与最终 rerun 共用 coverage 策略校验，拒绝缺失项目配置、错误命令或不匹配阈值；PDLC 保持自身策略。状态测试改用独立临时项目中的显式 coverage 配置。
+- coverage 只识别实际可执行入口及受支持的 Python module / Vitest launcher，拒绝参数中伪装的 runner 名称，以及关闭采集、跳过检查或 dry-run 的已知形式。
+- Evidence 命令使用独立进程组，超时及退出时清理本次派生的进程；清理等待有界，不能确认清理时不签发回执。
+- 支持 pytest 的普通 `.py` 文件 selector，同时保留不同文件与错误选择语法的拒绝检查。
+
 - 修复全量 closure 初审提前耗尽复核预算的问题；初审不扣额度，修复后的最终复核扣一次，仍禁止第三次审查。最终存在 finding 时允许保存 blocked 终态。
 - 正式 Eval 增加无副作用能力预检：缺少真实 evaluator bridge 时直接返回 uncovered/退出码 2，不再要求构造不可生成的 worker 证据；离线 bookkeeping 显式标为 diagnostic，不能用于发布放行。此变更不表示真实 Eval bridge 已实现。
 - Codex Capsule 复用现有异步 stdin writer，把大 capsule 写入纳入启动期限；写入未完成时不能以提前出现的 thread id 宣告投递成功，未知结果仍禁止重派。

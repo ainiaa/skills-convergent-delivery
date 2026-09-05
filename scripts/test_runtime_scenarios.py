@@ -117,7 +117,7 @@ class RuntimeScenarioTest(unittest.TestCase):
         from pathlib import Path
         from evidence_contract import run_evidence, workspace_source
         from test_delivery_state import DeliveryStateTest, state as initial_state
-        from test_delivery_next import tdd_trace
+        from test_delivery_next import tdd_trace, configure_coverage_fixture
         from worker_profile import fingerprint
 
         harness = DeliveryStateTest()
@@ -126,6 +126,8 @@ class RuntimeScenarioTest(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            configure_coverage_fixture(workspace)
+            subprocess.run(['git', '-C', str(workspace), 'add', '.'], check=True)
             subprocess.run(["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
                             "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty"], check=True)
             baseline = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()

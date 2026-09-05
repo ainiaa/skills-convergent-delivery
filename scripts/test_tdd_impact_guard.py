@@ -79,6 +79,31 @@ def trace(workspace, baseline, *, risks=None):
 
 
 class TddImpactGuardTest(unittest.TestCase):
+    def test_pytest_plain_file_selector_is_supported(self):
+        for prefix in (['pytest'], ['python3', '-m', 'pytest']):
+            self.assertTrue(tdd_impact_guard.runner_selector_matches([*prefix, 'test_payment.py'], 'test_payment.py'))
+            self.assertFalse(tdd_impact_guard.runner_selector_matches([*prefix, 'test_other.py'], 'test_payment.py'))
+
+    def test_native_completion_checks_the_same_coverage_policy_as_rerun(self):
+        from delivery_next import validate_native_tdd_trace
+        value = self.trace()
+        criteria = [item['criterion'] for item in value['acceptance']]
+        validate_native_tdd_trace(value, value['source'], [], criteria, required=True,
+                                  workspace=self.workspace)
+        with patch('native_tdd_policy.resolve', return_value={'status': 'uncovered'}):
+            with self.assertRaisesRegex(ValueError, 'coverage policy'):
+                validate_native_tdd_trace(value, value['source'], [], criteria, required=True,
+                                          workspace=self.workspace)
+        value['coverage']['receipt'] = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, '-c', 'pass'],
+        )
+        with self.assertRaisesRegex(ValueError, 'coverage.*command'):
+            validate_native_tdd_trace(value, value['source'], [], criteria, required=True,
+                                      workspace=self.workspace)
+        # PDLC's optional trace does not inherit the native coverage policy.
+        validate_native_tdd_trace(value, value['source'], [], criteria, required=False,
+                                  workspace=self.workspace)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.workspace = Path(self.temporary.name)

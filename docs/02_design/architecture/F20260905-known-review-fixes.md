@@ -37,3 +37,14 @@
 - 前置检查只确认 CLI、索引目录与 coverage 配置可发现，不证明索引新鲜、测试插件可执行或覆盖率达标；最终命令和回执仍决定通过与否。
 
 简单路径不因本轮新增 state、worker、后台进程或新的编排层；保持现有验证强度，待真实对照证据出现后再决定是否删减环节。
+
+## 后续整体验证审查修复（基线 4ea7489）
+
+- native 完成入口和 rerun 复用同一 coverage policy 校验。真实 `python -c pass` 回执在完成 CLI 被拒绝，正确策略通过，PDLC 可保留自身策略。
+- 解析 coverage 的实际启动位置，拒绝 `echo pytest --cov-fail-under=85`、关闭采集与跳过检查的反例。保留 Python module、Vitest、.NET 与 JaCoCo 正常配置回归。
+- 复用现有 runner 的进程组终止函数；在隔离 Git 目录复现并验证超时子进程不能延迟写入。清理边界仍为本次进程组，不新增宿主生命周期声明。
+- pytest 普通文件 selector 接受，错误文件拒绝。
+
+对应测试位于 `test_native_tdd_policy.py`、`test_evidence_contract.py`、`test_tdd_impact_guard.py` 和 `test_delivery_next.py`。旧状态单测原本未声明项目 coverage 配置；现在配置与被测状态共同放入临时 Git 项目，不放松生产校验，也不把 fixture 称为实际 coverage 测量。
+
+参考取舍：采用 [LangChain eval-engineering](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/SKILL.md) 的环境与判定器分离，落实为临时真实进程/CLI 的反例测试；不引入 Harbor 或新评测服务。沿用 HumanLayer 的组合链验证与 Trail of Bits 的不变量方法，分别对应完成入口/重跑一致性和超时后无延迟写入。已有测试能表达这四个反例，因此不增加 PBT 依赖。正式 Eval、真实成本对照的未覆盖结论仍有效。

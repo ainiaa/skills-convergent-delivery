@@ -4,7 +4,9 @@ import sys
 import tempfile
 import unittest
 import os
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 import evidence_contract
 
@@ -129,6 +131,42 @@ class EvidenceContractTest(unittest.TestCase):
         )
 
         self.assertEqual(124, receipt["exit_code"])
+
+    def test_timeout_cleans_up_descendants_before_returning(self):
+        child = "import time;from pathlib import Path;time.sleep(.7);Path('late.txt').write_text('late')"
+        parent = (
+            "import subprocess,sys,time;"
+            f"subprocess.Popen([sys.executable,'-c',{child!r}]);"
+            "print('started',flush=True);time.sleep(5)"
+        )
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, '-c', parent], timeout_seconds=.3,
+        )
+        self.assertEqual(124, receipt['exit_code'])
+        import hashlib
+        self.assertEqual(hashlib.sha256(b'started\n').hexdigest(), receipt['stdout_fingerprint'])
+        time.sleep(.8)
+        self.assertFalse((self.workspace / 'late.txt').exists())
+
+    def test_exited_command_cannot_leave_a_background_writer(self):
+        child = "import time;from pathlib import Path;time.sleep(.4);Path('late.txt').write_text('late')"
+        for exit_code in (0, 1):
+            parent = (
+                'import subprocess,sys;'
+                f'subprocess.Popen([sys.executable,"-c",{child!r}],'
+                'stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);'
+                f'raise SystemExit({exit_code})'
+            )
+            receipt = evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', parent])
+            self.assertEqual(exit_code, receipt['exit_code'])
+            time.sleep(.5)
+            self.assertFalse((self.workspace / 'late.txt').exists())
+
+    def test_cleanup_failure_cannot_issue_an_evidence_receipt(self):
+        with patch('codex_exec_runner._terminate_process', side_effect=PermissionError('cleanup denied')):
+            with self.assertRaises(PermissionError):
+                evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', 'pass'])
+
 
     def test_cli_executes_the_command_without_a_shell(self):
         marker = self.workspace / ".git" / "marker.txt"

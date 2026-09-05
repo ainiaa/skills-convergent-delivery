@@ -14,7 +14,7 @@ from delivery_engine import provider_reference
 from delivery_next import upgrade_state
 from delivery_state import state_path as delegate_state_path
 from provider_contract import canonical_fingerprint
-from test_delivery_next import state as single_state, tdd_trace
+from test_delivery_next import state as single_state, tdd_trace, configure_coverage_fixture
 from evidence_contract import run_evidence, workspace_source
 
 
@@ -207,7 +207,8 @@ class BatchStateTest(unittest.TestCase):
             ["git", "-C", str(self.workspace), "config", "user.email", "test@example.com"], check=True
         )
         (self.workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(self.workspace), "add", "seed.txt"], check=True)
+        configure_coverage_fixture(self.workspace)
+        subprocess.run(["git", "-C", str(self.workspace), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
         self.commit_id = subprocess.check_output(
             ["git", "-C", str(self.workspace), "rev-parse", "HEAD"], text=True
