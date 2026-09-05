@@ -131,43 +131,48 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     return {**receipt, "receipt_fingerprint": _fingerprint(receipt)}
 
 
+def validate_observed_evidence_receipt(item):
+    fields = {
+        "schema_version", "argv", "command", "exit_code", "stdout_fingerprint",
+        "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
+        "receipt_fingerprint",
+    }
+    if not isinstance(item, dict) or set(item) != fields \
+            or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
+        raise ValueError("Evidence Receipt fields are invalid")
+    if not isinstance(item.get("argv"), list) or not item["argv"] \
+            or any(not isinstance(argument, str) or not argument for argument in item["argv"]):
+        raise ValueError("Evidence Receipt argv is invalid")
+    if item.get("command") != shlex.join(item["argv"]):
+        raise ValueError("Evidence Receipt command is invalid")
+    if not isinstance(item.get("exit_code"), int) or isinstance(item["exit_code"], bool):
+        raise ValueError("Evidence Receipt exit code is invalid")
+    for field in ("stdout_fingerprint", "stderr_fingerprint", "runner_fingerprint", "receipt_fingerprint"):
+        value = item.get(field)
+        if not isinstance(value, str) or len(value) != 64 \
+                or any(character not in "0123456789abcdef" for character in value):
+            raise ValueError(f"Evidence Receipt {field} is invalid")
+    if item["runner_fingerprint"] != _runner_fingerprint() \
+            or item.get("evidence_level") != "observed":
+        raise ValueError("Evidence Receipt provenance is invalid")
+    validate_source_receipt(item.get("source"))
+    expected = _fingerprint({key: entry for key, entry in item.items() if key != "receipt_fingerprint"})
+    if item["receipt_fingerprint"] != expected:
+        raise ValueError("Evidence Receipt fingerprint is invalid")
+    return item
+
+
 def valid_evidence_receipts(value, source):
-    return (
-        isinstance(value, list)
-        and bool(value)
-        and all(
-            isinstance(item, dict)
-            and set(item) == {
-                "schema_version", "argv", "command", "exit_code", "stdout_fingerprint",
-                "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
-                "receipt_fingerprint",
-            }
-            and item.get("schema_version") == EVIDENCE_SCHEMA_VERSION
-            and isinstance(item.get("argv"), list)
-            and bool(item["argv"])
-            and all(isinstance(argument, str) and argument for argument in item["argv"])
-            and item.get("command") == shlex.join(item["argv"])
-            and isinstance(item.get("exit_code"), int)
-            and not isinstance(item["exit_code"], bool)
-            and item["exit_code"] == 0
-            and all(
-                isinstance(item.get(field), str)
-                and len(item[field]) == 64
-                and all(character in "0123456789abcdef" for character in item[field])
-                for field in (
-                    "stdout_fingerprint", "stderr_fingerprint", "runner_fingerprint",
-                    "receipt_fingerprint",
-                )
-            )
-            and item["runner_fingerprint"] == _runner_fingerprint()
-            and item.get("evidence_level") == "observed"
-            and item.get("source") == source
-            and item["receipt_fingerprint"] == _fingerprint({
-                key: entry for key, entry in item.items() if key != "receipt_fingerprint"
-            })
+    if not isinstance(value, list) or not value:
+        return False
+    try:
+        return all(
+            validate_observed_evidence_receipt(item)["exit_code"] == 0
+            and item["source"] == source
             for item in value
         )
-    )
+    except ValueError:
+        return False
 
 
 def validate_source_receipt(source):

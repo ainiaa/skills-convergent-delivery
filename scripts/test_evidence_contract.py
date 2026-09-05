@@ -74,6 +74,7 @@ class EvidenceContractTest(unittest.TestCase):
             self.workspace, self.baseline, [sys.executable, "-c", "print('verified')"]
         )
 
+        self.assertEqual(receipt, evidence_contract.validate_observed_evidence_receipt(receipt))
         self.assertTrue(evidence_contract.valid_evidence_receipts([receipt], source))
         self.assertEqual(2, receipt["schema_version"])
         self.assertEqual([sys.executable, "-c", "print('verified')"], receipt["argv"])
@@ -82,6 +83,14 @@ class EvidenceContractTest(unittest.TestCase):
                 [{**receipt, "receipt_fingerprint": "0" * 64}], source
             )
         )
+
+    def test_observed_receipt_keeps_a_real_failure_for_tdd_red_evidence(self):
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-c", "raise SystemExit(1)"]
+        )
+
+        self.assertEqual(1, evidence_contract.validate_observed_evidence_receipt(receipt)["exit_code"])
+        self.assertFalse(evidence_contract.valid_evidence_receipts([receipt], receipt["source"]))
 
     def test_nonexistent_command_cannot_be_turned_into_a_passing_receipt(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)

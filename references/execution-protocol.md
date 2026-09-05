@@ -13,14 +13,14 @@
 ## Scope
 
 - 阅读调用链、已有测试、接口和文档。
-- 将每条验收项映射到公共 seam（API、Service 契约、消息或持久化边界）的测试/检查，并列出改动入口及已知 caller、共享副作用或外部契约；有 CodeGraph 时先查实际调用链。
+- 将每条验收项映射到公共 seam（API、Service 契约、消息或持久化边界）的测试/检查，并列出改动入口及已知 caller、共享副作用或外部契约；有 CodeGraph 时先查实际调用链。每个测试验证一个可观察行为，mock 只位于外部系统边界。
 - Bug 必须先复现，记录观察、数据流、一个明确根因假设和能区分该假设的最小检查；根因不明时不改生产代码。
 
 ## Build
 
 1. 先写或更新测试并运行，红灯必须因目标行为缺失而失败；编译、Mock 或环境错误不是有效红灯。
 2. 只做最小实现使其变绿，不夹带重构和顺手修改。
-3. 运行定向验证并记录命令、退出码、时间和覆盖的验收项；按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v1) 校验测试、风险与影响链回执。
+3. 用 `evidence_contract.py run` 运行定向验证，保留 observed Evidence Receipt；coverage 项目配置优先：`test-commands.yml` 的 coverage 命令、`quality-targets.yml` 的阈值依次优先，否则使用项目原生 coverage 命令并以默认 >=85% 执行。没有可执行工具时标为 `uncovered`。按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v2) 校验测试、风险与影响链回执。
 
 第三方 TDD 只承担这一次红绿阶段，不得创建第二套状态、循环、worktree、发布或删除文件。
 
