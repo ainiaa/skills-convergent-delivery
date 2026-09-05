@@ -56,6 +56,24 @@ def resolved_threshold(command_threshold, target):
     return DEFAULT_THRESHOLD, "default"
 
 
+def explicit_threshold(argv):
+    value = threshold(shlex.join(argv))
+    if value is None:
+        return None
+    runners = {Path(argument).name.lower() for argument in argv}
+    arguments = " ".join(argv).casefold()
+    if "/p:threshold" in arguments:
+        return value if "dotnet" in runners else None
+    if "thresholds.lines" in arguments:
+        return value if "vitest" in runners else None
+    if "fail-under" in arguments:
+        coverage_runners = {
+            "pytest", "py.test", "coverage", "coverage.py", "cargo", "cargo-tarpaulin", "grcov",
+        }
+        return value if runners & coverage_runners else None
+    return None
+
+
 def adapt_coverage_argv(argv, threshold_value):
     runners = {Path(argument).name.lower() for argument in argv}
     coverage_enabled = any(argument == "--cov" or argument.startswith("--cov=") for argument in argv)
@@ -106,9 +124,8 @@ def project_gate_threshold(workspace, argv):
 def resolve(workspace):
     workspace = Path(workspace).expanduser().resolve()
     configured = scalar(workspace / COMMAND_FILE, ("coverage",))
-    configured_threshold = threshold(configured)
     target = target_threshold(workspace)
-    threshold_value, threshold_source = resolved_threshold(configured_threshold, target)
+    threshold_value, threshold_source = resolved_threshold(None, target)
     if configured:
         if SHELL_SYNTAX.search(configured):
             return {
@@ -126,6 +143,8 @@ def resolve(workspace):
                 "threshold": threshold_value, "threshold_source": threshold_source,
                 "reason": "coverage command is not a non-empty argv",
             }
+        configured_threshold = explicit_threshold(argv)
+        threshold_value, threshold_source = resolved_threshold(configured_threshold, target)
         if configured_threshold:
             return {
                 "status": "ready", "source": "test-commands.yml", "argv": argv,

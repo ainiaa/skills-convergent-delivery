@@ -71,7 +71,7 @@ def trace(workspace, baseline, *, risks=None):
         "coverage": {
             "status": "covered", "threshold": 85,
             "receipt": evidence_contract.run_evidence(
-                workspace, baseline, [str(workspace / "python"), "--fail-under=85"]
+                workspace, baseline, [str(workspace / "coverage"), "--fail-under=85"]
             ),
         },
     }
@@ -88,14 +88,14 @@ class TddImpactGuardTest(unittest.TestCase):
             check=True,
         )
         (self.workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
-        for name in ("codegraph", "mutmut", "pytest", "python"):
+        for name in ("codegraph", "coverage", "mutmut", "pytest", "python"):
             tool = self.workspace / name
             tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             tool.chmod(0o755)
         coverage_config = self.workspace / "docs" / "00_standards" / "test-commands.yml"
         coverage_config.parent.mkdir(parents=True)
         coverage_config.write_text(
-            f"coverage: {self.workspace / 'python'} --fail-under=85\n", encoding="utf-8"
+            f"coverage: {self.workspace / 'coverage'} --fail-under=85\n", encoding="utf-8"
         )
         subprocess.run(["git", "-C", str(self.workspace), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
@@ -234,12 +234,41 @@ class TddImpactGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "size limit"):
             tdd_impact_guard.validate(value)
 
+    def test_cli_rejects_oversized_input_before_json_parsing(self):
+        observed = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "validate", "--input", "-"],
+            input=b" " * (tdd_impact_guard.MAX_TRACE_BYTES + 1),
+            capture_output=True, check=False,
+        )
+
+        self.assertEqual(2, observed.returncode)
+        self.assertIn(b"input exceeds", observed.stdout)
+
     def test_rerun_refreshes_final_checks_without_changing_the_workspace_source(self):
         refreshed = tdd_impact_guard.rerun(
             self.trace(), self.workspace, self.baseline, native_coverage=True
         )
 
         self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
+
+    def test_rerun_stops_a_hung_frozen_check_within_its_budget(self):
+        value = self.trace()
+        test = value["acceptance"][0]["tests"][0]
+        test["green"]["receipts"][0]["argv"] = [
+            sys.executable, "-c", "import time; time.sleep(1)", test["selector"],
+        ]
+
+        with self.assertRaisesRegex(ValueError, "green receipt"):
+            tdd_impact_guard.rerun(
+                value, self.workspace, self.baseline, native_coverage=True, timeout_seconds=0.01,
+            )
+
+    def test_rerun_rejects_an_unbounded_or_excessive_timeout(self):
+        for timeout_seconds in (0, 3600.1):
+            with self.assertRaisesRegex(ValueError, "timeout"):
+                tdd_impact_guard.rerun(
+                    self.trace(), self.workspace, self.baseline, timeout_seconds=timeout_seconds,
+                )
 
     def test_rerun_requires_the_resolved_native_coverage_command(self):
         value = self.trace()

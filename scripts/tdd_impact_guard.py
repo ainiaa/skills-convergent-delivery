@@ -57,6 +57,8 @@ MAX_TESTS_PER_ACCEPTANCE = 20
 MAX_IMPACTS = 100
 MAX_STRING_LENGTH = 500
 MAX_TRACE_BYTES = 256 * 1024
+DEFAULT_RERUN_TIMEOUT_SECONDS = 600
+MAX_RERUN_TIMEOUT_SECONDS = 3600
 
 
 def require_string(value, name, *, max_length=MAX_STRING_LENGTH):
@@ -309,8 +311,12 @@ def validate(value):
     }
 
 
-def rerun(value, workspace, baseline, *, native_coverage=False):
+def rerun(value, workspace, baseline, *, native_coverage=False,
+          timeout_seconds=DEFAULT_RERUN_TIMEOUT_SECONDS):
     """Re-execute final-source checks and return a refreshed trace; never writes state."""
+    if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) \
+            or not 0 < timeout_seconds <= MAX_RERUN_TIMEOUT_SECONDS:
+        raise ValueError("TDD rerun timeout must be between 0 and 3600 seconds")
     validate(value)
     expected_source = workspace_source(workspace, baseline)
     if value["source"] != expected_source:
@@ -329,7 +335,7 @@ def rerun(value, workspace, baseline, *, native_coverage=False):
     required_runs = 3 if STABILITY_RISKS & set(refreshed["risk_flags"]) else 2
 
     def current_receipt(argv):
-        receipt = run_evidence(workspace, baseline, argv)
+        receipt = run_evidence(workspace, baseline, argv, timeout_seconds=timeout_seconds)
         if receipt["source"] != expected_source:
             raise ValueError("TDD rerun changed the workspace source; clean generated artifacts first")
         return receipt
@@ -355,11 +361,15 @@ def main():
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--native-coverage", action="store_true")
+    parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_RERUN_TIMEOUT_SECONDS)
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("TDD impact guard only accepts stdin input")
-        value = json.load(sys.stdin)
+        raw = sys.stdin.buffer.read(MAX_TRACE_BYTES + 1)
+        if len(raw) > MAX_TRACE_BYTES:
+            raise ValueError("TDD impact trace input exceeds the size limit")
+        value = json.loads(raw)
         if arguments.command == "validate":
             output = validate(value)
         else:
@@ -367,7 +377,7 @@ def main():
                 raise ValueError("TDD rerun requires --workspace and --baseline")
             output = rerun(
                 value, arguments.workspace, arguments.baseline,
-                native_coverage=arguments.native_coverage,
+                native_coverage=arguments.native_coverage, timeout_seconds=arguments.timeout_seconds,
             )
         print(json.dumps(output, ensure_ascii=False, sort_keys=True))
         return 0

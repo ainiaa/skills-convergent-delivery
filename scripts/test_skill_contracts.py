@@ -435,38 +435,51 @@ class SkillContractTest(unittest.TestCase):
 
     def test_root_skill_preserves_honest_check_and_p0_e2e_boundaries(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
 
         for marker in (
             "命令不存在、超时或无权限时标为 `uncovered`",
             "不得以替换、删除或放松检查命令取得通过",
             "P0 用户流程",
             "实际 E2E 标识和本次运行回执",
-            "每条验收项至少映射一个测试",
-            "正常、边界和异常场景",
-            "权限、并发或幂等",
-            "编译、Mock 或环境错误不能当作有效红灯",
+            "TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)",
+            "--timeout-seconds",
+            "600 秒",
+            "ledger.tdd_trace",
+        ):
+            self.assertIn(marker, skill)
+
+        for marker in (
+            "每个 `criterion` 至少一个测试",
+            "`normal`、`boundary`、`error`",
+            "权限/并发/幂等",
+            "编译、环境、Mock 等失败类型一律拒绝",
             "tdd_impact_guard.py",
             "native_tdd_policy.py",
-            "影响链",
-            "入口、调用方、共享副作用或外部契约",
+            "`impacts[]`",
+            "`entrypoint|caller|shared-effect|external-contract`",
             "公共 seam",
             "一个可观察行为",
-            "mock 只用于外部系统边界",
+            "mock 仅用于外部系统边界",
             "默认 >=85%",
             "test-commands.yml",
             "quality-targets.yml",
-            "项目配置优先",
-            "observed Evidence Receipt",
+            "coverage 命令返回为 argv 并优先执行",
+            "observed receipt",
             "failure_class",
             "selector",
             "runner selector",
             "CodeGraph",
             "稳定性 rerun",
-            "property 场景",
+            "`property` 场景",
             "ledger.tdd_trace",
-            ".NET `/p:Threshold`",
+            ".NET 的 `/p:Threshold=<n>`",
             "mutation",
             "pytest",
+        ):
+            self.assertIn(marker, tdd)
+
+        for marker in (
             "修改 Converge Suite 自身的行为、入口、契约或兼容性时，必须更新本仓 `CHANGELOG.md` 的 `Unreleased`",
             "必须更新对应的 changelog；不存在时在目标项目根目录创建 `CHANGELOG.md`",
             "所有当前任务变更",
