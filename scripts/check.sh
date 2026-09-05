@@ -76,6 +76,7 @@ python3 scripts/test_delivery_lease.py
 python3 scripts/test_delivery_task_key.py
 python3 scripts/test_delivery_engine.py
 python3 scripts/test_tdd_impact_guard.py
+python3 scripts/test_native_tdd_policy.py
 python3 scripts/test_provider_contract.py
 python3 scripts/test_runtime_adapter.py
 python3 scripts/test_capsule_dispatch.py

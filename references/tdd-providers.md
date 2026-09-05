@@ -14,15 +14,15 @@
 
 所有已适配执行者使用 Provider Schema v2。共享 Provider Contract 校验身份、role、task kind/stage capability、canonical task contract、实际 entrypoint、显式 closure、授权边界、Progress Receipt 和证据要求；Binding fingerprint 覆盖 manifest、task contract 与真实来源。auto 首次解析可在写入前说明并降级，`--provider <id>` 或已冻结 Provider 不可用时阻塞。
 
-## TDD/Impact Trace v2
+## TDD/Impact Trace v3
 
 运行时功能、修复和重构在最终验证前都生成一次短生命周期 trace，并以 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" validate --input -` 校验；它不运行命令、不保存状态，最终证据仍进入现有 Evidence Receipt/ledger。Trace 的 `source` 是最终源码的 Source Receipt。
 
-- `acceptance[]`：每个 `criterion` 至少一个测试，测试含唯一 `id`、`kind`（`unit|integration|e2e|contract`）、覆盖的 `scenarios` 和红/绿 Evidence Receipt。红灯为 `{"receipt": <observed receipt>, "cause":"missing_behavior"}`，必须真实非零且 source 不同于最终版本；绿灯为 `{"receipt": <observed receipt>}`，必须通过且其 source 等于 Trace 的最终 `source`。这绑定源码版本顺序，不伪造墙钟时间。不得填普通 command/exit-code 声明。
+- `acceptance[]`：每个 `criterion` 至少一个测试，测试含唯一 `id`、`selector`、`kind`（`unit|integration|e2e|contract`）、覆盖的 `scenarios` 和红/绿 Evidence Receipt。`selector` 必须作为独立 argv 元素同时出现在该测试的红绿回执中。红灯为 `{"receipt": <observed receipt>, "failure_class":"missing_behavior|assertion"}`，必须真实非零且 source 不同于最终版本；编译、环境、Mock 等失败类型一律拒绝。绿灯为 `{"receipt": <observed receipt>}`，必须通过且其 source 等于 Trace 的最终 `source`。这绑定源码版本顺序，不伪造墙钟时间。不得填普通 command/exit-code 声明。
 - 所有 trace 合计覆盖 `normal`、`boundary`、`error`。冻结风险会增加必测场景：权限/并发/幂等；事务；SQL、Mapper 与迁移的 integration；公共 API、跨服务与发布契约的 contract；安全与敏感数据。契约、事务和数据访问还要求对应 `kind`。
 - `impacts[]`：每条影响链含唯一 `id`、`relation`（`entrypoint|caller|shared-effect|external-contract`）和引用的测试 id。至少一条为改动入口；契约风险另须 `external-contract`。调用方或共享副作用未能验证时如实标为 `uncovered`，不得以局部绿灯宣称关联功能未受影响。
 
-测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。原生 `native-v1` 的 coverage 项目配置优先：`docs/00_standards/test-commands.yml` 的 coverage 命令优先于 `quality-targets.yml` 阈值；两者均无时按默认 >=85% 运行项目原生 coverage 命令并保留 Evidence Receipt。没有可执行 coverage 工具时为 `uncovered`。PDLC 与第三方 stage Provider 保持其已配置的门槛，Converge 不覆盖其规则。
+测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。原生 `native-v1` 先执行 `native_tdd_policy.py resolve --workspace <workspace>`：安全可拆分的 `docs/00_standards/test-commands.yml` coverage 命令返回为 argv 并优先执行；否则由 `quality-targets.yml` 提供阈值，再否则默认 >=85%。输出的 `threshold_source` 标示阈值来自 argv、项目目标或默认值；argv 未显式携带该阈值时，必须确认项目既有 coverage gate 等效。argv 为空时只能使用项目已有 coverage runner 注入该阈值；无法确认或得到可执行命令即为 `uncovered`。PDLC 与第三方 stage Provider 保持其已配置的门槛，Converge 不覆盖其规则。
 
 ## 委托契约
 

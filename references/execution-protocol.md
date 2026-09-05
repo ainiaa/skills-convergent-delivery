@@ -20,7 +20,7 @@
 
 1. 先写或更新测试并运行，红灯必须因目标行为缺失而失败；编译、Mock 或环境错误不是有效红灯。
 2. 只做最小实现使其变绿，不夹带重构和顺手修改。
-3. 用 `evidence_contract.py run` 运行定向验证，保留 observed Evidence Receipt；coverage 项目配置优先：`test-commands.yml` 的 coverage 命令、`quality-targets.yml` 的阈值依次优先，否则使用项目原生 coverage 命令并以默认 >=85% 执行。没有可执行工具时标为 `uncovered`。按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v2) 校验测试、风险与影响链回执。
+3. 用 `evidence_contract.py run` 运行定向验证，保留 observed Evidence Receipt；先以 `native_tdd_policy.py resolve --workspace <workspace>` 解析 coverage。安全的 `test-commands.yml` argv 优先；若其未显式携带 `threshold_source` 的阈值，先确认项目既有 coverage gate 等效；否则把 `quality-targets.yml` 或默认 >=85% 注入项目已有 coverage runner。无法确认或没有可执行工具时标为 `uncovered`。按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v3) 校验测试、风险与影响链回执。
 
 第三方 TDD 只承担这一次红绿阶段，不得创建第二套状态、循环、worktree、发布或删除文件。
 

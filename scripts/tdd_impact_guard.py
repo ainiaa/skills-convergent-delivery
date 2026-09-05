@@ -31,6 +31,7 @@ RISK_REQUIREMENTS = {
     "sensitive-log": ("sensitive-data", None),
 }
 CONTRACT_RISKS = {"public-api", "cross-service", "release-contract"}
+VALID_RED_FAILURE_CLASSES = {"missing_behavior", "assertion"}
 
 
 def require_string(value, name):
@@ -39,18 +40,20 @@ def require_string(value, name):
     return value
 
 
-def receipt(value, name, source, *, red):
-    required = {"receipt", "cause"} if red else {"receipt"}
+def receipt(value, name, source, selector, *, red):
+    required = {"receipt", "failure_class"} if red else {"receipt"}
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError(f"{name} fields are invalid")
     try:
         observed = validate_observed_evidence_receipt(value["receipt"])
     except ValueError as error:
         raise ValueError(f"{name} must reference an observed Evidence Receipt: {error}") from error
+    if selector not in observed["argv"]:
+        raise ValueError(f"{name} must execute the test selector")
     exit_code = observed["exit_code"]
     if red:
-        if exit_code == 0 or value.get("cause") != "missing_behavior":
-            raise ValueError(f"{name} must show a missing behavior failure")
+        if exit_code == 0 or value.get("failure_class") not in VALID_RED_FAILURE_CLASSES:
+            raise ValueError(f"{name} must show a target behavior failure")
         if observed["source"]["source_fingerprint"] == source["source_fingerprint"]:
             raise ValueError(f"{name} must precede the final trace source")
     elif exit_code != 0 or observed["source"] != source:
@@ -70,8 +73,8 @@ def validate(value):
         "schema_version", "source", "risk_flags", "acceptance", "impacts"
     }:
         raise ValueError("TDD impact trace fields are invalid")
-    if value.get("schema_version") != 2:
-        raise ValueError("TDD impact trace schema_version must be 2")
+    if value.get("schema_version") != 3:
+        raise ValueError("TDD impact trace schema_version must be 3")
     source = validate_source_receipt(value.get("source"))
     risks = value.get("risk_flags")
     if not isinstance(risks, list) or len(risks) != len(set(risks)) or not set(risks) <= RISK_FLAGS:
@@ -95,9 +98,14 @@ def validate(value):
         if not isinstance(tests, list) or not tests:
             raise ValueError(f"acceptance[{index}] requires at least one test reference")
         for test_index, test in enumerate(tests):
-            if not isinstance(test, dict) or set(test) != {"id", "kind", "scenarios", "red", "green"}:
+            if not isinstance(test, dict) or set(test) != {
+                "id", "selector", "kind", "scenarios", "red", "green"
+            }:
                 raise ValueError(f"acceptance[{index}].tests[{test_index}] fields are invalid")
             test_id = require_string(test.get("id"), f"acceptance[{index}].tests[{test_index}].id")
+            selector = require_string(
+                test.get("selector"), f"acceptance[{index}].tests[{test_index}].selector"
+            )
             if test_id in test_ids:
                 raise ValueError("test references are duplicated")
             test_ids.add(test_id)
@@ -109,8 +117,8 @@ def validate(value):
                     or not set(test_scenarios) <= SCENARIOS:
                 raise ValueError("test reference scenarios are invalid")
             scenarios.update(test_scenarios)
-            receipt(test.get("red"), "red receipt", source, red=True)
-            receipt(test.get("green"), "green receipt", source, red=False)
+            receipt(test.get("red"), "red receipt", source, selector, red=True)
+            receipt(test.get("green"), "green receipt", source, selector, red=False)
             test_references.append(test)
 
     missing = {"normal", "boundary", "error"} - scenarios

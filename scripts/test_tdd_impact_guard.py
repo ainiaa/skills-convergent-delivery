@@ -15,29 +15,37 @@ SPEC.loader.exec_module(tdd_impact_guard)
 
 
 def trace(workspace, baseline, *, risks=None):
-    def evidence(exit_code):
-        command = [sys.executable, "-c", f"raise SystemExit({exit_code})"]
+    def evidence(exit_code, selector):
+        command = [sys.executable, "-c", f"raise SystemExit({exit_code})", selector]
         return evidence_contract.run_evidence(workspace, baseline, command)
 
-    red = {"receipt": evidence(1), "cause": "missing_behavior"}
+    tests = []
+    for test_id, kind, scenarios in (
+        ("payment-normal", "unit", ["normal"]),
+        ("payment-boundary", "unit", ["boundary"]),
+        ("payment-error", "integration", ["error"]),
+    ):
+        tests.append({
+            "id": test_id,
+            "selector": test_id,
+            "kind": kind,
+            "scenarios": scenarios,
+            "red": {"receipt": evidence(1, test_id), "failure_class": "assertion"},
+            "green": None,
+        })
+
     (workspace / "implementation.txt").write_text("implemented\n", encoding="utf-8")
+    for test in tests:
+        test["green"] = {"receipt": evidence(0, test["selector"])}
     source = evidence_contract.workspace_source(workspace, baseline)
-    green = {"receipt": evidence(0)}
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": source,
         "risk_flags": risks or [],
         "acceptance": [{
             "criterion": "payment is rejected when the balance is insufficient",
-            "tests": [
-                {"id": "payment-normal", "kind": "unit", "scenarios": ["normal"],
-                 "red": red, "green": green},
-                {"id": "payment-boundary", "kind": "unit", "scenarios": ["boundary"],
-                 "red": red, "green": green},
-                {"id": "payment-error", "kind": "integration", "scenarios": ["error"],
-                 "red": red, "green": green},
-            ],
+            "tests": tests,
         }],
         "impacts": [{
             "id": "payment-api",
@@ -84,11 +92,18 @@ class TddImpactGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "test reference"):
             tdd_impact_guard.validate(value)
 
-    def test_red_receipt_must_show_a_missing_behavior_failure(self):
+    def test_red_receipt_must_show_a_target_behavior_failure(self):
         value = self.trace()
-        value["acceptance"][0]["tests"][0]["red"].pop("cause")
+        value["acceptance"][0]["tests"][0]["red"]["failure_class"] = "environment"
 
-        with self.assertRaisesRegex(ValueError, "red receipt"):
+        with self.assertRaisesRegex(ValueError, "target behavior"):
+            tdd_impact_guard.validate(value)
+
+    def test_each_receipt_must_execute_its_test_selector(self):
+        value = self.trace()
+        value["acceptance"][0]["tests"][0]["selector"] = "different-test"
+
+        with self.assertRaisesRegex(ValueError, "selector"):
             tdd_impact_guard.validate(value)
 
     def test_risk_flags_require_their_specific_test_scenarios(self):
@@ -109,25 +124,23 @@ class TddImpactGuardTest(unittest.TestCase):
         test = value["acceptance"][0]["tests"][2]
         test["kind"] = "integration"
         test["scenarios"].extend(["transaction", "sensitive-data"])
-        value["acceptance"][0]["tests"].append({
-            "id": "payment-contract", "kind": "contract", "scenarios": ["contract"],
-            "red": value["acceptance"][0]["tests"][0]["red"],
-            "green": value["acceptance"][0]["tests"][0]["green"],
-        })
+        contract = value["acceptance"][0]["tests"][0]
+        contract["kind"] = "contract"
+        contract["scenarios"].append("contract")
 
         with self.assertRaisesRegex(ValueError, "external-contract"):
             tdd_impact_guard.validate(value)
 
         value["impacts"].append({
             "id": "payment-contract", "relation": "external-contract",
-            "test_ids": ["payment-normal"],
+            "test_ids": ["payment-boundary"],
         })
         with self.assertRaisesRegex(ValueError, "contract test"):
             tdd_impact_guard.validate(value)
 
         value["impacts"][1] = {
             "id": "payment-contract", "relation": "external-contract",
-            "test_ids": ["payment-contract"],
+            "test_ids": ["payment-normal"],
         }
         self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
 
@@ -142,7 +155,8 @@ class TddImpactGuardTest(unittest.TestCase):
         value = self.trace()
         (self.workspace / "after.txt").write_text("changed\n", encoding="utf-8")
         value["acceptance"][0]["tests"][0]["green"]["receipt"] = evidence_contract.run_evidence(
-            self.workspace, self.baseline, [sys.executable, "-c", "raise SystemExit(0)"]
+            self.workspace, self.baseline,
+            [sys.executable, "-c", "raise SystemExit(0)", "payment-normal"],
         )
 
         with self.assertRaisesRegex(ValueError, "final trace source"):
@@ -152,9 +166,10 @@ class TddImpactGuardTest(unittest.TestCase):
         value = self.trace()
         value["acceptance"][0]["tests"][0]["red"] = {
             "receipt": evidence_contract.run_evidence(
-                self.workspace, self.baseline, [sys.executable, "-c", "raise SystemExit(1)"]
+                self.workspace, self.baseline,
+                [sys.executable, "-c", "raise SystemExit(1)", "payment-normal"],
             ),
-            "cause": "missing_behavior",
+            "failure_class": "assertion",
         }
 
         with self.assertRaisesRegex(ValueError, "precede"):

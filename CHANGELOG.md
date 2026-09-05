@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - TDD/Impact Trace 升级为 v2：红绿测试必须引用 `evidence_contract.py` 真实执行生成的 observed Evidence Receipt，红灯绑定不同于最终版本的源码、绿灯绑定最终源码；补充公共 seam、单一可观察行为和外部边界 mock 规则。原生 `native-v1` TDD coverage 默认门槛为 >=85%，项目配置优先使用 `docs/00_standards/test-commands.yml` 的 coverage 命令和 `quality-targets.yml` 阈值，无法运行时保持 `uncovered`。
+- TDD/Impact Trace 升级为 v3：每个测试以 selector 绑定红绿回执的实际 argv，红灯只接受 `missing_behavior` 或 `assertion`，拒绝编译、Mock 和环境失败；新增无副作用的原生 coverage 策略解析器，安全 argv 优先、配置阈值其次、默认 >=85%，无法解析或执行时保持 `uncovered`。
 - 新增轻量 TDD/Impact Trace 门禁：每条运行时验收项绑定测试标识、真实红绿命令回执和正常/边界/异常场景；冻结风险确定性要求权限、并发、幂等、事务、数据访问、契约、安全或敏感数据覆盖，并把改动入口及关联调用链绑定到最终回归测试。trace 不新增持久状态，缺少证据统一标为 `uncovered`。
 - PDLC workflow provider 改按稳定 Skill 路径、阶段完整性和任务语义兼容后续升级；新任务可接受兼容的内容变化，已冻结任务继续用逐文件指纹阻止运行中途漂移。
 - Superpowers 与 Matt Pocock 的 TDD adapter 同步改为按稳定入口与 TDD 语义兼容升级；已冻结 TDD 阶段仍拒绝中途替换 Skill 内容。
