@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import shlex
+import subprocess
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -15,33 +16,28 @@ TARGET_FILE = Path("docs/00_standards/quality-targets.yml")
 SHELL_SYNTAX = re.compile(r"[|&;<>()`$]")
 
 
-def scalar(path, names):
-    if not path.is_file():
-        return None
+def config_text(workspace, relative, revision=None):
+    if revision is not None:
+        result = subprocess.run(
+            ['git', '-C', str(workspace), 'show', f'{revision}:{relative}'],
+            capture_output=True, check=False,
+        )
+        return result.stdout.decode('utf-8') if result.returncode == 0 else ''
+    path = workspace / relative
+    return path.read_text(encoding='utf-8') if path.is_file() else ''
+
+
+def scalar(content, names):
     pattern = re.compile(r"^\s*(?:" + "|".join(map(re.escape, names)) + r")\s*:\s*(\S.*?)\s*$")
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in content.splitlines():
         match = pattern.match(line)
         if match:
             return match.group(1).strip().strip("\"'")
     return None
 
 
-def threshold(value):
-    if value is None:
-        return None
-    match = re.search(
-        r"(?:fail-under|thresholds\.lines|/p:threshold)\s*(?:=|\s)\s*(\d{1,3})\b",
-        value,
-        re.IGNORECASE,
-    )
-    if not match:
-        return None
-    candidate = int(match.group(1))
-    return candidate if 1 <= candidate <= 100 else None
-
-
-def target_threshold(workspace):
-    value = scalar(workspace / TARGET_FILE, ("coverage", "coverage_min", "line_coverage"))
+def target_threshold(workspace, revision=None):
+    value = scalar(config_text(workspace, TARGET_FILE, revision), ("coverage", "coverage_min", "line_coverage"))
     if value is None or not value.isdigit():
         return None
     candidate = int(value)
@@ -57,21 +53,25 @@ def resolved_threshold(command_threshold, target):
 
 
 def explicit_threshold(argv):
-    value = threshold(shlex.join(argv))
-    if value is None:
+    runner = coverage_runner(argv)
+    option = {
+        'pytest': '--cov-fail-under', 'py.test': '--cov-fail-under',
+        'coverage': '--fail-under', 'coverage.py': '--fail-under',
+        'cargo': '--fail-under', 'cargo-tarpaulin': '--fail-under', 'grcov': '--fail-under',
+        'vitest': '--coverage.thresholds.lines', 'dotnet': '/p:threshold',
+    }.get(runner)
+    values = []
+    for index, argument in enumerate(argv):
+        argument = argument.casefold() if runner == 'dotnet' else argument
+        if argument == option:
+            values.append(argv[index + 1] if index + 1 < len(argv) else '')
+        elif option and argument.startswith(option + '='):
+            values.append(argument[len(option) + 1:])
+    if not values:
         return None
-    runners = {coverage_runner(argv)}
-    arguments = " ".join(argv).casefold()
-    if "/p:threshold" in arguments:
-        return value if "dotnet" in runners else None
-    if "thresholds.lines" in arguments:
-        return value if "vitest" in runners else None
-    if "fail-under" in arguments:
-        coverage_runners = {
-            "pytest", "py.test", "coverage", "coverage.py", "cargo", "cargo-tarpaulin", "grcov",
-        }
-        return value if runners & coverage_runners else None
-    return None
+    if len(values) != 1 or not re.fullmatch(r'[0-9]{1,3}', values[0]) or not 1 <= int(values[0]) <= 100:
+        raise ValueError('coverage threshold must be one unambiguous integer in 1..100')
+    return int(values[0])
 
 
 def adapt_coverage_argv(argv, threshold_value):
@@ -80,7 +80,8 @@ def adapt_coverage_argv(argv, threshold_value):
     if {"pytest", "py.test"} & runners and coverage_enabled:
         return [*argv, f"--cov-fail-under={threshold_value}"]
     if "vitest" in runners and any(argument.startswith("--coverage") for argument in argv):
-        return [*argv, f"--coverage.thresholds.lines={threshold_value}"]
+        return [*('--coverage.enabled' if item == '--coverage' else item for item in argv),
+                f"--coverage.thresholds.lines={threshold_value}"]
     return None
 
 
@@ -100,18 +101,34 @@ def coverage_runner(argv):
 def collection_disabled(argv):
     runner = coverage_runner(argv)
     lowered = [item.casefold() for item in argv]
+    if '--' in argv:
+        return True
     if runner in {'pytest', 'py.test'}:
-        return '--no-cov' in argv or not any(item == '--cov' or item.startswith('--cov=') for item in argv)
+        enabled = False
+        for item in argv:
+            if item == '--cov-reset':
+                enabled = False
+            elif item == '--cov' or item.startswith('--cov='):
+                enabled = True
+        return not enabled or any(item in argv for item in ('--no-cov', '--collect-only', '--co'))
     if runner == 'dotnet':
         return (len(argv) < 2 or argv[1] != 'test'
                 or '/p:collectcoverage=true' not in lowered
                 or '/p:collectcoverage=false' in lowered)
     if runner == 'vitest':
-        return any(item in lowered for item in ('--no-coverage', '--coverage=false', '--coverage.enabled=false'))
+        enabled = any(item in lowered for item in ('--coverage', '--coverage=true', '--coverage.enabled', '--coverage.enabled=true'))
+        disabled = any(item in lowered for item in ('--no-coverage', '--coverage=false', '--coverage.enabled=false'))
+        disabled = disabled or any(
+            item in {'--coverage', '--coverage.enabled'} and index + 1 < len(lowered)
+            and lowered[index + 1] == 'false' for index, item in enumerate(lowered)
+        )
+        return not enabled or disabled
     if runner in {'mvn', 'mvnw'}:
         return any(item in lowered for item in ('-djacoco.skip=true', '-dskiptests', '-dskiptests=true', '-dmaven.test.skip=true'))
     if runner in {'gradle', 'gradlew'}:
         return '--dry-run' in argv or '-m' in argv or any(
+            item in {'--exclude-task=test', '--exclude-task=jacocoTestCoverageVerification'} for item in argv
+        ) or any(
             item in {'-x', '--exclude-task'} and index + 1 < len(argv)
             and argv[index + 1] in {'test', 'jacocoTestCoverageVerification'}
             for index, item in enumerate(argv)
@@ -131,24 +148,25 @@ def percentage(value):
     return int(candidate)
 
 
-def project_gate_threshold(workspace, argv):
+def project_gate_threshold(workspace, argv, revision=None):
     runners = {coverage_runner(argv)}
     gate_files = ()
     pattern = None
     if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
-        gate_files = (workspace / "pom.xml",)
+        gate_files = ("pom.xml",)
         pattern = r"<counter>\s*(?:LINE|INSTRUCTION)\s*</counter>.*?<minimum>\s*([0-9.]+)\s*</minimum>"
     elif {"gradle", "gradlew"} & runners and "jacocoTestCoverageVerification" in argv:
-        gate_files = (workspace / "build.gradle", workspace / "build.gradle.kts")
+        gate_files = ("build.gradle", "build.gradle.kts")
         pattern = r"counter\s*=\s*['\"](?:LINE|INSTRUCTION)['\"].*?minimum\s*=\s*([0-9.]+)"
     if pattern is None:
         return None
     for path in gate_files:
-        if path.is_file():
+        content = config_text(workspace, path, revision)
+        if content:
             thresholds = [
                 candidate for candidate in (
                     percentage(match.group(1))
-                    for match in re.finditer(pattern, path.read_text(encoding="utf-8"), re.DOTALL)
+                    for match in re.finditer(pattern, content, re.DOTALL)
                 ) if candidate is not None
             ]
             if thresholds:
@@ -156,10 +174,10 @@ def project_gate_threshold(workspace, argv):
     return None
 
 
-def resolve(workspace):
+def resolve(workspace, *, revision=None):
     workspace = Path(workspace).expanduser().resolve()
-    configured = scalar(workspace / COMMAND_FILE, ("coverage",))
-    target = target_threshold(workspace)
+    configured = scalar(config_text(workspace, COMMAND_FILE, revision), ("coverage",))
+    target = target_threshold(workspace, revision)
     threshold_value, threshold_source = resolved_threshold(None, target)
     if configured:
         if SHELL_SYNTAX.search(configured):
@@ -184,7 +202,14 @@ def resolve(workspace):
                 'threshold': threshold_value, 'threshold_source': threshold_source,
                 'reason': 'coverage command cannot enforce coverage: collection or verification is disabled',
             }
-        configured_threshold = explicit_threshold(argv)
+        try:
+            configured_threshold = explicit_threshold(argv)
+        except ValueError as error:
+            return {
+                'status': 'uncovered', 'source': 'test-commands.yml', 'argv': None,
+                'threshold': threshold_value, 'threshold_source': threshold_source,
+                'reason': str(error),
+            }
         threshold_value, threshold_source = resolved_threshold(configured_threshold, target)
         if configured_threshold:
             return {
@@ -197,7 +222,7 @@ def resolve(workspace):
                 "status": "ready", "source": "test-commands.yml", "argv": adapted,
                 "threshold": threshold_value, "threshold_source": "adapter",
             }
-        project_gate = project_gate_threshold(workspace, argv)
+        project_gate = project_gate_threshold(workspace, argv, revision)
         if project_gate is not None and project_gate >= threshold_value:
             return {
                 "status": "ready", "source": "test-commands.yml", "argv": argv,
@@ -221,8 +246,8 @@ def resolve(workspace):
     }
 
 
-def require_matching_coverage(coverage, workspace):
-    policy = resolve(workspace)
+def require_matching_coverage(coverage, workspace, *, revision=None):
+    policy = resolve(workspace, revision=revision)
     if policy['status'] != 'ready':
         raise ValueError('native coverage policy is not ready')
     if coverage['threshold'] != policy['threshold'] or coverage['receipt']['argv'] != policy['argv']:

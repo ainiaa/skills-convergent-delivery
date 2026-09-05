@@ -22,7 +22,7 @@ from delivery_next import (
     validate_provider_binding as validate_complete_provider_binding,
     validate_state as validate_delegate_state,
 )
-from evidence_contract import validate_source_receipt
+from evidence_contract import validate_source_receipt, workspace_source
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -253,6 +253,35 @@ def delegate_state_path(root, repo_id, task_id, run_id):
     )
 
 
+def validate_committed_source(workspace, source, commit_id):
+    """Compare baseline plus observed edits with a checkpoint, without checking it out."""
+    def entries(revision):
+        result = {}
+        for record in git_output(workspace, 'ls-tree', '-rz', revision).split('\0'):
+            if record:
+                metadata, path = record.split('\t', 1)
+                result[path] = metadata.split()
+        return result
+
+    baseline = entries(source['baseline_commit'])
+    committed = entries(commit_id)
+    for entry in source['changed_entries']:
+        path = entry['path']
+        baseline.pop(path, None)
+        actual = committed.pop(path, None)
+        if entry['kind'] == 'deleted':
+            if actual is not None:
+                raise ValueError('checkpoint retains a deleted verified path')
+            continue
+        if actual is None or actual[0] != entry['mode'] or actual[1] != 'blob':
+            raise ValueError('checkpoint does not contain the verified path and mode')
+        content = subprocess.check_output(['git', '-C', workspace, 'cat-file', 'blob', actual[2]])
+        if hashlib.sha256(content).hexdigest() != entry['content_fingerprint']:
+            raise ValueError('checkpoint does not contain the verified content')
+    if baseline != committed:
+        raise ValueError('checkpoint differs outside the verified changes')
+
+
 def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, previous_commit=None):
     receipt = require_mapping(receipt, f"receipt {batch['batch_id']}")
     if receipt.get("protocol_version") != 4:
@@ -299,8 +328,6 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         for field in ("task_kind", "binding", "binding_fingerprint")
     ):
         raise ValueError("receipt delegate state provider binding does not match")
-    if validate_delegate_state(delegate_state, SimpleNamespace()) != "complete":
-        raise ValueError("receipt delegate state is not complete")
     commit_id = require_string(receipt.get("commit_id"), "receipt.commit_id")
     commit_id = git_output(workspace, "rev-parse", "--verify", f"{commit_id}^{{commit}}")
     commit_tree = git_output(workspace, "rev-parse", f"{commit_id}^{{tree}}")
@@ -309,6 +336,13 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt was not verified against the committed tree")
     if tree_hash != commit_tree:
         raise ValueError("receipt tree does not match its Git commit")
+    validate_committed_source(workspace, source_receipt, commit_id)
+    if validate_delegate_state(
+        delegate_state, SimpleNamespace(), check_workspace=False, coverage_revision=commit_id,
+    ) != 'complete':
+        raise ValueError('receipt delegate state is not complete')
+    if batch['status'] == 'validating-receipt':
+        validate_committed_source(workspace, workspace_source(workspace, batch['capsule']['baseline']), commit_id)
     expected_parent = previous_commit or batch["capsule"]["baseline"]
     if receipt.get("parent_commit_id") != expected_parent:
         raise ValueError("receipt parent commit does not match the batch chain")
@@ -477,6 +511,11 @@ def validate_state(state):
     if status == "complete":
         if completed_prefix != len(batches):
             raise ValueError("all batches must be completed")
+        last = batches[-1]
+        validate_committed_source(
+            state['workspace'], workspace_source(state['workspace'], last['capsule']['baseline']),
+            last['receipt']['commit_id'],
+        )
         final_source = batches[-1]["receipt"]["delegate_source_fingerprint"]
         validate_evidence(
             state["final_acceptance"], "final_acceptance", require_pass=True,

@@ -2,6 +2,19 @@
 
 本轮按受影响能力先从 Skills.sh/GitHub 发现近期实现，再核对原始 Skill、脚本与测试。安装量只用于发现；最终只采用能关闭已复现失败、且有本地行为测试的最小机制。
 
+## 2026-09-05 Batch 与覆盖率验收修复
+
+本次沿用同一会话审查中已核对的 Skills.sh 发现结果及原始材料，不重复加载完整第三方流程。
+
+| 参考 | 采用 / 不采用 | 原因与行为验证 |
+|---|---|---|
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用参数组合与状态不变量；不新增测试依赖 | `test_native_tdd_policy.py` 覆盖重复、顺序、禁用与有效边界；`test_batch_state.py` 验证合法后续修改不损坏历史 checkpoint |
+| [LangChain calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用验收器误拒绝/误放行反例；不增加模型数量 | 两批真实 Git 提交应完成；未提交的验证内容不能冒充旧提交，提交也不能增加未验证文件 |
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) | 采用测量可被关闭的检查；不增加定时控制器和记忆文件 | collect-only、cov-reset、Vitest 未启用和 Gradle 排除检查任务都不能返回 ready |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [WalkingLabs harness-creator](https://github.com/walkinglabs/learn-harness-engineering/blob/main/skills/harness-creator/SKILL.md) | 保留旧 Controller Snapshot，区分结构测试与真实行为；不复制额外状态文件或结构评分门禁 | 原状态、Source Receipt 与 Git checkpoint 足够承载修复；本地回归不冒充缺失 bridge 的正式 Eval |
+
+实现取舍：直接读取不可变 Git tree/blob 与对应配置，复用现有 delegate、TDD 和 Evidence 校验；不切换工作区、不新增 checkout/状态 schema/代理。暂停或后续批次修改不会使历史回执失效；当前回执与最终验收仍检查源码一致性。
+
 | 参考 | 采用 | 原因与本地行为测试 |
 |---|---|---|
 | [OpenAI evaluate-skill](https://github.com/openai/plugins/blob/main/plugins/plugin-eval/skills/evaluate-skill/SKILL.md) | control/candidate 同场景差分、冻结判定面 | `test_eval_kernel.py` 验证 Git 双侧来源、同一 judge 和差分统计 |

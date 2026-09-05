@@ -69,6 +69,8 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源，并要求回执中的 Source Receipt v2 与正式状态完全一致。completed receipt 必须覆盖 capsule 全部 acceptance，全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
+checkpoint 的真实 Git tree 必须等于 Source Receipt 的基线加逐文件改动，包含内容、删除、权限和符号链接；不能遗漏验证内容或夹带额外文件。允许先验证再提交相同内容。历史 delegate 仍完整校验身份、Trace 和 Evidence，但 coverage 配置从对应 checkpoint 读取，不要求旧源码等于后续批次的工作区。当前 `validating-receipt` 与计划最终 `complete` 仍要求工作区内容匹配对应 checkpoint。此检查不切换 checkout，也不产生第二套状态。
+
 ## Final acceptance
 
 计划 complete 前，所有 Batch 必须 completed，所有本 run worker 都已进入宿主终态，`current_batch` 为空，并且 `final_acceptance` 的每一项都有新鲜通过证据。单批通过不能替代整体集成验收；上一 worker 未终结或 receipt 未通过时不得派发下一批。

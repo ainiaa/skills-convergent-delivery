@@ -57,7 +57,7 @@ def capsule(batch_id, plan_id="plan-1", task_id=None, baseline="abc123"):
     }
 
 
-def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
+def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None, baseline=None):
     value = {
         "protocol_version": 4,
         "batch_id": batch_id,
@@ -65,7 +65,7 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
         "commit_id": commit_id,
         "tree_hash": tree_hash,
         "verified_tree_hash": tree_hash,
-        "parent_commit_id": commit_id,
+        "parent_commit_id": baseline or commit_id,
         "acceptance": [
             {
                 "criterion": f"accept-{batch_id}",
@@ -87,10 +87,10 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
             task_key=batch_id.replace("B", "T"),
             status="complete",
             current_stage="verify-final",
-            baseline={"commit": commit_id, "diff_fingerprint": "clean"},
+            baseline={"commit": baseline or commit_id, "diff_fingerprint": "clean"},
         ))
         try:
-            child["source_receipt"] = workspace_source(workspace, commit_id)
+            child["source_receipt"] = workspace_source(workspace, baseline or commit_id)
         except ValueError:
             child["source_receipt"] = workspace_source(workspace, "HEAD")
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
@@ -223,6 +223,97 @@ class BatchStateTest(unittest.TestCase):
     def write(self, state, expected_revision):
         return batch_state.write_state(self.root, state, expected_revision)
 
+    def completed_first_batch(self):
+        state = candidate(self.workspace)
+        state['batches'][0].update(status='completed', dispatch_id='dispatch-B1')
+        register_worker(state, 0, 'thread-1')
+        state['batches'][0]['worker_status'] = 'completed'
+        state['batches'][0]['receipt'] = receipt(
+            'B1', 'dispatch-B1', self.commit_id, self.tree_hash, self.workspace
+        )
+        state['current_batch'] = 'B2'
+        return state
+
+    def test_later_batch_edits_and_coverage_changes_preserve_historical_receipts(self):
+        state = self.completed_first_batch()
+        state['batches'][1].update(status='running', dispatch_id='dispatch-B2')
+        register_worker(state, 1, 'thread-2')
+        batch_state.validate_state(state)
+        (self.workspace / 'seed.txt').write_text('Batch 2 implementation\n')
+        (self.workspace / 'docs/00_standards/test-commands.yml').write_text('coverage: invalid\n')
+        batch_state.validate_state(state)
+        subprocess.run(['git', '-C', str(self.workspace), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'Batch 2'], check=True)
+        batch_state.validate_state(state)
+        state['status'] = 'paused'
+        batch_state.validate_state(state)
+
+    def test_receipt_rejects_verified_edits_missing_from_checkpoint(self):
+        for kind in ('modified', 'untracked', 'deleted', 'mode', 'symlink'):
+            with self.subTest(kind=kind):
+                seed = self.workspace / 'seed.txt'
+                if seed.is_symlink():
+                    seed.unlink()
+                seed.write_text('seed\n')
+                seed.chmod(0o644)
+                extra = self.workspace / 'extra.txt'
+                extra.unlink(missing_ok=True)
+                if kind == 'modified':
+                    seed.write_text('verified new content\n')
+                elif kind == 'untracked':
+                    extra.write_text('verified new file\n')
+                elif kind == 'deleted':
+                    seed.unlink()
+                elif kind == 'mode':
+                    seed.chmod(0o755)
+                else:
+                    seed.unlink()
+                    seed.symlink_to('extra.txt')
+                state = self.completed_first_batch()
+                with self.assertRaisesRegex(ValueError, 'committed|checkpoint'):
+                    batch_state.validate_state(state)
+
+    def test_evidence_before_commit_can_bind_to_the_matching_checkpoint(self):
+        (self.workspace / 'seed.txt').write_text('verified implementation\n')
+        executable = self.workspace / 'new.bin'
+        executable.write_bytes(b'\x00\xff\n')
+        executable.chmod(0o755)
+        (self.workspace / 'link').symlink_to('new.bin')
+        state = self.completed_first_batch()
+        subprocess.run(['git', '-C', str(self.workspace), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'checkpoint'], check=True)
+        checkpoint = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD'], text=True).strip()
+        tree = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+        state['batches'][0]['receipt'].update(commit_id=checkpoint, tree_hash=tree, verified_tree_hash=tree)
+        batch_state.validate_state(state)
+        # Historical state validation must still reject damaged evidence.
+        path = delegate_state_path(self.workspace.parent / 'delegate-state', state['repo_id'], 'T1', 'delegate-B1')
+        child = json.loads(path.read_text())
+        child['ledger']['acceptance'][0]['evidence_receipts'][0]['exit_code'] = 1
+        path.write_text(json.dumps(child))
+        with self.assertRaises(ValueError):
+            batch_state.validate_state(state)
+
+    def test_checkpoint_cannot_add_unverified_files(self):
+        state = self.completed_first_batch()
+        (self.workspace / 'unexpected.txt').write_text('not verified\n')
+        subprocess.run(['git', '-C', str(self.workspace), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'unexpected'], check=True)
+        checkpoint = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD'], text=True).strip()
+        tree = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+        state['batches'][0]['receipt'].update(commit_id=checkpoint, tree_hash=tree, verified_tree_hash=tree)
+        with self.assertRaisesRegex(ValueError, 'outside the verified changes'):
+            batch_state.validate_state(state)
+
+    def test_current_receipt_rejects_workspace_drift_after_verification(self):
+        state = self.completed_first_batch()
+        state['batches'][0]['status'] = 'validating-receipt'
+        state['current_batch'] = 'B1'
+        batch_state.validate_state(state)
+        (self.workspace / 'seed.txt').write_text('unverified changes\n')
+        with self.assertRaisesRegex(ValueError, 'checkpoint'):
+            batch_state.validate_state(state)
+
     def test_plan_state_path_is_stable_across_scheduler_takeover(self):
         repo = str(self.workspace / ".git")
         first = batch_state.state_path(self.root, repo, "plan-1", "run-1")
@@ -329,10 +420,15 @@ class BatchStateTest(unittest.TestCase):
         register_worker(state, 0, "thread-1")
         self.write(state, 1)
 
+        (self.workspace / 'seed.txt').write_text('Batch 1 implementation\n')
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qam', 'Batch 1'], check=True)
+        first_commit = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD'], text=True).strip()
+        first_tree = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+
         state["revision"] = 3
         state["batches"][0]["status"] = "validating-receipt"
         state["batches"][0]["receipt"] = receipt(
-            "B1", "dispatch-B1", self.commit_id, self.tree_hash, self.workspace
+            "B1", "dispatch-B1", first_commit, first_tree, self.workspace, baseline=self.commit_id
         )
         self.write(state, 2)
 
@@ -350,11 +446,16 @@ class BatchStateTest(unittest.TestCase):
         state["batches"][1]["status"] = "running"
         register_worker(state, 1, "thread-2")
         self.write(state, 5)
+        (self.workspace / 'seed.txt').write_text('Batch 2 implementation\n')
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qam', 'Batch 2'], check=True)
+        second_commit = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD'], text=True).strip()
+        second_tree = subprocess.check_output(['git', '-C', str(self.workspace), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
         state["revision"] = 7
         state["batches"][1]["status"] = "validating-receipt"
         state["batches"][1]["receipt"] = receipt(
-            "B2", "dispatch-B2", self.commit_id, self.tree_hash, self.workspace
+            "B2", "dispatch-B2", second_commit, second_tree, self.workspace, baseline=self.commit_id
         )
+        state['batches'][1]['receipt']['parent_commit_id'] = first_commit
         self.write(state, 6)
         state["revision"] = 8
         state["batches"][1]["status"] = "completed"
@@ -372,6 +473,9 @@ class BatchStateTest(unittest.TestCase):
         ]
         self.write(state, 8)
         self.assertEqual(9, json.loads(path.read_text(encoding="utf-8"))["revision"])
+        (self.workspace / 'seed.txt').write_text('unverified final change\n')
+        with self.assertRaisesRegex(ValueError, 'checkpoint'):
+            batch_state.validate_state(state)
 
     def test_应该_当worker启动时_原子登记身份归属和活动状态(self):
         state = lifecycle_candidate(self.workspace)

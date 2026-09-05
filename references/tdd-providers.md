@@ -50,3 +50,5 @@ native 运行时任务（含第三方 TDD stage）第一次业务写入前执行
 冻结后的提供者路径和内容摘要不可改变。恢复时路径缺失、内容变更或不再满足相应能力即环境阻塞；不得换用另一个第三方 Skill 或内置流程继续。
 
 coverage 解析只识别实际入口、受支持的 `python -m` 和 Vitest launcher，不从任意参数猜 runner；`--no-cov`、关闭 CollectCoverage、JaCoCo skip 与 Gradle dry-run 等已知禁用形式保持 `uncovered`。配置识别仍不证明采集工具已安装或实际达标，最终必须执行冻结命令。
+
+阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。暂不支持带 `--` 参数分隔符的 coverage 命令。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。

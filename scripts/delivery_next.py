@@ -99,7 +99,7 @@ def require_mapping(value, name):
     return value
 
 
-def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required, workspace):
+def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required, workspace, coverage_revision=None):
     if value is None:
         if required:
             raise ValueError("native complete state requires a passing TDD trace")
@@ -125,7 +125,7 @@ def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_crit
         raise ValueError("native complete state requires a passing TDD trace")
     if required:
         from native_tdd_policy import require_matching_coverage
-        require_matching_coverage(value['coverage'], workspace)
+        require_matching_coverage(value['coverage'], workspace, revision=coverage_revision)
 
 
 def normalize_open_issues(value):
@@ -608,7 +608,7 @@ def validate_host_sync(host_sync):
             require_string(fallback[field], f"host_sync.fallback.{field}")
 
 
-def validate_state(state, arguments, *, check_workspace=True):
+def validate_state(state, arguments, *, check_workspace=True, coverage_revision=None):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
     strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
     state = upgrade_state(state)
@@ -1038,6 +1038,7 @@ def validate_state(state, arguments, *, check_workspace=True):
             [item["criterion"] for item in acceptance],
             required=workflow_provider == "native-v1",
             workspace=workspace,
+            coverage_revision=coverage_revision,
         )
         if runner_launches and not runner_complete:
             raise ValueError("complete state requires every frozen runner launch to complete")

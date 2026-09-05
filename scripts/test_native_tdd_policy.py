@@ -11,6 +11,46 @@ SPEC.loader.exec_module(native_tdd_policy)
 
 
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_conflicting_thresholds_and_inactive_gates_are_rejected(self):
+        commands = (
+            'pytest --cov --cov-fail-under=85 --cov-fail-under=1',
+            'pytest --cov --cov-fail-under 1 --cov-fail-under 85',
+            'pytest --cov --cov-fail-under=85 --cov-fail-under=85',
+            'pytest --cov --cov-fail-under=85 --collect-only',
+            'pytest --cov --cov-fail-under=85 --co',
+            'pytest --cov --cov-reset --cov-fail-under=85',
+            'pytest --cov --cov-fail-under=85.5',
+            'pytest --cov --cov-fail-under=invalid',
+            'pytest --cov -- --cov-fail-under=85',
+            'npx vitest run --coverage.thresholds.lines=85',
+            'npx vitest run --coverage.enabled=false --coverage.thresholds.lines=85',
+            'npx vitest run --coverage.enabled false --coverage.thresholds.lines=85',
+            'gradle test jacocoTestCoverageVerification --exclude-task=jacocoTestCoverageVerification',
+        )
+        for command in commands:
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                standard = workspace / 'docs/00_standards'
+                standard.mkdir(parents=True)
+                (standard / 'test-commands.yml').write_text(f'coverage: {command}\n')
+                (workspace / 'build.gradle').write_text("counter = 'LINE'\nminimum = 0.85")
+                self.assertEqual('uncovered', native_tdd_policy.resolve(workspace)['status'])
+
+    def test_enabled_collection_and_exact_threshold_values_remain_supported(self):
+        commands = (
+            'pytest --cov-reset --cov=src --cov-fail-under 85',
+            'pytest --cov --cov-fail-under=1',
+            'pytest --cov --cov-fail-under=100',
+            'npx vitest run --coverage.enabled --coverage.thresholds.lines=85',
+            'npx vitest run --coverage.enabled=true --coverage.thresholds.lines=85',
+        )
+        for command in commands:
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                standard = Path(directory) / 'docs/00_standards'
+                standard.mkdir(parents=True)
+                (standard / 'test-commands.yml').write_text(f'coverage: {command}\n')
+                self.assertEqual('ready', native_tdd_policy.resolve(directory)['status'])
+
     def test_runner_arguments_and_disabled_collection_cannot_claim_coverage(self):
         commands = (
             'echo pytest --cov-fail-under=85',

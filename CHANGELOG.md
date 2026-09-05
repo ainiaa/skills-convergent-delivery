@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Batch 历史回执按已验证的 checkpoint 源码和覆盖率配置复核，后续批次修改不再使前一批误判失效；当前回执与最终验收仍检查工作区漂移。连续生命周期测试改为两批真实修改并提交。
+- Batch 将 Source Receipt 的基线与逐文件改动绑定到提交树，拒绝旧提交遗漏已验证内容、文件权限/符号链接不匹配，以及提交夹带未验证文件；支持验证后提交相同内容。
+- coverage 按实际 runner 的完整参数解析阈值，拒绝重复、非整数与歧义参数；识别 pytest collect-only/cov-reset、Vitest 未启用采集及 Gradle exclude-task 等失效门禁，不静默追加阈值覆盖错误配置。
 - native 完成入口与最终 rerun 共用 coverage 策略校验，拒绝缺失项目配置、错误命令或不匹配阈值；PDLC 保持自身策略。状态测试改用独立临时项目中的显式 coverage 配置。
 - coverage 只识别实际可执行入口及受支持的 Python module / Vitest launcher，拒绝参数中伪装的 runner 名称，以及关闭采集、跳过检查或 dry-run 的已知形式。
 - Evidence 命令使用独立进程组，超时及退出时清理本次派生的进程；清理等待有界，不能确认清理时不签发回执。
