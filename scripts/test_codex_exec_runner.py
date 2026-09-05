@@ -36,6 +36,62 @@ def profile(**overrides):
 
 
 class CodexExecRunnerTest(unittest.TestCase):
+    def test_leaf_commands_override_agent_settings_for_readers_and_writers(self):
+        for access in ("read", "write"):
+            with self.subTest(access=access), mock.patch("codex_exec_runner._is_isolated_worktree", return_value=True):
+                worker_profile = profile(permissions={"workspace": access, "shell": True, "network": "egress"})
+                launch = plan_launch(worker_profile, "probe", workspace="/tmp", codex_bin=sys.executable)
+                command = command_for_launch(launch, "probe")
+                overrides = dict(command[i + 1].split("=", 1) for i, value in enumerate(command) if value == "-c")
+                self.assertEqual("false", overrides.get("agents.enabled"))
+                self.assertEqual("false", overrides.get("features.multi_agent"))
+                self.assertEqual("false", overrides.get("features.multi_agent_v2"))
+                self.assertEqual("workspace-write" if access == "write" else "read-only",
+                                 command[command.index("--sandbox") + 1])
+                self.assertEqual(worker_profile["effective"]["model"], command[command.index("-m") + 1])
+
+    def test_reader_and_progress_errors_never_deliver_partial_success(self):
+        import claude_exec_runner
+        from test_claude_exec_runner import profile as claude_profile
+
+        class FaultyStream(io.BytesIO):
+            def read(self, size=-1):
+                data = super().read(size)
+                if not data:
+                    raise OSError("injected pipe failure")
+                return data
+
+        for module, worker_profile, binary_option, output in (
+            (__import__("codex_exec_runner"), profile(
+                permissions={"workspace": "read", "shell": True, "network": "egress"},
+            ), "codex_bin", b'{"item":{"type":"agent_message","text":"partial"}}\n'),
+            (claude_exec_runner, claude_profile(), "claude_bin", b'{"result":"partial"}'),
+        ):
+            for fault in ("stdout-empty", "stdout-partial", "stderr-empty", "stderr-partial", "progress"):
+                with self.subTest(runner=worker_profile["runner_id"], fault=fault):
+                    process = mock.Mock(pid=None, stdin=io.BytesIO(), stdout=io.BytesIO(output),
+                                        stderr=io.BytesIO())
+                    process.wait.return_value = 0
+                    callback = None
+                    if fault == "progress":
+                        callback = mock.Mock(side_effect=RuntimeError("progress unavailable"))
+                    else:
+                        stream, portion = fault.split("-")
+                        setattr(process, stream, FaultyStream(output if portion == "partial" else b""))
+                    launch = module.plan_launch(worker_profile, "probe", workspace="/tmp",
+                                                **{binary_option: sys.executable})
+                    with mock.patch.object(threading, "excepthook") as uncaught:
+                        receipt, content = module.execute_launch(
+                            launch, "probe", allow_execute=True, capture_content=True,
+                            process_factory=lambda *_args, **_kwargs: process, on_progress=callback,
+                        )
+                    self.assertEqual("unknown", receipt["status"])
+                    self.assertEqual("RuntimeError" if callback else "OSError", receipt["error_type"])
+                    self.assertIsNone(content)
+                    process.kill.assert_called()
+                    uncaught.assert_not_called()
+                    self.assertTrue(all(getattr(process, name).closed for name in ("stdin", "stdout", "stderr")))
+
     def test_exit_cleans_redirected_children_for_both_runners(self):
         import claude_exec_runner
         from test_claude_exec_runner import profile as claude_profile

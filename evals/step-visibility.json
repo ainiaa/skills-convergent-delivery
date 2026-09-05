@@ -1,0 +1,1020 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "visible-two-steps",
+      "prompt": "先写 plan，再逐步修复两个已知问题；没有宿主计划工具也要展示每步结果。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "pass"
+    },
+    {
+      "id": "next-step-before-result",
+      "prompt": "顺序执行工具，但直到开始第二步才汇报第一步结果。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "fail"
+    },
+    {
+      "id": "hidden-result",
+      "prompt": "第一步完成信息仅存在折叠工具输出中。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": false,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "fail"
+    },
+    {
+      "id": "stop-on-failure",
+      "prompt": "第一步测试失败，展示失败结果后停止推进。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "fail"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "blocked",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "pass"
+    },
+    {
+      "id": "resume-without-reexecution",
+      "prompt": "恢复执行，第一步已有完成证据，只继续第二步。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [
+          "T1"
+        ],
+        "events": [
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "pass"
+    },
+    {
+      "id": "resume-reexecutes-completed",
+      "prompt": "恢复时为了补展示重新执行已完成的第一步。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [
+          "T1"
+        ],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "unavailable",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "fail"
+    },
+    {
+      "id": "failed-sync-continues-text-without-retry",
+      "prompt": "先写 plan，再逐步修复两个已知问题；没有宿主计划工具也要展示每步结果。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "failed",
+              "receipt_ref": "sync-call-1",
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "pass"
+    },
+    {
+      "id": "failed-sync-missing-receipt",
+      "prompt": "先写 plan，再逐步修复两个已知问题；没有宿主计划工具也要展示每步结果。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "failed",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "uncovered"
+    },
+    {
+      "id": "persisted-text-after-tool-reconnection",
+      "prompt": "继续已有文字降级任务；工具重连后沿用已记录的 text 模式。",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true,
+              "fallback": {
+                "reason": "unavailable",
+                "evidence_ref": "tool-list-1",
+                "disclosure_ref": "message-1"
+              }
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "not_called",
+              "receipt_ref": null,
+              "fallback_disclosed": true
+            }
+          }
+        ]
+      },
+      "expected_status": "pass"
+    },
+    {
+      "id": "native-merged-step-update",
+      "prompt": "一次实际计划更新完成 T1 并开始 T2。",
+      "expected_status": "pass",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-0",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "in_progress"
+                },
+                {
+                  "step": "T2",
+                  "status": "pending"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-4",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-4",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-7",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "completed"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "native-receipt-reused-for-different-states",
+      "prompt": "同一首次调用引用不能证明后续不同计划状态。",
+      "expected_status": "fail",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "same-first-call",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "in_progress"
+                },
+                {
+                  "step": "T2",
+                  "status": "pending"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "same-first-call",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "pending"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "same-first-call",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "same-first-call",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "completed"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "native-call-without-projection",
+      "prompt": "有成功回执但没有对应计划投影的旧轨迹。",
+      "expected_status": "uncovered",
+      "trace": {
+        "schema_version": 1,
+        "evidence_level": "fixture",
+        "steps": [
+          "T1",
+          "T2"
+        ],
+        "completed_before": [],
+        "events": [
+          {
+            "step": "T1",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-0",
+              "fallback_disclosed": false
+            }
+          },
+          {
+            "step": "T1",
+            "kind": "edit"
+          },
+          {
+            "step": "T1",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T1",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-3",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "pending"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "start",
+            "visible": true,
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-4",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          },
+          {
+            "step": "T2",
+            "kind": "edit"
+          },
+          {
+            "step": "T2",
+            "kind": "verify",
+            "result": "pass"
+          },
+          {
+            "step": "T2",
+            "kind": "report",
+            "visible": true,
+            "result": "done",
+            "plan": {
+              "capability": "available",
+              "result": "success",
+              "receipt_ref": "call-7",
+              "fallback_disclosed": false,
+              "projection": [
+                {
+                  "step": "T1",
+                  "status": "completed"
+                },
+                {
+                  "step": "T2",
+                  "status": "completed"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

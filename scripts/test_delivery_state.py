@@ -11,7 +11,7 @@ from pathlib import Path
 from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
-from delivery_next import upgrade_state
+from delivery_next import upgrade_state, next_runtime_action
 from evidence_contract import workspace_source
 from delivery_state import discover, validate_transition
 from autonomy_arm import arm
@@ -382,6 +382,76 @@ class DeliveryStateTest(unittest.TestCase):
         combined["host_sync"]["evidence_level"] = "host_observed"
         with self.assertRaisesRegex(ValueError, "acknowledgement-only"):
             validate_transition(previous, combined)
+
+    def test_native_fallback_persists_and_resumes_business_without_sync_retry(self):
+        for acknowledged in (None, "b" * 64):
+            with self.subTest(acknowledged=acknowledged), tempfile.TemporaryDirectory() as directory:
+                root, home = Path(directory) / "leases", Path(directory) / "home"
+                self.acquire(root)
+                previous = upgrade_state(state())
+                previous["current_stage"] = "scope"
+                previous["host_sync"] = {
+                    "mode": "native", "acknowledged_fingerprint": acknowledged,
+                    "evidence_level": "host_observed" if acknowledged else "controller_attested",
+                }
+                written = self.write(root, home, previous, -1)
+                self.assertEqual(0, written.returncode, written.stderr)
+                self.assertEqual("sync-plan", next_runtime_action(previous, "scope")["action"])
+                candidate = copy.deepcopy(previous)
+                candidate["revision"] += 1
+                candidate["host_sync"] = {
+                    "mode": "text", "acknowledged_fingerprint": None,
+                    "evidence_level": "controller_attested",
+                    "fallback": {"reason": "failed", "evidence_ref": "sync-call-1",
+                                 "disclosure_ref": "message-1"},
+                }
+                written = self.write(root, home, candidate, 0)
+                self.assertEqual(0, written.returncode, written.stderr)
+                resumed = upgrade_state(json.loads(self.state_path(home).read_text()))
+                self.assertEqual(candidate, resumed)
+                self.assertNotEqual("sync-plan", next_runtime_action(resumed, "scope")["action"])
+                advanced = copy.deepcopy(resumed)
+                advanced["revision"] += 1
+                advanced["current_stage"] = "round-1-build"
+                written = self.write(root, home, advanced, 1)
+                self.assertEqual(0, written.returncode, written.stderr)
+                self.assertEqual(candidate["host_sync"], json.loads(self.state_path(home).read_text())["host_sync"])
+
+    def test_native_fallback_requires_evidence_and_an_isolated_one_way_transition(self):
+        previous = upgrade_state(state())
+        previous["host_sync"]["mode"] = "native"
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] += 1
+        candidate["host_sync"] = {
+            "mode": "text", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+            "fallback": {"reason": "failed", "evidence_ref": "sync-call-1",
+                         "disclosure_ref": "message-1"},
+        }
+        for reason in ("failed", "unknown", "unavailable"):
+            candidate["host_sync"]["fallback"]["reason"] = reason
+            validate_transition(previous, candidate)
+        mutations = [
+            lambda c: c["host_sync"].pop("fallback"),
+            lambda c: c["host_sync"]["fallback"].update(evidence_ref=""),
+            lambda c: c["host_sync"]["fallback"].update(disclosure_ref=" "),
+            lambda c: c["host_sync"]["fallback"].update(reason="success"),
+            lambda c: c["host_sync"].update(acknowledged_fingerprint="b" * 64),
+            lambda c: c["host_sync"].update(evidence_level="host_observed"),
+            lambda c: c.update(current_stage="verify-final"),
+        ]
+        for mutate in mutations:
+            bad = copy.deepcopy(candidate)
+            mutate(bad)
+            with self.subTest(bad=bad["host_sync"]), self.assertRaises(ValueError):
+                validate_transition(previous, bad)
+        for sync in (previous["host_sync"], {**candidate["host_sync"], "fallback": {
+                **candidate["host_sync"]["fallback"], "evidence_ref": "rewritten"}}):
+            bad = copy.deepcopy(candidate)
+            bad["revision"] += 1
+            bad["host_sync"] = sync
+            with self.assertRaises(ValueError):
+                validate_transition(candidate, bad)
 
     def test_terminal_report_history_can_only_advance_by_itself(self):
         previous = upgrade_state(state())

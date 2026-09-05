@@ -34,19 +34,29 @@ STAGE_PLAN_INDEX = {
     "round-1-semantic-review": 2,
     "verify-round-1": 2,
     "round-2-risk-review": 2,
+    "closure-review": 2,
+    "closure-repair": 2,
+    "closure-final-review": 2,
+    "autonomy-repair": 2,
     "verify-final": 3,
 }
 
 
 def plan_projection(state):
-    index = STAGE_PLAN_INDEX.get(state.get("current_stage"), 0)
+    stage = state.get("current_stage")
+    if stage not in STAGE_PLAN_INDEX:
+        raise ValueError("cannot project an unknown current_stage")
+    index = STAGE_PLAN_INDEX[stage]
     terminal = state.get("status") == "complete"
+    blocked = state.get("status") == "blocked"
     items = []
     for position, step in enumerate(PLAN_STEPS):
         if terminal or position < index:
             status = "completed"
         elif position == index:
-            status = "in_progress"
+            status = "pending" if blocked else "in_progress"
+            if blocked:
+                step = f"{step}（已阻塞：{state.get('blocked_reason') or '原因未记录'}）"
         else:
             status = "pending"
         items.append({"step": step, "status": status})

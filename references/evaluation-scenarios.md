@@ -35,6 +35,7 @@
 | 命令回执伪造 | 调用者填写不存在命令和 `exit_code=0` | 只接受 `evidence_contract.py run` 实际执行 argv 后生成的 observed Evidence Receipt v2；伪造回执不能完成。 |
 | 真实触发评测 | trigger 数据集结构合法，但需要验证实际 selector 行为 | `trigger_eval.py` 在执行前完整校验所有 case，逐条执行 selector，报告混淆矩阵和 F1，并绑定 dataset/selector/runner 指纹；只检查 JSON 形状不算行为验收。 |
 | 宿主 selector release | 对 Suite 入口变更进行发布级触发验收 | 当前离线 `trigger_eval.py --release` 固定阻断并标为 `uncovered`；它可测本地 selector 的质量，但不能证明 selector 来自真实宿主。真实宿主 receipt 未接入前，不得以模拟 selector 通过替代。 |
+| 分步可见顺序 | 两步修复、原生工具成功/失败/缺失、失败停止或恢复继续 | `step_trace_eval.py` 拒绝抢跑、隐藏结果、陈旧验证、恢复重做、有工具未调用和未告知文字降级；旧文字轨迹或成功同步缺少回执引用为 uncovered。display_mode 区分原生与文字，native_ui_status/release 始终 uncovered，合成场景不能证明真实 UI 或模型稳定性。 |
 | 通用 TDD 不自动触发 | PDLC 和已适配 TDD 不可用，但只存在关键词相似的通用 TDD Skill | 选择 `native-v1`；不得扫描并自动执行通用 Skill。 |
 | 内置 TDD 降级 | 没有兼容 PDLC 或已适配 TDD Skill | 选择 `native-v1`，报告中写明降级原因；原生流程仍可完整交付。 |
 | 引擎恢复 | 已冻结的 PDLC 或第三方 TDD 任务恢复时能力消失，或 native 任务恢复时发现外部能力 | 前两者 `blocked_environment`；后者继续 native；不得静默切换或混用状态机。 |

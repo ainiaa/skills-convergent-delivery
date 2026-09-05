@@ -80,6 +80,7 @@ def command_for_launch(launch, prompt):
         "--no-session-persistence",
         "--model", effective["model"], "--effort", effective["reasoning_effort"],
         "--max-turns", str(profile["budget"]["max_turns"]), "--tools", configuration["tools"],
+        "--disallowedTools", "Agent,Task,TeamCreate",
         "--permission-mode", configuration["permission_mode"],
     ]
 

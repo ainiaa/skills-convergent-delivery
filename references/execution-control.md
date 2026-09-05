@@ -10,21 +10,38 @@
 - `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run。控制器解析冻结 entrypoint，并显式调用对应 `$pdlc-feature|fix|refactor` 完整执行；Provider Binding 或 `pdlc-run` 不算调用，禁止 native 混入。入口不可解析或激活即 `blocked_environment`；PDLC 证据返回 Converge 后再收口，不得拆解其内部阶段。复杂计划可含多个业务切片级 Provider Run。
 - Plan Contract v6 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。Git 汇总和范围审计始终使用计划冻结的 Source Receipt v2 baseline，而不是变化中的 `HEAD`。
 
-Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。简单 `inline` 不创建宿主计划项，只以简短 commentary 显示当前动作；持久任务只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。宿主无原生计划能力时降级为文本，不阻塞业务动作。
+Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。未要求分步展示的简单 `inline` 不创建宿主计划项；普通同会话计划从已冻结任务及完成证据派生宿主步骤状态，不为显示额外创建持久 run。持久任务 active/complete 路径只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。
+
+`block` 始终停止业务，不转回 `sync-plan`。控制器在该终态报告前读取阻塞投影；仍处于 native 且工具可用时仅尝试一次原生展示，失败或缺失则明确用文字报告，不等待或写入确认、不重试、不恢复执行。阻塞投影将当前项设为 pending 并在标题中标明阻塞原因，保留已完成项；只支持 pending/in_progress/completed 的宿主也不会继续显示当前项正在执行。它是终态展示，不新增状态或完成门禁。
 
 ### 分步可见交付
 
-用户明确要求逐步或分步执行时，控制器负责以下展示；一次只推进当前可执行步骤，不把多步结果留到最终回复才一起公布。
+用户明确要求逐步或分步执行时，控制器先核对当前可调用工具（如 `update_plan`，以实际工具名为准），不能按宿主名称猜测、把“没有调用”当成“没有工具”，或沿用旧会话的能力结论。原生计划面板、计划文件和 commentary 文字汇报是三种不同产物。
+
+- 有原生工具：第一次修改前创建步骤清单，开始、完成和阻塞时同步实际状态，并核对对应调用是否成功。普通同会话计划也必须同步，不能因为没有持久 run 而跳过。输出投影 JSON 不算调用；调用返回失败、未知或缺失回执时，不得声称面板已同步。持久路径遵守上文 `sync-plan` 约束。
+- 工具缺失、能力未知或调用失败：第一次修改前说明具体情况，以及“以下为文字清单，不是原生计划面板”；逐项列出已完成、进行中、待执行或阻塞。调用失败后可明确降级继续已授权业务，不为显示重试形成循环。已有 native 持久状态时，先按 [host_sync 降级契约](state-schema.md) 写入单向 text 转换，再请求下一动作，不能只改文字而留下待同步状态。此后保留文字降级标签，不能在最终回执中改称原生显示已修复。用户把原生面板本身作为验收时，该项保持未覆盖，Skill 不能凭空补出宿主工具。
+
+一次只推进当前可执行步骤，不把多步结果留到最终回复才一起公布：
 
 - 先展示既有计划的步骤清单和当前步骤；以计划中的可验收任务为单位，不把每次读文件、工具调用或 Provider 内部阶段拆成新任务。
 - 开始一步前，在用户可见的 commentary 中说明步骤编号、目标和修改范围。
 - 结束一步后，先展示实际改动、已执行验证及结果、遗留问题，再更新“已完成 / 进行中 / 待执行 / 阻塞”的进度视图，明确下一步。尚在运行、验证失败或未覆盖的检查不得写成已通过。
-- 复用上文的宿主计划投影；没有计划工具时直接给文本清单。展示必须在折叠工具输出和内部推理之外，不新增可写台账，也不把冻结 Plan 的 `pending` 定义当作执行状态修改。
+- 展示必须在折叠工具输出和内部推理之外，不新增可写台账，也不把冻结 Plan 的 `pending` 定义当作执行状态修改。
 - 已授权且无阻塞时自动进入下一步；只有用户要求每步确认或遇到既有决策门禁才暂停。恢复时从实际状态和证据继续，不为补展示重做已完成的修改或验证。
 
 例如：`第 1 步完成：已修复退出后的残留写入；回归检查通过；无遗留。进度：1 已完成，2 进行中，3 待执行。第 2 步：校验评测报告完整性，范围为比较器及其测试。` 验证失败时改报实际失败和阻塞原因，不进入依赖该结果的步骤。
 
 依据：[HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) 的可检查步骤和规则单一来源；采用阶段结果展示，不引入额外控制循环或状态。行为验收：两步修复中，第 1 步结果必须先于第 2 步修改可见；无宿主计划工具时仍有文本进度；失败、需确认和恢复路径不得误推进或重做。简单未要求分步的任务保持原路径。
+
+离线回归使用 [分步轨迹场景](../evals/step-visibility.json) 和 `python3 scripts/step_trace_eval.py --input <trace.json>`（从 Skill 根目录执行）。输入按观测顺序列出 `start/edit/verify/report`，以 `steps` 冻结步骤顺序、`completed_before` 表示恢复前已有证据的完成前缀；开始和结果事件的 `visible=true` 只能由评估者核对用户可见消息后标注，`verify.result` 必须来自实际验证。输入格式见场景中的 `trace`，不得直接把计划或模型自述转换成观测。检查器拒绝结果未展示便开始下一步、最后一次修改之后缺少通过验证、以及恢复重做。缺少完整轨迹返回 `uncovered`；正确停止也可使轨迹判定 `pass`，这不表示任务完成。
+
+每个 `start/report` 的 `plan` 观测记录 `capability=available|unavailable|unknown`、`result=success|failed|unknown|not_called`、实际调用的 `receipt_ref`（无回执为 null）及在该展示点前是否已说明降级的 `fallback_disclosed`。首次有工具未调用、文字降级未告知均失败；轨迹中已观测到 failed/unknown 调用且告知降级后，后续允许 available + not_called，保留告知标注，无需重复调用。没有持久 text 约束时，实际恢复成功同步后再次按原生规则检查。任何调用缺少回执引用或旧轨迹没有 plan 观测均为 `uncovered`。字段必须从当前工具清单、对应调用结果和用户可见消息核对，不能由模型补填成功。
+
+成功调用还需观测 `plan.projection=[{step, status}, ...]`：将该调用实际提交的完整计划条目对应到 `trace.steps` 的标识和顺序，status 使用 pending/in_progress/completed，不得从预期事件反推补填。开始对应当前项 in_progress，完成对应 completed，阻塞对应 pending 且宿主标题须标明原因；前项保持 completed，后项保持 pending，完成报告允许同次调用将紧邻下一项设为 in_progress。`receipt_ref` 必须唯一定位一次调用（必要时包含会话标识）；同一引用只能对应同一投影。一次真实调用可同时满足前步完成和后步开始，但不能证明不同投影。缺少投影的旧轨迹为 uncovered，投影矛盾或与事件状态不符为 fail。
+
+已有持久 text 降级时，可在首个 `start/report.plan` 观测附上 managed state 中原样读取的 `fallback`（沿用 host_sync 的 reason/evidence_ref/disclosure_ref，不另建状态）。检查器复用同一字段校验；工具重连或轨迹恢复后仍允许 available + not_called，后续不可改写降级证据或切回 native，且持续要求已告知降级。没有该证据的普通轨迹仍须调用当前可用工具，不能仅凭 completed_before 推断已降级。
+
+该工具检查事件顺序和同步/降级标注，不证明标注真实、阶段说明充分或原生 UI 实际渲染；`fixture` 是合成场景，真实观测标注也仅为 `evaluator_attested`。`display_mode` 区分 native/text/mixed/unknown，`native_ui_status` 和 `release_status` 始终为 `uncovered`。输出绑定输入指纹，不保存原始对话、不执行事件、不推进状态；真实宿主多样本验收仍须满足 `converge-eval` 的独立证据契约。
 
 一个执行段必须有一个清晰结果，并在结束时产生至少一项可观察活动：工具调用、状态更新、diff、测试输出或 worker receipt。不要在一个模型生成步骤中同时准备完整需求、设计、失败测试和实现补丁。
 

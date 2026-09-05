@@ -84,6 +84,7 @@ python3 scripts/test_runtime_scenarios.py
 python3 scripts/test_controller_snapshot.py
 python3 scripts/test_evidence_contract.py
 python3 scripts/test_delivery_progress.py
+python3 scripts/test_step_trace_eval.py
 python3 scripts/test_delivery_state.py
 python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py

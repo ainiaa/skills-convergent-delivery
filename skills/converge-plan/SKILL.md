@@ -56,4 +56,4 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" validate --input -
 
 输出计划路径或完整 JSON、校验结果、执行方式和第一个可执行 task。不得自行开始实现。同会话多任务顺序交给 `converge`；只有显式跨会话 checkpoint 的计划交给 `converge-batch`。
 
-用户同时授权“先写计划，再逐步修复”时，计划完成后切换到执行 Skill，并遵循 [分步可见交付](../../references/execution-control.md#分步可见交付)；不要只给计划链接或把逐步执行理解为隐藏的连续工具调用。
+用户同时授权“先写计划，再逐步修复”时，计划完成后切换到执行 Skill，并遵循 [分步可见交付](../../references/execution-control.md#分步可见交付)：执行前核对原生计划工具，同步成功或明确说明文字降级。Plan 文件校验通过不代表宿主面板已创建，不能只给计划链接或用文字汇报冒充原生分步显示。

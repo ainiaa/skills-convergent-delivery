@@ -11,7 +11,7 @@ Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-rev
 
 需要持久状态的显式闭环使用 arm v11；终态只认新鲜证据。简单 `inline` 不创建 run。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
 
-用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，先按 [分步可见交付](references/execution-control.md#分步可见交付) 展示步骤清单；每步开始说明目标和范围，结束展示改动、验证和状态，再进入下一步。顺序调用工具不能替代这些用户可见的阶段结果。
+用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，按 [分步可见交付](references/execution-control.md#分步可见交付) 先探测当前原生计划工具：可用则调用并核对成功回执；不可用或同步失败则明确说明降级，逐项显示文字清单。计划文件、投影 JSON 和文字汇报不代表原生面板已显示。每步开始说明目标和范围，结束展示改动、验证和状态，再进入下一步。
 
 ## 开始
 

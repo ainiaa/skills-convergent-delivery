@@ -32,7 +32,11 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 - `codex-exec-v1` 与 `claude-code-v1` 都是本地进程 runner，分别只接受 OpenAI 与 Anthropic 的 effective provider，且 requested/effective 的 model 与 effort 必须完全相同。计划冻结 CLI 绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传递，不进入命令参数。Codex 读取用户的 `$CODEX_HOME/config.toml`，并冻结其内容指纹；计划后该文件变化会在启动前阻断，而冻结的 `--model`、reasoning effort 与 sandbox 参数仍优先。Claude 显式传入 `--bare --strict-mcp-config --model --effort --max-turns`、冻结工具与 permission mode。Claude 这是一层 CLI permission 边界，不是 OS sandbox。
 - `openai-compatible-v1` 仅接受 `reviewer|scout`、`workspace=none|read`、`shell=false`。当前仅支持已验证的 Zhipu origin、`GLM_API_KEY` 与注册的 effort mapping；请求没有 tools、shell 或工作区写入能力。未验证 provider 不发送猜测的 wire 字段。
 
+本地 runner 在每次生成命令时禁止 CLI 原生派发：Codex 覆盖 `agents.enabled=false`、`features.multi_agent=false` 和 `features.multi_agent_v2=false`；Claude 使用 `--disallowedTools Agent,Task,TeamCreate`，保留实施所需的 Bash/Edit/Write 和只读工具。前者覆盖现行配置及 feature 开关，后者同时拒绝 Agent 与旧 Task 派发名称。参数依据：[Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)、[Claude CLI](https://code.claude.com/docs/en/cli-reference)。这不等于禁止通过 shell 或 MCP 访问所有外部服务：Codex 仍继承用户 MCP 配置，工具收窄需先映射任务必要能力；不能把文件系统 read-only sandbox 当成外部 MCP 写操作隔离。
+
 ## 真实执行与密钥
+
+stdout/stderr 读取或进度回调异常必须传回共享执行函数，终止并回收本次进程，返回 `unknown` 和异常类型，且不交付已读取的部分回答。读取线程结束本身不能证明流已完整读取；输出超限时清理失败也不得伪装成成功。
 
 三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：它从 managed state 取得唯一 workspace，先以 `append-runner-launch` 持久化 launch，再执行，最后以 `append-runner-result` 持久化 receipt。runner 对当前 controller 额外返回 `output={status,content?}`：`content` 只在完成且成功提取最终模型文本时存在，受冻结输出预算限制，绝不写入 ledger；`unavailable` 不是可用协作结论。两个本地 runner 的 prompt 写入与 stdout/stderr drain 并发启动，随后立即进入冻结 timeout；子进程不读 stdin 时也会 kill/reap 并写入终态 receipt。输出上限是本地读取到超限后终止的保守边界，不宣称能限制远端在 pipe 中已经写出的字节。receipt 本身只含 exit code、stdout/stderr 摘要、requested model/effort 和有限 timeout/output budget；requested 字段只证明命令请求，并非远端模型观察。写权限只能指向独立 Git worktree，父 controller 仍要审查 diff 和运行独立验证。
 

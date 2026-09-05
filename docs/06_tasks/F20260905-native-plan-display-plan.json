@@ -1,0 +1,422 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-native-plan-display",
+  "requirement_fingerprint": "57677525a12d3040f868ab486874821ec6828e9b16441bae98cf130ca5572395",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "commit_id": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "tree_hash": "7668c56564ed06adab3bb8395f49e222f1cb8000",
+      "diff_fingerprint": "00dee50b91f44067ac59d36e5f2866a729c1e7de9dd099b2546bfbfa1b3377f9",
+      "changed_paths": [
+        "CHANGELOG.md",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md",
+        "evals/step-visibility.json",
+        "references/evaluation-scenarios.md",
+        "references/execution-control.md",
+        "references/worker-runners.md",
+        "scripts/check.sh",
+        "scripts/claude_exec_runner.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/step_trace_eval.py",
+        "scripts/test_claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_step_trace_eval.py"
+      ],
+      "changed_entries": [
+        {
+          "path": "CHANGELOG.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "401e9a2884ec569b00a96b50c8154717883a835bf71cf4774631bc6ad0130566"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "9cb27c47978d586c4edd3bc70cc1a77d0f9eb2effae63b51682e3b4b8ea818cd"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "695d1bcbfbc05a4f9ac963b36b5aa80071322fd218328071103653324c0b3ab3"
+        },
+        {
+          "path": "evals/step-visibility.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "70a9f643a5c569df267d8f943871d5507dfd7aeb99df4c7a2dbae86cf22568c7"
+        },
+        {
+          "path": "references/evaluation-scenarios.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "54bbf29ae3e9f30f647cbb4ef24c86eef19422c0c57e7c40e223e1e4e68a99b1"
+        },
+        {
+          "path": "references/execution-control.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "00d9f503dd0ce358759abb2f030225fb84f1f2c64419ff27c569bd97f81c352e"
+        },
+        {
+          "path": "references/worker-runners.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "37e4bc950a8881f76a44d971be90c604a5020921199d47485dcdeabb20181661"
+        },
+        {
+          "path": "scripts/check.sh",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "0cc35fb6ca5bd23548cad3fbc79c39753abdaa81cd724e3cb7317659c528778d"
+        },
+        {
+          "path": "scripts/claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "fff5f23efc10be5f45c0ee07fd27ae43d673369d29ec0e43f78111a63e9e4e87"
+        },
+        {
+          "path": "scripts/codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7c1f8fe787b6db6a1d68f542780dc37f8f4b95c68ce1724dca6cd6289a6fbb34"
+        },
+        {
+          "path": "scripts/step_trace_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7339825b4d1b8e07798b66b305c712357eb3b3d97e93bf70ec45b8d07a071fc5"
+        },
+        {
+          "path": "scripts/test_claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "3cb2a88e6e4eb5b66669016bf0fd9bcf5c7a87816b617d4e79379c1cddab79f3"
+        },
+        {
+          "path": "scripts/test_codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "f8c109ba30b71ca88d53df76fb13abbf9e5928975d36f642aabad65e0deeb281"
+        },
+        {
+          "path": "scripts/test_step_trace_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "d9759ee49545202ddd30bfc3f4b8cf78ca48c31e09ddb74920abeddbb759166a"
+        }
+      ],
+      "source_fingerprint": "43401ca056110ab2e85a14528b1bfc73c614322506f5d257d09a7662ee73bf3f"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "冻结原生面板与文字降级的修复范围及验收"
+      ],
+      "goal": "冻结原生面板与文字降级的修复范围及验收",
+      "owned_paths": [
+        "docs/06_tasks/F20260905-native-plan-display-plan.json",
+        "docs/06_tasks/F20260905-native-plan-display-plan.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "冻结原生面板与文字降级的修复范围及验收"
+      ],
+      "verification": [
+        "python3 skills/converge-plan/scripts/plan_check.py validate --input -"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示"
+      ],
+      "goal": "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+      "owned_paths": [
+        "SKILL.md",
+        "skills/converge-plan/SKILL.md",
+        "references/execution-control.md",
+        "scripts/step_trace_eval.py",
+        "scripts/test_step_trace_eval.py",
+        "evals/step-visibility.json"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_step_trace_eval test_skill_contracts test_delivery_progress"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": [
+        "文档和 changelog 与能力边界一致且受影响检查通过"
+      ],
+      "goal": "文档和 changelog 与能力边界一致且受影响检查通过",
+      "owned_paths": [
+        "CHANGELOG.md",
+        "references/evaluation-scenarios.md"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "文档和 changelog 与能力边界一致且受影响检查通过"
+      ],
+      "verification": [
+        "CONVERGE_QUICK_VALIDATE=/tmp/converge-official-quick-validate.py bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "冻结原生面板与文字降级的修复范围及验收",
+    "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+    "文档和 changelog 与能力边界一致且受影响检查通过"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "native-plan-presentation",
+        "description": "Skill→宿主计划能力与回执→明确文字降级→离线轨迹验收",
+        "entrypoints": [
+          "docs/06_tasks/F20260905-native-plan-display-plan.json",
+          "docs/06_tasks/F20260905-native-plan-display-plan.md",
+          "SKILL.md",
+          "skills/converge-plan/SKILL.md",
+          "references/execution-control.md",
+          "scripts/step_trace_eval.py",
+          "scripts/test_step_trace_eval.py",
+          "evals/step-visibility.json",
+          "CHANGELOG.md",
+          "references/evaluation-scenarios.md"
+        ],
+        "callers": [
+          "scripts/check.sh",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "冻结原生面板与文字降级的修复范围及验收",
+              "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+              "文档和 changelog 与能力边界一致且受影响检查通过"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "冻结原生面板与文字降级的修复范围及验收",
+              "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+              "文档和 changelog 与能力边界一致且受影响检查通过"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "冻结原生面板与文字降级的修复范围及验收",
+              "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+              "文档和 changelog 与能力边界一致且受影响检查通过"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "冻结原生面板与文字降级的修复范围及验收",
+              "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+              "文档和 changelog 与能力边界一致且受影响检查通过"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "冻结原生面板与文字降级的修复范围及验收",
+              "有原生工具必须同步并核实回执，缺少或失败时明确降级；文字轨迹不冒充原生显示",
+              "文档和 changelog 与能力边界一致且受影响检查通过"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "43401ca056110ab2e85a14528b1bfc73c614322506f5d257d09a7662ee73bf3f",
+      "chains_fingerprint": "29f5dfb7f5fca8a391172a07398fa337418ad71239291a27d0fb51fb9dd201cf",
+      "receipt_fingerprint": "7f917c6fa7e5de8db9e4de2284f316799edc54764b1275a898147d8730b49c8b"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "原生面板不可用时如何处理",
+      "resolution": "实际工具清单无原生计划工具；明确告知并逐项显示文字清单，不声称创建原生面板，不修改宿主配置。",
+      "source": "code"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "既有修改和验收边界",
+      "resolution": "保留上一轮全部改动，基线记录已有脏文件；本轮只修显示契约和离线判定，不增加运行时状态或代理。",
+      "source": "user"
+    }
+  ]
+}

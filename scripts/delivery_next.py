@@ -556,6 +556,30 @@ def validate_review_gate(routing, review, task_key, baseline_commit, source_fing
                 raise ValueError("review pass requires a completed reviewer result bound to its request")
 
 
+def validate_host_sync(host_sync):
+    host_sync = require_mapping(host_sync, "host_sync")
+    if set(host_sync) - {"fallback"} != {"mode", "acknowledged_fingerprint", "evidence_level"} \
+            or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
+        raise ValueError("host_sync fields are invalid")
+    if host_sync["evidence_level"] not in {"host_observed", "controller_attested"}:
+        raise ValueError("host_sync evidence_level is invalid")
+    acknowledged = host_sync["acknowledged_fingerprint"]
+    if acknowledged is not None:
+        require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
+    if host_sync["mode"] != "native" and acknowledged is not None:
+        raise ValueError("non-native host_sync cannot acknowledge a native projection")
+    if acknowledged is not None and host_sync["evidence_level"] != "host_observed":
+        raise ValueError("native plan acknowledgement must be host-observed")
+    if "fallback" in host_sync:
+        fallback = require_mapping(host_sync["fallback"], "host_sync.fallback")
+        if host_sync["mode"] != "text" or host_sync["evidence_level"] != "controller_attested" \
+                or set(fallback) != {"reason", "evidence_ref", "disclosure_ref"} \
+                or fallback["reason"] not in ("failed", "unknown", "unavailable"):
+            raise ValueError("host_sync fallback is invalid")
+        for field in ("evidence_ref", "disclosure_ref"):
+            require_string(fallback[field], f"host_sync.fallback.{field}")
+
+
 def validate_state(state, arguments, *, check_workspace=True):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
     strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
@@ -654,19 +678,7 @@ def validate_state(state, arguments, *, check_workspace=True):
         validate_runtime_binding(runtime_binding)
     profile = routing.get("profile")
     cross_session = profile.get("cross_session", False) if isinstance(profile, dict) else False
-    host_sync = require_mapping(state.get("host_sync"), "host_sync")
-    if set(host_sync) != {"mode", "acknowledged_fingerprint", "evidence_level"} \
-            or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
-        raise ValueError("host_sync fields are invalid")
-    if host_sync["evidence_level"] not in {"host_observed", "controller_attested"}:
-        raise ValueError("host_sync evidence_level is invalid")
-    acknowledged = host_sync["acknowledged_fingerprint"]
-    if acknowledged is not None:
-        require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
-    if host_sync["mode"] != "native" and acknowledged is not None:
-        raise ValueError("non-native host_sync cannot acknowledge a native projection")
-    if acknowledged is not None and host_sync["evidence_level"] != "host_observed":
-        raise ValueError("native plan acknowledgement must be host-observed")
+    validate_host_sync(state.get("host_sync"))
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")

@@ -25,7 +25,7 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state, validate_host_sync
 from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
@@ -245,22 +245,32 @@ def validate_transition(previous, candidate):
         raise ValueError("runtime_binding is immutable once workers are enabled")
     old_sync = previous["host_sync"]
     new_sync = candidate["host_sync"]
+    validate_host_sync(new_sync)
     old_report = previous["ledger"].get("report_history")
     new_report = candidate["ledger"].get("report_history")
     report_changed = new_report != old_report
-    if new_sync["mode"] != old_sync["mode"]:
-        raise ValueError("host_sync.mode is immutable")
+    downgrading = new_sync["mode"] != old_sync["mode"]
+    if downgrading:
+        if old_sync["mode"] != "native" or new_sync["mode"] != "text" \
+                or "fallback" not in new_sync:
+            raise ValueError("host_sync mode may only downgrade native to text with fallback evidence")
+        for field in set(previous) | set(candidate):
+            if field not in {"revision", "host_sync"} \
+                    and candidate.get(field) != previous.get(field):
+                raise ValueError("host_sync fallback must be a fallback-only transition")
+    elif new_sync.get("fallback") != old_sync.get("fallback"):
+        raise ValueError("host_sync fallback evidence is immutable")
     acknowledgement_changed = (
         new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]
     )
-    if acknowledgement_changed and new_sync["evidence_level"] != "host_observed":
+    if not downgrading and acknowledgement_changed and new_sync["evidence_level"] != "host_observed":
         raise ValueError("native plan acknowledgement must be host-observed")
-    if not acknowledgement_changed and new_sync["evidence_level"] != old_sync["evidence_level"]:
+    if not downgrading and not acknowledgement_changed and new_sync["evidence_level"] != old_sync["evidence_level"]:
         raise ValueError("host_sync evidence may only change with acknowledgement")
-    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"] \
+    if not downgrading and acknowledgement_changed \
             and new_sync["acknowledged_fingerprint"] != plan_projection_fingerprint(candidate):
         raise ValueError("host_sync acknowledgement must match the current projection")
-    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]:
+    if not downgrading and acknowledgement_changed:
         for field in set(previous) | set(candidate):
             if field not in {"revision", "host_sync"} \
                     and candidate.get(field) != previous.get(field):

@@ -61,6 +61,40 @@ class DeliveryProgressTest(unittest.TestCase):
         self.assertEqual(fingerprint, delivery_progress.plan_projection_fingerprint(current))
         self.assertEqual("in_progress", projection["items"][1]["status"])
 
+    def test_projection_covers_legal_stages_and_rejects_unknown_stage(self):
+        from delivery_next import NATIVE_ACTIVE_STAGES, PDLC_ACTIVE_STAGES
+
+        self.assertEqual(NATIVE_ACTIVE_STAGES | PDLC_ACTIVE_STAGES,
+                         set(delivery_progress.STAGE_PLAN_INDEX))
+        for stage in ("closure-review", "closure-repair", "closure-final-review", "autonomy-repair"):
+            current = {"task_key": "task-1", "current_stage": stage, "status": "active"}
+            projection = delivery_progress.plan_projection(current)
+            self.assertEqual("completed", projection["items"][0]["status"])
+            self.assertEqual("in_progress", projection["items"][2]["status"])
+            current["status"] = "complete"
+            self.assertTrue(all(item["status"] == "completed"
+                                for item in delivery_progress.plan_projection(current)["items"]))
+        with self.assertRaises(ValueError):
+            delivery_progress.plan_projection({"current_stage": "typo", "status": "active"})
+
+    def test_blocked_projection_stops_progress_without_reopening_runtime(self):
+        from delivery_next import next_runtime_action
+
+        current = {"task_key": "task-1", "current_stage": "round-1-build", "status": "active",
+                   "host_sync": {"mode": "native", "acknowledged_fingerprint": None}}
+        active_fingerprint = delivery_progress.plan_projection_fingerprint(current)
+        current.update(status="blocked", blocked_reason="等待用户决策")
+        before = copy.deepcopy(current)
+        projection = delivery_progress.plan_projection(current)
+        self.assertNotEqual(active_fingerprint, delivery_progress.plan_projection_fingerprint(current))
+        self.assertFalse(any(item["status"] == "in_progress" for item in projection["items"]))
+        self.assertEqual("completed", projection["items"][0]["status"])
+        self.assertEqual("pending", projection["items"][1]["status"])
+        self.assertIn("等待用户决策", projection["items"][1]["step"])
+        for _ in range(2):
+            self.assertEqual("block", next_runtime_action(current, "blocked")["action"])
+        self.assertEqual(before, current)
+
     def test_workspace_change_summary_aggregates_tracked_and_untracked_files(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

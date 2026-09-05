@@ -4,6 +4,7 @@
 import shutil
 import io
 import unittest
+import sys
 from unittest import mock
 from pathlib import Path
 
@@ -27,6 +28,21 @@ def profile(**overrides):
 
 
 class ClaudeExecRunnerTest(unittest.TestCase):
+    def test_leaf_commands_deny_agent_tools_without_removing_work_tools(self):
+        for access in ("read", "write"):
+            with self.subTest(access=access), mock.patch("claude_exec_runner._is_isolated_worktree", return_value=True):
+                worker_profile = profile(role="implementer" if access == "write" else "reviewer",
+                                         permissions={"workspace": access, "shell": access == "write", "network": "egress"})
+                launch = plan_launch(worker_profile, "probe", workspace="/tmp", claude_bin=sys.executable)
+                command = command_for_launch(launch, "probe")
+                self.assertIn("--disallowedTools", command)
+                denied = set(command[command.index("--disallowedTools") + 1].split(","))
+                self.assertTrue({"Agent", "Task", "TeamCreate"} <= denied)
+                self.assertFalse({"Read", "Grep", "Glob", "Bash", "Edit", "Write"} & denied)
+                self.assertEqual("default" if access == "write" else "Read,Grep,Glob",
+                                 command[command.index("--tools") + 1])
+                self.assertIn("--strict-mcp-config", command)
+
     def test_freezes_model_effort_and_read_only_tools_without_storing_the_prompt(self):
         launch = plan_launch(profile(), "Review the isolated task", workspace="/tmp", claude_bin=shutil.which("claude"))
         command = command_for_launch(launch, "Review the isolated task")
