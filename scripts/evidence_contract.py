@@ -18,7 +18,8 @@ MAX_ARGV_ITEMS = 128
 MAX_ARGUMENT_LENGTH = 4096
 SENSITIVE_ARGUMENT = re.compile(
     r"(?:^--?(?:api[-_]?key|access[-_]?token|token|password|secret|private[-_]?key)(?:=|$)"
-    r"|^(?:api[-_]?key|access[-_]?token|token|password|secret)=[^=])",
+    r"|^(?:api[-_]?key|access[-_]?token|token|password|secret)=[^=]"
+    r"|^(?:authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+).+)",
     re.IGNORECASE,
 )
 

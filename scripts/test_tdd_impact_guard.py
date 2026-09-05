@@ -71,7 +71,7 @@ def trace(workspace, baseline, *, risks=None):
         "coverage": {
             "status": "covered", "threshold": 85,
             "receipt": evidence_contract.run_evidence(
-                workspace, baseline, [sys.executable, "-c", "pass", "coverage"]
+                workspace, baseline, [str(workspace / "python"), "--fail-under=85"]
             ),
         },
     }
@@ -92,10 +92,12 @@ class TddImpactGuardTest(unittest.TestCase):
             tool = self.workspace / name
             tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             tool.chmod(0o755)
-        subprocess.run(
-            ["git", "-C", str(self.workspace), "add", "seed.txt", "codegraph", "mutmut", "pytest", "python"],
-            check=True,
+        coverage_config = self.workspace / "docs" / "00_standards" / "test-commands.yml"
+        coverage_config.parent.mkdir(parents=True)
+        coverage_config.write_text(
+            f"coverage: {self.workspace / 'python'} --fail-under=85\n", encoding="utf-8"
         )
+        subprocess.run(["git", "-C", str(self.workspace), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
         self.baseline = subprocess.run(
             ["git", "-C", str(self.workspace), "rev-parse", "HEAD"],
@@ -236,6 +238,15 @@ class TddImpactGuardTest(unittest.TestCase):
         refreshed = tdd_impact_guard.rerun(self.trace(), self.workspace, self.baseline)
 
         self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
+
+    def test_rerun_requires_the_resolved_native_coverage_command(self):
+        value = self.trace()
+        value["coverage"]["receipt"] = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-c", "pass"]
+        )
+
+        with self.assertRaisesRegex(ValueError, "coverage receipt does not match"):
+            tdd_impact_guard.rerun(value, self.workspace, self.baseline)
 
     def test_graph_query_is_derived_from_and_executed_for_the_impact_list(self):
         value = self.trace()

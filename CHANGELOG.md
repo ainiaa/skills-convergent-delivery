@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-- TDD/Impact Trace 升级为 v5：trace criterion 必须精确覆盖当前验收项，coverage 也以最终源码 observed receipt 和阈值进入 completion gate；CodeGraph 必须执行由 impacts 派生的精确查询。新增无副作用 rerun，在 complete 前实际重跑最终绿灯、coverage、mutation 与图谱命令并拒绝生成工件污染源码；time、timezone、不可逆操作加入对应 integration 覆盖要求。Evidence Receipt 拒绝敏感 argv 并限制参数与 trace 总大小；明确本地回执不提供同一工作区用户对抗篡改的密码学保证。修复 .NET coverage parser 误把任意 `threshold` 参数当作 gate 的问题。
+- TDD/Impact Trace 升级为 v5：trace criterion 必须精确覆盖当前验收项，状态拒绝重复验收项；coverage 也以最终源码 observed receipt 和阈值进入 completion gate，最终 rerun 还必须与项目解析出的 coverage argv/阈值一致；CodeGraph 必须执行由 impacts 派生的精确查询。新增无副作用 rerun，在 complete 前实际重跑最终绿灯、coverage、mutation 与图谱命令并拒绝生成工件污染源码；time、timezone、不可逆操作加入对应 integration 覆盖要求。Evidence Receipt 拒绝敏感 argv（含 Authorization/Bearer）并限制参数与 trace 总大小；明确本地回执不提供同一工作区用户对抗篡改的密码学保证。修复 .NET coverage parser 误把任意 `threshold` 参数当作 gate 的问题。
 - TDD/Impact Trace 升级为 v2：红绿测试必须引用 `evidence_contract.py` 真实执行生成的 observed Evidence Receipt，红灯绑定不同于最终版本的源码、绿灯绑定最终源码；补充公共 seam、单一可观察行为和外部边界 mock 规则。原生 `native-v1` TDD coverage 默认门槛为 >=85%，项目配置优先使用 `docs/00_standards/test-commands.yml` 的 coverage 命令和 `quality-targets.yml` 阈值，无法运行时保持 `uncovered`。
 - TDD/Impact Trace 升级为 v3：每个测试以 selector 绑定红绿回执的实际 argv，红灯只接受 `missing_behavior` 或 `assertion`，拒绝编译、Mock 和环境失败；新增无副作用的原生 coverage 策略解析器，安全 argv 优先、配置阈值其次、默认 >=85%，无法解析或执行时保持 `uncovered`。
 - TDD/Impact Trace 升级为 v4：已知 runner 校验 selector 语法，绿灯固定重跑一次检测不稳定，最终影响链绑定 CodeGraph 执行回执；高风险 integration/contract 测试要求 mutation 回执。原生 coverage 为 pytest/Vitest 注入项目或默认阈值；Maven/Gradle 仅认可已执行且配置足够的 JaCoCo gate，无法证明其他 runner 的 gate 时保持 `uncovered`。

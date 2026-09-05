@@ -141,6 +141,11 @@ class EvidenceContractTest(unittest.TestCase):
                 self.workspace, self.baseline, ["tool", "--api-key=secret-value"]
             )
 
+        with self.assertRaisesRegex(ValueError, "sensitive"):
+            evidence_contract.run_evidence(
+                self.workspace, self.baseline, ["curl", "Authorization: Bearer secret-value"]
+            )
+
     def test_receipts_reject_oversized_argv_values(self):
         with self.assertRaisesRegex(ValueError, "argv"):
             evidence_contract.run_evidence(

@@ -315,6 +315,16 @@ def rerun(value, workspace, baseline):
     expected_source = workspace_source(workspace, baseline)
     if value["source"] != expected_source:
         raise ValueError("TDD trace source is not the current workspace source")
+    if value["coverage"]["status"] == "covered":
+        from native_tdd_policy import resolve as resolve_coverage
+
+        coverage_policy = resolve_coverage(workspace)
+        receipt = value["coverage"]["receipt"]
+        if coverage_policy["status"] != "ready":
+            raise ValueError("native coverage policy is not ready")
+        if value["coverage"]["threshold"] != coverage_policy["threshold"] \
+                or receipt["argv"] != coverage_policy["argv"]:
+            raise ValueError("coverage receipt does not match the resolved native coverage command")
     refreshed = copy.deepcopy(value)
     required_runs = 3 if STABILITY_RISKS & set(refreshed["risk_flags"]) else 2
 

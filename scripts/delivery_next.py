@@ -874,10 +874,11 @@ def validate_state(state, arguments, *, check_workspace=True):
     acceptance = ledger.get("acceptance")
     if not isinstance(acceptance, list) or not all(isinstance(item, dict) for item in acceptance):
         raise ValueError("ledger.acceptance must be a list of objects")
+    acceptance_criteria = []
     for item in acceptance:
         if not set(item) <= ACCEPTANCE_FIELDS:
             raise ValueError("ledger.acceptance[] fields are invalid")
-        require_string(item.get("criterion"), "ledger.acceptance[].criterion")
+        acceptance_criteria.append(require_string(item.get("criterion"), "ledger.acceptance[].criterion"))
         require_string(item.get("evidence"), "ledger.acceptance[].evidence")
         if item.get("result") not in CHECK_RESULTS:
             raise ValueError("ledger.acceptance[].result must be pass, fail, or unknown")
@@ -888,6 +889,8 @@ def validate_state(state, arguments, *, check_workspace=True):
             "ledger.acceptance[].source_fingerprint",
             optional=True,
         )
+    if len(acceptance_criteria) != len(set(acceptance_criteria)):
+        raise ValueError("ledger.acceptance criteria must not be duplicated")
     acceptance_history = ledger.get("acceptance_history", [])
     if not isinstance(acceptance_history, list):
         raise ValueError("ledger.acceptance_history must be a list")

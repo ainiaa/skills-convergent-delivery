@@ -1221,6 +1221,13 @@ class DeliveryNextTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "acceptance"):
             validate_state(payload, SimpleNamespace())
 
+    def test_native_complete_state_rejects_duplicate_acceptance_criteria(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["acceptance"].append(copy.deepcopy(payload["ledger"]["acceptance"][0]))
+
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_state(payload, SimpleNamespace())
+
     def test_native_complete_state_requires_coverage_evidence(self):
         payload = state(status="complete", current_stage="verify-final")
         payload["ledger"]["tdd_trace"]["coverage"] = {
