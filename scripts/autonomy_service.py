@@ -19,7 +19,7 @@ from claude_exec_runner import execute_launch as execute_claude, plan_launch as 
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
 from delivery_next import validate_active_lease, validate_state
 from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
-from evidence_contract import run_evidence
+from evidence_contract import run_evidence, workspace_source
 
 
 def service_runtime(state):
@@ -80,9 +80,16 @@ def _write(state_path, state, state_root, lease_root):
     return json.loads(Path(state_path).read_text(encoding="utf-8"))
 
 
-def _update(state_path, state_root, lease_root, mutate):
+def _update(state_path, state_root, lease_root, mutate, *, refresh_source=False):
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
     mutate(state)
+    if refresh_source:
+        state["source_receipt"] = workspace_source(state["workspace"], state["baseline"]["commit"])
+        state["source_fingerprint"] = state["source_receipt"]["source_fingerprint"]
+    rounds = state["execution_control"]["review"]["rounds"]
+    if rounds and rounds[-1]["source_fingerprint"] != state["source_fingerprint"]:
+        # Preserve earlier reviews; a changed source starts with no review evidence.
+        rounds.append({"source_fingerprint": state["source_fingerprint"], "requests": []})
     return _write(state_path, state, state_root, lease_root)
 
 
@@ -134,7 +141,7 @@ def _observe(state_path, state_root, lease_root, receipt):
             "outcome": outcomes.get(receipt["status"], "unknown"),
             "receipt_fingerprint": receipt["receipt_fingerprint"],
         }
-    return _update(state_path, state_root, lease_root, mutate)
+    return _update(state_path, state_root, lease_root, mutate, refresh_source=True)
 
 
 def _commit(state_path, state_root, lease_root, verification):
@@ -258,6 +265,7 @@ def _append_runner_record(state_path, state_root, lease_root, field, record):
     return _update(
         state_path, state_root, lease_root,
         lambda state: state["ledger"].setdefault(field, []).append(record),
+        refresh_source=field == "runner_results",
     )
 
 
@@ -291,7 +299,7 @@ def block(state_path, state, state_root, lease_root, reason, evidence=None, stag
 
     blocked = _update(
         state_path, state_root, lease_root,
-        mutate,
+        mutate, refresh_source=True,
     )
     _release(blocked, state_root, lease_root)
     return blocked
@@ -374,9 +382,6 @@ def _finalize_observed(state_path, state_root, lease_root):
 
 def _run_once(state_path, state_root, lease_root):
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    action = decide(state, lease_root=lease_root)
-    if action["decision"] == "allow":
-        return {"status": "terminal", "terminal": action["terminal"]}
     attempts = state["execution_control"]["autonomy"]["action_attempts"]
     if attempts and attempts[-1]["status"] == "running":
         # A process may have changed the workspace before a crash; never replay an uncertain action.
@@ -386,6 +391,9 @@ def _run_once(state_path, state_root, lease_root):
         return _finalize_observed(state_path, state_root, lease_root)
     if attempts and attempts[-1]["status"] == "observed":
         return _finalize_observed(state_path, state_root, lease_root)
+    action = decide(state, lease_root=lease_root)
+    if action["decision"] == "allow":
+        return {"status": "terminal", "terminal": action["terminal"]}
     next_action = action["next_action"]
     executable = next_action["action"] == "execute-inline" or (
         next_action["action"] == "verify" and "phase" in next_action
@@ -410,6 +418,16 @@ def _run_once(state_path, state_root, lease_root):
     return _finalize_observed(state_path, state_root, lease_root)
 
 
+def recovering_action(state):
+    if not isinstance(state, dict) or state.get("status") != "active":
+        return False
+    control = state.get("execution_control")
+    autonomy = control.get("autonomy") if isinstance(control, dict) else None
+    attempts = autonomy.get("action_attempts") if isinstance(autonomy, dict) else None
+    return isinstance(attempts, list) and bool(attempts) and isinstance(attempts[-1], dict) \
+        and attempts[-1].get("status") in {"running", "observed"}
+
+
 def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
     state_path = Path(state_path).expanduser().resolve()
     state_root = Path(state_root).expanduser().resolve()
@@ -419,7 +437,8 @@ def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
             return {"status": "busy"}
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            validate_state(state, SimpleNamespace(strict_evidence=True))
+            validate_state(state, SimpleNamespace(strict_evidence=True),
+                           check_workspace=not recovering_action(state))
             if state_path != managed_state_path(
                     state_root, state["repo_id"], state["task_key"], state["run_id"]
             ).resolve():
@@ -470,7 +489,8 @@ def service_paths(root):
             continue
         try:
             if not has_frozen_snapshot(state):
-                validate_state(state, SimpleNamespace(strict_evidence=True))
+                validate_state(state, SimpleNamespace(strict_evidence=True),
+                               check_workspace=not recovering_action(state))
             service_runtime(state)
         except (KeyError, ValueError) as error:
             diagnostics.append(f"invalid autonomous service state {path}: {error}")

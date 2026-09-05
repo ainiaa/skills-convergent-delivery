@@ -78,3 +78,7 @@ checkpoint 的真实 Git tree 必须等于 Source Receipt 的基线加逐文件�
 ## Cleanup barrier
 
 公共 worker/watchdog/清场行为以 [执行控制](../../../references/execution-control.md) 为唯一真源。Batch 额外要求把无法完成的清场结果写为 blocked，并在 `blocked_reason` 保留需 manual cleanup 的精确 ref。
+
+最终 `final_acceptance` 的 criterion 列表从初始化起固定，不能添加、删除、替换、重排或重复。只有 evidence/result/freshness/source_fingerprint 可以在未通过时补充，已经通过的最终验收仍不可改写。
+
+计划 complete 时，每项 `final_acceptance[].evidence` 必须是 `evidence_contract.py run` 真实执行生成的 observed Evidence Receipt 对象，退出码为 0，回执来源和 fingerprint 有效，且 source 精确等于当前工作区相对最后 Batch baseline 的 Source Receipt；外层 source_fingerprint 也必须一致。文本、缺失、失败、篡改或旧源码回执均不能放行。最终源码仍必须对应最后 Batch 的已验证提交；各 Batch receipt 内的 evidence 摘要继续由正式 delegate state 和提交链复核，不能替代最终检查。

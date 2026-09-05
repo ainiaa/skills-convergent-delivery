@@ -44,3 +44,18 @@
 | [gstack domain skills](https://github.com/garrytan/gstack/blob/main/docs/domain-skills.md) | 不采用运行时沉淀/自动晋升；仅保留“隔离 → 重复有效使用 → 显式全局晋升”的未来研究约束 | Converge 的当前任务不需要跨项目记忆；新增 JSONL 和记忆状态会违反 Single State，未来若授权记忆须先通过隔离和 prompt-injection 审计 |
 
 最终收敛路径：先按拓扑而非风险决定 `inline/planned/delegated/batch`；风险独立提高验证与 review；无真实宿主桥接时只手工交接；触发评测必须运行真实 selector；自进化只在用户显式授权的离线实验中进行。新增机制必须先证明减少真实失败或总 token，不能只增加协议。
+
+
+## 2026-09-05 自治落盘、最终验收与派发身份修复
+
+复用本会话 Skills.sh 发现结果并核对以下原始材料，只采纳本轮边界需要的机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [planning-with-files plan-doctor](https://github.com/othmanadi/planning-with-files/blob/master/skills/planning-with-files/scripts/plan-doctor.sh) | 采用真实恢复探测与规范路径；不复制 Markdown 状态或其诊断总是成功退出的策略，现有机器状态负责恢复 | `test_autonomy_service.py` 在真实源码变化和状态写入后恢复 running/observed，未知执行不重放 |
+| [Superpowers systematic-debugging](https://github.com/obra/superpowers/blob/master/skills/systematic-debugging/SKILL.md) | 采用跨组件边界追踪；不新增调试控制器 | 自治测试只模拟外部 runner，结果、异常、verifier 失败均走真实落盘与租约释放 |
+| [LangChain calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用误放行/误拒绝反例；不增加模型数量或独立状态 | `test_batch_state.py` 拒绝文本、缺失、失败与篡改回执，接受当前源码真实验证 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用不变量思路，以现有 unittest 参数化有限状态；不引入新测试依赖 | 最终 criterion 从初始化冻结；`test_capsule_dispatch.py` 覆盖所有缓存状态的 workspace 绑定与同路径复用 |
+| [Context compression evaluation](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/context-compression/references/evaluation-framework.md) | 采用恢复后核对范围与下一动作；不增加压缩日志或第二份真源 | 恢复依然检查状态身份、冻结约束与租约，只有未完成动作允许旧源码快照 |
+
+复用 Source Receipt、Evidence Receipt、review rounds 和现有 receipt 文件。控制器保有写权、验证与终态清场责任；失败和未知结果有限停止。本轮没有新增代理、依赖、循环或状态文件。真实宿主 Eval bridge 和本仓原生覆盖率配置仍缺失，本地回归不冒充正式 Eval 或覆盖率通过。

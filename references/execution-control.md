@@ -57,6 +57,8 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 需要独立服务时，`autonomy_begin.py --runtime service` 必须同时带冻结的 `--task-profile-json`、implementer runner、JSON `verification_argv` 与不同的 JSON `audit_argv`；service 仅接受 low-risk route、高风险必须保留独立 review，且当前只接受 LaunchAgent 已知的默认 state/lease roots，避免后台服务失联。语义风险由冻结画像和 `--risk-flag` 显式声明并与路径风险合并。service 先写动作 intent/running，再在外部 runner 启动前写入冻结 `runner_launches`，收到回执后写入匹配的 `runner_results`；模型回执只可形成 observed。独立 verifier 通过后，controller 以 verifier 的 source receipt 原子推进阶段并 committed；最终阶段还必须由独立 audit 在同一源码上通过，才归档旧验收、记录当前 pass audit 并 complete；失败 verifier 与 audit 都必须以 fail check 保存 receipt。模型只改冻结工作区，绝不写 managed state。任何可写状态的 service 异常必须尽力持久化为 `blocked`，且终态仅在 lease 返回 `released` 后才算清场；已识别但无效、非对象或不可解析的 managed state 必须输出诊断，但不得阻止同一 state root 中健康 run 继续执行；仅有这类诊断而无 active state 时成功退出，避免 LaunchAgent 无限重启。直接指定无效 state 必须返回手工恢复诊断，直接指定有效的 Hook state 必须拒绝且不得改写其 state 或释放 lease，且指定 state path 必须与 state root 的规范路径相同。恢复遇到 running 结果一律视为未知并 block，不会为“再试一次”重放外部模型调用。
 
+service 在记录 runner result、observation 或 blocked 状态时采集当前 Source Receipt；源码变化只追加空的 review round，历史审查保留，不把采集动作当作验证通过。扫描和恢复仅对 active 且末次动作为 running/observed 的状态允许旧工作区快照，其他结构、范围、风险和租约校验不放宽；running 记录未知后阻塞，observed 重新执行冻结 verifier，均不重放模型动作。
+
 service 只执行 `execute-inline` 或带 `phase` 的 `verify`。其他宿主 controller action 必须由同会话控制器处理；service 遇到它们立即停止，绝不降级为普通模型阶段，并写为 `blocked/no_progress`。
 
 需求取舍、计划、方案仲裁和最终 review 保留给主执行者；文件定位、独立代码扫描、测试或日志分析可以交给边界明确的辅助执行者。只有宿主支持且能节省上下文时才委托，不为了“并行”增加无收益的 Agent。

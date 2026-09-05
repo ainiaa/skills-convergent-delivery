@@ -80,6 +80,89 @@ def native_tdd_trace(workspace, baseline, source):
 
 
 class AutonomyServiceTest(unittest.TestCase):
+    def test_source_changing_actions_persist_results_and_failures(self):
+        for outcome in ('completed', 'failed', 'verifier-failed', 'exception'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                path, state_root, lease_root = self.managed_service_state(directory)
+                state = json.loads(path.read_text())
+                state['ledger']['tdd_trace'] = None
+                if outcome == 'verifier-failed':
+                    state['execution_control']['autonomy']['runtime']['verification_argv'] = ['false']
+                path.write_text(json.dumps(state))
+                edited = Path(state['workspace']) / 'implementation.py'
+                self.assertNotEqual(Path(state['workspace']), Path.cwd())
+
+                def plan(profile, request, workspace):
+                    return freeze_launch(profile, request, {
+                        'codex_bin': 'codex', 'binary_fingerprint': 'b' * 64,
+                        'sandbox': 'workspace-write', 'workspace': workspace,
+                    })
+
+                def run(launch, request, **kwargs):
+                    edited.write_text('result = 42\n')
+                    if outcome == 'exception':
+                        raise ValueError('runner transport failed after edit')
+                    profile = state['execution_control']['autonomy']['runtime']['runner_profile']
+                    raw = {
+                        'schema_version': 1, 'runner_id': 'codex-exec-v1',
+                        'launch_fingerprint': launch['launch_fingerprint'],
+                        'status': 'failed' if outcome == 'failed' else 'completed',
+                        'exit_code': 1 if outcome == 'failed' else 0,
+                        'stdout_fingerprint': 'c' * 64, 'stderr_fingerprint': 'd' * 64,
+                        'requested_model': profile['effective']['model'],
+                        'requested_reasoning_effort': profile['effective']['reasoning_effort'],
+                    }
+                    return {**raw, 'receipt_fingerprint': fingerprint(raw)}, ''
+
+                try:
+                    with patch.object(autonomy_service, 'plan_codex', side_effect=plan), \
+                            patch.object(autonomy_service, 'execute_codex', side_effect=run):
+                        result = autonomy_service.run_once(path, state_root, lease_root)
+                    self.assertEqual('advanced' if outcome == 'completed' else 'blocked', result['status'])
+                    current = json.loads(path.read_text())
+                    self.assertIn('implementation.py', current['source_receipt']['changed_paths'])
+                    self.assertEqual(0 if outcome == 'exception' else 1, len(current['ledger'].get('runner_results', [])))
+                    self.assertEqual('unknown', current['ledger']['acceptance'][0]['result'])
+                    rounds = current['execution_control']['review']['rounds']
+                    self.assertEqual(state['execution_control']['review']['rounds'], rounds[:-1])
+                    self.assertEqual([], rounds[-1]['requests'])
+                    self.assertEqual(current['source_fingerprint'], rounds[-1]['source_fingerprint'])
+                    if outcome != 'completed':
+                        self.assertEqual('blocked', current['status'])
+                        self.assertTrue(all(not p.exists() for p in lease_paths(
+                            lease_root, current['repo_id'], current['workspace'], current['task_key']
+                        ).values()))
+                finally:
+                    edited.unlink(missing_ok=True)
+
+    def test_restarted_action_with_source_edits_recovers_without_replay(self):
+        for status in ('running', 'observed'):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                path, state_root, lease_root = self.managed_service_state(directory)
+                state = json.loads(path.read_text())
+                action = autonomy_service.decide(state, lease_root=lease_root)['next_action']
+                autonomy_service._append_intent(path, state_root, lease_root, action)
+                autonomy_service._start(path, state_root, lease_root)
+                if status == 'observed':
+                    autonomy_service._observe(path, state_root, lease_root, {
+                        'status': 'completed', 'receipt_fingerprint': 'c' * 64,
+                    })
+                edited = Path(state['workspace']) / 'implementation.py'
+                edited.write_text('interrupted edit\n')
+                try:
+                    paths, diagnostics = autonomy_service.service_paths(state_root)
+                    self.assertIn(path, paths)
+                    self.assertEqual([], diagnostics)
+                    with patch.object(autonomy_service, 'execute') as execute:
+                        result = autonomy_service.run_once(path, state_root, lease_root)
+                    execute.assert_not_called()
+                    self.assertEqual('blocked' if status == 'running' else 'advanced', result['status'])
+                    current = json.loads(path.read_text())
+                    self.assertIn('implementation.py', current['source_receipt']['changed_paths'])
+                    self.assertEqual('unknown', current['ledger']['acceptance'][0]['result'])
+                finally:
+                    edited.unlink(missing_ok=True)
+
     def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None):
         root = WORKSPACE
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
@@ -663,7 +746,7 @@ class AutonomyServiceTest(unittest.TestCase):
             path = Path(directory) / "state.json"
             state = {"revision": 0, "source_fingerprint": "a" * 64, "ledger": {"checks": [], "acceptance": [
                 {"criterion": "first"}, {"criterion": "second"},
-            ]}}
+            ]}, "execution_control": {"review": {"rounds": []}}}
             path.write_text(json.dumps(state), encoding="utf-8")
             receipt = {
                 "command": "true", "receipt_fingerprint": "b" * 64,

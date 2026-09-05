@@ -196,6 +196,45 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_final_acceptance_identity_is_frozen_before_any_pass(self):
+        before = candidate(self.workspace)
+        self.write(before, -1)
+        for change in ('replace', 'remove', 'duplicate'):
+            with self.subTest(change=change):
+                after = json.loads(json.dumps(before))
+                after['revision'] = 1
+                if change == 'replace':
+                    after['final_acceptance'][0]['criterion'] = 'easier criterion'
+                elif change == 'remove':
+                    after['final_acceptance'] = []
+                else:
+                    after['final_acceptance'].append(dict(after['final_acceptance'][0]))
+                with self.assertRaises(ValueError):
+                    self.write(after, 0)
+
+    def test_final_acceptance_requires_current_observed_passing_evidence(self):
+        state = candidate(self.workspace)
+        for index, batch in enumerate(state['batches']):
+            batch.update(status='completed', dispatch_id='dispatch-' + batch['batch_id'])
+            register_worker(state, index, 'thread-' + str(index))
+            batch['worker_status'] = 'completed'
+            batch['receipt'] = receipt(batch['batch_id'], batch['dispatch_id'], self.commit_id, self.tree_hash, self.workspace)
+        state.update(status='complete', current_batch=None)
+        observed = run_evidence(self.workspace, self.commit_id, [sys.executable, '-c', 'pass'])
+        entry = state['final_acceptance'][0]
+        entry.update(result='pass', freshness='fresh', source_fingerprint=observed['source']['source_fingerprint'])
+        for evidence in ('NEVER EXECUTED', None,
+                         run_evidence(self.workspace, self.commit_id, [sys.executable, '-c', 'raise SystemExit(1)'])):
+            with self.subTest(evidence=type(evidence).__name__):
+                entry['evidence'] = evidence
+                with self.assertRaises(ValueError):
+                    batch_state.validate_state(state)
+        entry['evidence'] = observed
+        batch_state.validate_state(state)
+        observed['exit_code'] = 1
+        with self.assertRaises(ValueError):
+            batch_state.validate_state(state)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "state"
@@ -466,7 +505,9 @@ class BatchStateTest(unittest.TestCase):
         state["status"] = "complete"
         state["final_acceptance"] = [
             {
-                "criterion": "whole-plan", "evidence": "e2e", "result": "pass",
+                "criterion": "whole-plan", "evidence": run_evidence(
+                    self.workspace, self.commit_id, [sys.executable, "-c", "print('e2e passed')"]
+                ), "result": "pass",
                 "freshness": "fresh",
                 "source_fingerprint": state["batches"][-1]["receipt"]["delegate_source_fingerprint"],
             }

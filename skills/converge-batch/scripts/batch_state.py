@@ -22,7 +22,7 @@ from delivery_next import (
     validate_provider_binding as validate_complete_provider_binding,
     validate_state as validate_delegate_state,
 )
-from evidence_contract import validate_source_receipt, workspace_source
+from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -185,12 +185,16 @@ def write_private(path, payload):
         temporary.unlink(missing_ok=True)
 
 
-def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None):
+def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None, source=None):
+    criteria = set()
     for index, entry in enumerate(require_list(entries, name, non_empty=True)):
         entry = require_mapping(entry, f"{name}[{index}]")
         if set(entry) != EVIDENCE_FIELDS:
             raise ValueError(f"{name}[{index}] fields are invalid")
-        require_string(entry.get("criterion"), f"{name}[{index}].criterion")
+        criterion = require_string(entry.get("criterion"), f"{name}[{index}].criterion")
+        if criterion in criteria:
+            raise ValueError(f"{name} criteria must be unique")
+        criteria.add(criterion)
         result = entry.get("result")
         freshness = entry.get("freshness")
         if result not in {"pass", "fail", "unknown"}:
@@ -198,7 +202,10 @@ def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=N
         if freshness not in {"fresh", "stale", "unavailable"}:
             raise ValueError(f"{name}[{index}].freshness is invalid")
         if require_pass:
-            require_string(entry.get("evidence"), f"{name}[{index}].evidence")
+            if source is None:
+                require_string(entry.get("evidence"), f"{name}[{index}].evidence")
+            elif not valid_evidence_receipts([entry.get("evidence")], source):
+                raise ValueError(f"{name} requires current observed passing evidence")
             if result != "pass" or freshness != "fresh":
                 raise ValueError(f"{name} must contain only fresh passing evidence")
             if entry.get("source_fingerprint") != source_fingerprint:
@@ -512,14 +519,14 @@ def validate_state(state):
         if completed_prefix != len(batches):
             raise ValueError("all batches must be completed")
         last = batches[-1]
+        current_source = workspace_source(state["workspace"], last["capsule"]["baseline"])
         validate_committed_source(
-            state['workspace'], workspace_source(state['workspace'], last['capsule']['baseline']),
+            state['workspace'], current_source,
             last['receipt']['commit_id'],
         )
-        final_source = batches[-1]["receipt"]["delegate_source_fingerprint"]
         validate_evidence(
             state["final_acceptance"], "final_acceptance", require_pass=True,
-            source_fingerprint=final_source,
+            source_fingerprint=current_source["source_fingerprint"], source=current_source,
         )
     blocked_reason = state.get("blocked_reason")
     if status == "blocked":
@@ -603,6 +610,10 @@ def validate_transition(previous, candidate, *, takeover=False):
                 raise ValueError("receipt workspace is not clean")
     if changed > 1:
         raise ValueError("only one batch may transition per revision")
+    if [item["criterion"] for item in previous["final_acceptance"]] != [
+        item["criterion"] for item in candidate["final_acceptance"]
+    ]:
+        raise ValueError("final acceptance criteria are immutable")
     if any(item.get("result") == "pass" for item in previous["final_acceptance"]) \
             and candidate["final_acceptance"] != previous["final_acceptance"]:
         raise ValueError("passing final acceptance is immutable")

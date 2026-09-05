@@ -54,8 +54,11 @@ def read_receipt(path):
 
 
 def validate_saved_receipt(value):
-    if value.get("schema_version") != 1:
+    if value.get("schema_version") != 2:
         raise ValueError("dispatch receipt schema_version is invalid")
+    workspace = value.get("workspace")
+    if not nonblank_string(workspace) or str(Path(workspace).expanduser().resolve()) != workspace:
+        raise ValueError("dispatch receipt requires a canonical workspace")
     status = value.get("status")
     if status not in {"attempted", "delivered", "unavailable", "failed", "indeterminate"}:
         raise ValueError("dispatch receipt status is invalid")
@@ -66,20 +69,22 @@ def validate_saved_receipt(value):
         raise ValueError("terminal dispatch receipt requires reason")
 
 
-def saved_or_new(path, adapter, attempt_id, capsule):
+def saved_or_new(path, adapter, attempt_id, capsule, workspace):
     expected_fingerprint = fingerprint(capsule)
     attempt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": adapter,
         "attempt_id": attempt_id,
         "capsule_fingerprint": expected_fingerprint,
+        "workspace": str(Path(workspace).expanduser().resolve()),
         "status": "attempted",
     }
     if path.exists():
         existing = read_receipt(path)
         validate_saved_receipt(existing)
         if existing.get("adapter") != adapter or existing.get("attempt_id") != attempt_id \
-                or existing.get("capsule_fingerprint") != expected_fingerprint:
+                or existing.get("capsule_fingerprint") != expected_fingerprint \
+                or existing.get("workspace") != attempt["workspace"]:
             raise ValueError("dispatch attempt id is already bound to different input")
         if existing.get("status") == "attempted":
             return persist(path, {
@@ -92,7 +97,7 @@ def saved_or_new(path, adapter, attempt_id, capsule):
             return None
         return existing
     if not write_exclusive(path, attempt):
-        return saved_or_new(path, adapter, attempt_id, capsule)
+        return saved_or_new(path, adapter, attempt_id, capsule, workspace)
     return None
 
 
@@ -102,12 +107,13 @@ def persist(path, result):
     return result
 
 
-def result(adapter, attempt_id, capsule, status, **fields):
+def result(adapter, attempt_id, capsule, status, *, workspace, **fields):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": adapter,
         "attempt_id": attempt_id,
         "capsule_fingerprint": fingerprint(capsule),
+        "workspace": str(Path(workspace).expanduser().resolve()),
         "status": status,
         **fields,
     }
@@ -136,7 +142,7 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
     workspace = Path(workspace).expanduser().resolve()
     evidence = path.with_suffix(".jsonl")
     with lock_record(path):
-        previous = saved_or_new(path, adapter, attempt_id, capsule)
+        previous = saved_or_new(path, adapter, attempt_id, capsule, workspace)
         if previous is not None:
             return previous
         deadline = time.monotonic() + startup_timeout_seconds
@@ -149,7 +155,7 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                 )
         except (OSError, subprocess.SubprocessError) as error:
             return persist(path, result(
-                adapter, attempt_id, capsule, "failed", reason=error_reason(error),
+                adapter, attempt_id, capsule, "failed", workspace=workspace, reason=error_reason(error),
             ))
         threading.Thread(target=process.wait, daemon=True).start()
         writer, write_errors = _start_prompt_writer(process, capsule)
@@ -159,27 +165,27 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                 continue
             if write_errors:
                 return persist(path, result(
-                    adapter, attempt_id, capsule, "indeterminate",
+                    adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
                     reason="Codex process started but the capsule write was not confirmed; do not retry it",
                     evidence_path=str(evidence),
                 ))
             task_id = codex_thread_id(evidence)
             if task_id is not None:
                 return persist(path, result(
-                    adapter, attempt_id, capsule, "delivered", external_task_id=task_id,
+                    adapter, attempt_id, capsule, "delivered", workspace=workspace, external_task_id=task_id,
                     evidence_path=str(evidence),
                 ))
             if process.poll() is not None:
                 if process.returncode:
                     return persist(path, result(
-                        adapter, attempt_id, capsule, "failed",
+                        adapter, attempt_id, capsule, "failed", workspace=workspace,
                         reason=f"Codex exited before thread confirmation with status {process.returncode}",
                         evidence_path=str(evidence),
                     ))
                 break
             time.sleep(0.02)
         return persist(path, result(
-            adapter, attempt_id, capsule, "indeterminate",
+            adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
             reason="Codex launch has no thread.started confirmation; do not retry it",
             evidence_path=str(evidence),
         ))
@@ -246,7 +252,7 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
     path = receipt_path(receipt_dir, attempt_id)
     workspace = Path(workspace).expanduser().resolve()
     with lock_record(path):
-        previous = saved_or_new(path, adapter, attempt_id, capsule)
+        previous = saved_or_new(path, adapter, attempt_id, capsule, workspace)
         if previous is not None:
             return previous
         deadline = time.monotonic() + startup_timeout_seconds
@@ -254,7 +260,7 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
             previous_agents = claude_agents(executable, workspace, deadline)
         except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
             return persist(path, result(
-                adapter, attempt_id, capsule, "unavailable",
+                adapter, attempt_id, capsule, "unavailable", workspace=workspace,
                 reason=f"Claude Code agent inventory is unavailable before launch: {error}",
             ))
         snapshot = write_capsule_snapshot(capsule_snapshot_path(path, attempt_id), capsule)
@@ -274,16 +280,16 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
             )
         except subprocess.TimeoutExpired:
             return persist(path, result(
-                adapter, attempt_id, capsule, "indeterminate",
+                adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
                 reason="Claude Code launch timed out; do not retry it",
             ))
         except (OSError, subprocess.SubprocessError) as error:
             return persist(path, result(
-                adapter, attempt_id, capsule, "failed", reason=error_reason(error),
+                adapter, attempt_id, capsule, "failed", workspace=workspace, reason=error_reason(error),
             ))
         if completed.returncode:
             return persist(path, result(
-                adapter, attempt_id, capsule, "failed",
+                adapter, attempt_id, capsule, "failed", workspace=workspace,
                 reason=f"Claude Code returned status {completed.returncode}",
             ))
         session_id = claude_session_registered(
@@ -291,22 +297,22 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
         )
         if not session_id:
             return persist(path, result(
-                adapter, attempt_id, capsule, "indeterminate",
+                adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
                 reason="Claude Code launch returned but agents did not confirm its named session; do not retry it",
             ))
         return persist(path, result(
-            adapter, attempt_id, capsule, "delivered", external_task_id=session_id,
+            adapter, attempt_id, capsule, "delivered", workspace=workspace, external_task_id=session_id,
         ))
 
 
-def unavailable(host, capsule, receipt_dir, attempt_id, reason):
+def unavailable(host, capsule, receipt_dir, attempt_id, reason, *, workspace):
     adapter = {"codex": "codex-exec-v1", "claude": "claude-background-v1"}[host]
     path = receipt_path(receipt_dir, attempt_id)
     with lock_record(path):
-        previous = saved_or_new(path, adapter, attempt_id, capsule)
+        previous = saved_or_new(path, adapter, attempt_id, capsule, workspace)
         if previous is not None:
             return previous
-        return persist(path, result(adapter, attempt_id, capsule, "unavailable", reason=reason))
+        return persist(path, result(adapter, attempt_id, capsule, "unavailable", workspace=workspace, reason=reason))
 
 
 def executable(name):
@@ -356,13 +362,13 @@ def main():
             host_executable = executable(arguments.host)
         except ValueError as error:
             dispatched = unavailable(
-                arguments.host, capsule, arguments.receipt_dir, attempt_id, str(error),
+                arguments.host, capsule, arguments.receipt_dir, attempt_id, str(error), workspace=arguments.workspace,
             )
         else:
             capability = capability_error(arguments.host, host_executable)
             if capability is not None:
                 dispatched = unavailable(
-                    arguments.host, capsule, arguments.receipt_dir, attempt_id, capability,
+                    arguments.host, capsule, arguments.receipt_dir, attempt_id, capability, workspace=arguments.workspace,
                 )
             elif arguments.host == "codex":
                 dispatched = dispatch_codex(

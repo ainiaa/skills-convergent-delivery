@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复自治 service 在模型实际修改源码后无法保存结果或 blocked 状态的问题：落盘同步当前 Source Receipt，保留历史审查并为新源码建立空轮次；running/observed 中断恢复仍检查身份、租约与冻结约束，未知执行不重放，失败保存后释放租约。
+- Batch 最终验收改为校验真实 observed Evidence Receipt、成功退出码与当前提交源码，拒绝自由文本冒充执行证据；验收项从初始化冻结并禁止重复，保留每批 delegate receipt 的独立校验。
+- Capsule 派发持久回执升级为 schema v2，将显式 attempt id 也绑定到规范化 workspace；跨工作区复用在返回缓存或重试前拒绝。缺少该绑定的旧 schema v1 不自动迁移或重派。
+
 - Batch 历史回执按已验证的 checkpoint 源码和覆盖率配置复核，后续批次修改不再使前一批误判失效；当前回执与最终验收仍检查工作区漂移。连续生命周期测试改为两批真实修改并提交。
 - Batch 将 Source Receipt 的基线与逐文件改动绑定到提交树，拒绝旧提交遗漏已验证内容、文件权限/符号链接不匹配，以及提交夹带未验证文件；支持验证后提交相同内容。
 - coverage 按实际 runner 的完整参数解析阈值，拒绝重复、非整数与歧义参数；识别 pytest collect-only/cov-reset、Vitest 未启用采集及 Gradle exclude-task 等失效门禁，不静默追加阈值覆盖错误配置。
