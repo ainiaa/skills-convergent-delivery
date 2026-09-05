@@ -2,19 +2,26 @@
 """Validate a bounded TDD and regression-impact trace without running commands."""
 
 import argparse
+import copy
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-from evidence_contract import validate_observed_evidence_receipt, validate_source_receipt
+from evidence_contract import (
+    run_evidence,
+    validate_observed_evidence_receipt,
+    validate_source_receipt,
+    workspace_source,
+)
 from task_profile import RISK_FLAGS
 
 
 TEST_KINDS = {"unit", "integration", "e2e", "contract"}
 SCENARIOS = {
     "normal", "boundary", "error", "authorization", "concurrency", "idempotency", "contract",
-    "integration", "security", "sensitive-data", "transaction", "property",
+    "integration", "security", "sensitive-data", "transaction", "property", "time", "timezone",
+    "recovery",
 }
 RELATIONS = {"entrypoint", "caller", "shared-effect", "external-contract"}
 RISK_REQUIREMENTS = {
@@ -32,6 +39,9 @@ RISK_REQUIREMENTS = {
     "sql": ("integration", "integration"),
     "mapper": ("integration", "integration"),
     "sensitive-log": ("sensitive-data", None),
+    "time": ("time", "integration"),
+    "timezone": ("timezone", "integration"),
+    "irreversible": ("recovery", "integration"),
 }
 CONTRACT_RISKS = {"public-api", "cross-service", "release-contract"}
 VALID_RED_FAILURE_CLASSES = {"missing_behavior", "assertion"}
@@ -41,10 +51,16 @@ MUTATION_RISKS = {
     "database-migration",
 }
 PROPERTY_RISKS = {"money", "payment"}
+STABILITY_RISKS = set(RISK_FLAGS)
+MAX_ACCEPTANCE = 50
+MAX_TESTS_PER_ACCEPTANCE = 20
+MAX_IMPACTS = 100
+MAX_STRING_LENGTH = 500
+MAX_TRACE_BYTES = 256 * 1024
 
 
-def require_string(value, name):
-    if not isinstance(value, str) or not value.strip():
+def require_string(value, name, *, max_length=MAX_STRING_LENGTH):
+    if not isinstance(value, str) or not value.strip() or len(value) > max_length:
         raise ValueError(f"{name} must be a non-empty string")
     return value
 
@@ -125,15 +141,45 @@ def graph_receipt(value, source, impacts):
     if isinstance(value, dict) and set(value) == {"status", "reason"} \
             and value["status"] == "uncovered" and isinstance(value["reason"], str) and value["reason"].strip():
         return False
-    if not isinstance(value, dict) or set(value) != {"status", "receipt", "impacts_fingerprint"} \
+    if not isinstance(value, dict) or set(value) != {"status", "receipt", "impacts_fingerprint", "query"} \
             or value["status"] != "covered":
         raise ValueError("CodeGraph receipt fields are invalid")
-    observed = observed_receipt(value["receipt"], "CodeGraph receipt", source, "explore", passing=True)
+    query = require_string(value.get("query"), "CodeGraph query")
+    if query != graph_query(impacts):
+        raise ValueError("CodeGraph query does not match impact chains")
+    observed = observed_receipt(value["receipt"], "CodeGraph receipt", source, query, passing=True)
     if Path(observed["argv"][0]).name != "codegraph":
         raise ValueError("CodeGraph receipt must execute CodeGraph")
+    if observed["argv"][:3] != [observed["argv"][0], "explore", query]:
+        raise ValueError("CodeGraph receipt must execute the derived query")
     if value["impacts_fingerprint"] != fingerprint(impacts):
         raise ValueError("CodeGraph receipt impact fingerprint is invalid")
     return True
+
+
+def coverage_receipt(value, source):
+    if isinstance(value, dict) and set(value) == {"status", "reason"} \
+            and value["status"] == "uncovered" and isinstance(value["reason"], str) and value["reason"].strip():
+        return False
+    if not isinstance(value, dict) or set(value) != {"status", "threshold", "receipt"} \
+            or value.get("status") != "covered":
+        raise ValueError("coverage receipt fields are invalid")
+    threshold = value.get("threshold")
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or not 1 <= threshold <= 100:
+        raise ValueError("coverage threshold is invalid")
+    try:
+        observed = validate_observed_evidence_receipt(value["receipt"])
+    except ValueError as error:
+        raise ValueError(f"coverage receipt must reference an observed Evidence Receipt: {error}") from error
+    if observed["exit_code"] != 0 or observed["source"] != source:
+        raise ValueError("coverage receipt must pass on the final trace source")
+    return True
+
+
+def graph_query(impacts):
+    return "CodeGraph impact chains: " + "; ".join(
+        f"{item['relation']}:{item['id']}" for item in impacts
+    )
 
 
 def fingerprint(value):
@@ -143,18 +189,24 @@ def fingerprint(value):
 
 
 def validate(value):
+    try:
+        trace_size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("TDD impact trace must be JSON-serializable") from error
+    if trace_size > MAX_TRACE_BYTES:
+        raise ValueError("TDD impact trace exceeds the size limit")
     if not isinstance(value, dict) or set(value) != {
-        "schema_version", "source", "risk_flags", "acceptance", "impacts", "graph"
+        "schema_version", "source", "risk_flags", "acceptance", "impacts", "graph", "coverage"
     }:
         raise ValueError("TDD impact trace fields are invalid")
-    if value.get("schema_version") != 4:
-        raise ValueError("TDD impact trace schema_version must be 4")
+    if value.get("schema_version") != 5:
+        raise ValueError("TDD impact trace schema_version must be 5")
     source = validate_source_receipt(value.get("source"))
     risks = value.get("risk_flags")
     if not isinstance(risks, list) or len(risks) != len(set(risks)) or not set(risks) <= RISK_FLAGS:
         raise ValueError("TDD impact trace risk_flags are invalid")
     acceptance = value.get("acceptance")
-    if not isinstance(acceptance, list) or not acceptance:
+    if not isinstance(acceptance, list) or not acceptance or len(acceptance) > MAX_ACCEPTANCE:
         raise ValueError("TDD impact trace acceptance is invalid")
 
     criteria = set()
@@ -163,7 +215,7 @@ def validate(value):
     test_references = []
     mutation_checked = {}
     missing_mutation = False
-    required_green_runs = 3 if MUTATION_RISKS & set(risks) else 2
+    required_green_runs = 3 if STABILITY_RISKS & set(risks) else 2
     for index, item in enumerate(acceptance):
         if not isinstance(item, dict) or set(item) != {"criterion", "tests"}:
             raise ValueError(f"acceptance[{index}] fields are invalid")
@@ -172,7 +224,7 @@ def validate(value):
             raise ValueError("acceptance criteria are duplicated")
         criteria.add(criterion)
         tests = item.get("tests")
-        if not isinstance(tests, list) or not tests:
+        if not isinstance(tests, list) or not tests or len(tests) > MAX_TESTS_PER_ACCEPTANCE:
             raise ValueError(f"acceptance[{index}] requires at least one test reference")
         for test_index, test in enumerate(tests):
             if not isinstance(test, dict) or set(test) != {
@@ -218,7 +270,7 @@ def validate(value):
             raise ValueError(f"TDD impact trace is missing property coverage for {risk}")
 
     impacts = value.get("impacts")
-    if not isinstance(impacts, list) or not impacts:
+    if not isinstance(impacts, list) or not impacts or len(impacts) > MAX_IMPACTS:
         raise ValueError("TDD impact trace requires at least one impact chain")
     impact_ids = set()
     relations = set()
@@ -250,21 +302,60 @@ def validate(value):
             for test in test_references):
         raise ValueError("contract risk requires an external-contract contract test")
     graph_covered = graph_receipt(value.get("graph"), source, impacts)
+    coverage_covered = coverage_receipt(value.get("coverage"), source)
     return {
-        "status": "pass" if graph_covered and not missing_mutation else "uncovered",
+        "status": "pass" if graph_covered and coverage_covered and not missing_mutation else "uncovered",
         "trace_fingerprint": fingerprint(value),
     }
 
 
+def rerun(value, workspace, baseline):
+    """Re-execute final-source checks and return a refreshed trace; never writes state."""
+    validate(value)
+    expected_source = workspace_source(workspace, baseline)
+    if value["source"] != expected_source:
+        raise ValueError("TDD trace source is not the current workspace source")
+    refreshed = copy.deepcopy(value)
+    required_runs = 3 if STABILITY_RISKS & set(refreshed["risk_flags"]) else 2
+
+    def current_receipt(argv):
+        receipt = run_evidence(workspace, baseline, argv)
+        if receipt["source"] != expected_source:
+            raise ValueError("TDD rerun changed the workspace source; clean generated artifacts first")
+        return receipt
+
+    for acceptance in refreshed["acceptance"]:
+        for test in acceptance["tests"]:
+            argv = test["green"]["receipts"][0]["argv"]
+            test["green"] = {"receipts": [current_receipt(argv) for _ in range(required_runs)]}
+            if test["mutation"] is not None:
+                test["mutation"]["receipt"] = current_receipt(test["mutation"]["receipt"]["argv"])
+    if refreshed["coverage"]["status"] == "covered":
+        refreshed["coverage"]["receipt"] = current_receipt(refreshed["coverage"]["receipt"]["argv"])
+    if refreshed["graph"]["status"] == "covered":
+        refreshed["graph"]["receipt"] = current_receipt(refreshed["graph"]["receipt"]["argv"])
+    validate(refreshed)
+    return refreshed
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("validate",))
+    parser.add_argument("command", choices=("validate", "rerun"))
     parser.add_argument("--input", required=True)
+    parser.add_argument("--workspace")
+    parser.add_argument("--baseline")
     arguments = parser.parse_args()
     try:
         if arguments.input != "-":
             raise ValueError("TDD impact guard only accepts stdin input")
-        print(json.dumps(validate(json.load(sys.stdin)), ensure_ascii=False, sort_keys=True))
+        value = json.load(sys.stdin)
+        if arguments.command == "validate":
+            output = validate(value)
+        else:
+            if not arguments.workspace or not arguments.baseline:
+                raise ValueError("TDD rerun requires --workspace and --baseline")
+            output = rerun(value, arguments.workspace, arguments.baseline)
+        print(json.dumps(output, ensure_ascii=False, sort_keys=True))
         return 0
     except (ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "blocked", "reason": str(error)}, ensure_ascii=False, sort_keys=True))

@@ -37,7 +37,7 @@ def trace(workspace, baseline, *, risks=None):
         })
 
     (workspace / "implementation.txt").write_text("implemented\n", encoding="utf-8")
-    green_runs = 3 if set(risks or []) & tdd_impact_guard.MUTATION_RISKS else 2
+    green_runs = 3 if risks else 2
     for test in tests:
         test["green"] = {"receipts": [evidence(0, test["selector"]) for _ in range(green_runs)]}
     source = evidence_contract.workspace_source(workspace, baseline)
@@ -49,7 +49,7 @@ def trace(workspace, baseline, *, risks=None):
     }]
 
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "source": source,
         "risk_flags": risks or [],
         "acceptance": [{
@@ -60,9 +60,19 @@ def trace(workspace, baseline, *, risks=None):
         "graph": {
             "status": "covered",
             "receipt": evidence_contract.run_evidence(
-                workspace, baseline, [str(workspace / "codegraph"), "explore", "payment-api"]
+                workspace, baseline, [
+                    str(workspace / "codegraph"), "explore",
+                    tdd_impact_guard.graph_query(impacts),
+                ]
             ),
             "impacts_fingerprint": tdd_impact_guard.fingerprint(impacts),
+            "query": tdd_impact_guard.graph_query(impacts),
+        },
+        "coverage": {
+            "status": "covered", "threshold": 85,
+            "receipt": evidence_contract.run_evidence(
+                workspace, baseline, [sys.executable, "-c", "pass", "coverage"]
+            ),
         },
     }
 
@@ -201,6 +211,51 @@ class TddImpactGuardTest(unittest.TestCase):
 
         self.assertEqual("uncovered", tdd_impact_guard.validate(value)["status"])
 
+    def test_unavailable_coverage_keeps_the_trace_uncovered(self):
+        value = self.trace()
+        value["coverage"] = {"status": "uncovered", "reason": "no project coverage gate"}
+
+        self.assertEqual("uncovered", tdd_impact_guard.validate(value)["status"])
+
+    def test_coverage_receipt_is_not_forced_to_contain_a_generic_selector(self):
+        value = self.trace()
+        value["coverage"]["receipt"] = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [str(self.workspace / "codegraph"), "jacoco:check"]
+        )
+
+        self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
+
+    def test_trace_size_is_bounded(self):
+        value = self.trace()
+        value["acceptance"][0]["tests"][0]["selector"] = "x" * (256 * 1024)
+
+        with self.assertRaisesRegex(ValueError, "size limit"):
+            tdd_impact_guard.validate(value)
+
+    def test_rerun_refreshes_final_checks_without_changing_the_workspace_source(self):
+        refreshed = tdd_impact_guard.rerun(self.trace(), self.workspace, self.baseline)
+
+        self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
+
+    def test_graph_query_is_derived_from_and_executed_for_the_impact_list(self):
+        value = self.trace()
+        value["graph"]["query"] = "unrelated query"
+
+        with self.assertRaisesRegex(ValueError, "query"):
+            tdd_impact_guard.validate(value)
+
+    def test_time_timezone_and_irreversible_risks_require_specific_coverage(self):
+        value = self.trace(risks=["time", "timezone", "irreversible"])
+
+        with self.assertRaisesRegex(ValueError, "time"):
+            tdd_impact_guard.validate(value)
+
+        test = value["acceptance"][0]["tests"][2]
+        test["kind"] = "integration"
+        test["scenarios"].extend(["time", "timezone", "recovery"])
+        test["mutation"] = self.mutation(test["selector"])
+        self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
+
     def test_green_receipts_are_rerun_to_detect_flaky_tests(self):
         value = self.trace()
         value["acceptance"][0]["tests"][0]["green"]["receipts"].pop()
@@ -269,8 +324,11 @@ class TddImpactGuardTest(unittest.TestCase):
             "test_ids": ["payment-boundary"],
         })
         value["graph"]["impacts_fingerprint"] = tdd_impact_guard.fingerprint(value["impacts"])
+        value["graph"]["query"] = tdd_impact_guard.graph_query(value["impacts"])
         value["graph"]["receipt"] = evidence_contract.run_evidence(
-            self.workspace, self.baseline, [str(self.workspace / "codegraph"), "explore", "payment-contract"]
+            self.workspace, self.baseline, [
+                str(self.workspace / "codegraph"), "explore", value["graph"]["query"],
+            ]
         )
         with self.assertRaisesRegex(ValueError, "contract test"):
             tdd_impact_guard.validate(value)
@@ -280,6 +338,7 @@ class TddImpactGuardTest(unittest.TestCase):
             "test_ids": ["payment-normal"],
         }
         value["graph"]["impacts_fingerprint"] = tdd_impact_guard.fingerprint(value["impacts"])
+        value["graph"]["query"] = tdd_impact_guard.graph_query(value["impacts"])
         self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
 
     def test_every_impact_chain_must_reference_known_passing_tests(self):

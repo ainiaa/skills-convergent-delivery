@@ -95,7 +95,7 @@ def state(status="complete"):
         "ledger": {
             "completed_rounds": 2,
             "repair_fingerprints": ["issue-a", "issue-b"],
-            "tdd_trace": tdd_trace(SOURCE),
+            "tdd_trace": tdd_trace(SOURCE, criterion="doctor detects incomplete Suite"),
             "key_changes": ["统一 Provider 契约", "增加可见进度"],
             "checks": [{"stage": "final", "command": "check", "result": "pass"}],
             "acceptance": [

@@ -51,6 +51,7 @@ NO_OPEN_ISSUES = {
     "", "0", "none", "no", "n/a", "无", "没有", "无需处理",
     "no remaining scoped findings",
 }
+MAX_TDD_TRACE_BYTES = 256 * 1024
 
 BLOCKED_CODES = {
     "decision",
@@ -98,13 +99,19 @@ def require_mapping(value, name):
     return value
 
 
-def validate_native_tdd_trace(value, source_receipt, risk_flags, *, required):
+def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required):
     if value is None:
         if required:
             raise ValueError("native complete state requires a passing TDD trace")
         return
     if source_receipt is None:
         raise ValueError("TDD trace requires a current source receipt")
+    try:
+        trace_size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("TDD trace must be JSON-serializable") from error
+    if trace_size > MAX_TDD_TRACE_BYTES:
+        raise ValueError("TDD trace exceeds the persisted size limit")
     from tdd_impact_guard import validate as validate_tdd_trace
 
     result = validate_tdd_trace(value)
@@ -112,6 +119,8 @@ def validate_native_tdd_trace(value, source_receipt, risk_flags, *, required):
         raise ValueError("TDD trace source does not match the current state")
     if set(value["risk_flags"]) != set(risk_flags):
         raise ValueError("TDD trace risk flags do not match frozen routing")
+    if {item["criterion"] for item in value["acceptance"]} != set(acceptance_criteria):
+        raise ValueError("TDD trace acceptance does not match the current state")
     if required and result["status"] != "pass":
         raise ValueError("native complete state requires a passing TDD trace")
 
@@ -1022,6 +1031,7 @@ def validate_state(state, arguments, *, check_workspace=True):
             raise ValueError("complete state requires a passing Evidence Receipt for every acceptance")
         validate_native_tdd_trace(
             ledger.get("tdd_trace"), source_receipt, routing["profile"]["risk_flags"],
+            [item["criterion"] for item in acceptance],
             required=workflow_provider == "native-v1",
         )
         if runner_launches and not runner_complete:

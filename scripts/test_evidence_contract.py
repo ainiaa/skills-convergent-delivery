@@ -135,6 +135,18 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertEqual("ran", marker.read_text(encoding="utf-8"))
         self.assertEqual(0, json.loads(result.stdout)["exit_code"])
 
+    def test_sensitive_command_arguments_are_rejected_before_execution(self):
+        with self.assertRaisesRegex(ValueError, "sensitive"):
+            evidence_contract.run_evidence(
+                self.workspace, self.baseline, ["tool", "--api-key=secret-value"]
+            )
+
+    def test_receipts_reject_oversized_argv_values(self):
+        with self.assertRaisesRegex(ValueError, "argv"):
+            evidence_contract.run_evidence(
+                self.workspace, self.baseline, [sys.executable, "-c", "x" * 4097]
+            )
+
     def test_source_receipt_validator_rejects_tampered_metadata(self):
         source = evidence_contract.workspace_source(self.workspace, self.baseline)
         source["changed_paths"] = ["invented.txt"]

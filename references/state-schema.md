@@ -159,11 +159,11 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 - append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
-`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`ledger.tdd_trace` 仅允许保存有界的 TDD/Impact Trace v5；native complete 时其 source、冻结 risk flags 和 criterion 集合必须分别等于当前 Source Receipt、Routing Receipt 与 `ledger.acceptance`，并返回 `pass`。最终验证通过 rerun 刷新该 trace 后才写入，避免旧绿灯、覆盖率或图谱回执完成新源码。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
 
 交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 
-Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-review → verify-round-1（高风险）→ round-2-risk-review → verify-final`。PDLC workflow 只使用 `pdlc-run`，其细粒度阶段仍由 PDLC 自己保存。终态 complete 必须位于最终阶段并具有全部 fresh/pass 验收证据；blocked 必须提供 `blocked_code/reason`。
+Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-review → verify-round-1（高风险）→ round-2-risk-review → verify-final`。第三方只替换 native workflow 内红绿方法，不绕过 native 的 TDD/Impact Trace v5 completion gate。PDLC workflow 只使用 `pdlc-run`，其细粒度阶段仍由 PDLC 自己保存。终态 complete 必须位于最终阶段并具有全部 fresh/pass 验收证据；blocked 必须提供 `blocked_code/reason`。
 
 ## 5. 路径、租约与原子写入
 

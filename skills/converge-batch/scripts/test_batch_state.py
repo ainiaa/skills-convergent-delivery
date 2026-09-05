@@ -94,7 +94,9 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None):
         except ValueError:
             child["source_receipt"] = workspace_source(workspace, "HEAD")
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
-        child["ledger"]["tdd_trace"] = tdd_trace(child["source_receipt"])
+        child["ledger"]["tdd_trace"] = tdd_trace(
+            child["source_receipt"], criterion=child["ledger"]["acceptance"][0]["criterion"]
+        )
         child["execution_control"]["review"]["rounds"] = []
         child["ledger"]["acceptance"][0]["source_fingerprint"] = child["source_fingerprint"]
         child["ledger"]["acceptance"][0]["evidence_receipts"] = [run_evidence(

@@ -186,6 +186,19 @@ class NativeTddPolicyTest(unittest.TestCase):
         self.assertEqual(90, policy["threshold"])
         self.assertEqual("argv", policy["threshold_source"])
 
+    def test_unrelated_threshold_argument_does_not_claim_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: npm test --threshold=90\n", encoding="utf-8"
+            )
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -127,7 +127,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
 
-所有运行时变更还须通过 [TDD/Impact Trace](tdd-providers.md#tddimpact-trace-v4)：它以一条改动入口和已知关联链绑定 observed 红绿 Evidence Receipt 与最终回归测试，不建立第二状态机。只有明确要求全量收口时，才升级为下述 Plan v6 矩阵。
+所有运行时变更还须通过 [TDD/Impact Trace](tdd-providers.md#tddimpact-trace-v5)：它以一条改动入口和已知关联链绑定 observed 红绿 Evidence Receipt 与最终回归测试，不建立第二状态机。只有明确要求全量收口时，才升级为下述 Plan v6 矩阵。
 
 ### 6.1 全量收口矩阵
 

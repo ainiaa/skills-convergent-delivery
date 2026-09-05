@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -13,6 +14,13 @@ from pathlib import Path
 
 SOURCE_SCHEMA_VERSION = 2
 EVIDENCE_SCHEMA_VERSION = 2
+MAX_ARGV_ITEMS = 128
+MAX_ARGUMENT_LENGTH = 4096
+SENSITIVE_ARGUMENT = re.compile(
+    r"(?:^--?(?:api[-_]?key|access[-_]?token|token|password|secret|private[-_]?key)(?:=|$)"
+    r"|^(?:api[-_]?key|access[-_]?token|token|password|secret)=[^=])",
+    re.IGNORECASE,
+)
 
 
 def _git(workspace, *arguments):
@@ -104,10 +112,12 @@ def _runner_fingerprint():
 def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     """Run one argv command and bind its outcome to the resulting workspace source."""
     workspace = Path(workspace).expanduser().resolve()
-    if not isinstance(argv, list) or not argv or any(
-        not isinstance(item, str) or not item for item in argv
+    if not isinstance(argv, list) or not argv or len(argv) > MAX_ARGV_ITEMS or any(
+        not isinstance(item, str) or not item or len(item) > MAX_ARGUMENT_LENGTH for item in argv
     ):
         raise ValueError("evidence argv must be a non-empty string list")
+    if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
+        raise ValueError("evidence argv must not contain sensitive command arguments")
     try:
         result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False,
                                 timeout=timeout_seconds)
@@ -141,7 +151,10 @@ def validate_observed_evidence_receipt(item):
             or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError("Evidence Receipt fields are invalid")
     if not isinstance(item.get("argv"), list) or not item["argv"] \
-            or any(not isinstance(argument, str) or not argument for argument in item["argv"]):
+            or len(item["argv"]) > MAX_ARGV_ITEMS \
+            or any(not isinstance(argument, str) or not argument or len(argument) > MAX_ARGUMENT_LENGTH
+                   for argument in item["argv"]) \
+            or any(SENSITIVE_ARGUMENT.search(argument) for argument in item["argv"]):
         raise ValueError("Evidence Receipt argv is invalid")
     if item.get("command") != shlex.join(item["argv"]):
         raise ValueError("Evidence Receipt command is invalid")

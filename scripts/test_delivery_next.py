@@ -24,6 +24,7 @@ from runner_contract import bind_role_result, fingerprint as runner_fingerprint,
 from run_contract import action
 from runtime_adapter import _bind, cleanup_receipt as runtime_cleanup_receipt, negotiate
 from task_profile import freeze_routing
+from tdd_impact_guard import graph_query
 from provider_contract import canonical_fingerprint
 from worker_profile import fingerprint as worker_profile_fingerprint
 
@@ -48,7 +49,7 @@ def trace_receipt(source, argv, exit_code=0):
     return receipt
 
 
-def tdd_trace(source, risks=()):
+def tdd_trace(source, risks=(), criterion="Requested behavior"):
     previous_source = copy.deepcopy(source)
     previous_source["diff_fingerprint"] = "0" * 64
     previous_source["source_fingerprint"] = runner_fingerprint({
@@ -99,15 +100,20 @@ def tdd_trace(source, risks=()):
         primary = tests[0]
         primary.update(kind="integration", scenarios=["normal", "property"])
     return {
-        "schema_version": 4, "source": source, "risk_flags": list(risks),
-        "acceptance": [{"criterion": "Requested behavior", "tests": tests}],
+        "schema_version": 5, "source": source, "risk_flags": list(risks),
+        "acceptance": [{"criterion": criterion, "tests": tests}],
         "impacts": impacts,
         "graph": {
             "status": "covered",
-            "receipt": trace_receipt(source, ["codegraph", "explore", "requested-entrypoint"]),
+            "receipt": trace_receipt(source, ["codegraph", "explore", graph_query(impacts)]),
             "impacts_fingerprint": hashlib.sha256(json.dumps(
                 impacts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode()).hexdigest(),
+            "query": graph_query(impacts),
+        },
+        "coverage": {
+            "status": "covered", "threshold": 85,
+            "receipt": trace_receipt(source, [sys.executable, "-c", "pass", "coverage"]),
         },
     }
 
@@ -1206,6 +1212,29 @@ class DeliveryNextTest(unittest.TestCase):
         payload["ledger"].pop("tdd_trace")
 
         with self.assertRaisesRegex(ValueError, "passing TDD trace"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_requires_trace_acceptance_to_match_the_state(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["acceptance"][0]["criterion"] = "Different behavior"
+
+        with self.assertRaisesRegex(ValueError, "acceptance"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_requires_coverage_evidence(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["coverage"] = {
+            "status": "uncovered", "reason": "coverage command is unavailable",
+        }
+
+        with self.assertRaisesRegex(ValueError, "passing TDD trace"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_rejects_an_oversized_tdd_trace(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["acceptance"][0]["tests"][0]["selector"] = "x" * (256 * 1024)
+
+        with self.assertRaisesRegex(ValueError, "size limit"):
             validate_state(payload, SimpleNamespace())
 
     def test_应该_当终态缺少阶段必需字段时_拒绝恢复(self):

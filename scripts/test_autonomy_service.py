@@ -25,6 +25,7 @@ from delivery_state import state_path
 from delivery_next import validate_state
 from evidence_contract import run_evidence
 from runner_contract import fingerprint, freeze_launch
+from tdd_impact_guard import graph_query
 
 
 def native_tdd_trace(workspace, baseline, source):
@@ -62,12 +63,17 @@ def native_tdd_trace(workspace, baseline, source):
         "test_ids": [test["id"] for test in tests],
     }]
     return {
-        "schema_version": 4, "source": source, "risk_flags": [],
+        "schema_version": 5, "source": source, "risk_flags": [],
         "acceptance": [{"criterion": "tests pass", "tests": tests}], "impacts": impacts,
         "graph": {
             "status": "covered",
-            "receipt": receipt(source, ["codegraph", "explore", "service-entrypoint"]),
+            "receipt": receipt(source, ["codegraph", "explore", graph_query(impacts)]),
             "impacts_fingerprint": fingerprint(impacts),
+            "query": graph_query(impacts),
+        },
+        "coverage": {
+            "status": "covered", "threshold": 85,
+            "receipt": receipt(source, [sys.executable, "-c", "pass", "coverage"]),
         },
     }
 
