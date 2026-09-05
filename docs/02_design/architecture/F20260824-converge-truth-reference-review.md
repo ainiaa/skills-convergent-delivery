@@ -2,6 +2,19 @@
 
 本轮按受影响能力先从 Skills.sh/GitHub 发现近期实现，再核对原始 Skill、脚本与测试。安装量只用于发现；最终只采用能关闭已复现失败、且有本地行为测试的最小机制。
 
+## 2026-09-06 验收绑定与 Trace 生命周期修复
+
+沿用本会话在 Skills.sh 分类/排行榜发现并核对的原始材料，只读取相关机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) | 采用单一真源与可独立运行的验收组件；不增加新控制器或状态文件 | `test_batch_state.py` 以正式 delegate 为真源，拒绝不一致的 criterion/evidence，以及缺失、失败、过期证据 |
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) | 采用实际控制器加外部边界替身；不安装整套 Node harness 或复制自动提交步骤 | `test_tdd_impact_guard.py` 实际重跑产生不同输出后完成普通 native；`test_autonomy_service.py` 将畸形模型 Trace 经真实写入路径转为 blocked，并验证租约清理 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用输入类型变异和状态不变量；用现有 unittest，不新增 Hypothesis | Trace 的数组/枚举/嵌套 Source Receipt 遍历非法 JSON 类型，全部产生 ValueError；正式 Trace 不可覆盖，保留候选不能 complete |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) 及 scripts/run_eval.py | 保持冻结 control 与真实行为评测边界；不增加 evaluator 代理或替代宿主事件 | 本地先红后绿；冻结 evaluator preflight 的宿主 bridge 缺口继续为 uncovered，本仓 coverage 配置缺口也不计为通过 |
+
+复用既有 candidate 字段、delegate ledger 和共享校验入口，无 schema 升级、代理或循环。普通 native 将原本的过程 Trace 保存为候选，最终一次固化，不增加执行步骤；控制器继续拥有写权与清场责任。旧正式 Trace 保持不可变，不增加自动迁移或覆盖路径。
+
 ## 2026-09-05 Batch 与覆盖率验收修复
 
 本次沿用同一会话审查中已核对的 Skills.sh 发现结果及原始材料，不重复加载完整第三方流程。

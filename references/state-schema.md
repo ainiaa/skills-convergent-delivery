@@ -161,7 +161,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 
 `host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`ledger.tdd_trace` 仅允许保存有界的 TDD/Impact Trace v5；native complete 时其 source、冻结 risk flags 和 criterion 集合必须分别等于当前 Source Receipt、Routing Receipt 与 `ledger.acceptance`，并返回 `pass`。最终验证通过 rerun 刷新该 trace 后才写入，避免旧绿灯、覆盖率或图谱回执完成新源码。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
 
-Schema v11 的未完成 service run 可选保存 `ledger.tdd_trace_candidate`，内容为通过结构、大小、冻结风险与验收项校验的 Trace v5。它只承载模型候选，不能作为正式验收事实；后续动作改变源码时允许保留历史候选供恢复，最终必须与当前 Source Receipt 匹配并通过真实 rerun。控制器在同一 complete revision 中写入正式 `ledger.tdd_trace` 并删除候选。普通或 Hook run 不接受候选；blocked 保留候选便于诊断，不能据此继续执行。
+未完成的 native run（普通 Schema v10，以及 Schema v11 Hook/service）可保存 `ledger.tdd_trace_candidate`，内容为通过结构、大小、冻结风险与验收项校验的 Trace v5。它承载执行期间的候选，不能作为正式验收事实；后续动作改变源码时允许保留历史候选供恢复，最终必须与当前 Source Receipt 匹配并通过真实 rerun。控制器在同一 complete revision 中写入正式 `ledger.tdd_trace` 并删除候选。PDLC run 不接受 native 候选；blocked 保留候选便于诊断，不能据此继续执行。正式 Trace 写入后仍不可替换，不自动改写既有正式证据。
 
 交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 

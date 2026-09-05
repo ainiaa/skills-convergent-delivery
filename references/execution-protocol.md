@@ -20,7 +20,7 @@
 
 1. 先写或更新测试并运行，红灯必须因目标行为缺失而失败；编译、Mock 或环境错误不是有效红灯。已知 runner 使用其 runner selector 语法。
 2. 只做最小实现使其变绿，不夹带重构和顺手修改。
-3. 用 `evidence_contract.py run` 运行定向验证，保留 observed Evidence Receipt；无风险每个绿灯定向重跑一次，任一冻结风险重跑两次，并在最终源码上运行由 impacts 派生的 CodeGraph 查询；未索引或不可用时写入 graph `uncovered`。先以 `native_tdd_policy.py resolve --workspace <workspace>` 解析 coverage：pytest/Vitest 可注入 `quality-targets.yml` 或默认 >=85%，Rust `--fail-under`、.NET `/p:Threshold` 等显式 argv gate 可识别，其他命令须已有可证明 gate。高风险补一条 integration/contract mutation 检查；金额和支付补 property 场景，time、timezone 和不可逆操作补相应 integration 场景。所有 argv 不得携带 secret、token、password 或 key。native-v1 将通过 `tdd_impact_guard.py validate` 的 trace 写入 `ledger.tdd_trace`；在进入 complete 前执行 `tdd_impact_guard.py rerun --input - --workspace <workspace> --baseline <commit> --native-coverage`；每条冻结命令默认最多运行 600 秒，可用 `--timeout-seconds <0..3600>` 调整，超时阻止完成。将 stdout 写回 state 后，`complete` 会再次校验。无法确认、生成工件改变源码或没有可执行工具时标为 `uncovered`。按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v5) 校验测试、风险与影响链回执。
+3. 用 `evidence_contract.py run` 运行定向验证，保留 observed Evidence Receipt；无风险每个绿灯定向重跑一次，任一冻结风险重跑两次，并在最终源码上运行由 impacts 派生的 CodeGraph 查询；未索引或不可用时写入 graph `uncovered`。先以 `native_tdd_policy.py resolve --workspace <workspace>` 解析 coverage：pytest/Vitest 可注入 `quality-targets.yml` 或默认 >=85%，Rust `--fail-under`、.NET `/p:Threshold` 等显式 argv gate 可识别，其他命令须已有可证明 gate。高风险补一条 integration/contract mutation 检查；金额和支付补 property 场景，time、timezone 和不可逆操作补相应 integration 场景。所有 argv 不得携带 secret、token、password 或 key。native-v1 将通过 `tdd_impact_guard.py validate` 的 trace 保存为 `ledger.tdd_trace_candidate`，普通、Hook 和 service run 共用此候选；在进入 complete 前以当前源码候选执行 `tdd_impact_guard.py rerun --input - --workspace <workspace> --baseline <commit> --native-coverage`；每条冻结命令默认最多运行 600 秒，可用 `--timeout-seconds <0..3600>` 调整，超时阻止完成。重跑成功后在同一 complete revision 中将 stdout 的刷新 trace 固化为 `ledger.tdd_trace` 并删除候选；正式 Trace 写入后不可替换，complete 门禁会再次校验。无法确认、生成工件改变源码或没有可执行工具时标为 `uncovered`。按 [TDD 追溯](tdd-providers.md#tddimpact-trace-v5) 校验测试、风险与影响链回执。
 
 第三方 TDD 只承担这一次红绿阶段，不得创建第二套状态、循环、worktree、发布或删除文件。
 
@@ -32,7 +32,7 @@
 
 ## Independent risk review
 
-高风险时将冻结的最小材料交给全新 reviewer。返回结果必须符合 Review Protocol v3，并且 `source_fingerprint` 与当前源码一致；同一 reviewer 先完成 `spec` 单轴请求，通过后才接收 `quality` 单轴请求。旧 v2 结果先经确定性适配器转换。PDLC 已有 review 作为意图审查，不再重复；只增加需要的新鲜盲审。
+高风险时将冻结的最小材料交给全新 reviewer。返回结果必须符合 Review Protocol v3，并且 `source_fingerprint` 与当前源码一致；同一 reviewer 先完成 `spec` 单轴请求，通过后才接收 `quality` 单轴请求。旧 v2 结果直接拒绝，reviewer 必须返回有效 v3 结果。PDLC 已有 review 作为意图审查，不再重复；只增加需要的新鲜盲审。
 
 ## Finding closure
 

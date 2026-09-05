@@ -1,10 +1,13 @@
 import importlib.util
+import copy
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
 
 import evidence_contract
 
@@ -79,6 +82,71 @@ def trace(workspace, baseline, *, risks=None):
 
 
 class TddImpactGuardTest(unittest.TestCase):
+    def test_native_candidate_can_be_refreshed_before_immutable_completion(self):
+        from delivery_next import validate_state
+        from delivery_state import validate_transition
+        from test_delivery_next import state
+
+        candidate = self.trace()
+        test = candidate["acceptance"][0]["tests"][0]
+        argv = [sys.executable, "-c", "import os; print(os.environ['TRACE_RUN'])", test["selector"]]
+        with patch.dict(os.environ, TRACE_RUN="build"):
+            test["green"]["receipts"] = [
+                evidence_contract.run_evidence(self.workspace, self.baseline, argv) for _ in range(2)
+            ]
+        active = state(current_stage="verify-final")
+        active.update(workspace=str(self.workspace), source_receipt=candidate["source"],
+                      source_fingerprint=candidate["source"]["source_fingerprint"],
+                      baseline={"commit": self.baseline, "diff_fingerprint": candidate["source"]["diff_fingerprint"]})
+        active["execution_control"]["review"]["rounds"][0]["source_fingerprint"] = active["source_fingerprint"]
+        active["ledger"].pop("tdd_trace")
+        active["ledger"]["tdd_trace_candidate"] = candidate
+        active["ledger"]["acceptance"][0].update(
+            criterion=candidate["acceptance"][0]["criterion"], source_fingerprint=active["source_fingerprint"],
+            evidence_receipts=[test["green"]["receipts"][0]],
+        )
+        validate_state(active, SimpleNamespace())
+        with patch.dict(os.environ, TRACE_RUN="final"):
+            refreshed = tdd_impact_guard.rerun(candidate, self.workspace, self.baseline, native_coverage=True)
+        self.assertNotEqual(candidate, refreshed)
+        complete = copy.deepcopy(active)
+        complete.update(status="complete", revision=1)
+        complete["ledger"]["tdd_trace"] = refreshed
+        with self.assertRaises(ValueError):
+            validate_state(complete, SimpleNamespace())
+        complete["ledger"].pop("tdd_trace_candidate")
+        self.assertEqual("complete", validate_state(complete, SimpleNamespace()))
+        validate_transition(active, complete)
+        overwritten = copy.deepcopy(complete)
+        overwritten["ledger"]["tdd_trace"] = candidate
+        with self.assertRaises(ValueError):
+            validate_transition(complete, overwritten)
+
+    def test_malformed_enum_and_reference_values_raise_validation_errors(self):
+        original = self.trace()
+        paths = (
+            ("risk_flags",),
+            ("acceptance", 0, "tests", 0, "scenarios"),
+            ("acceptance", 0, "tests", 0, "kind"),
+            ("acceptance", 0, "tests", 0, "red", "failure_class"),
+            ("impacts", 0, "relation"),
+            ("impacts", 0, "test_ids"),
+            ("source", "changed_entries", 0, "kind"),
+            ("source", "changed_entries", 0, "mode"),
+        )
+        for path in paths:
+            for invalid in ({}, [], [None], [{}], 1, None):
+                if path == ("risk_flags",) and invalid == []:
+                    continue  # Empty risk flags are valid for low-risk tasks.
+                with self.subTest(path=path, invalid=invalid):
+                    value = copy.deepcopy(original)
+                    parent = value
+                    for key in path[:-1]:
+                        parent = parent[key]
+                    parent[path[-1]] = invalid
+                    with self.assertRaises(ValueError):
+                        tdd_impact_guard.validate(value)
+
     def test_pytest_plain_file_selector_is_supported(self):
         for prefix in (['pytest'], ['python3', '-m', 'pytest']):
             self.assertTrue(tdd_impact_guard.runner_selector_matches([*prefix, 'test_payment.py'], 'test_payment.py'))

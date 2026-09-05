@@ -110,7 +110,8 @@ def red_receipt(value, source, selector):
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError("red receipt fields are invalid")
     observed = observed_receipt(value["receipt"], "red receipt", source, selector, passing=False)
-    if observed["exit_code"] == 0 or value.get("failure_class") not in VALID_RED_FAILURE_CLASSES:
+    if observed["exit_code"] == 0 or not isinstance(value.get("failure_class"), str) \
+            or value["failure_class"] not in VALID_RED_FAILURE_CLASSES:
         raise ValueError("red receipt must show a target behavior failure")
     if observed["source"]["source_fingerprint"] == source["source_fingerprint"]:
         raise ValueError("red receipt must precede the final trace source")
@@ -204,7 +205,8 @@ def validate(value):
         raise ValueError("TDD impact trace schema_version must be 5")
     source = validate_source_receipt(value.get("source"))
     risks = value.get("risk_flags")
-    if not isinstance(risks, list) or len(risks) != len(set(risks)) or not set(risks) <= RISK_FLAGS:
+    if not isinstance(risks, list) or not all(isinstance(risk, str) for risk in risks) \
+            or len(risks) != len(set(risks)) or not set(risks) <= RISK_FLAGS:
         raise ValueError("TDD impact trace risk_flags are invalid")
     acceptance = value.get("acceptance")
     if not isinstance(acceptance, list) or not acceptance or len(acceptance) > MAX_ACCEPTANCE:
@@ -239,10 +241,11 @@ def validate(value):
             if test_id in test_ids:
                 raise ValueError("test references are duplicated")
             test_ids.add(test_id)
-            if test.get("kind") not in TEST_KINDS:
+            if not isinstance(test.get("kind"), str) or test["kind"] not in TEST_KINDS:
                 raise ValueError("test reference kind is invalid")
             test_scenarios = test.get("scenarios")
             if not isinstance(test_scenarios, list) or not test_scenarios \
+                    or not all(isinstance(scenario, str) for scenario in test_scenarios) \
                     or len(test_scenarios) != len(set(test_scenarios)) \
                     or not set(test_scenarios) <= SCENARIOS:
                 raise ValueError("test reference scenarios are invalid")
@@ -283,11 +286,13 @@ def validate(value):
         if impact_id in impact_ids:
             raise ValueError("impact chain ids are duplicated")
         impact_ids.add(impact_id)
-        if impact.get("relation") not in RELATIONS:
+        if not isinstance(impact.get("relation"), str) or impact["relation"] not in RELATIONS:
             raise ValueError("impact chain relation is invalid")
         relations.add(impact["relation"])
         covered_by = impact.get("test_ids")
-        if not isinstance(covered_by, list) or not covered_by or len(covered_by) != len(set(covered_by)) \
+        if not isinstance(covered_by, list) or not covered_by \
+                or not all(isinstance(test_id, str) for test_id in covered_by) \
+                or len(covered_by) != len(set(covered_by)) \
                 or not set(covered_by) <= test_ids:
             raise ValueError("impact chain must reference known tests")
         if impact["relation"] == "external-contract":

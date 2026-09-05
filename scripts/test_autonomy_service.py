@@ -205,7 +205,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 test_file.unlink(missing_ok=True)
 
     def test_final_service_rejects_missing_invalid_stale_and_failing_trace(self):
-        for failure in ("missing", "malformed", "oversized", "criteria", "stale", "coverage"):
+        for failure in ("missing", "malformed", "unhashable", "oversized", "criteria", "stale", "coverage"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 path, state_root, lease_root = self.managed_service_state(
                     directory, "round-2-risk-review", with_trace=False,
@@ -214,6 +214,8 @@ class AutonomyServiceTest(unittest.TestCase):
                 trace = native_tdd_trace(state["workspace"], state["baseline"]["commit"], state["source_receipt"])
                 if failure == "criteria":
                     trace["acceptance"][0]["criterion"] = "unrequested criterion"
+                if failure == "unhashable":
+                    trace["risk_flags"] = [{}]
                 output = json.dumps({"tdd_trace": trace})
                 if failure == "missing": output = "{}"
                 if failure == "malformed": output = '{"tdd_trace": null}'

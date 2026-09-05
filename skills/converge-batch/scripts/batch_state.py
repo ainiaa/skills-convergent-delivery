@@ -368,6 +368,14 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
     actual = {item["criterion"] for item in receipt["acceptance"]}
     if expected != actual:
         raise ValueError("receipt acceptance does not cover the capsule")
+    verified = {
+        item["criterion"]: {field: item[field] for field in EVIDENCE_FIELDS}
+        for item in delegate_state["ledger"]["acceptance"]
+    }
+    if set(verified) != expected:
+        raise ValueError("delegate acceptance does not match the capsule")
+    if {item["criterion"]: item for item in receipt["acceptance"]} != verified:
+        raise ValueError("receipt acceptance does not match the verified delegate")
     if require_list(receipt.get("open_issues"), "receipt.open_issues"):
         raise ValueError("completed receipt cannot have open issues")
 

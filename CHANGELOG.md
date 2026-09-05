@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Batch 完成回执逐项绑定正式 delegate 的真实验收，拒绝验收项或 evidence 摘要不一致；继续要求真实、当前源码的 passing Evidence Receipt。
+- 普通与 Hook native run 复用候选 Trace 生命周期，最终 rerun 后在同一 complete revision 固化正式 Trace 并移除候选；保留正式证据不可覆盖约束，修正文档提前写入 Trace 和旧 Review v2 转换的过时指令。
+- TDD Trace 的风险、场景、测试引用和枚举，以及嵌套 Source Receipt 的类型与权限字段先校验类型再做集合操作；畸形模型 JSON 返回受控校验失败，service 正常进入 blocked 并按既有清场屏障释放租约。
 - runner 缺少结果、结果为 unknown 或回执无效时禁止释放正式任务租约；service 中断持久化 blocked 后保留租约并报告手工恢复，防止旧进程仍可写入时放行第二个 writer。确定退出的失败结果仍允许清场。
 - native service 从模型 JSON 输出收集有界的 TDD/Impact Trace v5 候选，复用现有 managed ledger 恢复；最终按当前源码、风险与验收项校验，并真实重跑 GREEN、coverage、mutation 与图谱后才固化正式 Trace。缺失或失败的证据不能完成。
 - 最终报告拒绝 active 输入并返回退出码 2，避免把进行中的工作显示为“已完成，需关注”；blocked 报告仍支持 Git 不可读时的结构化降级。

@@ -231,8 +231,8 @@ def validate_source_receipt(source):
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {
             "path", "kind", "mode", "content_fingerprint"
-        } or entry["kind"] not in {"file", "symlink", "deleted"} \
-                or entry["mode"] not in {"100644", "100755", "120000", "000000"} \
+        } or not isinstance(entry["kind"], str) or entry["kind"] not in {"file", "symlink", "deleted"} \
+                or not isinstance(entry["mode"], str) or entry["mode"] not in {"100644", "100755", "120000", "000000"} \
                 or not isinstance(entry["content_fingerprint"], str) \
                 or len(entry["content_fingerprint"]) != 64 \
                 or any(char not in "0123456789abcdef" for char in entry["content_fingerprint"]):

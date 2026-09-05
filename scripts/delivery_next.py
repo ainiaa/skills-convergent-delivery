@@ -894,9 +894,9 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
         raise ValueError("ledger.acceptance criteria must not be duplicated")
     if "tdd_trace_candidate" in ledger:
         candidate_trace = ledger["tdd_trace_candidate"]
-        if autonomy is None or autonomy["runtime"]["mode"] != "service" \
+        if workflow_provider != "native-v1" \
                 or state.get("status") == "complete" or not isinstance(candidate_trace, dict):
-            raise ValueError("TDD trace candidate is only valid in an unfinished service run")
+            raise ValueError("TDD trace candidate is only valid in an unfinished native run")
         validate_native_tdd_trace(
             candidate_trace, candidate_trace.get("source"), routing["profile"]["risk_flags"],
             acceptance_criteria, required=False, workspace=workspace,

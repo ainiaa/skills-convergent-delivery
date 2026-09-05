@@ -94,6 +94,7 @@ def receipt(batch_id, dispatch_id, commit_id, tree_hash, workspace=None, baselin
         except ValueError:
             child["source_receipt"] = workspace_source(workspace, "HEAD")
         child["source_fingerprint"] = child["source_receipt"]["source_fingerprint"]
+        child["ledger"]["acceptance"][0].update(criterion=f"accept-{batch_id}", evidence=f"test-{batch_id}")
         child["ledger"]["tdd_trace"] = tdd_trace(
             child["source_receipt"], criterion=child["ledger"]["acceptance"][0]["criterion"]
         )
@@ -196,6 +197,31 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_receipt_acceptance_must_match_the_verified_delegate(self):
+        for mismatch in ("criterion", "evidence", "missing_receipt", "failed", "stale"):
+            with self.subTest(mismatch=mismatch):
+                state = self.completed_first_batch()
+                batch = state["batches"][0]
+                batch_state.validate_state(state)
+                path = delegate_state_path(Path(state["delegate_state_root"]), state["repo_id"],
+                                           batch["task_id"], batch["delegate_run_id"])
+                child = json.loads(path.read_text())
+                acceptance = child["ledger"]["acceptance"][0]
+                if mismatch == "criterion":
+                    acceptance["criterion"] = "unrelated behavior"
+                    child["ledger"]["tdd_trace"]["acceptance"][0]["criterion"] = "unrelated behavior"
+                elif mismatch == "evidence":
+                    batch["receipt"]["acceptance"][0]["evidence"] = "unobserved verification"
+                elif mismatch == "missing_receipt":
+                    acceptance.pop("evidence_receipts")
+                elif mismatch == "failed":
+                    acceptance["result"] = "fail"
+                else:
+                    acceptance["freshness"] = "stale"
+                path.write_text(json.dumps(child))
+                with self.assertRaises(ValueError):
+                    batch_state.validate_state(state)
+
     def test_final_acceptance_identity_is_frozen_before_any_pass(self):
         before = candidate(self.workspace)
         self.write(before, -1)
