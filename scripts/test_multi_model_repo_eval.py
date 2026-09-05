@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the frozen Git coding-task evaluator."""
 
+import copy
 import json
 import subprocess
 import tempfile
@@ -241,6 +242,44 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
         altered = dict(multi, task_fingerprint="a" * 64)
         with self.assertRaisesRegex(ValueError, "same frozen"):
             compare_reports([single, altered])
+
+    def test_comparison_rejects_incomplete_or_inconsistent_results(self):
+        single = evaluate(self.profiles)
+        executed = self.probe()
+        for mutation in ("missing", "duplicate", "different_task", "empty", "summary",
+                         "report_status", "result_status", "result_mode", "mixed"):
+            with self.subTest(mutation=mutation):
+                report = copy.deepcopy(executed)
+                if mutation == "missing":
+                    report["results"].pop()
+                elif mutation == "duplicate":
+                    report["results"][1] = copy.deepcopy(report["results"][0])
+                elif mutation == "different_task":
+                    report["results"][1]["task_id"] = "unknown-task"
+                elif mutation == "empty":
+                    report["results"] = []
+                elif mutation == "summary":
+                    report["summary"]["task_count"] += 1
+                elif mutation == "report_status":
+                    report["status"] = report["summary"]["status"] = "failed"
+                elif mutation == "result_status":
+                    report["results"][0]["status"] = "completed"
+                elif mutation == "result_mode":
+                    report["results"][0]["mode"] = "single"
+                else:
+                    report["results"][0]["status"] = "planned"
+                with self.assertRaises(ValueError):
+                    compare_reports([single, report])
+
+    def test_comparison_accepts_complete_failed_reports_and_missing_legacy_timing(self):
+        single = evaluate(self.profiles)
+        report = self.probe(review_status="timed_out")
+        for item in report["results"]:
+            item.pop("duration_ms")
+        comparison = compare_reports([single, report])
+        self.assertEqual("failed", comparison["modes"][1]["status"])
+        self.assertEqual(2, comparison["modes"][1]["failed"])
+        self.assertIsNone(comparison["modes"][1]["duration_ms"])
 
 
 if __name__ == "__main__":

@@ -237,6 +237,7 @@ def compare_reports(reports):
     if not isinstance(reports, list) or len(reports) < 2:
         raise ValueError("repository evaluation comparison requires at least two reports")
     surface = None
+    task_ids = None
     modes = []
     for report in reports:
         if not isinstance(report, dict) or report.get("trust_level") != "diagnostic" \
@@ -254,6 +255,25 @@ def compare_reports(reports):
         if report["mode"] in {item["mode"] for item in modes}:
             raise ValueError("repository evaluation comparison modes must be unique")
         results = report["results"]
+        if report.get("schema_version") != 1 or not 2 <= len(results) <= 3 or any(
+            not isinstance(item, dict) or not isinstance(item.get("task_id"), str)
+            or not item["task_id"].strip() or item.get("mode") != report["mode"]
+            or item.get("status") not in {"planned", "passed", "failed"}
+            for item in results
+        ):
+            raise ValueError("repository evaluation comparison task results are invalid")
+        identifiers = {item["task_id"] for item in results}
+        if len(identifiers) != len(results) or task_ids is not None and identifiers != task_ids:
+            raise ValueError("repository evaluation comparison requires the same unique task ids")
+        task_ids = identifiers
+        statuses = {item["status"] for item in results}
+        if "planned" in statuses and len(statuses) != 1:
+            raise ValueError("repository evaluation comparison mixes planned and executed tasks")
+        expected_status = "planned" if statuses == {"planned"} else (
+            "completed" if statuses == {"passed"} else "failed"
+        )
+        if report["status"] != expected_status or report.get("summary") != _summary(results, expected_status):
+            raise ValueError("repository evaluation comparison summary does not match task results")
         durations = [item.get("duration_ms") if isinstance(item, dict) else None for item in results]
         modes.append({
             "mode": report["mode"], "status": report["status"],

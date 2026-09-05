@@ -42,7 +42,11 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 `multi_model_repo_eval.py` 是冻结的两题 Git 小型代码评测。默认只输出 planned；显式 `--allow-execute` 后，它在内部临时 Git 仓库为每题创建 candidate worktree，只让 implementer 写入，先冻结模型改动范围、再以固定 argv 运行 unittest。`--mode multi` 仅在实现与独立验证都通过且范围未越界后增加一个只读 reviewer；review 不会替代确定性验证或改变通过结论。报告只保留 task id、profile/receipt 指纹、验证状态、耗时、变更路径和受限 review 结论，不保留 prompt、源码、原始回答、密钥或成本估算。
 
-`--compare-report` 只能比较同一 task/evaluator fingerprint 的 single 与 multi 报告；它只汇总通过数、失败数与验证耗时，拒绝跨题库、跨 evaluator 或重复模式，也不会推断 token 或价格。
+两个本地 runner 在主进程正常或非零退出后也会终止本次进程组内的残留子进程；清理失败返回 `unknown`，不能报告完成。该边界覆盖仍属于原进程组的后台进程，不保证清理由自行创建新 session/process group 的进程或宿主外部服务。
+
+`--compare-report` 只能比较同一 task/evaluator fingerprint、相同且唯一的任务 ID 集合；任务数量、结果状态与 summary 必须一致，拒绝缺项、重复、跨题库、跨 evaluator、重复模式及单份报告内混合计划和执行结果。它分别汇总整题耗时与验证耗时；旧报告缺少整题耗时时保留为空，不补零或估算 token/价格。
+
+这项评测衡量单写入及追加只读审查的执行情况和耗时；reviewer 不参与失败实现的修复，因此不能证明多模型提高修复成功率。模型、推理等级或预算不同的报告也不能把差异归因于拓扑；核对原报告的冻结 profile。闭环收益应由既有有限修复流程的同题对照验证，不另建评测专用修复循环。
 
 ## 当前接线状态
 

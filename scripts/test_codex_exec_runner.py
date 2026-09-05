@@ -2,6 +2,8 @@
 """Tests for bounded Codex CLI launch construction; no Codex run is executed."""
 
 import io
+import os
+import signal
 import shutil
 import threading
 import subprocess
@@ -34,6 +36,70 @@ def profile(**overrides):
 
 
 class CodexExecRunnerTest(unittest.TestCase):
+    def test_exit_cleans_redirected_children_for_both_runners(self):
+        import claude_exec_runner
+        from test_claude_exec_runner import profile as claude_profile
+
+        for planner, executor, worker_profile, binary_option in (
+            (plan_launch, execute_launch, profile(
+                permissions={"workspace": "read", "shell": True, "network": "egress"},
+            ), "codex_bin"),
+            (claude_exec_runner.plan_launch, claude_exec_runner.execute_launch,
+             claude_profile(), "claude_bin"),
+        ):
+            for code in (0, 7):
+                with self.subTest(runner=worker_profile["runner_id"], code=code), tempfile.TemporaryDirectory() as directory:
+                    ready, release, marker = [Path(directory) / name for name in ("ready", "release", "marker")]
+                    child = (
+                        "import time; from pathlib import Path\n"
+                        f"Path({str(ready)!r}).touch()\n"
+                        f"while not Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+                        f"Path({str(marker)!r}).touch()\n"
+                    )
+                    parent = (
+                        "import subprocess,sys,time; from pathlib import Path\n"
+                        "sys.stdin.read()\n"
+                        f"subprocess.Popen([sys.executable, '-c', {child!r}], stdin=subprocess.DEVNULL, "
+                        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                        f"while not Path({str(ready)!r}).exists(): time.sleep(0.01)\n"
+                        f"sys.exit({code})\n"
+                    )
+                    processes = []
+
+                    def factory(_command, **kwargs):
+                        process = subprocess.Popen([sys.executable, "-c", parent], **kwargs)
+                        processes.append(process)
+                        return process
+
+                    launch = planner(worker_profile, "probe", workspace=directory,
+                                     **{binary_option: sys.executable})
+                    try:
+                        receipt = executor(launch, "probe", allow_execute=True, process_factory=factory)
+                        self.assertEqual("completed" if code == 0 else "failed", receipt["status"])
+                        self.assertEqual(code, receipt["exit_code"])
+                        release.touch()
+                        time.sleep(0.3)
+                        self.assertFalse(marker.exists(), "child wrote after the runner returned")
+                    finally:
+                        for process in processes:
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+
+    def test_group_cleanup_failure_never_reports_completion(self):
+        for timed_out in (False, True):
+            with self.subTest(timed_out=timed_out):
+                process = mock.Mock(pid=123, stdin=io.BytesIO(), stdout=io.BytesIO(), stderr=io.BytesIO())
+                process.wait.side_effect = [subprocess.TimeoutExpired("probe", 1), 0] if timed_out else [0, 0]
+                launch = plan_launch(profile(permissions={"workspace": "read", "shell": True, "network": "egress"}),
+                                     "probe", workspace="/tmp", codex_bin=sys.executable)
+                with mock.patch("codex_exec_runner.os.killpg", side_effect=PermissionError("denied")):
+                    receipt = execute_launch(launch, "probe", allow_execute=True,
+                                             process_factory=lambda *_args, **_kwargs: process)
+                self.assertEqual("unknown", receipt["status"])
+                self.assertEqual("PermissionError", receipt["error_type"])
+
     def test_timeout_includes_inherited_output_pipes_for_both_runners(self):
         import claude_exec_runner
         from test_claude_exec_runner import profile as claude_profile

@@ -1,0 +1,380 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-runner-eval-fixes",
+  "requirement_fingerprint": "3ce8242777738cdf0501e8ec463a972a5aa3e0f560d5a26addcd96d8fafdb156",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "764e0a9fedbf5e52afc0016a26629ef0ee57d8db",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "764e0a9fedbf5e52afc0016a26629ef0ee57d8db",
+      "commit_id": "764e0a9fedbf5e52afc0016a26629ef0ee57d8db",
+      "tree_hash": "f524d5b262e700305f4c90111995c417a93acac5",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "7459c9a485b93ac3673d8f0b20d8f7a7857a5f5554d6bc56448a716d1c707d4b"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+      ],
+      "goal": "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败",
+      "owned_paths": [
+        "scripts/codex_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "docs/06_tasks/F20260905-runner-eval-fixes-plan.md",
+        "docs/06_tasks/F20260905-runner-eval-fixes-plan.json"
+      ],
+      "depends_on": [],
+      "steps": [
+        "先补可执行回归测试并确认失败",
+        "实施最小修复",
+        "运行对应检查并记录源码回执"
+      ],
+      "acceptance": [
+        "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_codex_exec_runner test_claude_exec_runner"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+      ],
+      "goal": "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果",
+      "owned_paths": [
+        "scripts/multi_model_repo_eval.py",
+        "scripts/test_multi_model_repo_eval.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "先补可执行回归测试并确认失败",
+        "实施最小修复",
+        "运行对应检查并记录源码回执"
+      ],
+      "acceptance": [
+        "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_multi_model_repo_eval"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "integration",
+      "outcomes": [
+        "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+      ],
+      "goal": "评测用途明确且既有单写入、只读审查和默认不执行行为不变",
+      "owned_paths": [
+        "references/worker-runners.md",
+        "docs/06_tasks/F20260905-runner-eval-fixes-plan.md"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "更新评测与清理能力边界说明",
+        "运行全量检查",
+        "审计计划范围和证据连续性"
+      ],
+      "acceptance": [
+        "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+      ],
+      "verification": [
+        "bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败",
+    "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果",
+    "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "chain-1",
+        "description": "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败",
+        "entrypoints": [
+          "scripts/codex_exec_runner.py",
+          "scripts/test_codex_exec_runner.py",
+          "docs/06_tasks/F20260905-runner-eval-fixes-plan.md",
+          "docs/06_tasks/F20260905-runner-eval-fixes-plan.json"
+        ],
+        "callers": [
+          "scripts/runner_lifecycle.py",
+          "scripts/claude_exec_runner.py"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "runner 主进程退出后不会遗留同进程组写入，超时和清理失败保持有限失败"
+            ]
+          }
+        }
+      },
+      {
+        "id": "chain-2",
+        "description": "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果",
+        "entrypoints": [
+          "scripts/multi_model_repo_eval.py",
+          "scripts/test_multi_model_repo_eval.py"
+        ],
+        "callers": [
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "评测比较拒绝缺失、重复、集合不一致及摘要矛盾的任务结果"
+            ]
+          }
+        }
+      },
+      {
+        "id": "chain-3",
+        "description": "评测用途明确且既有单写入、只读审查和默认不执行行为不变",
+        "entrypoints": [
+          "references/worker-runners.md",
+          "docs/06_tasks/F20260905-runner-eval-fixes-plan.md"
+        ],
+        "callers": [
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "评测用途明确且既有单写入、只读审查和默认不执行行为不变"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "7459c9a485b93ac3673d8f0b20d8f7a7857a5f5554d6bc56448a716d1c707d4b",
+      "chains_fingerprint": "3082b613c42b2d26f0d0849f9f1ad7e4f414b6409b7a7776412ddc00dd5f1993",
+      "receipt_fingerprint": "c7b3521132b7e901772f9d7ce466208ffc5d2957a45841bc401d73c4cbce8a7a"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "本轮范围和执行方式",
+      "resolution": "同会话顺序修复已复现的两项缺陷并明确报告用途；普通计划矩阵分层、真实模型评测暂不纳入；不提交、推送或安装。",
+      "source": "reversible-default"
+    }
+  ]
+}

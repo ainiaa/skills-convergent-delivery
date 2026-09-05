@@ -11,6 +11,8 @@ Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-rev
 
 需要持久状态的显式闭环使用 arm v11；终态只认新鲜证据。简单 `inline` 不创建 run。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
 
+用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，先按 [分步可见交付](references/execution-control.md#分步可见交付) 展示步骤清单；每步开始说明目标和范围，结束展示改动、验证和状态，再进入下一步。顺序调用工具不能替代这些用户可见的阶段结果。
+
 ## 开始
 
 Skill 根目录记为 `CONVERGE_SKILL_DIR`。冻结验收、路径和基线，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown` 失败，走完整路径。

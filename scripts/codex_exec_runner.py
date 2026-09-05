@@ -160,14 +160,14 @@ def _capture_bounded(process, limit, on_progress=None):
 
 
 def _terminate_process(process):
-    """Kill the dedicated session so a timed-out CLI cannot leave model children behind."""
+    """Kill this launch's process group; a missing group is already cleaned up."""
     pid = getattr(process, "pid", None)
     if isinstance(pid, int) and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             return
-        except OSError:
-            pass
+        except ProcessLookupError:
+            return
     process.kill()
 
 
@@ -246,12 +246,16 @@ def _execute_process(command, workspace, prompt, budget, process_factory, on_pro
         elif write_errors:
             raise write_errors[0]
         else:
+            _terminate_process(process)
             status = "completed" if exit_code == 0 else "failed"
     except (subprocess.TimeoutExpired, OSError) as error:
         status, exit_code = ("timed_out", 124) if isinstance(error, subprocess.TimeoutExpired) else ("unknown", 127)
         error_type = type(error).__name__
         if process is not None:
-            _terminate_process(process)
+            try:
+                _terminate_process(process)
+            except OSError as cleanup_error:
+                status, exit_code, error_type = "unknown", 127, type(cleanup_error).__name__
             cleanup_deadline = time.monotonic() + 1
             try:
                 process.wait(timeout=max(0, cleanup_deadline - time.monotonic()))
