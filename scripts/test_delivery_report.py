@@ -129,6 +129,17 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
+    def test_active_state_cannot_render_a_final_report(self):
+        for output_format in ("text", "json"):
+            with self.subTest(output_format=output_format):
+                payload = state("active")
+                payload["current_stage"] = "scope"
+                payload["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
+                result = self.run_report(payload, output_format)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn("已完成", result.stdout)
+                self.assertIn("terminal", result.stderr)
+
     def test_json_reports_only_usage_present_in_fingerprint_validated_runner_receipts(self):
         payload = state()
         profile = {
@@ -194,7 +205,8 @@ class DeliveryReportTest(unittest.TestCase):
             payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
             payload.pop("source_receipt")
             payload["ledger"]["acceptance"][0].pop("evidence_receipts")
-            payload.update(status="active", current_stage="round-1-semantic-review")
+            payload.update(status="blocked", current_stage="round-1-semantic-review",
+                           blocked_code="environment", blocked_reason="verification unavailable")
 
             report = json.loads(self.run_report(payload, "json").stdout)
             rendered = self.run_report(payload, "text").stdout
@@ -220,7 +232,8 @@ class DeliveryReportTest(unittest.TestCase):
         payload["workspace"] = "/missing/worktree"
         payload.pop("source_receipt")
         payload["ledger"]["acceptance"][0].pop("evidence_receipts")
-        payload.update(status="active", current_stage="round-1-semantic-review")
+        payload.update(status="blocked", current_stage="round-1-semantic-review",
+                       blocked_code="environment", blocked_reason="workspace unavailable")
 
         result = self.run_report(payload, "json")
 
@@ -228,7 +241,7 @@ class DeliveryReportTest(unittest.TestCase):
         summary = json.loads(result.stdout)["workspace_changes"]
         self.assertEqual("unavailable", summary["status"])
         self.assertEqual("git_read_failed", summary["error"])
-        self.assertEqual("attention", json.loads(result.stdout)["outcome"])
+        self.assertEqual("blocked", json.loads(result.stdout)["outcome"])
 
     def test_default_report_hides_diagnostics_but_detail_includes_them(self):
         summary = self.run_report(state(), "text")

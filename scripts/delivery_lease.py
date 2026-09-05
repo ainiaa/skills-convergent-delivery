@@ -12,6 +12,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from runtime_adapter import validate_cleanup_barrier
+from runner_contract import runner_results_complete
 
 
 DEFAULT_TTL_SECONDS = 7200
@@ -296,6 +297,14 @@ def validate_cleanup_for_release(state, arguments):
         raise ValueError("formal state owner does not match the lease")
     if state.get("status") not in {"complete", "blocked"}:
         raise ValueError("formal state is not terminal")
+    ledger = state.get("ledger", {})
+    if not isinstance(ledger, dict):
+        raise ValueError("formal state ledger must be an object")
+    launches, results = ledger.get("runner_launches", []), ledger.get("runner_results", [])
+    runner_results_complete(launches, results)
+    terminated = {item["launch_fingerprint"] for item in results if item["status"] != "unknown"}
+    if any(item["launch_fingerprint"] not in terminated for item in launches):
+        raise ValueError("runner cleanup is unconfirmed; retain the lease for manual recovery")
     workers = state.get("workers", [])
     if workers:
         raise ValueError("worker lifecycle release requires a concrete host bridge")

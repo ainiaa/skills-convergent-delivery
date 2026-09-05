@@ -4,7 +4,10 @@
 
 ## [Unreleased]
 
-- 修复自治 service 在模型实际修改源码后无法保存结果或 blocked 状态的问题：落盘同步当前 Source Receipt，保留历史审查并为新源码建立空轮次；running/observed 中断恢复仍检查身份、租约与冻结约束，未知执行不重放，失败保存后释放租约。
+- runner 缺少结果、结果为 unknown 或回执无效时禁止释放正式任务租约；service 中断持久化 blocked 后保留租约并报告手工恢复，防止旧进程仍可写入时放行第二个 writer。确定退出的失败结果仍允许清场。
+- native service 从模型 JSON 输出收集有界的 TDD/Impact Trace v5 候选，复用现有 managed ledger 恢复；最终按当前源码、风险与验收项校验，并真实重跑 GREEN、coverage、mutation 与图谱后才固化正式 Trace。缺失或失败的证据不能完成。
+- 最终报告拒绝 active 输入并返回退出码 2，避免把进行中的工作显示为“已完成，需关注”；blocked 报告仍支持 Git 不可读时的结构化降级。
+- 修复自治 service 在模型实际修改源码后无法保存结果或 blocked 状态的问题：落盘同步当前 Source Receipt，保留历史审查并为新源码建立空轮次；running/observed 中断恢复仍检查身份、租约与冻结约束，未知执行不重放，确认清场后才释放租约。
 - Batch 最终验收改为校验真实 observed Evidence Receipt、成功退出码与当前提交源码，拒绝自由文本冒充执行证据；验收项从初始化冻结并禁止重复，保留每批 delegate receipt 的独立校验。
 - Capsule 派发持久回执升级为 schema v2，将显式 attempt id 也绑定到规范化 workspace；跨工作区复用在返回缓存或重试前拒绝。缺少该绑定的旧 schema v1 不自动迁移或重派。
 

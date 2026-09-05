@@ -6,14 +6,46 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import delivery_lease
+from runner_contract import fingerprint, freeze_launch
+from test_runner_contract import profile
 
 
 SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
+    def test_release_requires_a_valid_determinate_result_for_every_runner(self):
+        launch = freeze_launch(profile(
+            runner_id="codex-exec-v1",
+            requested={"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            effective={"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        ), "action", {"codex_bin": "codex"})
+        owner = dict(repo_id="/repo", workspace="/workspace", task_key="task", run_id="run", writer_id="writer")
+        arguments = SimpleNamespace(repo=owner["repo_id"], **{k: v for k, v in owner.items() if k != "repo_id"})
+        for status in ("missing", "unknown", "tampered", "completed", "failed", "timed_out", "output_exceeded"):
+            with self.subTest(status=status):
+                receipt = {"schema_version": 1, "runner_id": launch["runner_id"],
+                           "launch_fingerprint": launch["launch_fingerprint"],
+                           "status": "completed" if status == "tampered" else status,
+                           "exit_code": 0 if status in {"completed", "tampered"} else 1,
+                           "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                           "requested_model": launch["profile"]["effective"]["model"],
+                           "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
+                if status == "unknown": receipt["error_type"] = "interrupted"
+                receipt["receipt_fingerprint"] = fingerprint(receipt)
+                if status == "tampered": receipt["stdout_fingerprint"] = "c" * 64
+                state = {**owner, "status": "blocked", "ledger": {
+                    "runner_launches": [launch], "runner_results": [] if status == "missing" else [receipt],
+                }}
+                if status in {"missing", "unknown", "tampered"}:
+                    with self.assertRaises(ValueError):
+                        delivery_lease.validate_cleanup_for_release(state, arguments)
+                else:
+                    delivery_lease.validate_cleanup_for_release(state, arguments)
+
     def run_lease(
         self, root, command, *, workspace, task_key, run_id=None, writer_id=None,
         from_workspace=None, state_root=None

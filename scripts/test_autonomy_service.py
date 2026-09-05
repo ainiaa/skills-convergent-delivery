@@ -23,7 +23,7 @@ from delivery_engine import controller_identity
 from delivery_lease import lease_paths
 from delivery_state import state_path
 from delivery_next import validate_state
-from evidence_contract import run_evidence
+from evidence_contract import run_evidence, workspace_source
 from runner_contract import fingerprint, freeze_launch
 from tdd_impact_guard import graph_query
 from test_delivery_next import WORKSPACE, COVERAGE_ARGV
@@ -80,6 +80,178 @@ def native_tdd_trace(workspace, baseline, source):
 
 
 class AutonomyServiceTest(unittest.TestCase):
+    def setUp(self):
+        # External coverage and graph tools are transport stand-ins; state/TDD validation is real.
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.tool_dir = Path(temporary.name)
+        for name in ("coverage", "codegraph"):
+            tool = self.tool_dir / name
+            tool.write_text("#!/bin/sh\nexit 0\n")
+            tool.chmod(0o755)
+        environment = patch.dict(os.environ, {"PATH": str(self.tool_dir) + os.pathsep + os.environ["PATH"]})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_interrupted_runner_keeps_lease_while_process_may_still_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text())
+            action = autonomy_service.decide(state, lease_root=lease_root)["next_action"]
+            autonomy_service._append_intent(path, state_root, lease_root, action)
+            autonomy_service._start(path, state_root, lease_root)
+            profile = state["execution_control"]["autonomy"]["runtime"]["runner_profile"]
+            launch = freeze_launch(profile, "interrupted action", {
+                "codex_bin": "codex", "binary_fingerprint": "b" * 64,
+                "sandbox": "workspace-write", "workspace": state["workspace"],
+            })
+            autonomy_service._append_runner_record(path, state_root, lease_root, "runner_launches", launch)
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                     start_new_session=True)
+            try:
+                with self.assertRaisesRegex(ValueError, "cleanup|recovery"):
+                    autonomy_service.run_once(path, state_root, lease_root)
+                self.assertIsNone(child.poll())
+                self.assertEqual("blocked", json.loads(path.read_text())["status"])
+                self.assertTrue(all(p.exists() for p in lease_paths(
+                    lease_root, state["repo_id"], state["workspace"], state["task_key"]
+                ).values()))
+            finally:
+                child.kill()
+                child.wait(timeout=3)
+
+    def test_service_collects_and_reruns_trace_without_preloaded_completion_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, with_trace=False)
+            state = json.loads(path.read_text())
+            workspace = Path(state["workspace"])
+            implementation, test_file = workspace / "example.py", workspace / "test_example.py"
+            candidate = None
+            rerun_counter = Path(directory) / "green-runs"
+
+            def model(launch, request, **kwargs):
+                nonlocal candidate
+                if candidate is None:
+                    implementation.write_text("def increment(value): return None\n")
+                    test_file.write_text(
+                        "import unittest, pathlib\nfrom example import increment\n"
+                        + f"p=pathlib.Path({str(rerun_counter)!r}); p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
+                        + "class Behavior(unittest.TestCase):\n"
+                        + " def test_normal(self): self.assertEqual(2, increment(1))\n"
+                        + " def test_boundary(self): self.assertEqual(1, increment(0))\n"
+                        + " def test_error(self):\n  with self.assertRaises(ValueError): increment(-1)\n"
+                        + "if __name__ == '__main__': unittest.main()\n"
+                    )
+                    tests = []
+                    for scenario in ("normal", "boundary", "error"):
+                        selector = "Behavior.test_" + scenario
+                        argv = [sys.executable, str(test_file), selector]
+                        red = run_evidence(workspace, state["baseline"]["commit"], argv)
+                        self.assertNotEqual(0, red["exit_code"])
+                        tests.append({"id": selector, "selector": selector, "kind": "unit",
+                                      "scenarios": [scenario], "red": {"receipt": red, "failure_class": "assertion"},
+                                      "green": {"receipts": []}, "mutation": None})
+                    implementation.write_text("def increment(value):\n if value < 0: raise ValueError(value)\n return value + 1\n")
+                    for test in tests:
+                        test["green"]["receipts"] = [run_evidence(workspace, state["baseline"]["commit"],
+                                                                 test["red"]["receipt"]["argv"]) for _ in range(2)]
+                    candidate = native_tdd_trace(workspace, state["baseline"]["commit"],
+                                                 workspace_source(workspace, state["baseline"]["commit"]))
+                    candidate["acceptance"][0]["tests"] = tests
+                    candidate["impacts"][0]["test_ids"] = [test["id"] for test in tests]
+                    query = graph_query(candidate["impacts"])
+                    candidate["graph"].update(query=query, impacts_fingerprint=fingerprint(candidate["impacts"]),
+                        receipt=run_evidence(workspace, state["baseline"]["commit"], ["codegraph", "explore", query]))
+                raw = {"schema_version": 1, "runner_id": launch["runner_id"],
+                       "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                       "stdout_fingerprint": "c" * 64, "stderr_fingerprint": "d" * 64,
+                       "requested_model": launch["profile"]["effective"]["model"],
+                       "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
+                return {**raw, "receipt_fingerprint": fingerprint(raw)}, json.dumps({"tdd_trace": candidate})
+
+            def plan(profile, request, workspace):
+                return freeze_launch(profile, request, {"codex_bin": "codex", "binary_fingerprint": "b" * 64,
+                                                       "sandbox": "workspace-write", "workspace": workspace})
+            try:
+                with patch.object(autonomy_service, "plan_codex", side_effect=plan), \
+                        patch.object(autonomy_service, "execute_codex", side_effect=model):
+                    first = autonomy_service.run_once(path, state_root, lease_root)
+                    self.assertEqual("advanced", first["status"])
+                    stored = json.loads(path.read_text())
+                    self.assertIsNone(stored["ledger"].get("tdd_trace"))
+                    self.assertEqual(candidate, stored["ledger"].get("tdd_trace_candidate"))
+                    before = len(rerun_counter.read_text())
+                    for _ in range(4):
+                        current = json.loads(path.read_text())
+                        action = autonomy_service.decide(current, lease_root=lease_root)["next_action"]
+                        if action.get("phase") == "verify-final":
+                            autonomy_service._append_intent(path, state_root, lease_root, action)
+                            started = autonomy_service._start(path, state_root, lease_root)
+                            receipt = autonomy_service.execute(path, started, action, state_root, lease_root)
+                            autonomy_service._observe(path, state_root, lease_root, receipt)
+                            with patch.object(autonomy_service, "execute") as replay:
+                                result = autonomy_service.run_once(path, state_root, lease_root)
+                            replay.assert_not_called()
+                        else:
+                            result = autonomy_service.run_once(path, state_root, lease_root)
+                        if result["status"] != "advanced": break
+                self.assertEqual("complete", result["status"])
+                final = json.loads(path.read_text())
+                self.assertEqual(candidate["source"], final["ledger"]["tdd_trace"]["source"])
+                self.assertNotIn("tdd_trace_candidate", final["ledger"])
+                self.assertGreater(len(rerun_counter.read_text()), before)
+            finally:
+                implementation.unlink(missing_ok=True)
+                test_file.unlink(missing_ok=True)
+
+    def test_final_service_rejects_missing_invalid_stale_and_failing_trace(self):
+        for failure in ("missing", "malformed", "oversized", "criteria", "stale", "coverage"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                path, state_root, lease_root = self.managed_service_state(
+                    directory, "round-2-risk-review", with_trace=False,
+                )
+                state = json.loads(path.read_text())
+                trace = native_tdd_trace(state["workspace"], state["baseline"]["commit"], state["source_receipt"])
+                if failure == "criteria":
+                    trace["acceptance"][0]["criterion"] = "unrequested criterion"
+                output = json.dumps({"tdd_trace": trace})
+                if failure == "missing": output = "{}"
+                if failure == "malformed": output = '{"tdd_trace": null}'
+                if failure == "oversized": output = "x" * (autonomy_service.MAX_TRACE_BYTES + 1)
+                edited = Path(state["workspace"]) / "stale-trace.txt"
+
+                def plan(profile, request, workspace):
+                    return freeze_launch(profile, request, {
+                        "codex_bin": "codex", "binary_fingerprint": "b" * 64,
+                        "sandbox": "workspace-write", "workspace": workspace,
+                    })
+
+                def model(launch, request, **kwargs):
+                    if failure == "stale": edited.write_text("new source\n")
+                    raw = {"schema_version": 1, "runner_id": launch["runner_id"],
+                           "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                           "stdout_fingerprint": "c" * 64, "stderr_fingerprint": "d" * 64,
+                           "requested_model": launch["profile"]["effective"]["model"],
+                           "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
+                    return {**raw, "receipt_fingerprint": fingerprint(raw)}, output
+
+                try:
+                    if failure == "coverage":
+                        (self.tool_dir / "coverage").write_text("#!/bin/sh\nexit 1\n")
+                    with patch.object(autonomy_service, "plan_codex", side_effect=plan), \
+                            patch.object(autonomy_service, "execute_codex", side_effect=model):
+                        result = autonomy_service.run_once(path, state_root, lease_root)
+                    self.assertEqual("blocked", result["status"])
+                    current = json.loads(path.read_text())
+                    self.assertEqual("blocked", current["status"])
+                    self.assertIsNone(current["ledger"].get("tdd_trace"))
+                    self.assertTrue(all(not p.exists() for p in lease_paths(
+                        lease_root, current["repo_id"], current["workspace"], current["task_key"]
+                    ).values()))
+                finally:
+                    edited.unlink(missing_ok=True)
+                    (self.tool_dir / "coverage").write_text("#!/bin/sh\nexit 0\n")
+
     def test_source_changing_actions_persist_results_and_failures(self):
         for outcome in ('completed', 'failed', 'verifier-failed', 'exception'):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
@@ -117,8 +289,12 @@ class AutonomyServiceTest(unittest.TestCase):
                 try:
                     with patch.object(autonomy_service, 'plan_codex', side_effect=plan), \
                             patch.object(autonomy_service, 'execute_codex', side_effect=run):
-                        result = autonomy_service.run_once(path, state_root, lease_root)
-                    self.assertEqual('advanced' if outcome == 'completed' else 'blocked', result['status'])
+                        if outcome == 'exception':
+                            with self.assertRaisesRegex(ValueError, 'manual recovery'):
+                                autonomy_service.run_once(path, state_root, lease_root)
+                        else:
+                            result = autonomy_service.run_once(path, state_root, lease_root)
+                            self.assertEqual('advanced' if outcome == 'completed' else 'blocked', result['status'])
                     current = json.loads(path.read_text())
                     self.assertIn('implementation.py', current['source_receipt']['changed_paths'])
                     self.assertEqual(0 if outcome == 'exception' else 1, len(current['ledger'].get('runner_results', [])))
@@ -129,7 +305,7 @@ class AutonomyServiceTest(unittest.TestCase):
                     self.assertEqual(current['source_fingerprint'], rounds[-1]['source_fingerprint'])
                     if outcome != 'completed':
                         self.assertEqual('blocked', current['status'])
-                        self.assertTrue(all(not p.exists() for p in lease_paths(
+                        self.assertTrue(all(p.exists() == (outcome == 'exception') for p in lease_paths(
                             lease_root, current['repo_id'], current['workspace'], current['task_key']
                         ).values()))
                 finally:
@@ -163,7 +339,7 @@ class AutonomyServiceTest(unittest.TestCase):
                 finally:
                     edited.unlink(missing_ok=True)
 
-    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None):
+    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None, with_trace=True):
         root = WORKSPACE
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
@@ -177,9 +353,6 @@ class AutonomyServiceTest(unittest.TestCase):
         )
         if stage is not None:
             initial["current_stage"] = stage
-        initial["ledger"]["tdd_trace"] = native_tdd_trace(
-            root, initial["baseline"]["commit"], initial["source_receipt"],
-        )
         acquired = subprocess.run([
             sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
             "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],
@@ -207,7 +380,12 @@ class AutonomyServiceTest(unittest.TestCase):
             "--expected-revision", "0",
         ], input=json.dumps(armed), text=True, capture_output=True, check=False)
         self.assertEqual(0, armed_write.returncode, armed_write.stderr)
-        return state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"]), state_root, lease_root
+        path = state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"])
+        if runtime == "service" and with_trace:
+            trace = native_tdd_trace(root, initial["baseline"]["commit"], initial["source_receipt"])
+            autonomy_service._update(path, state_root, lease_root,
+                                     lambda value: value["ledger"].update(tdd_trace_candidate=trace))
+        return path, state_root, lease_root
 
     def test_snapshot_service_state_dispatches_to_its_frozen_controller(self):
         with tempfile.TemporaryDirectory() as directory:

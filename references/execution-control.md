@@ -59,6 +59,8 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 service 在记录 runner result、observation 或 blocked 状态时采集当前 Source Receipt；源码变化只追加空的 review round，历史审查保留，不把采集动作当作验证通过。扫描和恢复仅对 active 且末次动作为 running/observed 的状态允许旧工作区快照，其他结构、范围、风险和租约校验不放宽；running 记录未知后阻塞，observed 重新执行冻结 verifier，均不重放模型动作。
 
+正式任务的 lease release 统一核对每条 runner launch 的结果契约与指纹。缺少结果或结果为 unknown 时无法确认外部进程已清场，必须保留租约并报告手工恢复；不得猜测 PID、重放动作或将 blocked 等同于清场完成。确定退出的 completed/failed/timed_out/output_exceeded 结果才通过 runner 清场检查。租约过期不会自动允许第二个 writer，仍须显式 takeover；接管前必须人工确认旧执行已停止。native service 通过模型 JSON 返回的 `tdd_trace` 收集候选证据，见 [TDD 提供者](tdd-providers.md)；最终验证必须重跑候选后才写 complete。
+
 service 只执行 `execute-inline` 或带 `phase` 的 `verify`。其他宿主 controller action 必须由同会话控制器处理；service 遇到它们立即停止，绝不降级为普通模型阶段，并写为 `blocked/no_progress`。
 
 需求取舍、计划、方案仲裁和最终 review 保留给主执行者；文件定位、独立代码扫描、测试或日志分析可以交给边界明确的辅助执行者。只有宿主支持且能节省上下文时才委托，不为了“并行”增加无收益的 Agent。

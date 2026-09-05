@@ -17,9 +17,10 @@ from contextlib import contextmanager
 from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
-from delivery_next import validate_active_lease, validate_state
+from delivery_next import validate_active_lease, validate_native_tdd_trace, validate_state
 from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
 from evidence_contract import run_evidence, workspace_source
+from tdd_impact_guard import MAX_TRACE_BYTES, MAX_RERUN_TIMEOUT_SECONDS, rerun as rerun_tdd_trace
 
 
 def service_runtime(state):
@@ -175,7 +176,7 @@ def _advance_verified_action(state_path, state_root, lease_root, action, verific
     return _update(state_path, state_root, lease_root, mutate)
 
 
-def _complete(state_path, state_root, lease_root, verification, audit):
+def _complete(state_path, state_root, lease_root, verification, audit, tdd_trace=None):
     def mutate(state):
         source_receipt = verification["source"]
         source = source_receipt["source_fingerprint"]
@@ -218,6 +219,9 @@ def _complete(state_path, state_root, lease_root, verification, audit):
         elif autonomy is not None:
             raise ValueError("service final audit is not eligible for completion")
         ledger = state["ledger"]
+        if tdd_trace is not None:
+            ledger["tdd_trace"] = tdd_trace
+            ledger.pop("tdd_trace_candidate", None)
         ledger["checks"].append({
             "stage": "autonomy-audit", "command": audit["command"], "result": "pass",
             "evidence_receipts": [audit],
@@ -258,6 +262,12 @@ def prompt(state_path, next_action):
         "Work only within its frozen scope and use current evidence. Do not modify the managed "
         "state: the service controller records the verified source and advances the stage after "
         "this action exits. Do not report completion from prose, publish, or create another agent."
+        " For native work, preserve real RED/GREEN observed Evidence Receipts while implementing."
+        " Return only JSON {\"tdd_trace\": <TDD/Impact Trace v5>} after code changes and for verify-final."
+        " Read the frozen references/tdd-providers.md through the state's controller snapshot."
+        " Reuse ledger.tdd_trace_candidate from prior actions, update it for the current source,"
+        " and keep original RED receipts; never invent receipts. A scope-only action may return {}."
+        " The controller stores this untrusted candidate and reruns it before final completion."
     )
 
 
@@ -283,8 +293,26 @@ def execute(state_path, state, next_action, state_root, lease_root):
     else:
         raise ValueError("autonomy service runner is unsupported")
     _append_runner_record(state_path, state_root, lease_root, "runner_launches", launch)
-    receipt, _content = run(launch, request, allow_execute=True, capture_content=True)
+    receipt, content = run(launch, request, allow_execute=True, capture_content=True)
     _append_runner_record(state_path, state_root, lease_root, "runner_results", receipt)
+    if receipt["status"] == "completed" and content:
+        if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TRACE_BYTES:
+            raise ValueError("service TDD output exceeds the trace size limit")
+        try:
+            output = json.loads(content)
+        except json.JSONDecodeError:
+            output = None
+        if isinstance(output, dict) and "tdd_trace" in output:
+            def store_trace(candidate):
+                trace = output["tdd_trace"]
+                validate_native_tdd_trace(
+                    trace, candidate["source_receipt"],
+                    candidate["execution_control"]["routing"]["profile"]["risk_flags"],
+                    [item["criterion"] for item in candidate["ledger"]["acceptance"]],
+                    required=False, workspace=candidate["workspace"],
+                )
+                candidate["ledger"]["tdd_trace_candidate"] = trace
+            _update(state_path, state_root, lease_root, store_trace)
     return receipt
 
 
@@ -371,7 +399,20 @@ def _finalize_observed(state_path, state_root, lease_root):
         if audit["exit_code"] != 0:
             block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
-        completed = _complete(state_path, state_root, lease_root, verification, audit)
+        trace = None
+        if state["provider_binding"]["binding"]["workflow_provider"]["id"] == "native-v1":
+            trace = state["ledger"].get("tdd_trace_candidate", state["ledger"].get("tdd_trace"))
+            validate_native_tdd_trace(
+                trace, verification["source"], state["execution_control"]["routing"]["profile"]["risk_flags"],
+                [item["criterion"] for item in state["ledger"]["acceptance"]],
+                required=True, workspace=state["workspace"],
+            )
+            trace = rerun_tdd_trace(
+                trace, state["workspace"], state["baseline"]["commit"], native_coverage=True,
+                timeout_seconds=min(MAX_RERUN_TIMEOUT_SECONDS,
+                                    _time_policy(service_runtime(state)["runner_profile"])["absolute_seconds"]),
+            )
+        completed = _complete(state_path, state_root, lease_root, verification, audit, trace)
         _release(completed, state_root, lease_root)
         return {"status": "complete", "verification": verification, "audit": audit,
                 "revision": completed["revision"]}

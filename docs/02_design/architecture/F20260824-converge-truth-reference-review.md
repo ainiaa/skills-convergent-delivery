@@ -59,3 +59,16 @@
 | [Context compression evaluation](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/context-compression/references/evaluation-framework.md) | 采用恢复后核对范围与下一动作；不增加压缩日志或第二份真源 | 恢复依然检查状态身份、冻结约束与租约，只有未完成动作允许旧源码快照 |
 
 复用 Source Receipt、Evidence Receipt、review rounds 和现有 receipt 文件。控制器保有写权、验证与终态清场责任；失败和未知结果有限停止。本轮没有新增代理、依赖、循环或状态文件。真实宿主 Eval bridge 和本仓原生覆盖率配置仍缺失，本地回归不冒充正式 Eval 或覆盖率通过。
+
+## 2026-09-06 Runner 清场、服务 Trace 和报告终态修复
+
+复用本会话 Skills.sh 分类与排行榜发现结果，核对原始 Skill 和脚本后按以下机制取舍；安装量不作为正确性证据。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) 及 references/writing-tests.md | 采用真实控制器配脚本模型、外部边界替身；不安装完整 Node harness，不复制自动提交行为 | service 从无正式 Trace 起步，真实 unittest RED/GREEN、实际状态写入及最终 rerun；observed 恢复不重放模型。图谱与 coverage transport 明确为替身，不算真实宿主评测 |
+| [Agent harness](https://github.com/borghei/claude-skills/blob/main/engineering/agent-harness/SKILL.md) 及 scenario_runner.py / eval_diff.py | 采用逐场景结构断言与关键失败门禁；不新增 transcript、ledger 或成本采样层，也不把缺失指标默认成零 | 缺失、畸形、超限、验收项不符、过期和 coverage 失败均不能固化正式 Trace；真实成本保持 unavailable |
+| [Anthropic skill-creator run_eval](https://github.com/anthropics/skills/blob/main/skills/skill-creator/scripts/run_eval.py) | 采用真实工具事件区分触发与文字宣称；不将 Claude 事件代理当作 Codex bridge | 本地 service 组装回归与正式 Eval 分开，冻结 evaluator 预检无 bridge 仍返回 uncovered |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用有限状态不变量，复用 unittest，不新增 Hypothesis | 实际存活进程加 running 恢复不能释放租约；缺失/unknown/篡改结果拒绝清场，确定退出失败可释放；active 状态两种最终输出格式均拒绝 |
+
+唯一新增状态字段是同一 ledger 内的可恢复候选 Trace，正式 Trace 仍是完成证据真源。复用现有 Trace 校验及 rerun、runner 契约和租约屏障；不新增 PID 注册表、自动接管、代理或循环。简单非服务任务不增加执行步骤。控制器持有候选写权、完成判定及清场责任；未知执行停止并保留租约，手工确认旧执行停止后才可显式接管。

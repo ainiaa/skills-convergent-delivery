@@ -47,6 +47,8 @@ def execution_metrics(state):
 
 def build_report(state):
     validate_state(state, SimpleNamespace(strict_evidence=True))
+    if state["status"] not in {"complete", "blocked"}:
+        raise ValueError("final report requires a terminal complete or blocked state")
     state = upgrade_state(state)
     acceptance = state["ledger"]["acceptance"]
     pending_acceptance = sum(

@@ -6,6 +6,8 @@
 
 ## 先选用户状态
 
+最终报告只接受 `complete|blocked`；`active` 输入返回退出码 2，不生成 JSON 或文字完成回执。运行中的任务使用进度展示。Git 不可读时，complete 降级为 attention，blocked 仍保持 blocked。
+
 按以下优先级只选择一个状态：
 
 | 状态 | 使用条件 | 标题 |

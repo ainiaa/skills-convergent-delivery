@@ -831,7 +831,7 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
     ledger = require_mapping(state.get("ledger"), "ledger")
     allowed_ledger_fields = {
         "completed_rounds", "repair_fingerprints", "autonomy_repair_fingerprints", "key_changes", "checks", "acceptance",
-        "acceptance_history", "runner_launches", "runner_results", "report_history", "tdd_trace",
+        "acceptance_history", "runner_launches", "runner_results", "report_history", "tdd_trace", "tdd_trace_candidate",
     }
     if not set(ledger) <= allowed_ledger_fields:
         raise ValueError("ledger fields are invalid")
@@ -892,6 +892,15 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
         )
     if len(acceptance_criteria) != len(set(acceptance_criteria)):
         raise ValueError("ledger.acceptance criteria must not be duplicated")
+    if "tdd_trace_candidate" in ledger:
+        candidate_trace = ledger["tdd_trace_candidate"]
+        if autonomy is None or autonomy["runtime"]["mode"] != "service" \
+                or state.get("status") == "complete" or not isinstance(candidate_trace, dict):
+            raise ValueError("TDD trace candidate is only valid in an unfinished service run")
+        validate_native_tdd_trace(
+            candidate_trace, candidate_trace.get("source"), routing["profile"]["risk_flags"],
+            acceptance_criteria, required=False, workspace=workspace,
+        )
     acceptance_history = ledger.get("acceptance_history", [])
     if not isinstance(acceptance_history, list):
         raise ValueError("ledger.acceptance_history must be a list")
