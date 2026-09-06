@@ -87,3 +87,5 @@
 7. 是否用一行说明了交付轮数、已修问题数和待处理项？
 
 任一项不满足，重写回执；不得重新跑检查来凑报告内容。
+
+`blocked` 与 `complete` 均允许独立 revision 持久化 `next_report_history`。该写入只能改变 revision 和 ledger.report_history，不能混入原因、状态、验收或 worker 更新；blocked 清场仍沿用单独的 worker lifecycle 写入。

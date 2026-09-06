@@ -12,7 +12,7 @@ from pathlib import Path
 
 from autonomy_gate import decide
 from delivery_lease import lock_record, replace_record
-from delivery_state import repository_state_root
+from delivery_state import repository_state_root, workspace_state_roots
 
 
 def approve():
@@ -21,9 +21,12 @@ def approve():
 
 def active_state(workspace):
     workspace = str(Path(workspace).expanduser().resolve())
-    root = repository_state_root(state_root(), workspace)
+    base = state_root()
+    roots = [repository_state_root(base, workspace) if root == base else root
+             for root in workspace_state_roots(base, workspace)]
     matches = []
-    for path in root.rglob("*.json") if root.is_dir() else ():
+    paths = {path for root in roots if root.is_dir() for path in root.rglob("*.json")}
+    for path in sorted(paths):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
@@ -73,6 +76,7 @@ def continuation_message(state_path, next_action):
 def continuation_identity(state, next_action):
     identity = {
         "stage": state["current_stage"],
+        "source_fingerprint": state.get("source_fingerprint"),
         "action_fingerprint": hashlib.sha256(
             json.dumps(next_action, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -90,7 +94,7 @@ def continuation_receipt_path(state_path):
     return root.expanduser().resolve() / digest
 
 
-def queue_codex(session, state_path, state, next_action):
+def record_continuation(state_path, state, next_action):
     receipt_path = continuation_receipt_path(state_path)
     identity = continuation_identity(state, next_action)
     with lock_record(receipt_path):
@@ -99,16 +103,22 @@ def queue_codex(session, state_path, state, next_action):
                 previous = json.loads(receipt_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
                 raise ValueError("autonomous continuation receipt is unreadable") from error
+            if not isinstance(previous, dict) or set(previous) != set(identity):
+                raise ValueError("autonomous continuation receipt is invalid")
             if previous == identity:
                 raise ValueError("no state progress after the previous autonomous continuation")
         replace_record(receipt_path, identity)
-        message = continuation_message(state_path, next_action)
-        result = subprocess.run(
-            ["codex", "queue", "--thread", session, "--message", message],
-            text=True, capture_output=True, check=False, timeout=10,
-        )
-        if result.returncode:
-            raise ValueError("Codex could not queue the autonomous continuation")
+
+
+def queue_codex(session, state_path, state, next_action):
+    record_continuation(state_path, state, next_action)
+    message = continuation_message(state_path, next_action)
+    result = subprocess.run(
+        ["codex", "queue", "--thread", session, "--message", message],
+        text=True, capture_output=True, check=False, timeout=10,
+    )
+    if result.returncode:
+        raise ValueError("Codex could not queue the autonomous continuation")
 
 
 def terminalize_hook_failure(state_path, state, reason):
@@ -168,6 +178,11 @@ def run_hook(host, payload, active):
         )
         return approve(), 0
     if host == "claude":
+        try:
+            record_continuation(state_path, state, result["next_action"])
+        except (OSError, ValueError) as error:
+            terminalize_hook_failure(state_path, state, str(error))
+            return approve(), 0
         return {
             "decision": "block",
             "reason": continuation_message(state_path, result["next_action"]),

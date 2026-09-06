@@ -63,6 +63,8 @@ from pathlib import Path
 arguments = sys.argv[1:]
 with Path(os.environ["FAKE_GIT_LOG"]).open("a", encoding="utf-8") as log:
     log.write(" ".join(arguments) + "\\n")
+if "ls-tree" in arguments:
+    print("100644 blob " + "a" * 40 + " " + arguments[-1])
 if arguments and arguments[0] == "clone":
     destination = Path(arguments[-1])
     shutil.copytree(
@@ -149,6 +151,60 @@ if arguments and arguments[0] == "clone":
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("cannot be combined with --source", result.stderr)
+
+    def test_real_tag_upgrade_preserves_previous_install_until_candidate_is_valid(self):
+        # Exercise the actual preparation function against a local Git remote.
+        function = INSTALLER.read_text().split("prepare_source() {", 1)[1].split("\nsame_source()", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            origin, managed = root / "origin", root / "managed"
+            def git(*args):
+                return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main", origin)
+            git("-C", origin, "config", "user.name", "Test")
+            git("-C", origin, "config", "user.email", "test@example.com")
+            (origin / "VERSION").write_text("good")
+            (origin / "SKILL.md").write_text("skill")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "good")
+            git("-C", origin, "tag", "good")
+            git("clone", "-q", "--branch", "good", origin, managed)
+            (root / "installed").symlink_to(managed, target_is_directory=True)
+            (origin / "VERSION").unlink()
+            git("-C", origin, "commit", "-qam", "incomplete")
+            git("-C", origin, "tag", "incomplete")
+            (origin / "VERSION").symlink_to("missing")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "broken symlink")
+            git("-C", origin, "tag", "broken-link")
+            (origin / "VERSION").unlink()
+            (origin / "VERSION").write_text("latest")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "latest")
+            def prepare(selector, ref=""):
+                script = ("set -eu\nSOURCE_OVERRIDE=\nSCRIPT_DIR=/nonexistent\n"
+                          "GITHUB_BRANCH=main\nREQUIRED_SOURCE_FILES=(SKILL.md VERSION)\n"
+                          "prepare_source() {" + function + "\nprepare_source\n")
+                return subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                                      env=os.environ | {"MANAGED_SOURCE": str(managed),
+                                                        "REMOTE_SELECTOR": selector, "REMOTE_REF": ref})
+            before = git("-C", managed, "rev-parse", "HEAD")
+            invalid = prepare("--tag", "incomplete")
+            self.assertNotEqual(0, invalid.returncode)
+            self.assertEqual(before, git("-C", managed, "rev-parse", "HEAD"))
+            self.assertEqual("good", (root / "installed/VERSION").read_text())
+            broken_link = prepare("--tag", "broken-link")
+            self.assertNotEqual(0, broken_link.returncode)
+            self.assertEqual(before, git("-C", managed, "rev-parse", "HEAD"))
+            self.assertEqual("good", (root / "installed/VERSION").read_text())
+            latest = prepare("--latest")
+            self.assertEqual(0, latest.returncode, latest.stderr)
+            self.assertEqual("latest", (root / "installed/VERSION").read_text())
+            self.assertEqual("main", git("-C", managed, "symbolic-ref", "--short", "HEAD"))
+            (managed / "VERSION").write_text("local edit")
+            dirty = prepare("--tag", "good")
+            self.assertNotEqual(0, dirty.returncode)
+            self.assertEqual("local edit", (managed / "VERSION").read_text())
 
     def test_tagged_upgrade_fetches_and_detaches_the_requested_tag(self):
         with tempfile.TemporaryDirectory() as directory:

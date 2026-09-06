@@ -20,7 +20,7 @@ SPEC.loader.exec_module(tdd_impact_guard)
 
 def trace(workspace, baseline, *, risks=None):
     def evidence(exit_code, selector):
-        command = [sys.executable, "-c", f"raise SystemExit({exit_code})", selector]
+        command = [sys.executable, "-m", "unittest", selector]
         return evidence_contract.run_evidence(workspace, baseline, command)
 
     (workspace / "implementation.txt").unlink(missing_ok=True)
@@ -32,10 +32,10 @@ def trace(workspace, baseline, *, risks=None):
     ):
         tests.append({
             "id": test_id,
-            "selector": test_id,
+            "selector": "test_cases.Tests.test_" + test_id.replace("-", "_"),
             "kind": kind,
             "scenarios": scenarios,
-            "red": {"receipt": evidence(1, test_id), "failure_class": "assertion"},
+            "red": {"receipt": evidence(1, "test_cases.Tests.test_" + test_id.replace("-", "_")), "failure_class": "assertion"},
             "green": {"receipts": []},
             "mutation": None,
         })
@@ -75,7 +75,7 @@ def trace(workspace, baseline, *, risks=None):
         "coverage": {
             "status": "covered", "threshold": 85,
             "receipt": evidence_contract.run_evidence(
-                workspace, baseline, [str(workspace / "coverage"), "--fail-under=85"]
+                workspace, baseline, [str(workspace / "pytest"), "--cov=src", "--cov-fail-under=85"]
             ),
         },
     }
@@ -89,7 +89,7 @@ class TddImpactGuardTest(unittest.TestCase):
 
         candidate = self.trace()
         test = candidate["acceptance"][0]["tests"][0]
-        argv = [sys.executable, "-c", "import os; print(os.environ['TRACE_RUN'])", test["selector"]]
+        argv = [sys.executable, "-m", "unittest", test["selector"]]
         with patch.dict(os.environ, TRACE_RUN="build"):
             test["green"]["receipts"] = [
                 evidence_contract.run_evidence(self.workspace, self.baseline, argv) for _ in range(2)
@@ -147,6 +147,44 @@ class TddImpactGuardTest(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         tdd_impact_guard.validate(value)
 
+    def test_selector_requires_an_actual_test_runner(self):
+        selector = "tests/test_payment.py"
+        for argv in (["echo", "pytest", selector], ["true", selector],
+                     ["python3", "-c", "pass", selector], ["pytest", "--collect-only", selector],
+                     ["pytest", "--help", selector], ["pytest", "--fixtures", selector],
+                     ["pytest", "--setup-only", selector]):
+            with self.subTest(argv=argv):
+                self.assertFalse(tdd_impact_guard.runner_selector_matches(argv, selector))
+
+    def test_successful_unresolved_graph_output_is_not_impact_evidence(self):
+        value = self.trace()
+        with patch.dict(os.environ, GRAPH_MODE="missing"):
+            value["graph"]["receipt"] = evidence_contract.run_evidence(
+                self.workspace, self.baseline,
+                [str(self.workspace / "codegraph"), "explore", value["graph"]["query"]],
+            )
+        with self.assertRaisesRegex(ValueError, "graph|Graph"):
+            tdd_impact_guard.graph_receipt(value["graph"], value["source"], value["impacts"])
+
+    def test_graph_requires_fresh_unique_symbols_and_real_edges(self):
+        value = self.trace()
+        value["impacts"].append({"id": "payment-contract", "relation": "external-contract",
+                                 "test_ids": ["payment-normal"]})
+        graph = value["graph"]
+        graph["query"] = tdd_impact_guard.graph_query(value["impacts"])
+        graph["impacts_fingerprint"] = tdd_impact_guard.fingerprint(value["impacts"])
+        for mode in ("stale", "ambiguous", "missing", "no-edge", ""):
+            with self.subTest(mode=mode), patch.dict(os.environ, GRAPH_MODE=mode):
+                graph["receipt"] = evidence_contract.run_evidence(
+                    self.workspace, self.baseline,
+                    [str(self.workspace / "codegraph"), "explore", graph["query"]],
+                )
+                if mode:
+                    with self.assertRaisesRegex(ValueError, "CodeGraph"):
+                        tdd_impact_guard.graph_receipt(graph, value["source"], value["impacts"])
+                else:
+                    self.assertTrue(tdd_impact_guard.graph_receipt(graph, value["source"], value["impacts"]))
+
     def test_pytest_plain_file_selector_is_supported(self):
         for prefix in (['pytest'], ['python3', '-m', 'pytest']):
             self.assertTrue(tdd_impact_guard.runner_selector_matches([*prefix, 'test_payment.py'], 'test_payment.py'))
@@ -186,10 +224,40 @@ class TddImpactGuardTest(unittest.TestCase):
             tool = self.workspace / name
             tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             tool.chmod(0o755)
+        (self.workspace / "test_cases.py").write_text(
+            "import os, unittest\nfrom pathlib import Path\n"
+            "class Tests(unittest.TestCase):\n"
+            "    def test_payment_normal(self):\n"
+            "        print(os.environ.get('TRACE_RUN', 'fixture'))\n"
+            "        self.assertTrue(Path('implementation.txt').is_file())\n"
+            "    def test_payment_boundary(self):\n"
+            "        self.assertEqual('implemented\\n', Path('implementation.txt').read_text())\n"
+            "    def test_payment_error(self):\n"
+            "        self.assertGreater(Path('implementation.txt').stat().st_size, 0)\n"
+        )
+        # Protocol fixture for CodeGraph structured status, exact symbols and direct edges.
+        (self.workspace / "codegraph").write_text(
+            f"#!{sys.executable}\n" + """import json, os, sys
+from pathlib import Path
+mode = os.environ.get('GRAPH_MODE', '')
+command = sys.argv[1]
+node = lambda name: {'id': name, 'name': name, 'filePath': 'seed.txt', 'startLine': 1}
+if command == 'status':
+    print(json.dumps({'initialized': True, 'lastIndexed': '2026-09-06T00:00:00Z',
+        'projectPath': str(Path.cwd()), 'pendingChanges': {'added': 0, 'modified': int(mode == 'stale'), 'removed': 0},
+        'worktreeMismatch': None, 'index': {'reindexRecommended': False}}))
+elif command == 'query':
+    print(json.dumps([] if mode == 'missing' else [{'node': node(sys.argv[2])}] * (2 if mode == 'ambiguous' else 1)))
+elif command == 'callees':
+    print(json.dumps({'callees': [] if mode == 'no-edge' else [node('payment-contract')]}))
+else:
+    print('unrelated successful explore output')
+"""
+        )
         coverage_config = self.workspace / "docs" / "00_standards" / "test-commands.yml"
         coverage_config.parent.mkdir(parents=True)
         coverage_config.write_text(
-            f"coverage: {self.workspace / 'coverage'} --fail-under=85\n", encoding="utf-8"
+            f"coverage: {self.workspace / 'pytest'} --cov=src --cov-fail-under=85\n", encoding="utf-8"
         )
         subprocess.run(["git", "-C", str(self.workspace), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "commit", "-q", "-m", "seed"], check=True)
@@ -539,7 +607,7 @@ class TddImpactGuardTest(unittest.TestCase):
         (self.workspace / "after.txt").write_text("changed\n", encoding="utf-8")
         value["acceptance"][0]["tests"][0]["green"]["receipts"][0] = evidence_contract.run_evidence(
             self.workspace, self.baseline,
-            [sys.executable, "-c", "raise SystemExit(0)", "payment-normal"],
+            [sys.executable, "-m", "unittest", "test_cases.Tests.test_payment_normal"],
         )
 
         with self.assertRaisesRegex(ValueError, "final trace source"):
@@ -550,7 +618,7 @@ class TddImpactGuardTest(unittest.TestCase):
         value["acceptance"][0]["tests"][0]["red"] = {
             "receipt": evidence_contract.run_evidence(
                 self.workspace, self.baseline,
-                [sys.executable, "-c", "raise SystemExit(1)", "payment-normal"],
+                [sys.executable, "-m", "unittest", "test_cases.Tests.test_payment_normal", "test_cases.Tests.missing"],
             ),
             "failure_class": "assertion",
         }

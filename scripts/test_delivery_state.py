@@ -484,6 +484,20 @@ class DeliveryStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "report-only"):
             validate_transition(candidate, mixed)
 
+    def test_blocked_report_history_can_advance_without_reopening_execution(self):
+        from test_delivery_report import state as report_state
+        from delivery_report import build_report
+        previous = report_state("blocked")
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] += 1
+        candidate["ledger"]["report_history"] = build_report(previous)["next_report_history"]
+        validate_transition(previous, candidate)
+        for field, value in (("status", "active"), ("blocked_reason", "other")):
+            mixed = copy.deepcopy(candidate)
+            mixed[field] = value
+            with self.assertRaises(ValueError):
+                validate_transition(previous, mixed)
+
     def test_state_path_hashes_run_id(self):
         with tempfile.TemporaryDirectory() as directory:
             state_home = Path(directory) / "home"

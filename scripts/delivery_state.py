@@ -298,6 +298,8 @@ def validate_transition(previous, candidate):
     if blocked_cleanup:
         if candidate["status"] != "blocked":
             raise ValueError("blocked status is immutable")
+        if report_changed:
+            return  # The report-only checks above preserve the blocked execution state.
         for field in set(previous) | set(candidate):
             if field not in {"revision", "workers", "worker_tree_receipt"} \
                     and candidate.get(field) != previous.get(field):

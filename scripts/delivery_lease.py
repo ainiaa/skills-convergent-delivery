@@ -42,10 +42,22 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def lease_paths(root, repo, workspace, task_key):
-    base = Path(root).expanduser().resolve() / digest(repo)
+def lease_paths(root, repo, workspace, task_key, *, release_owner=None):
+    root = Path(root).expanduser().resolve()
+    base = root / digest(repo)
+    name = f"{digest(workspace)}.json"
+    workspace_path = root / "workspaces" / name
+    # Preserve existing leases while sharing one workspace lock across repository aliases.
+    existing = [path for path in [workspace_path, *root.glob(f"*/workspaces/{name}")] if path.exists()]
+    if len(existing) > 1 and release_owner is not None:
+        existing = [path for path in existing if same_owner(read_record(path), *release_owner)
+                    and read_record(path).get("repo_id") == repo]
+        if len(existing) != 1:
+            raise ValueError("cannot identify the legacy lease owned by this run")
+    if len(existing) > 1:
+        raise ValueError("multiple writer leases exist for this workspace; release the legacy owners first")
     return {
-        "workspace": base / "workspaces" / f"{digest(workspace)}.json",
+        "workspace": existing[0] if existing else workspace_path,
         "task": base / "tasks" / f"{digest(task_key)}.json",
     }
 
@@ -203,6 +215,9 @@ def payload(status, **values):
 
 
 def acquire(arguments, paths, repo, workspace):
+    if paths["workspace"].parent.parent != Path(arguments.root).expanduser().resolve():
+        payload("blocked_workspace", reason="resume the legacy owner with renew or release it before acquiring")
+        return 2
     run_id = arguments.run_id or f"run-{uuid.uuid4()}"
     writer_id = arguments.writer_id or f"writer-{uuid.uuid4()}"
     workspace_record = make_record(
@@ -345,6 +360,9 @@ def validate_cleanup_for_release(state, arguments):
 def move(arguments, paths, repo, workspace):
     """Move one active writer to a new worktree without leaving the old lease behind."""
     from_workspace = canonical_path(arguments.from_workspace)
+    if from_workspace != workspace and paths["workspace"].parent.parent != Path(arguments.root).expanduser().resolve():
+        payload("blocked_workspace", reason="release the legacy target owner before moving")
+        return 2
     old_paths = lease_paths(arguments.root, repo, from_workspace, arguments.task_key)
     records = {old_paths["workspace"], paths["workspace"], paths["task"]}
 
@@ -428,7 +446,10 @@ def main():
         workspace = canonical_path(arguments.workspace)
         arguments.repo = repo
         arguments.workspace = workspace
-        paths = lease_paths(arguments.root, repo, workspace, arguments.task_key)
+        paths = lease_paths(
+            arguments.root, repo, workspace, arguments.task_key,
+            release_owner=(arguments.run_id, arguments.writer_id) if arguments.command == "release" else None,
+        )
         if arguments.command in {"renew", "release", "move"} and (
             not arguments.run_id or not arguments.writer_id
         ):

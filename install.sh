@@ -455,10 +455,37 @@ prepare_source() {
       exit 1
     fi
     if [[ -d "$MANAGED_SOURCE/.git" ]]; then
+      local candidate relative entry
+      if [[ -n "$(git -C "$MANAGED_SOURCE" status --porcelain)" ]]; then
+        echo "Error: managed source has local changes; preserve or move them before upgrading." >&2
+        exit 1
+      fi
       if [[ -z "$REMOTE_SELECTOR" || "$REMOTE_SELECTOR" == "--latest" ]]; then
-        git -C "$MANAGED_SOURCE" pull --ff-only
+        git -C "$MANAGED_SOURCE" fetch origin "$GITHUB_BRANCH"
+        candidate=FETCH_HEAD
       else
         git -C "$MANAGED_SOURCE" fetch --depth 1 origin "refs/tags/${REMOTE_REF}:refs/tags/${REMOTE_REF}"
+        candidate="$REMOTE_REF"
+      fi
+      # Validate the fetched tree before changing files reached by installed symlinks.
+      for relative in "${REQUIRED_SOURCE_FILES[@]}"; do
+        entry="$(git -C "$MANAGED_SOURCE" ls-tree "$candidate" -- "$relative")"
+        case "$entry" in
+          100644\ blob\ *|100755\ blob\ *) ;;
+          *)
+            echo "Error: mandatory Suite file is missing or not a regular file in candidate: $relative" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [[ -z "$REMOTE_SELECTOR" || "$REMOTE_SELECTOR" == "--latest" ]]; then
+        if git -C "$MANAGED_SOURCE" show-ref --verify --quiet "refs/heads/$GITHUB_BRANCH"; then
+          git -C "$MANAGED_SOURCE" merge-base --is-ancestor "$GITHUB_BRANCH" "$candidate"
+          git -C "$MANAGED_SOURCE" checkout -B "$GITHUB_BRANCH" "$candidate"
+        else
+          git -C "$MANAGED_SOURCE" checkout -b "$GITHUB_BRANCH" "$candidate"
+        fi
+      else
         git -C "$MANAGED_SOURCE" checkout --detach "$REMOTE_REF"
       fi
     elif [[ -e "$MANAGED_SOURCE" ]]; then

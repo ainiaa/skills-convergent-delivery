@@ -196,3 +196,5 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
 ```
 
 不得把 `/tmp` 文件、调用者指定的任意路径或自然语言回执当作状态真源。workspace 只有在同 owner 的有效 lease move 后才能改变；revision、worker 身份和终态均不可回退。
+
+普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。

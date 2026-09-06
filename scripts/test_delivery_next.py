@@ -33,7 +33,7 @@ from worker_profile import fingerprint as worker_profile_fingerprint
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
 ROOT = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).resolve().parent.parent)).resolve()
-COVERAGE_ARGV = ['coverage', 'report', '--fail-under=85']
+COVERAGE_ARGV = ['pytest', '--cov=src', '--cov-fail-under=85']
 
 
 def configure_coverage_fixture(workspace):
@@ -62,6 +62,10 @@ EVIDENCE = run_evidence(WORKSPACE, HEAD, [sys.executable, "-c", "pass"])
 def trace_receipt(source, argv, exit_code=0):
     receipt = copy.deepcopy(EVIDENCE)
     receipt.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=source)
+    if len(argv) >= 3 and argv[:2] == ["codegraph", "explore"] and argv[2].startswith("CodeGraph impact chains: "):
+        # Schema fixture only; actual index/symbol/edge observations are exercised in evidence tests.
+        receipt["graph_check"] = {"query": argv[2], "index_fingerprint": "a" * 64,
+                                  "bindings_fingerprint": "b" * 64}
     receipt["receipt_fingerprint"] = runner_fingerprint({
         key: value for key, value in receipt.items() if key != "receipt_fingerprint"
     })
@@ -84,13 +88,13 @@ def tdd_trace(source, risks=(), criterion="Requested behavior"):
             "id": identifier, "selector": identifier, "kind": "unit", "scenarios": [scenario],
             "red": {
                 "receipt": trace_receipt(
-                    previous_source, [sys.executable, "-c", "raise SystemExit(1)", identifier], 1,
+                    previous_source, ["pytest", "-k", identifier], 1,
                 ),
                 "failure_class": "assertion",
             },
             "green": {"receipts": [
-                trace_receipt(source, [sys.executable, "-c", "pass", identifier]),
-                trace_receipt(source, [sys.executable, "-c", "pass", identifier]),
+                trace_receipt(source, ["pytest", "-k", identifier]),
+                trace_receipt(source, ["pytest", "-k", identifier]),
             ]},
             "mutation": None,
         })
@@ -101,7 +105,7 @@ def tdd_trace(source, risks=(), criterion="Requested behavior"):
     if risks:
         for test in tests:
             test["green"]["receipts"].append(
-                trace_receipt(source, [sys.executable, "-c", "pass", test["selector"]])
+                trace_receipt(source, ["pytest", "-k", test["selector"]])
             )
         primary = tests[0]
         primary["mutation"] = {

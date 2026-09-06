@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复本轮八项已知问题：测试 selector 只识别实际 runner 与选择语法；CodeGraph 增加当前索引、唯一符号与直接边的结构化观察；native 拒绝独立旧 coverage 报告和追加历史数据。
+- 普通和自治 run 统一 Git common-dir 身份，workspace 写锁跨 repo 别名共享并兼容旧租约；Claude 与 Codex 共用无进展收束；blocked 报告可独立保存去重历史。
+- 安装升级先检查本地改动与候选必需文件，再切换源码；tag/release 后可回到 latest/main，非快进和不完整候选不替换当前安装。正式宿主 Eval 仍为 uncovered。
+
 - 修复 6 项已确认缺陷：Batch 执行 capsule 从上一批已验证检查点派生基线，真实 Single 写入、恢复和父验收使用同一范围；旧累计基线的后续批次回执不自动迁移，须在正确检查点重新建立并验证。
 - Gradle coverage 将指标和阈值绑定到同一 limit，只接受覆盖比率，拒绝 MISSEDCOUNT 等计数、跨 limit 拼接与不可解析的动态写法；Routing 和 Plan 在规范化前拒绝绝对根路径，避免 `/`、`\\` 扩大为整个工作区。
 - acquire、renew、move 统一核对完整租约归属，续租先校验两份记录再写入；错误来源不能释放其他任务工作区。Capsule 日志忽略非对象 JSON，保留后续有效创建确认；报告去重纳入阻塞原因和下一步，显示更新后的恢复指引。

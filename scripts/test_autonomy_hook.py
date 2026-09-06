@@ -40,6 +40,9 @@ class AutonomyHookTest(unittest.TestCase):
             workspace, ["complete task"], ["tests pass"], ["."], "run-hook", "writer-hook",
             mode="native", controller=controller,
         )
+        common = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                text=True, capture_output=True, check=True).stdout.strip()
+        self.assertEqual(common, initial["repo_id"])
         acquired = subprocess.run([
             sys.executable, str(SCRIPT.with_name("delivery_lease.py")), "acquire",
             "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],
@@ -74,7 +77,10 @@ class AutonomyHookTest(unittest.TestCase):
             )
             workspace = json.loads(path.read_text(encoding="utf-8"))["workspace"]
             completed = subprocess.CompletedProcess([], 0, '{"decision":"approve"}\n', "")
-            with patch.object(autonomy_hook.subprocess, "run", return_value=completed) as run, \
+            real_run = subprocess.run
+            def execute(command, **kwargs):
+                return completed if "controller_snapshot.py" in str(command[1]) else real_run(command, **kwargs)
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=execute) as run, \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
                     patch("sys.stdin", StringIO(json.dumps({"cwd": workspace, "session_id": "thread-1"}))), \
                     patch.dict(os.environ, {
@@ -400,6 +406,43 @@ class AutonomyHookTest(unittest.TestCase):
         decision = json.loads(result.stdout)
         self.assertEqual("block", decision["decision"])
         self.assertIn('"action": "execute-inline"', decision["reason"])
+
+    def test_claude_repeated_stop_terminalizes_and_releases_the_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text())
+            environment = os.environ | {
+                "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
+            }
+            payload = {"cwd": state["workspace"], "stop_hook_active": True}
+            first = self.invoke("claude", payload, environment)
+            self.assertEqual("block", json.loads(first.stdout)["decision"])
+            second = self.invoke("claude", payload, environment)
+            self.assertEqual("approve", json.loads(second.stdout)["decision"])
+            self.assertEqual("blocked", json.loads(path.read_text())["status"])
+            self.assertFalse(any(p.exists() for p in lease_paths(
+                lease_root, state["repo_id"], state["workspace"], state["task_key"]
+            ).values()))
+            third = self.invoke("claude", payload, environment)
+            self.assertEqual("approve", json.loads(third.stdout)["decision"])
+
+    def test_continuation_uses_source_and_action_progress_not_report_revisions(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "CONVERGE_AUTONOMY_RECEIPT_ROOT": directory,
+        }):
+            state = {"current_stage": "implement", "source_fingerprint": "a" * 64, "revision": 1}
+            action = {"action": "execute-inline"}
+            path = Path(directory) / "state.json"
+            autonomy_hook.record_continuation(path, state, action)
+            state["revision"] += 1
+            with self.assertRaisesRegex(ValueError, "no state progress"):
+                autonomy_hook.record_continuation(path, state, action)
+            state["source_fingerprint"] = "b" * 64
+            autonomy_hook.record_continuation(path, state, action)
+            autonomy_hook.record_continuation(path, state, {"action": "verify"})
+            autonomy_hook.continuation_receipt_path(path).write_text('[]')
+            with self.assertRaisesRegex(ValueError, "invalid|unreadable"):
+                autonomy_hook.record_continuation(path, state, action)
 
     def test_expired_lease_blocks_the_hook_before_queueing_a_continuation(self):
         with tempfile.TemporaryDirectory() as directory:

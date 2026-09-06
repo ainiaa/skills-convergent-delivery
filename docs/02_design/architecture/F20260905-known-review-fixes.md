@@ -48,3 +48,20 @@
 对应测试位于 `test_native_tdd_policy.py`、`test_evidence_contract.py`、`test_tdd_impact_guard.py` 和 `test_delivery_next.py`。旧状态单测原本未声明项目 coverage 配置；现在配置与被测状态共同放入临时 Git 项目，不放松生产校验，也不把 fixture 称为实际 coverage 测量。
 
 参考取舍：采用 [LangChain eval-engineering](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/SKILL.md) 的环境与判定器分离，落实为临时真实进程/CLI 的反例测试；不引入 Harbor 或新评测服务。沿用 HumanLayer 的组合链验证与 Trail of Bits 的不变量方法，分别对应完成入口/重跑一致性和超时后无延迟写入。已有测试能表达这四个反例，因此不增加 PBT 依赖。正式 Eval、真实成本对照的未覆盖结论仍有效。
+
+## 2026-09-06 八项修复（基线 7e1f94b）
+
+| 已知问题 | 验收与实现边界 | 行为回归 |
+|---|---|---|
+| 非测试命令绑定 selector | actual runner + runner 专属选择语法，拒绝 echo/true/python -c/collect-only | `test_selector_requires_an_actual_test_runner` 与真实 unittest 红绿 fixture |
+| 图搜索成功误作影响证明 | 当前索引、精确唯一符号、直接边；无法证明保留 uncovered | `test_successful_unresolved_graph_output_is_not_impact_evidence`、`test_graph_requires_fresh_unique_symbols_and_real_edges` |
+| 旧 coverage 数据被复用 | 只接受本次采集检查；拒绝 report-only/append | `test_report_only_commands_cannot_claim_fresh_coverage` |
+| tag 后 latest 失败 | 获取 main 并在检查后切换，保留快进约束 | `test_real_tag_upgrade_preserves_previous_install_until_candidate_is_valid` |
+| 普通/自治重复 writer | common-dir 身份、workspace 共享锁；旧租约原位兼容 | `test_workspace_writer_cannot_be_split_across_repo_identities` 与 Hook managed-state 生命周期 |
+| 安装失败破坏旧版 | 校验完整候选在切换之前，拒绝本地改动 | 同一真实本地 Git tag/latest/坏候选生命周期测试 |
+| Claude 重复 Stop | 复用续跑回执；源码/阶段/动作不变就 blocked 并清场 | `test_claude_repeated_stop_terminalizes_and_releases_the_writer`、`test_continuation_uses_source_and_action_progress_not_report_revisions` |
+| blocked 报告无法保存 | 允许既有 report-only transition，不重新打开执行 | `test_blocked_report_history_can_advance_without_reopening_execution` |
+
+复用上一轮已核对的参考：采用 [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) 的实际效果与缺证据反例，落实为前三项门禁测试；采用 [Trail of Bits variant-analysis](https://github.com/trailofbits/skills/blob/master/plugins/variant-analysis/skills/variant-analysis/SKILL.md) 的同根因入口复核，覆盖普通/自治/迁移、Codex/Claude 与终态报告。采用 HumanLayer 的可运行组件链，使用真实临时 Git 仓验证安装生命周期。未引入新的评估平台、PBT 依赖、后台 loop、代理、可写状态或报告文件；现有 unittest 和回执足够表达本轮失败。
+
+正式 evaluator bridge 仍缺失。本轮本地回归与锁定旧 controller 快照仅用于修复诊断，不构成真实宿主差分验收，不据此修改总分或宣称成本下降。

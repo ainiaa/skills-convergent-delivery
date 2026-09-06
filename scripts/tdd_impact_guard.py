@@ -69,12 +69,13 @@ def require_string(value, name, *, max_length=MAX_STRING_LENGTH):
     return value
 
 
-def observed_receipt(value, name, source, selector, *, passing):
+def observed_receipt(value, name, source, selector, *, passing, test_command=True):
     try:
         observed = validate_observed_evidence_receipt(value)
     except ValueError as error:
         raise ValueError(f"{name} must reference an observed Evidence Receipt: {error}") from error
-    if not runner_selector_matches(observed["argv"], selector):
+    if not (runner_selector_matches(observed["argv"], selector) if test_command
+            else selector in observed["argv"][1:]):
         raise ValueError(f"{name} must execute the test selector using the runner selector syntax")
     if passing and (observed["exit_code"] != 0 or observed["source"] != source):
         if observed["source"] != source:
@@ -84,26 +85,34 @@ def observed_receipt(value, name, source, selector, *, passing):
 
 
 def runner_selector_matches(argv, selector):
-    runners = {Path(argument).name.lower() for argument in argv}
-    if {"mvn", "mvnw"} & runners:
-        return f"-Dtest={selector}" in argv
+    from native_tdd_policy import coverage_runner
+    import re
+
+    if not argv or any(item in argv for item in (
+        "--help", "-h", "--version", "--collect-only", "--co", "--dry-run", "--listTests",
+        "--passWithNoTests", "--list", "--list-tests", "--fixtures", "--fixtures-per-test",
+        "--markers", "--setup-only", "--setup-plan", "-V", "-DskipTests", "-DskipTests=true",
+        "-Dmaven.test.skip", "-Dmaven.test.skip=true",
+    )):
+        return False
+    runner = coverage_runner(argv)
+    if runner in {"mvn", "mvnw"}:
+        return f"-Dtest={selector}" in argv and any(item in argv for item in ("test", "package", "verify", "install"))
     if selector not in argv:
         return False
-    if {"pytest", "py.test"} & runners:
-        index = argv.index(selector)
-        return "::" in selector or "/" in selector or selector.endswith('.py') or index > 0 and argv[index - 1] in {"-k", "--keyword"}
-    if {"gradle", "gradlew"} & runners:
-        return any(
-            index + 1 < len(argv) and argument == "--tests" and argv[index + 1] == selector
-            for index, argument in enumerate(argv)
+    index = argv.index(selector)
+    if runner in {"pytest", "py.test"}:
+        return not selector.startswith('-') and (
+            "::" in selector or "/" in selector or selector.endswith('.py')
+            or index > 0 and argv[index - 1] in {"-k", "--keyword"}
         )
-    if {"vitest", "jest"} & runners:
-        return any(
-            index + 1 < len(argv) and argument in {"-t", "--testNamePattern"}
-            and argv[index + 1] == selector
-            for index, argument in enumerate(argv)
-        )
-    return True
+    if runner == "unittest":
+        return index > 2 and bool(re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", selector))
+    if runner in {"gradle", "gradlew"}:
+        return index > 0 and argv[index - 1] == "--tests" and "test" in argv
+    if runner in {"vitest", "jest"}:
+        return index > 0 and argv[index - 1] in {"-t", "--testNamePattern"}
+    return False
 
 
 def red_receipt(value, source, selector):
@@ -134,7 +143,7 @@ def mutation_receipt(value, source, selector):
     if not isinstance(value, dict) or set(value) != {"tool", "receipt"}:
         raise ValueError("mutation receipt fields are invalid")
     tool = require_string(value.get("tool"), "mutation receipt tool")
-    observed = observed_receipt(value["receipt"], "mutation receipt", source, selector, passing=True)
+    observed = observed_receipt(value["receipt"], "mutation receipt", source, selector, passing=True, test_command=False)
     if Path(observed["argv"][0]).name != tool:
         raise ValueError("mutation receipt tool must bind the executed command")
     return True
@@ -150,11 +159,13 @@ def graph_receipt(value, source, impacts):
     query = require_string(value.get("query"), "CodeGraph query")
     if query != graph_query(impacts):
         raise ValueError("CodeGraph query does not match impact chains")
-    observed = observed_receipt(value["receipt"], "CodeGraph receipt", source, query, passing=True)
+    observed = observed_receipt(value["receipt"], "CodeGraph receipt", source, query, passing=True, test_command=False)
     if Path(observed["argv"][0]).name != "codegraph":
         raise ValueError("CodeGraph receipt must execute CodeGraph")
     if observed["argv"][:3] != [observed["argv"][0], "explore", query]:
         raise ValueError("CodeGraph receipt must execute the derived query")
+    if not observed.get("graph_check"):
+        raise ValueError("CodeGraph requires a fresh index, uniquely resolved symbols and verified impact edges")
     if value["impacts_fingerprint"] != fingerprint(impacts):
         raise ValueError("CodeGraph receipt impact fingerprint is invalid")
     return True

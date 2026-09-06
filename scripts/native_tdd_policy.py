@@ -102,7 +102,7 @@ def coverage_runner(argv):
         offset = 2 if len(argv) > 1 and argv[1] == 'exec' else 1
         if runner == 'npm' and offset != 2:
             return None
-        return argv[offset] if len(argv) > offset and argv[offset] == 'vitest' else None
+        return argv[offset] if len(argv) > offset and argv[offset] in {'vitest', 'jest'} else None
     return runner
 
 
@@ -111,6 +111,12 @@ def collection_disabled(argv):
     lowered = [item.casefold() for item in argv]
     if any(item in argv for item in ('--', '--help', '-h', '--version')):
         return True
+    if runner in {'coverage', 'coverage.py', 'grcov'}:
+        return True  # Reports consume prior artifacts; native evidence requires collection in this invocation.
+    if runner == 'cargo':
+        return len(argv) < 2 or argv[1] != 'tarpaulin' or '--no-run' in argv
+    if runner == 'cargo-tarpaulin':
+        return '--no-run' in argv
     if runner in {'pytest', 'py.test'}:
         enabled = False
         for item in argv:
@@ -118,7 +124,7 @@ def collection_disabled(argv):
                 enabled = False
             elif item == '--cov' or item.startswith('--cov='):
                 enabled = True
-        return not enabled or any(item in argv for item in ('--no-cov', '--collect-only', '--co'))
+        return not enabled or any(item in argv for item in ('--no-cov', '--collect-only', '--co', '--cov-append'))
     if runner == 'dotnet':
         return (len(argv) < 2 or argv[1] != 'test'
                 or '/p:collectcoverage=true' not in lowered

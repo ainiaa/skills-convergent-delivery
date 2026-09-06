@@ -40,6 +40,8 @@ bash install.sh --upgrade --target all
 
 远程来源选择三选一：`--latest` 跟随 `main`（默认），`--release <version>` 使用稳定 tag `v<version>`，`--tag <tag>` 使用任意精确 Git tag。三者不能与本地 `--source` 混用。发布 tag 后，首次安装也应从同一个 tag 下载 bootstrap：
 
+已有远程安装可从 tag/release 用 `--upgrade --latest` 切回 main。升级先拒绝本地未保存改动并核对候选必需文件均为普通文件，再切换；不完整候选、损坏链接和非快进分支不会替换当前已安装源码。
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v<version>/install.sh \
   | bash -s -- --release <version> --target all

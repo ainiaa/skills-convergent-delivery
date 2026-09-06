@@ -22,6 +22,16 @@ def maven_config(minimum="0.92"):
 
 
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_report_only_commands_cannot_claim_fresh_coverage(self):
+        for command in ("coverage report --fail-under=85", "python3 -m coverage report --fail-under=85",
+                        "grcov old-data --fail-under=85", "cargo --fail-under=85",
+                        "pytest --cov=src --cov-append --cov-fail-under=85"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / native_tdd_policy.COMMAND_FILE
+                config.parent.mkdir(parents=True)
+                config.write_text("coverage: " + command + "\n")
+                self.assertEqual("uncovered", native_tdd_policy.resolve(directory)["status"])
+
     def test_gradle_metric_and_minimum_must_belong_to_the_same_ratio_limit(self):
         cases = [
             ("counter = 'LINE'; minimum = 0.92", "ready"),
@@ -404,7 +414,7 @@ class NativeTddPolicyTest(unittest.TestCase):
         self.assertEqual("uncovered", policy["status"])
         self.assertIn("cannot enforce", policy["reason"])
 
-    def test_coverage_dot_py_explicit_threshold_is_a_coverage_gate(self):
+    def test_coverage_dot_py_report_is_not_a_fresh_collection_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             standard = workspace / "docs/00_standards"
@@ -415,8 +425,7 @@ class NativeTddPolicyTest(unittest.TestCase):
 
             policy = native_tdd_policy.resolve(workspace)
 
-        self.assertEqual("ready", policy["status"])
-        self.assertEqual(90, policy["threshold"])
+        self.assertEqual("uncovered", policy["status"])
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ native 运行时任务（含第三方 TDD stage）第一次业务写入前执行
 - `impacts[]`：每条影响链含唯一 `id`、`relation`（`entrypoint|caller|shared-effect|external-contract`）和引用的测试 id。至少一条为改动入口；契约风险另须 `external-contract`。`graph.status=covered` 时查询由完整 impacts 确定生成，CodeGraph receipt 必须执行该精确查询并绑定 impacts 指纹和当前源码；否则图谱范围为 `uncovered`。调用方或共享副作用未能验证时如实标为 `uncovered`，不得以局部绿灯宣称关联功能未受影响。
 - `coverage`：`{"status":"covered","threshold":1..100,"receipt":<final passing observed receipt>}`，或 `{"status":"uncovered","reason":<non-empty>}`。后者使 trace 不能 native complete。公共 Evidence 命令在独立进程组运行，超时及退出时清理该组；清理等待有界，不能确认时不签发回执。此边界不覆盖主动脱离进程组的进程或外部服务。公共 Evidence Receipt 比较命令执行前后 Source Receipt；源码改变（含删除、生成未忽略文件）时拒绝签发，须在最终源码重新验证。Evidence Receipt 和 trace 均有有界 argv、字符串与总大小；命令行不得携带 token、password、secret、key 或 Authorization/Bearer 凭据，改用进程环境或项目的受控凭据配置。回执防止误写和事后不一致，但不提供同一工作区用户对抗篡改的密码学证明。
 
-测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。金额、支付、权限、安全、事务、并发、幂等、SQL/Mapper/迁移及契约风险的匹配测试必须为 integration/contract，并带 mutation receipt。原生 `native-v1` 先执行 `native_tdd_policy.py resolve --workspace <workspace>`：安全可拆分的 `docs/00_standards/test-commands.yml` coverage 命令返回为 argv 并优先执行；pytest、`coverage.py` 与 Vitest 可识别显式或由 `quality-targets.yml` 注入的阈值，默认 >=85%；Maven/Gradle 只接受运行 JaCoCo verification task 且 POM/Gradle 配置最低阈值不低于解析目标的命令；Rust 的 `--fail-under` 和 .NET 的 `/p:Threshold=<n>` 只在已知 coverage runner 中可识别，不能证明的命令保持 `uncovered`。PDLC 保持其已配置的门槛；第三方 stage Provider 在 native workflow 中同样必须产出能通过 native trace 的 coverage 证据。
+测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。金额、支付、权限、安全、事务、并发、幂等、SQL/Mapper/迁移及契约风险的匹配测试必须为 integration/contract，并带 mutation receipt。原生 `native-v1` 先执行 `native_tdd_policy.py resolve --workspace <workspace>`：安全可拆分的 `docs/00_standards/test-commands.yml` coverage 命令返回为 argv 并优先执行；pytest 与 Vitest 可识别显式或由 `quality-targets.yml` 注入的阈值，默认 >=85%；Maven/Gradle 只接受运行 JaCoCo verification task 且 POM/Gradle 配置最低阈值不低于解析目标的命令；Rust 的 `--fail-under` 和 .NET 的 `/p:Threshold=<n>` 只在已知 coverage runner 中可识别，不能证明的命令保持 `uncovered`。PDLC 保持其已配置的门槛；第三方 stage Provider 在 native workflow 中同样必须产出能通过 native trace 的 coverage 证据。
 
 ## 委托契约
 
@@ -62,3 +62,13 @@ Gradle 将 counter、value、minimum 绑定同一个 `limit { ... }`，只接受
 阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。暂不支持带 `--` 参数分隔符的 coverage 命令。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。
 
 JaCoCo 的命令退出 0 还不构成 coverage 证据。公共 Evidence runner 仅从本次 stdout 中对应 verification/check 的任务块提取可选 `jacoco_check={"checks":<1..128>,"classes":<positive int>}`，并纳入既有 receipt fingerprint；每个检查块必须显示加载 execution data 和分析非空类集合，Maven 还须出现检查全部通过的结果。stdout 或 stderr 出现阈值违规时不签发检查摘要，即使构建配置把失败降为警告且退出 0。Trace 与 native 门禁共同要求此结果；SKIPPED、UP-TO-DATE、FROM-CACHE、缺数据、零类、仅 report 和缺少可识别输出均不能通过。不读取历史报告文件补证据，也不把类数量解释成覆盖率百分比；阈值仍由冻结命令和项目配置校验。Gradle 冻结命令使用 `--info --console=plain --no-parallel`，需要重新执行时加入 `--rerun-tasks`；Maven 使用标准 INFO 输出。静默、定制或交错输出需要先恢复可核对的日志再重跑，不能手填此字段。非 JaCoCo 的原有 runner 契约保持不变。
+
+### 证据入口约束（2026-09-06）
+
+测试 selector 只绑定实际可执行入口：pytest/py.test、Python `-m pytest|unittest`、Maven、Gradle、Jest/Vitest 及受支持的 npm exec/npx/pnpm 启动形式。unittest 使用明确的点分测试路径；任意 `python -c`、echo/true、未知脚本、help/collect-only 等不构成红绿测试证据。图查询和 mutation 单独校验其参数绑定，不套用测试 runner 语法。
+
+CodeGraph 的 explore 退出 0 只代表命令执行成功。公共 Evidence runner 对派生的 `CodeGraph impact chains: ...` 查询额外读取 `status --json`、`query --json` 和必要的 `callees --json`，限定 60 秒总预算。索引必须属于当前 workspace，无 pending changes/worktree mismatch/reindex 要求，且前后状态一致；每个 impact.id 必须是唯一、精确匹配的符号 name，源文件须存在。caller 必须直接调用某个 entrypoint；shared-effect/external-contract 必须被某个 entrypoint 直接调用。当前 CLI 不能无歧义证明的重名符号、传递链或非代码契约保持 uncovered，不用自然语言搜索结果代替关系证据。
+
+只有上述读取全部成功，runner 才在 Evidence v2 中加入 `graph_check={query,index_fingerprint,bindings_fingerprint}` 并纳入 receipt 指纹。Trace 拒绝没有该结果的 covered 图回执；旧回执必须在当前源码重新采集。此字段不得手工填写。它是本地工具观察，不能替代真实宿主 Eval。
+
+native coverage 要求同一调用采集并检查阈值：独立 `coverage report` / `coverage.py report`、grcov 历史输入、pytest `--cov-append` 与 cargo 非 tarpaulin 命令保持 uncovered。需要 coverage.py 时可使用项目已有的 pytest-cov 采集命令；不自动安装插件或用历史 `.coverage` 数据补证据。

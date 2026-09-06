@@ -17,6 +17,52 @@ SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
+    def test_workspace_writer_cannot_be_split_across_repo_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, repo in enumerate(("/repo/workspace", "/repo/common.git")):
+                result = subprocess.run([
+                    sys.executable, str(SCRIPT), "acquire", "--root", str(root),
+                    "--repo", repo, "--workspace", "/repo/workspace", "--task-key", f"task-{index}",
+                    "--run-id", f"run-{index}", "--writer-id", f"writer-{index}",
+                ], text=True, capture_output=True)
+                self.assertEqual(0 if index == 0 else 2, result.returncode, result.stdout)
+
+    def test_duplicate_legacy_writers_can_release_without_allowing_new_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, repo in enumerate(("/repo/a", "/repo/common.git")):
+                for kind, key in (("workspace", "/repo/a"), ("task", f"task-{index}")):
+                    path = root / delivery_lease.digest(repo) / ("workspaces" if kind == "workspace" else "tasks") / (delivery_lease.digest(key) + ".json")
+                    delivery_lease.write_exclusive(path, delivery_lease.make_record(
+                        kind, repo, "/repo/a", f"task-{index}", f"run-{index}", f"writer-{index}", 600,
+                    ))
+            blocked = self.run_lease(root, "acquire", workspace="/repo/a", task_key="new")
+            self.assertNotEqual(0, blocked.returncode)
+            released = self.run_lease(root, "release", workspace="/repo/a", task_key="task-1",
+                                      run_id="run-1", writer_id="writer-1", state_root=root / "state")
+            self.assertEqual(0, released.returncode, released.stdout)
+            self.assertEqual(1, len(list(root.glob("*/workspaces/*.json"))))
+            blocked = self.run_lease(root, "acquire", workspace="/repo/a", task_key="new")
+            self.assertNotEqual(0, blocked.returncode)
+
+    def test_release_race_cannot_recreate_a_legacy_workspace_namespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repo, workspace = "/repo/common.git", "/repo/a"
+            legacy = root / delivery_lease.digest(repo) / "workspaces" / (delivery_lease.digest(workspace) + ".json")
+            delivery_lease.write_exclusive(legacy, delivery_lease.make_record(
+                "workspace", repo, workspace, "old", "old-run", "old-writer", 600,
+            ))
+            stale_paths = delivery_lease.lease_paths(root, repo, workspace, "stale")
+            # A release and another acquire happen after a caller resolved its paths.
+            delivery_lease.remove_if_owned(legacy, "old-run", "old-writer")
+            self.assertEqual(0, self.run_lease(root, "acquire", workspace=workspace, task_key="new").returncode)
+            args = SimpleNamespace(root=str(root), run_id="stale-run", writer_id="stale-writer",
+                                   task_key="stale", ttl_seconds=600, takeover=False)
+            self.assertEqual(2, delivery_lease.acquire(args, stale_paths, repo, workspace))
+            self.assertFalse(legacy.exists())
+
     def test_acquire_rejects_same_owner_with_different_task_or_workspace(self):
         for field in ("task_key", "workspace"):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:

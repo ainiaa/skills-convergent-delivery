@@ -26,57 +26,11 @@ from delivery_next import validate_state
 from evidence_contract import run_evidence, workspace_source
 from runner_contract import fingerprint, freeze_launch
 from tdd_impact_guard import graph_query
-from test_delivery_next import WORKSPACE, COVERAGE_ARGV
+from test_delivery_next import WORKSPACE, COVERAGE_ARGV, tdd_trace
 
 
 def native_tdd_trace(workspace, baseline, source):
-    def receipt(receipt_source, argv, exit_code=0):
-        value = run_evidence(workspace, baseline, [sys.executable, "-c", f"raise SystemExit({exit_code})"])
-        value.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=receipt_source)
-        value["receipt_fingerprint"] = fingerprint({
-            key: item for key, item in value.items() if key != "receipt_fingerprint"
-        })
-        return value
-
-    previous = copy.deepcopy(source)
-    previous["diff_fingerprint"] = "0" * 64
-    previous["source_fingerprint"] = fingerprint({
-        key: item for key, item in previous.items() if key != "source_fingerprint"
-    })
-    tests = []
-    for identifier, scenario in (
-        ("service-normal", "normal"),
-        ("service-boundary", "boundary"),
-        ("service-error", "error"),
-    ):
-        tests.append({
-            "id": identifier, "selector": identifier, "kind": "unit", "scenarios": [scenario],
-            "red": {"receipt": receipt(previous, [sys.executable, "-c", "raise SystemExit(1)", identifier], 1),
-                    "failure_class": "assertion"},
-            "green": {"receipts": [
-                receipt(source, [sys.executable, "-c", "pass", identifier]),
-                receipt(source, [sys.executable, "-c", "pass", identifier]),
-            ]},
-            "mutation": None,
-        })
-    impacts = [{
-        "id": "service-entrypoint", "relation": "entrypoint",
-        "test_ids": [test["id"] for test in tests],
-    }]
-    return {
-        "schema_version": 5, "source": source, "risk_flags": [],
-        "acceptance": [{"criterion": "tests pass", "tests": tests}], "impacts": impacts,
-        "graph": {
-            "status": "covered",
-            "receipt": receipt(source, ["codegraph", "explore", graph_query(impacts)]),
-            "impacts_fingerprint": fingerprint(impacts),
-            "query": graph_query(impacts),
-        },
-        "coverage": {
-            "status": "covered", "threshold": 85,
-            "receipt": receipt(source, COVERAGE_ARGV),
-        },
-    }
+    return tdd_trace(source, criterion="tests pass")
 
 
 class AutonomyServiceTest(unittest.TestCase):
@@ -85,10 +39,22 @@ class AutonomyServiceTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.tool_dir = Path(temporary.name)
-        for name in ("coverage", "codegraph"):
+        for name in ("pytest", "codegraph"):
             tool = self.tool_dir / name
             tool.write_text("#!/bin/sh\nexit 0\n")
             tool.chmod(0o755)
+        (self.tool_dir / "codegraph").write_text(f"#!{sys.executable}\n" + """import json, sys
+from pathlib import Path
+if sys.argv[1] == 'status':
+    print(json.dumps({'initialized': True, 'lastIndexed': '2026-09-06T00:00:00Z',
+        'projectPath': str(Path.cwd()), 'pendingChanges': {'added': 0, 'modified': 0, 'removed': 0},
+        'worktreeMismatch': None, 'index': {'reindexRecommended': False}}))
+elif sys.argv[1] == 'query':
+    print(json.dumps([{'node': {'id': 'fixture', 'name': sys.argv[2],
+        'filePath': 'docs/00_standards/test-commands.yml', 'startLine': 1}}]))
+else:
+    print('fixture explore result')
+""")
         environment = patch.dict(os.environ, {"PATH": str(self.tool_dir) + os.pathsep + os.environ["PATH"]})
         environment.start()
         self.addCleanup(environment.stop)
@@ -144,8 +110,8 @@ class AutonomyServiceTest(unittest.TestCase):
                     )
                     tests = []
                     for scenario in ("normal", "boundary", "error"):
-                        selector = "Behavior.test_" + scenario
-                        argv = [sys.executable, str(test_file), selector]
+                        selector = "test_example.Behavior.test_" + scenario
+                        argv = [sys.executable, "-m", "unittest", selector]
                         red = run_evidence(workspace, state["baseline"]["commit"], argv)
                         self.assertNotEqual(0, red["exit_code"])
                         tests.append({"id": selector, "selector": selector, "kind": "unit",
@@ -239,7 +205,7 @@ class AutonomyServiceTest(unittest.TestCase):
 
                 try:
                     if failure == "coverage":
-                        (self.tool_dir / "coverage").write_text("#!/bin/sh\nexit 1\n")
+                        (self.tool_dir / "pytest").write_text("#!/bin/sh\nexit 1\n")
                     with patch.object(autonomy_service, "plan_codex", side_effect=plan), \
                             patch.object(autonomy_service, "execute_codex", side_effect=model):
                         result = autonomy_service.run_once(path, state_root, lease_root)
@@ -252,7 +218,7 @@ class AutonomyServiceTest(unittest.TestCase):
                     ).values()))
                 finally:
                     edited.unlink(missing_ok=True)
-                    (self.tool_dir / "coverage").write_text("#!/bin/sh\nexit 0\n")
+                    (self.tool_dir / "pytest").write_text("#!/bin/sh\nexit 0\n")
 
     def test_source_changing_actions_persist_results_and_failures(self):
         for outcome in ('completed', 'failed', 'verifier-failed', 'exception'):

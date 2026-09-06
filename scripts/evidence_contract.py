@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -162,6 +163,75 @@ def require_jacoco_execution(receipt):
         raise ValueError("coverage requires an executed nonempty JaCoCo check; use Gradle --info --console=plain")
 
 
+def graph_check_result(workspace, argv, timeout_seconds):
+    """Resolve declared direct impact edges through CodeGraph's structured read API."""
+    prefix = "CodeGraph impact chains: "
+    if len(argv) < 3 or Path(argv[0]).name != "codegraph" or argv[1] != "explore" \
+            or not argv[2].startswith(prefix):
+        return None
+    deadline = time.monotonic() + min(timeout_seconds or 60, 60)
+
+    def query(*arguments):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("CodeGraph verification timed out")
+        result = subprocess.run([argv[0], *arguments], cwd=workspace, capture_output=True,
+                                text=True, timeout=remaining, check=True)
+        return json.loads(result.stdout)
+
+    try:
+        status = query("status", "--json", str(workspace))
+        if status.get("initialized") is not True or not status.get("lastIndexed") \
+                or Path(status.get("projectPath", "")).resolve() != workspace \
+                or status.get("pendingChanges") != {"added": 0, "modified": 0, "removed": 0} \
+                or status.get("worktreeMismatch") is not None \
+                or status.get("index", {}).get("reindexRecommended") is not False:
+            return None
+        claims = [item.split(":", 1) for item in argv[2][len(prefix):].split("; ")]
+        if not 1 <= len(claims) <= 100 or any(len(item) != 2 for item in claims):
+            return None
+        nodes = {}
+        for relation, identifier in claims:
+            if relation not in {"entrypoint", "caller", "shared-effect", "external-contract"}:
+                return None
+            results = query("query", identifier, "--json", "--limit", "101", "--path", str(workspace))
+            if not isinstance(results, list) or len(results) >= 101:
+                return None
+            matches = [item["node"] for item in results if item.get("node", {}).get("name") == identifier]
+            if len(matches) != 1:
+                return None
+            node = matches[0]
+            path = (workspace / node["filePath"]).resolve()
+            if not path.is_relative_to(workspace) or not path.is_file():
+                return None
+            nodes[identifier] = node
+        entries = [identifier for relation, identifier in claims if relation == "entrypoint"]
+        if not entries:
+            return None
+        edges = {}
+        for relation, identifier in claims:
+            if relation == "entrypoint":
+                continue
+            origins, targets = ([identifier], entries) if relation == "caller" else (entries, [identifier])
+            found = False
+            for origin in origins:
+                if origin not in edges:
+                    edges[origin] = query("callees", origin, "--json", "--limit", "1000",
+                                          "--path", str(workspace))["callees"]
+                for target in targets:
+                    node = nodes[target]
+                    found |= any(all(edge.get(key) == node.get(key) for key in ("name", "filePath", "startLine"))
+                                 for edge in edges[origin])
+            if not found:
+                return None
+        if query("status", "--json", str(workspace)) != status:
+            return None
+        return {"query": argv[2], "index_fingerprint": _fingerprint(status),
+                "bindings_fingerprint": _fingerprint({"nodes": nodes, "edges": edges})}
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        return None
+
+
 def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     """Run one argv command and bind its outcome to the resulting workspace source."""
     workspace = Path(workspace).expanduser().resolve()
@@ -195,6 +265,7 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
             finally:
                 process.stdout.close()
                 process.stderr.close()
+    graph_check = graph_check_result(workspace, argv, timeout_seconds) if exit_code == 0 else None
     source_after = workspace_source(workspace, baseline_commit)
     if source_after != source_before:
         raise ValueError("verification changed the workspace source; rerun on the final source")
@@ -209,6 +280,8 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         "evidence_level": "observed",
         "source": source_after,
     }
+    if graph_check is not None:
+        receipt["graph_check"] = graph_check
     jacoco_check = jacoco_check_result(argv, stdout, stderr) if exit_code == 0 else None
     if jacoco_check is not None:
         receipt["jacoco_check"] = jacoco_check
@@ -221,7 +294,7 @@ def validate_observed_evidence_receipt(item):
         "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
         "receipt_fingerprint",
     }
-    if not isinstance(item, dict) or set(item) not in (fields, fields | {"jacoco_check"}) \
+    if not isinstance(item, dict) or set(item) not in (fields, fields | {"jacoco_check"}, fields | {"graph_check"}) \
             or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError("Evidence Receipt fields are invalid")
     if not isinstance(item.get("argv"), list) or not item["argv"] \
@@ -250,6 +323,16 @@ def validate_observed_evidence_receipt(item):
                 or Path(item["argv"][0]).name.lower() not in {"gradle", "gradlew", "mvn", "mvnw"} \
                 or item["exit_code"] != 0:
             raise ValueError("Evidence Receipt JaCoCo coverage result is invalid")
+    if "graph_check" in item:
+        check = item["graph_check"]
+        if not isinstance(check, dict) or set(check) != {"query", "index_fingerprint", "bindings_fingerprint"} \
+                or len(item["argv"]) < 3 or Path(item["argv"][0]).name != "codegraph" \
+                or item["argv"][1:3] != ["explore", check.get("query")] or item["exit_code"] != 0 \
+                or not isinstance(check.get("query"), str) \
+                or not check["query"].startswith("CodeGraph impact chains: ") \
+                or any(not isinstance(check.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", check[key])
+                       for key in ("index_fingerprint", "bindings_fingerprint")):
+            raise ValueError("Evidence Receipt CodeGraph result is invalid")
     validate_source_receipt(item.get("source"))
     expected = _fingerprint({key: entry for key, entry in item.items() if key != "receipt_fingerprint"})
     if item["receipt_fingerprint"] != expected:
