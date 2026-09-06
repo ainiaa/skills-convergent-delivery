@@ -7,6 +7,8 @@ import json
 import os
 import re
 import shlex
+import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import time
@@ -163,33 +165,59 @@ def require_jacoco_execution(receipt):
         raise ValueError("coverage requires an executed nonempty JaCoCo check; use Gradle --info --console=plain")
 
 
+TEST_OUTCOMES = ('passed', 'failed', 'errors', 'skipped', 'xfailed', 'xpassed')
+
+
 def test_execution_result(argv, stdout, stderr):
-    """Count executed tests from this invocation's runner summary, never old reports."""
+    """Observe runner outcomes; a successful process is not proof of passing tests."""
     from native_tdd_policy import coverage_runner
     runner = coverage_runner(argv)
     output = re.sub(r'\x1b\[[0-9;]*m', '', (stdout + b'\n' + stderr).decode('utf-8', 'replace'))
-    counts = []
+    rows = []
     if runner == 'unittest':
-        counts = [int(n) for n in re.findall(r'^Ran (\d+) tests? in ', output, re.M)]
-        skipped = re.findall(r'\bskipped=(\d+)', output)
-        if len(counts) == 1:
-            counts[0] -= sum(map(int, skipped))
-    elif runner in {'pytest', 'py.test'}:
+        summaries = re.findall(r'^Ran (\d+) tests? in [^\n]+\n\s*'
+                               r'(OK|FAILED)(?: \(([^\n]*)\))?\s*$', output, re.M)
+        for total, status, detail in summaries:
+            outcomes = dict(re.findall(r'([a-z ]+)=(\d+)', detail))
+            aliases = {'failures': 'failed', 'errors': 'errors', 'skipped': 'skipped',
+                       'expected failures': 'xfailed', 'unexpected successes': 'xpassed'}
+            if any(key.strip() not in aliases for key in outcomes):
+                return None
+            row = {aliases[key.strip()]: int(value) for key, value in outcomes.items()}
+            row['passed'] = int(total) - sum(row.values())
+            if status == 'FAILED' and not any(row.get(key, 0) for key in ('failed', 'errors', 'xpassed')):
+                return None
+            rows.append(row)
+    elif runner in {'pytest', 'py.test', 'jest', 'vitest'}:
         for line in output.splitlines():
-            if re.search(r'\bin \d+(?:\.\d+)?s\b', line):
-                counts.append(sum(int(n) for n in re.findall(r'\b(\d+) (?:passed|failed)\b', line)))
+            summary = (re.search(r'\bin \d+(?:\.\d+)?s\b', line) if runner in {'pytest', 'py.test'}
+                       else re.match(r'^\s*Tests\s*:?\s+', line))
+            if summary:
+                row = {}
+                for count, outcome in re.findall(
+                        r'\b(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|todo)\b', line):
+                    key = {'error': 'errors', 'todo': 'skipped'}.get(outcome, outcome)
+                    row[key] = row.get(key, 0) + int(count)
+                if row:
+                    rows.append(row)
     elif runner in {'mvn', 'mvnw'}:
-        # Surefire prints per-suite and aggregate summaries; only the final aggregate is counted.
-        summaries = re.findall(r'Tests run: (\d+), Failures: \d+, Errors: \d+, Skipped: (\d+)', output)
-        counts = [int(n) - int(skipped) for n, skipped in summaries[-1:]]
-    elif runner in {'jest', 'vitest'}:
-        for line in output.splitlines():
-            if re.match(r'^\s*Tests\s*:?\s+', line):
-                counts.append(sum(int(n) for n in re.findall(r'\b(\d+) (?:passed|failed)\b', line)))
+        summaries = re.findall(r'Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)', output)
+        if summaries:
+            # The last Surefire aggregate gives the count. No earlier failing module may be hidden by it.
+            total, failed, errors, skipped = map(int, summaries[-1])
+            if any(int(f) or int(e) for _, f, e, _ in summaries[:-1]):
+                return None
+            rows.append(dict(passed=total - failed - errors - skipped, failed=failed, errors=errors, skipped=skipped))
     elif runner in {'gradle', 'gradlew'}:
-        counts = [int(n) - int(skipped or 0) for n, skipped in re.findall(
-            r'^\s*(\d+) tests completed(?:, \d+ failed)?(?:, (\d+) skipped)?\s*$', output, re.M)]
-    return {'executed': sum(counts)} if counts and sum(counts) > 0 else None
+        for total, failed, skipped in re.findall(
+                r'^\s*(\d+) tests completed(?:, (\d+) failed)?(?:, (\d+) skipped)?\s*$', output, re.M):
+            total, failed, skipped = int(total), int(failed or 0), int(skipped or 0)
+            rows.append(dict(passed=total - failed - skipped, failed=failed, skipped=skipped))
+    if not rows or any(value < 0 for row in rows for value in row.values()):
+        return None
+    result = {key: sum(row.get(key, 0) for row in rows) for key in TEST_OUTCOMES}
+    result['executed'] = sum(result[key] for key in TEST_OUTCOMES if key != 'skipped')
+    return result if result['executed'] > 0 else None
 
 
 def _pit_selector(argv):
@@ -330,6 +358,62 @@ def require_graph_execution(receipt, query):
     return observed
 
 
+# CodeGraph 1.0.1 extraction-v24 source inventory. Unknown index schemas fail closed.
+GRAPH_SOURCE_SUFFIXES = frozenset(('.ts .tsx .mts .cts .js .mjs .cjs .xsjs .xsjslib .jsx .py .pyw '
+    '.go .rs .java .c .h .cpp .cc .cxx .hpp .hxx .cs .cshtml .razor .php .module .install .theme '
+    '.inc .yml .yaml .twig .rb .rake .swift .kt .kts .dart .liquid .svelte .vue .astro .r .pas '
+    '.dpr .dpk .lpr .dfm .fmx .scala .sc .lua .luau .m .mm .xml .properties').split())
+
+
+def _graph_index_snapshot(workspace, deadline):
+    """Read existing SQLite provenance, never sync, create an index, or trust Git cleanliness."""
+    database = workspace / '.codegraph' / 'codegraph.db'
+    if not database.is_file() or not database.resolve().is_relative_to(workspace):
+        raise ValueError('CodeGraph index content provenance is unavailable')
+    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True,
+                                 timeout=max(0, min(1, deadline - time.monotonic())))) as db:
+        db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        rows = db.execute('SELECT path, content_hash, errors FROM files ORDER BY path LIMIT 4097').fetchall()
+    if not rows or len(rows) > 4096:
+        raise ValueError('CodeGraph indexed file inventory is empty or too large')
+    hashes = {}
+    for path, digest, errors in rows:
+        if time.monotonic() >= deadline:
+            raise ValueError('CodeGraph verification timed out')
+        if not isinstance(path, str) or not path or Path(path).is_absolute() or '..' in Path(path).parts \
+                or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest) \
+                or errors not in (None, '[]'):
+            raise ValueError('invalid CodeGraph indexed file provenance')
+        source = workspace / path
+        if not source.resolve().is_relative_to(workspace) or not source.is_file() \
+                or source.stat().st_size > 1024 * 1024 \
+                or hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+            raise ValueError('CodeGraph indexed content differs from current source')
+        hashes[path] = digest
+    # Include committed additions too: status --json may only report the Git working diff.
+    exit_code, inventory, _ = _run_command(workspace,
+        ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+        max(0, deadline - time.monotonic()))
+    if exit_code:
+        raise ValueError('CodeGraph source inventory could not be verified')
+    paths = inventory.split(b'\0')
+    for raw in paths:
+        if raw:
+            path = raw.decode('utf-8')
+            if Path(path).suffix.lower() in GRAPH_SOURCE_SUFFIXES and path not in hashes:
+                raise ValueError('CodeGraph omits a current source file')
+    # Detect index replacement/rebuild during CLI queries, including SQLite WAL writes.
+    identity = {}
+    for path in (database, database.with_name(database.name + '-wal')):
+        if path.exists():
+            if time.monotonic() >= deadline or path.stat().st_size > 64 * 1024 * 1024:
+                raise ValueError('CodeGraph index snapshot exceeds verification budget')
+            identity[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if time.monotonic() >= deadline:
+        raise ValueError('CodeGraph verification timed out')
+    return {'files': hashes, 'database': identity}
+
+
 def graph_check_result(workspace, argv, timeout_seconds):
     """Resolve declared direct impact edges through CodeGraph's structured read API."""
     prefix = "CodeGraph impact chains: "
@@ -357,14 +441,18 @@ def graph_check_result(workspace, argv, timeout_seconds):
                 or status.get("worktreeMismatch") is not None \
                 or status.get("index", {}).get("reindexRecommended") is not False:
             return None
+        snapshot = _graph_index_snapshot(workspace, deadline)
         if argv[2].startswith(closure_prefix):
             request = json.loads(argv[2][len(closure_prefix):])
             if not isinstance(request, dict):
                 return None
             bindings = _closure_graph_bindings(workspace, request, query)
-            if query('status', '--json', str(workspace)) != status:
+            if {item['path'] for item in bindings['files']} != set(snapshot['files']):
                 return None
-            return {'query': argv[2], 'index_fingerprint': _fingerprint(status),
+            if query('status', '--json', str(workspace)) != status \
+                    or _graph_index_snapshot(workspace, deadline) != snapshot:
+                return None
+            return {'query': argv[2], 'index_fingerprint': _fingerprint({'status': status, 'snapshot': snapshot}),
                     'bindings_fingerprint': _fingerprint(bindings)}
         claims = [item.split(":", 1) for item in argv[2][len(prefix):].split("; ")]
         if not 1 <= len(claims) <= 100 or any(len(item) != 2 for item in claims):
@@ -383,7 +471,7 @@ def graph_check_result(workspace, argv, timeout_seconds):
                 return None
             node = matches[0]
             path = (workspace / node["filePath"]).resolve()
-            if not path.is_relative_to(workspace) or not path.is_file():
+            if not path.is_relative_to(workspace) or not path.is_file() or node["filePath"] not in snapshot["files"]:
                 return None
             nodes[identifier] = node
         entries = [identifier for relation, identifier in claims if relation == "entrypoint"]
@@ -409,13 +497,14 @@ def graph_check_result(workspace, argv, timeout_seconds):
                                  for edge in edges[origin])
             if not found:
                 return None
-        if query("status", "--json", str(workspace)) != status:
+        if query("status", "--json", str(workspace)) != status \
+                or _graph_index_snapshot(workspace, deadline) != snapshot:
             return None
-        return {"query": argv[2], "index_fingerprint": _fingerprint(status),
+        return {"query": argv[2], "index_fingerprint": _fingerprint({"status": status, "snapshot": snapshot}),
                 "bindings_fingerprint": _fingerprint({"nodes": nodes, "edges": edges})}
     except EvidenceCleanupError:
         raise
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error, subprocess.SubprocessError):
         return None
 
 
@@ -492,8 +581,10 @@ def validate_observed_evidence_receipt(item):
     if 'test_check' in item:
         check = item['test_check']
         from native_tdd_policy import coverage_runner
-        if not isinstance(check, dict) or set(check) != {'executed'} \
-                or type(check['executed']) is not int or check['executed'] <= 0 \
+        if not isinstance(check, dict) or set(check) != {'executed', *TEST_OUTCOMES} \
+                or any(type(check[key]) is not int or check[key] < 0 for key in check) \
+                or check['executed'] <= 0 \
+                or check['executed'] != sum(check[key] for key in TEST_OUTCOMES if key != 'skipped') \
                 or coverage_runner(item['argv']) not in {'unittest', 'pytest', 'py.test', 'mvn', 'mvnw',
                                                         'gradle', 'gradlew', 'vitest', 'jest'}:
             raise ValueError('Evidence Receipt executed test result is invalid')

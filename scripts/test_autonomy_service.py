@@ -26,10 +26,13 @@ from delivery_next import validate_state
 from evidence_contract import run_evidence, workspace_source
 from runner_contract import fingerprint, freeze_launch
 from tdd_impact_guard import graph_query
-from test_delivery_next import WORKSPACE, COVERAGE_ARGV, tdd_trace
+from test_delivery_next import WORKSPACE, COVERAGE_ARGV, tdd_trace, graph_index
 
 
 def native_tdd_trace(workspace, baseline, source):
+    paths = subprocess.run(['git', '-C', str(workspace), 'ls-files', '--cached', '--others',
+                            '--exclude-standard', '-z'], capture_output=True, check=True).stdout
+    graph_index(Path(workspace), sorted({path.decode() for path in paths.split(b'\0') if path}))
     return tdd_trace(source, criterion="tests pass")
 
 

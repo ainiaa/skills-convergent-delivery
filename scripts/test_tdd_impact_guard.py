@@ -44,6 +44,8 @@ def trace(workspace, baseline, *, risks=None):
     green_runs = 3 if risks else 2
     for test in tests:
         test["green"] = {"receipts": [evidence(0, test["selector"]) for _ in range(green_runs)]}
+    from test_delivery_next import graph_index
+    graph_index(workspace, ['seed.txt', 'test_cases.py', 'docs/00_standards/test-commands.yml'])
     source = evidence_contract.workspace_source(workspace, baseline)
 
     impacts = [{

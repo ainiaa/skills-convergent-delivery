@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复 GREEN 误放行：保留通过、失败、错误、跳过与预期失败分类，拒绝 expectedFailure/xfail/xpass 和被成功退出码掩盖的测试失败；Surefire 前序失败不能被后续成功汇总覆盖。
+- 修复图谱新鲜度误判：只读 CodeGraph 已索引文件哈希，与当前源码和已知源码类型清单核对；查询前后绑定数据库/WAL 摘要，TDD、Plan 和收口共享同一检查。状态显示干净的过期索引、已提交新增源码、删除、损坏及并发变化均不能签发图证据。
+- 兼容性收紧：旧 executed-only 测试结果与旧 runner 图回执需重新采集；缺失或不可核对的 CodeGraph 数据库保持 uncovered。正式 Eval bridge、实际模型成本对照和未适配 mutation 工具的能力缺口保持明确，不用协议夹具充当真实运行证明。
+
 - 修复本轮五项证据缺陷：GREEN 要求实际非空测试汇总，pytest 输出选项值不能冒充 selector；mutation 要求作用域绑定的 PIT 执行和 KILLED 结果，echo/未知工具/零变异/异常变异均不能放行。
 - Plan 和全量收口与 TDD 共用结构化图证据校验，核对新鲜索引、真实路径、调用边和遗漏 caller；图子查询统一进程组清理及总超时，畸形 JSON 受控失败，清场不明时不签发回执。
 - 兼容性收紧：旧 GREEN、mutation 和 Plan 图回执缺少执行证明时必须重新采集。未知 mutation 工具及无法识别的测试汇总保持 uncovered；不自动安装工具或降低门槛。

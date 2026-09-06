@@ -65,3 +65,20 @@
 复用上一轮已核对的参考：采用 [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) 的实际效果与缺证据反例，落实为前三项门禁测试；采用 [Trail of Bits variant-analysis](https://github.com/trailofbits/skills/blob/master/plugins/variant-analysis/skills/variant-analysis/SKILL.md) 的同根因入口复核，覆盖普通/自治/迁移、Codex/Claude 与终态报告。采用 HumanLayer 的可运行组件链，使用真实临时 Git 仓验证安装生命周期。未引入新的评估平台、PBT 依赖、后台 loop、代理、可写状态或报告文件；现有 unittest 和回执足够表达本轮失败。
 
 正式 evaluator bridge 仍缺失。本轮本地回归与锁定旧 controller 快照仅用于修复诊断，不构成真实宿主差分验收，不据此修改总分或宣称成本下降。
+
+
+## 2026-09-06 结果分类与索引内容修复（基线 d9a9847）
+
+验收冻结为两个已确认缺陷：目标失败不能作为 GREEN；状态正常但内容过期的索引不能作为 TDD/Plan/closure 图证据。沿用现有 helper、SQLite stdlib 和 unittest，不增加代理、可写状态、依赖或发布动作。
+
+| 采用的机制 | 不采用及原因 | 对应行为验证 |
+|---|---|---|
+| [LangChain calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md)：已知正确路径与误放行路径成对验证，区分环境故障和判定错误 | 不添加固定多模型采样；当前缺少 evaluator lifecycle bridge，不能产生正式差分证据 | `test_outcome_counts_preserve_normal_and_failure_results`、`test_success_exit_cannot_hide_failed_runner_outcomes` |
+| [Trail of Bits fp-check](https://github.com/trailofbits/skills/blob/main/plugins/fp-check/skills/fp-check/SKILL.md)：核实具体触发条件和完整公共调用路径 | 不复制安全审计专用的代理编排；本次共享 seam 的确定性反例足够 | 真实 unittest 的 `test_real_expected_failure_is_not_green`；同一 SQLite 反例分别执行 impact 和 closure 查询 |
+| [Trail of Bits code-maturity-assessor](https://github.com/trailofbits/skills/blob/main/plugins/building-secure-contracts/skills/code-maturity-assessor/SKILL.md)：固定评级依据并绑定证据 | 不套用智能合约九维度，也不因新增单测数量调整效果分；评分属于审查产物，不增加运行时打分器 | 既有五维评分口径保持不变；本轮不生成新的主观分数，正式 Eval 预检仍返回 uncovered |
+
+测试结果保留 passed/failed/errors/skipped/xfailed/xpassed，GREEN 在共享入口验证，旧 executed-only 结果不能重新封装放行。Maven/Gradle/JS 分支使用本次真实子进程输出的协议夹具；不声称执行了实际 JVM/JS 测试。真实 unittest 证明 expectedFailure 的退出码 0 确实不能再通过 GREEN。
+
+图适配复用本机 CodeGraph 1.0.1 的 files.content_hash（SHA-256）与 extraction-v24 后缀清单；只读 SQLite，不重建本仓索引。`test_clean_status_cannot_hide_stale_index_contents` 覆盖正常索引、保留尺寸/mtime 的内容变化、已提交新增 caller、删除、缺数据库与损坏数据库，并同时验证 impact 和 closure。查询期间的数据库变化也必须被拒绝。旧图状态无法证明当前源码时是环境 uncovered，不能以此撤销代码修复或伪造图回执。
+
+仍未覆盖的能力：本仓没有 coverage 命令；正式 evaluator bridge 不可用；Maven/PIT 以外的 mutation 结果未适配；Gradle 无可识别汇总时保持 uncovered。它们不是这两个缺陷的替代修复，未通过放宽门槛、安装工具或调用真实模型来消除。后续适配必须用对应真实运行器的已知正确/错误场景验证，不预先生成空适配器。旧 controller 快照保存在仓库外，本轮新增 catalog 条目不能成为本轮候选自证通过的判定器。

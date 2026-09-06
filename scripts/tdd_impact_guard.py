@@ -83,6 +83,9 @@ def observed_receipt(value, name, source, selector, *, passing, test_command=Tru
         raise ValueError(f"{name} must pass")
     if passing and test_command and not observed.get('test_check'):
         raise ValueError(f"{name} must prove nonempty executed tests")
+    if passing and test_command and (observed['test_check']['passed'] <= 0 or any(
+            observed['test_check'][key] for key in ('failed', 'errors', 'xfailed', 'xpassed'))):
+        raise ValueError(f"{name} must show passing tests without failed or expected-failure outcomes")
     return observed
 
 

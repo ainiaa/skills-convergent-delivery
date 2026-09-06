@@ -42,3 +42,11 @@
 - Gradle 需要本次输出可解析的测试执行汇总；静默/定制日志和未知 mutation 工具保持 uncovered，不读历史报告补证据。
 - 静态图只证明当前索引内的直接关系，不能保证分析器发现所有动态调用；文件/边数量和图查询时间有界。
 - 正式 evaluator 缺少真实宿主 bridge，预检返回 uncovered。本地测试不冒充独立模型 Eval 或收益证明；本仓 native coverage 配置仍为 uncovered，未更改原检查命令。
+
+
+## 后续审查修复：结果分类与索引内容（基线 d9a9847）
+
+- `successful-process-hides-failed-test-outcomes`：真实 unittest expectedFailure 和返回码 0 的失败汇总仍可作为 GREEN。现在保留结果分类，要求真实 passed 且无失败、错误或预期失败结果；对应 `test_real_expected_failure_is_not_green`、`test_success_exit_cannot_hide_failed_runner_outcomes` 和正常结果/旧回执回归。
+- `clean-graph-status-hides-stale-index-content`：本仓真实 CodeGraph 的 clean status 掩盖已过期源码。现在只读 files.content_hash，核对当前源码清单并比较查询前后数据库/WAL 摘要；对应 `test_clean_status_cannot_hide_stale_index_contents` 的正常、保留尺寸/mtime 的编辑、已提交新增、删除、损坏及查询中变化场景，同时覆盖 impact/closure。
+
+本轮参考取舍、适配边界和未覆盖能力见 [机制记录](../../02_design/architecture/F20260905-known-review-fixes.md)。本仓真实旧索引已被新 helper 拒绝签发 graph_check，未自动重建索引；协议夹具不是实际模型或 JVM 执行证明。

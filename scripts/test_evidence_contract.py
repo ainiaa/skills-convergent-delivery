@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import evidence_contract
+from test_delivery_next import graph_index
 
 
 def pit_output(generated=2, killed=2, outcome='SURVIVED'):
@@ -19,7 +20,124 @@ def pit_output(generated=2, killed=2, outcome='SURVIVED'):
             f'\n>> Generated {generated} mutations Killed {killed} (100%)\n>> Ran 3 tests (1.5 tests per mutation)\n')
 
 
+
 class EvidenceContractTest(unittest.TestCase):
+    def test_real_expected_failure_is_not_green(self):
+        from tdd_impact_guard import green_receipts
+        (self.workspace / 'pending.py').write_text(
+            'import unittest\nclass Pending(unittest.TestCase):\n'
+            ' @unittest.expectedFailure\n def test_missing(self): self.assertEqual(1, 2)\n')
+        selector = 'pending.Pending.test_missing'
+        receipts = [evidence_contract.run_evidence(self.workspace, self.baseline,
+                    [sys.executable, '-m', 'unittest', selector]) for _ in range(2)]
+        self.assertEqual(0, receipts[0]['exit_code'])
+        with self.assertRaisesRegex(ValueError, 'pass|executed'):
+            green_receipts({'receipts': receipts}, receipts[0]['source'], selector, 2)
+
+    def test_success_exit_cannot_hide_failed_runner_outcomes(self):
+        from tdd_impact_guard import green_receipts
+        cases = [
+            ('mvn', ['test', '-Dtest=PaymentTest', '-Dmaven.test.failure.ignore=true'],
+             'Tests run: 1, Failures: 1, Errors: 0, Skipped: 0'),
+            ('mvn', ['test', '-Dtest=PaymentTest'],
+             'Tests run: 1, Failures: 0, Errors: 1, Skipped: 0'),
+            ('mvn', ['test', '-Dtest=PaymentTest'],
+             'Tests run: 1, Failures: 1, Errors: 0, Skipped: 0\n'
+             'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'),
+            ('gradle', ['test', '--tests', 'PaymentTest'], '2 tests completed, 1 failed'),
+            ('pytest', ['-k', 'PaymentTest'], '1 passed, 1 failed in 0.01s'),
+            ('pytest', ['-k', 'PaymentTest'], '1 passed, 1 error in 0.01s'),
+            ('pytest', ['-k', 'PaymentTest'], '1 passed, 1 xfailed in 0.01s'),
+            ('jest', ['-t', 'PaymentTest'], 'Tests: 1 failed, 1 passed, 2 total'),
+            ('vitest', ['-t', 'PaymentTest'], ' Tests  1 failed | 1 passed (2)'),
+        ]
+        for runner, arguments, output in cases:
+            with self.subTest(runner=runner, output=output):
+                tool = self.workspace / runner
+                tool.write_text(f'#!{sys.executable}\nprint({output!r})\n')
+                tool.chmod(0o700)
+                receipt = evidence_contract.run_evidence(self.workspace, self.baseline, [str(tool), *arguments])
+                self.assertEqual(0, receipt['exit_code'])
+                with self.assertRaisesRegex(ValueError, 'pass|executed'):
+                    green_receipts({'receipts': [receipt, receipt]}, receipt['source'], 'PaymentTest', 2)
+
+    def test_outcome_counts_preserve_normal_and_failure_results(self):
+        cases = [
+            ([sys.executable, '-m', 'unittest'], 'Ran 2 tests in 0.01s\nOK (skipped=1)',
+             dict(executed=1, passed=1, skipped=1)),
+            ([sys.executable, '-m', 'unittest'], 'Ran 2 tests in 0.01s\nOK (expected failures=1)',
+             dict(executed=2, passed=1, xfailed=1)),
+            ([sys.executable, '-m', 'unittest'], 'Ran 2 tests in 0.01s\nFAILED (failures=1)',
+             dict(executed=2, passed=1, failed=1)),
+            (['mvn'], 'Tests run: 3, Failures: 0, Errors: 1, Skipped: 1',
+             dict(executed=2, passed=1, errors=1, skipped=1)),
+            (['gradle'], '2 tests completed, 1 skipped', dict(executed=1, passed=1, skipped=1)),
+            (['pytest'], '1 passed, 1 xpassed in 0.01s', dict(executed=2, passed=1, xpassed=1)),
+            (['vitest'], ' Tests  2 passed (2)', dict(executed=2, passed=2)),
+        ]
+        for argv, output, outcomes in cases:
+            with self.subTest(argv=argv, output=output):
+                expected = dict(passed=0, failed=0, errors=0, skipped=0, xfailed=0, xpassed=0)
+                expected.update(outcomes)
+                self.assertEqual(expected, evidence_contract.test_execution_result(argv, output.encode(), b''))
+
+    def test_legacy_or_inconsistent_outcomes_cannot_be_resealed_as_evidence(self):
+        tool = self.workspace / 'pytest'
+        tool.write_text(f'#!{sys.executable}\nprint("1 passed in 0.01s")\n')
+        tool.chmod(0o700)
+        receipt = evidence_contract.run_evidence(self.workspace, self.baseline, [str(tool), '-k', 'test_case'])
+        evidence_contract.validate_observed_evidence_receipt(receipt)
+        for check in ({'executed': 1}, {**receipt['test_check'], 'failed': -1},
+                      {**receipt['test_check'], 'passed': True}, {**receipt['test_check'], 'passed': 2}):
+            with self.subTest(check=check):
+                value = {**receipt, 'test_check': check}
+                value['receipt_fingerprint'] = evidence_contract._fingerprint(
+                    {key: item for key, item in value.items() if key != 'receipt_fingerprint'})
+                with self.assertRaisesRegex(ValueError, 'test result'):
+                    evidence_contract.validate_observed_evidence_receipt(value)
+
+    def test_clean_status_cannot_hide_stale_index_contents(self):
+        # Keep CLI status clean for every variant; only the real SQLite/content binding changes.
+        tool = self.workspace / 'codegraph'
+        tool.write_text(f'#!{sys.executable}\n' + """import json, sys, os, sqlite3
+from pathlib import Path
+command = sys.argv[1]
+if command in ('query', 'files') and os.environ.get('GRAPH_MUTATE') == '1':
+ with sqlite3.connect('.codegraph/codegraph.db') as db: db.execute("UPDATE files SET errors = '[]'")
+if command == 'status':
+ print(json.dumps({'initialized': True, 'lastIndexed': 'now', 'projectPath': str(Path.cwd()),
+  'pendingChanges': {'added': 0, 'modified': 0, 'removed': 0},
+  'worktreeMismatch': None, 'index': {'reindexRecommended': False}}))
+elif command == 'files': print(json.dumps([{'path': 'entry.py'}]))
+elif command == 'query': print(json.dumps([{'node': {'id': 'entry', 'name': 'entry', 'filePath': 'entry.py'}}]))
+elif command == 'callers': print(json.dumps({'callers': []}))
+else: print('explore succeeded')
+""")
+        tool.chmod(0o700)
+        queries = ['CodeGraph impact chains: entrypoint:entry', evidence_contract.closure_graph_request(
+            [{'id': 'chain', 'entrypoints': ['entry.py'], 'callers': ['external']}])]
+        for mode in ('good', 'same-size-edit', 'new-committed-caller', 'deleted', 'missing-db', 'corrupt-db', 'changing-index'):
+            for query in queries:
+                with self.subTest(mode=mode, query=query):
+                    (self.workspace / 'entry.py').write_text('def entry(): return 1\n')
+                    (self.workspace / 'caller.py').unlink(missing_ok=True)
+                    graph_index(self.workspace, ['entry.py'])
+                    if mode == 'same-size-edit':
+                        stat = (self.workspace / 'entry.py').stat()
+                        (self.workspace / 'entry.py').write_text('def entry(): return 2\n')
+                        os.utime(self.workspace / 'entry.py', ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                    elif mode == 'new-committed-caller':
+                        (self.workspace / 'caller.py').write_text('from entry import entry\nentry()\n')
+                    elif mode == 'deleted': (self.workspace / 'entry.py').unlink()
+                    elif mode == 'missing-db': (self.workspace / '.codegraph/codegraph.db').unlink()
+                    elif mode == 'corrupt-db': (self.workspace / '.codegraph/codegraph.db').write_bytes(b'broken')
+                    subprocess.run(['git', '-C', str(self.workspace), 'add', '-A'], check=True)
+                    subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'fixture', '--allow-empty'], check=True)
+                    with patch.dict(os.environ, GRAPH_MUTATE='1' if mode == 'changing-index' else '0'):
+                        receipt = evidence_contract.run_evidence(self.workspace, self.baseline, [str(tool), 'explore', query])
+                    if mode == 'corrupt-db': (self.workspace / '.codegraph/codegraph.db').unlink()
+                    self.assertEqual(mode == 'good', bool(receipt.get('graph_check')))
+
     def test_pit_requires_a_scoped_nonempty_executed_campaign(self):
         from tdd_impact_guard import mutation_receipt
         tool = self.workspace / 'mvn'
@@ -65,6 +183,7 @@ class EvidenceContractTest(unittest.TestCase):
         tool = self.workspace / 'codegraph'
         (self.workspace / 'caller.py').write_text('pass\n')
         chains = [{'id': 'chain', 'entrypoints': ['seed.txt'], 'callers': ['caller.py']}]
+        graph_index(self.workspace, ['seed.txt', 'caller.py'])
         for mode in ('good', 'unrelated', 'missing', 'stale', 'malformed', 'bad-edge'):
             with self.subTest(mode=mode):
                 tool.write_text(f'#!{sys.executable}\n' + f'mode = {mode!r}\n' + '''import json, sys

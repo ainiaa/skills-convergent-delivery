@@ -172,6 +172,26 @@
       ],
       "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
       "scenario": "Valid JSON with invalid object or nested element shapes must return no graph proof without an unhandled AttributeError."
+    },
+    {
+      "id": "successful-process-hides-failed-test-outcomes",
+      "control_surfaces": [
+        "evidence.completion",
+        "tdd.selector"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "A real unittest expectedFailure and exit-zero runner summaries containing failures, errors or expected failures must not satisfy GREEN; ordinary passing results remain valid."
+    },
+    {
+      "id": "clean-graph-status-hides-stale-index-content",
+      "control_surfaces": [
+        "evidence.graph",
+        "evidence.freshness",
+        "plan.validation",
+        "completion.gate"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "Clean status must not certify stale content hashes, newly committed source files, deleted source or a changing/corrupt SQLite index; a matching index must remain usable."
     }
   ]
 }

@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import shlex
+import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import tempfile
@@ -43,6 +45,19 @@ def configure_coverage_fixture(workspace):
     path.write_text('coverage: ' + shlex.join(COVERAGE_ARGV) + '\n')
 
 
+def graph_index(workspace, paths):
+    """CodeGraph 1.0.1 SQLite protocol fixture, deliberately independent of production helpers."""
+    directory = workspace / '.codegraph'
+    directory.mkdir(exist_ok=True)
+    with closing(sqlite3.connect(directory / 'codegraph.db')) as db, db:
+        db.execute('CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, content_hash TEXT, errors TEXT)')
+        db.execute('DELETE FROM files')
+        db.executemany('INSERT INTO files VALUES (?, ?, NULL)',
+                       [(path, hashlib.sha256((workspace / path).read_bytes()).hexdigest()) for path in paths])
+    with (workspace / '.git/info/exclude').open('a') as ignored:
+        ignored.write('\n.codegraph/\n')
+
+
 _workspace_fixture = tempfile.TemporaryDirectory()
 atexit.register(_workspace_fixture.cleanup)
 WORKSPACE = Path(_workspace_fixture.name).resolve()
@@ -67,7 +82,8 @@ def trace_receipt(source, argv, exit_code=0):
         receipt["graph_check"] = {"query": argv[2], "index_fingerprint": "a" * 64,
                                   "bindings_fingerprint": "b" * 64}
     if argv[0] == 'pytest':
-        receipt['test_check'] = {'executed': 1}
+        receipt['test_check'] = {'executed': 1, 'passed': 1, 'failed': 0, 'errors': 0,
+                                 'skipped': 0, 'xfailed': 0, 'xpassed': 0}
     if argv[0] == 'mvn':
         receipt['mutation_check'] = {'selector': argv[-1].split('=', 1)[1], 'generated': 2, 'killed': 2, 'tests': 2}
     receipt["receipt_fingerprint"] = runner_fingerprint({
