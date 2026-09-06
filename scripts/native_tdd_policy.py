@@ -161,28 +161,38 @@ def percentage(value):
 
 def project_gate_threshold(workspace, argv, revision=None):
     runners = {coverage_runner(argv)}
-    gate_files = ()
-    pattern = None
     if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
         return maven_gate_threshold(config_text(workspace, "pom.xml", revision))
-    elif {"gradle", "gradlew"} & runners and "jacocoTestCoverageVerification" in argv:
-        gate_files = ("build.gradle", "build.gradle.kts")
-        pattern = r"counter\s*=\s*['\"](?:LINE|INSTRUCTION)['\"].*?minimum\s*=\s*([0-9.]+)"
-    if pattern is None:
-        return None
-    for path in gate_files:
-        content = config_text(workspace, path, revision)
-        if content:
-            content = re.sub(r'/\*.*?\*/|//[^\n]*', '', content, flags=re.DOTALL)
-            thresholds = [
-                candidate for candidate in (
-                    percentage(match.group(1))
-                    for match in re.finditer(pattern, content, re.DOTALL)
-                ) if candidate is not None
-            ]
-            if thresholds:
-                return min(thresholds)
+    if {"gradle", "gradlew"} & runners and "jacocoTestCoverageVerification" in argv:
+        for path in ("build.gradle", "build.gradle.kts"):
+            threshold = gradle_gate_threshold(config_text(workspace, path, revision))
+            if threshold is not None:
+                return threshold
     return None
+
+
+def gradle_gate_threshold(content):
+    content = re.sub(r'/\*.*?\*/|//[^\n]*', '', content, flags=re.DOTALL)
+    thresholds = []
+    # Resolve only literal limits; never combine a counter and minimum across sibling limits.
+    for body in re.findall(r'\blimit\s*\{([^{}]*)\}', content):
+        clauses = [clause.strip() for clause in re.split(r'[;\n]', body) if clause.strip()]
+        fields = [re.fullmatch(r'(counter|value|minimum|maximum)\s*=\s*(.+)', clause) for clause in clauses]
+        if any(field is None for field in fields):
+            continue
+        values = {field[1]: field[2].strip() for field in fields}
+        if len(values) != len(fields):
+            continue
+        if values.get('counter', "'INSTRUCTION'") not in {"'LINE'", '"LINE"', "'INSTRUCTION'", '"INSTRUCTION"'} \
+                or values.get('value', "'COVEREDRATIO'") not in {"'COVEREDRATIO'", '"COVEREDRATIO"'}:
+            continue
+        minimum = values.get('minimum', '')
+        if not re.fullmatch(r'(?:0?\.\d+|1(?:\.0+)?)(?:\.toBigDecimal\(\))?', minimum):
+            continue
+        threshold = percentage(minimum.removesuffix('.toBigDecimal()'))
+        if threshold is not None:
+            thresholds.append(threshold)
+    return min(thresholds) if thresholds else None
 
 
 def maven_gate_threshold(content):

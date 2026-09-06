@@ -69,7 +69,7 @@ def require_sha256(value, name):
 
 
 def clean_path(value, name):
-    path = require_string(value, name).replace("\\", "/").rstrip("/") or "."
+    path = require_string(value, name).replace("\\", "/")
     parsed = PurePosixPath(path)
     if parsed.is_absolute() or ".." in parsed.parts:
         raise ValueError(f"{name} must stay inside the workspace")

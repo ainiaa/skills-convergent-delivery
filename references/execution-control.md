@@ -53,6 +53,8 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 writer lease 的同身份 acquire 重试不续租，只返回两份已持有租约中最早的真实到期时间。任一租约已过期时返回 blocked_*_expired；原 owner 可显式 renew，或在确认旧执行停止后显式 takeover。task lease 获取失败不能删除此前已持有的 workspace lease；本次新获取的 workspace lease 仍按原有回滚规则释放。
 
+acquire 的幂等判断和 move 的来源/目标检查均核对 kind、repo、workspace、task、run、writer 完整归属；复用 run/writer 但错填工作区或任务不算同一租约。renew 在固定顺序持有两份文件锁并核对完整归属后才续租，身份错误不能先更新其中一份。move 身份错误不删除来源租约，也不创建目标租约。
+
 release 按固定顺序持有两份租约的文件锁，核对各自 kind 与完整 repo/workspace/task/run/writer 归属，再查正式状态、验证清场并删除。身份不匹配返回 blocked_owner，两份既有租约保持原样；不得用错填的 task key 跳过原任务的清场屏障。原身份释放仍支持租约已过期及重复清理，但正式状态存在时仍必须满足终态与清场要求。
 
 ## 1.2 显式自治交付

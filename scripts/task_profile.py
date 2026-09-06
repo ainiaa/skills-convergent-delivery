@@ -114,7 +114,7 @@ def _canonical_paths(paths):
     for value in paths:
         if not isinstance(value, str) or not value.strip():
             raise ValueError("allowed_paths must contain non-empty strings")
-        path = value.replace("\\", "/").rstrip("/") or "."
+        path = value.replace("\\", "/")
         parsed = PurePosixPath(path)
         if parsed.is_absolute() or ".." in parsed.parts:
             raise ValueError("allowed_paths must stay inside the workspace")

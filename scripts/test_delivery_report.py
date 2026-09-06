@@ -129,6 +129,19 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
+    def test_changed_recovery_details_are_not_hidden_by_report_deduplication(self):
+        for field in ("blocked_reason", "next_action"):
+            with self.subTest(field=field):
+                payload = state("blocked")
+                first = json.loads(self.run_report(payload).stdout)
+                payload["ledger"]["report_history"] = first["next_report_history"]
+                target = payload if field == "blocked_reason" else payload["handoff"]
+                target[field] = "Refresh the unavailable credential"
+                result = self.run_report(payload)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertFalse(json.loads(result.stdout)["unchanged"])
+                self.assertIn(target[field], self.run_report(payload, "text").stdout)
+
     def test_active_state_cannot_render_a_final_report(self):
         for output_format in ("text", "json"):
             with self.subTest(output_format=output_format):

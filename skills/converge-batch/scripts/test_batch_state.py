@@ -199,12 +199,39 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_execution_capsule_uses_verified_predecessor_and_preserves_frozen_plan(self):
+        state = candidate(self.workspace)
+        before = copy.deepcopy(state)
+        result = self.execution_capsule(state)
+        self.assertEqual(self.commit_id, result["baseline"])
+        self.assertEqual(before, state)
+        dirty = self.workspace / 'unverified.txt'
+        dirty.write_text('not verified')
+        rejected = subprocess.run([sys.executable, str(MODULE_PATH), "capsule", "--input", "-"],
+                                  input=json.dumps(state), text=True, capture_output=True)
+        self.assertEqual(2, rejected.returncode)
+        self.assertIn('unverified changes', rejected.stderr)
+        dirty.unlink()
+        state["current_batch"] = "B2"
+        rejected = subprocess.run([sys.executable, str(MODULE_PATH), "capsule", "--input", "-"],
+                                  input=json.dumps(state), text=True, capture_output=True)
+        self.assertEqual(2, rejected.returncode)
+
+    def execution_capsule(self, state):
+        result = subprocess.run([sys.executable, str(MODULE_PATH), "capsule", "--input", "-"],
+                                input=json.dumps(state), text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        return json.loads(result.stdout)
+
     def test_disjoint_batch_scopes_use_each_checkpoint_not_cumulative_source(self):
         state = candidate(self.workspace)
         parent = self.commit_id
         for index, batch in enumerate(state['batches']):
             module = f"module-{batch['batch_id']}"
             batch['capsule']['scope'] = [module]
+            execution = self.execution_capsule(state)
+            self.assertEqual(parent, execution['baseline'])
+            self.assertEqual(self.commit_id, batch['capsule']['baseline'])
             target = self.workspace / module / 'implementation.txt'
             target.parent.mkdir()
             target.write_text(module)
@@ -216,18 +243,40 @@ class BatchStateTest(unittest.TestCase):
             register_worker(state, index, f'worker-{index}')
             batch['worker_status'] = 'completed'
             batch['receipt'] = receipt(batch['batch_id'], batch['dispatch_id'], commit, tree,
-                                       self.workspace, baseline=self.commit_id)
+                                       self.workspace, baseline=execution['baseline'])
             batch['receipt']['parent_commit_id'] = parent
             path = delegate_state_path(state['delegate_state_root'], state['repo_id'],
                                        batch['task_id'], batch['delegate_run_id'])
             child = json.loads(path.read_text())
             child['execution_control']['routing'] = routing(allowed_paths=[module])
-            path.write_text(json.dumps(child))
+            path.unlink()  # The real writer must create and validate the managed state.
+            leases = Path(self.temporary.name) / 'delegate-leases'
+            identity = ['--root', str(leases), '--repo', child['repo_id'], '--workspace', str(self.workspace),
+                        '--task-key', child['task_key'], '--run-id', child['run_id'], '--writer-id', child['writer_id']]
+            acquired = subprocess.run([sys.executable, str(ROOT_SCRIPTS / 'delivery_lease.py'), 'acquire', *identity],
+                                      text=True, capture_output=True)
+            self.assertEqual(0, acquired.returncode, acquired.stdout + acquired.stderr)
+            write = subprocess.run([sys.executable, str(ROOT_SCRIPTS / 'delivery_state.py'), 'write',
+                '--input', '-', '--state-root', state['delegate_state_root'], '--lease-root', str(leases),
+                '--repo-id', child['repo_id'], '--task-key', child['task_key'], '--run-id', child['run_id'],
+                '--writer-id', child['writer_id'], '--expected-revision', '-1'],
+                input=json.dumps(child), text=True, capture_output=True)
+            self.assertEqual(0, write.returncode, write.stdout + write.stderr)
+            report = subprocess.run([sys.executable, str(ROOT_SCRIPTS / 'delivery_report.py'), '--state', str(path)],
+                                    text=True, capture_output=True)
+            self.assertEqual(0, report.returncode, report.stderr)
+            released = subprocess.run([sys.executable, str(ROOT_SCRIPTS / 'delivery_lease.py'), 'release',
+                *identity, '--state-root', state['delegate_state_root']], text=True, capture_output=True)
+            self.assertEqual(0, released.returncode, released.stdout + released.stderr)
             state['current_batch'] = 'B2' if index == 0 else None
             batch_state.validate_state(state)
             parent = commit
-        self.assertEqual(['module-B1/implementation.txt', 'module-B2/implementation.txt'],
+        self.assertEqual(['module-B2/implementation.txt'],
                          state['batches'][1]['receipt']['delegate_source_receipt']['changed_paths'])
+        rejected = subprocess.run([sys.executable, str(MODULE_PATH), "capsule", "--input", "-"],
+                                  input=json.dumps(state), text=True, capture_output=True)
+        self.assertEqual(2, rejected.returncode)
+        self.assertNotIn('Traceback', rejected.stderr)
 
     def test_capsule_rejects_absolute_or_escaping_scope_before_dispatch(self):
         for scope in ('/', '/tmp', '../outside', 'module/../../outside', '\\tmp'):
@@ -456,7 +505,7 @@ class BatchStateTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "state"
-        self.workspace = Path(self.temporary.name) / "workspace"
+        self.workspace = (Path(self.temporary.name) / "workspace").resolve()
         self.workspace.mkdir()
         subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "config", "user.name", "Test"], check=True)
@@ -710,7 +759,7 @@ class BatchStateTest(unittest.TestCase):
         state["revision"] = 7
         state["batches"][1]["status"] = "validating-receipt"
         state["batches"][1]["receipt"] = receipt(
-            "B2", "dispatch-B2", second_commit, second_tree, self.workspace, baseline=self.commit_id
+            "B2", "dispatch-B2", second_commit, second_tree, self.workspace, baseline=first_commit
         )
         state['batches'][1]['receipt']['parent_commit_id'] = first_commit
         self.write(state, 6)
@@ -727,7 +776,7 @@ class BatchStateTest(unittest.TestCase):
                     self.workspace, self.commit_id, [sys.executable, "-c", "print('e2e passed')"]
                 ), "result": "pass",
                 "freshness": "fresh",
-                "source_fingerprint": state["batches"][-1]["receipt"]["delegate_source_fingerprint"],
+                "source_fingerprint": workspace_source(self.workspace, self.commit_id)["source_fingerprint"],
             }
         ]
         self.write(state, 8)

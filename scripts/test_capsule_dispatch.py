@@ -18,6 +18,19 @@ SPEC.loader.exec_module(capsule_dispatch)
 
 
 class CapsuleDispatchTest(unittest.TestCase):
+    def test_codex_ignores_non_object_json_before_creation_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex = self.executable(root, "codex",
+                'cat >/dev/null\nprintf \'[]\\nnull\\n42\\n"noise"\\n\' >&2\n'
+                'printf \'{"type":"thread.started","thread_id":"thread-confirmed"}\\n\'\n')
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "capsule", root / "receipts", "noisy", 1)
+            self.assertEqual("delivered", result["status"])
+            self.assertEqual("thread-confirmed", result["external_task_id"])
+            self.assertEqual(result, capsule_dispatch.dispatch_codex(
+                "/must-not-launch", root, "capsule", root / "receipts", "noisy", 1))
+
     def test_explicit_attempt_rejects_a_different_workspace_for_both_hosts(self):
         for host in ('codex', 'claude'):
             with self.subTest(host=host), tempfile.TemporaryDirectory() as directory:

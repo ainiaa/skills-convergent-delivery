@@ -598,7 +598,7 @@ class DeliveryStateTest(unittest.TestCase):
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}
 
-    def acquire(self, root, workspace="/repo/worktree-a"):
+    def acquire(self, root, workspace="/repo/worktree-a", expected_exit=0):
         result = subprocess.run(
             [
                 sys.executable,
@@ -621,7 +621,7 @@ class DeliveryStateTest(unittest.TestCase):
             capture_output=True,
             check=False,
         )
-        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(expected_exit, result.returncode, result.stdout + result.stderr)
 
     def state_path(self, state_home):
         result = subprocess.run(
@@ -1574,7 +1574,9 @@ class DeliveryStateTest(unittest.TestCase):
             state_home = Path(directory) / "home"
             self.acquire(root)
             self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
-            self.acquire(root, "/repo/worktree-b")
+            before = {path: path.read_bytes() for path in root.rglob("*.json")}
+            self.acquire(root, "/repo/worktree-b", expected_exit=2)
+            self.assertEqual(before, {path: path.read_bytes() for path in root.rglob("*.json")})
             candidate = state(revision=1)
             candidate["workspace"] = "/repo/worktree-b"
 

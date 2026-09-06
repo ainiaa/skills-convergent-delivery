@@ -211,6 +211,15 @@ def final_evidence(source):
 
 
 class PlanCheckTest(unittest.TestCase):
+    def test_plan_rejects_absolute_root_before_normalizing_scope(self):
+        for path in ("/", "///", "\\", "\\\\", "/tmp", "../outside"):
+            with self.subTest(path=path):
+                value = plan([task("T1", [path])])
+                value["closure_matrix"]["chains"][0]["entrypoints"] = ["."]
+                refresh_graph_receipt(value)
+                result = self.run_check("validate", value)
+                self.assertNotEqual(0, result.returncode, result.stdout)
+
     def test_audit_binds_every_verification_to_real_passing_command_evidence(self):
         commands = [[sys.executable, "-c", "pass", "first check"],
                     [sys.executable, "-c", "pass", "second check"]]

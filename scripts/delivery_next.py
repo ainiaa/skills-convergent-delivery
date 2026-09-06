@@ -608,7 +608,7 @@ def validate_host_sync(host_sync):
             require_string(fallback[field], f"host_sync.fallback.{field}")
 
 
-def validate_state(state, arguments, *, check_workspace=True, coverage_revision=None, scope_changed_paths=None):
+def validate_state(state, arguments, *, check_workspace=True, coverage_revision=None):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
     strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
     state = upgrade_state(state)
@@ -688,8 +688,8 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
         autonomy = None
     if source_receipt is not None and routing["schema_version"] == 3:
         allowed_paths = routing["allowed_paths"]
-        # Batch supplies the verified checkpoint delta; source receipts retain the frozen plan baseline.
-        changed_paths = source_receipt["changed_paths"] if scope_changed_paths is None else scope_changed_paths
+        # Each run, including a Batch delegate, freezes its own execution baseline.
+        changed_paths = source_receipt["changed_paths"]
         drift = [
             path for path in changed_paths
             if not any(_path_contains(owner, path) for owner in allowed_paths)

@@ -69,7 +69,7 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 
 Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源，并要求回执中的 Source Receipt v2 与正式状态完全一致。completed receipt、capsule 和正式 delegate 的 criterion 集合必须完全一致；receipt 中每项 criterion/evidence/result/freshness/source_fingerprint 必须逐项等于正式 delegate 的对应字段，不能自行补写摘要冒充子任务验收。delegate 每项仍须通过 observed Evidence Receipt 校验；全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
 
-冻结 capsule 的 scope 必须是工作区内的相对路径；子任务 routing.allowed_paths 可以更窄，但不能扩大父范围。实际写入范围使用前一个 checkpoint（首批为 capsule.baseline）到当前 commit 的 `git diff --no-renames --name-only -z`，因此重命名两端、删除、权限变化都参与核对。Source Receipt 继续保留冻结计划 baseline；历史验证仅以本批 delta 判定范围与路径风险，避免前批累计改动导致误拒绝。
+冻结 capsule 的 scope 必须是工作区内的相对路径；子任务 routing.allowed_paths 可以更窄，但不能扩大父范围。派发前使用 `batch_state.py capsule --input -` 从正式状态生成当前 pending Batch 的执行 capsule；不修改计划内原 capsule。执行 baseline 为前一个已验证 checkpoint（首批为计划 capsule.baseline），子任务 Single State、Source Receipt、Trace 和 Evidence Receipt 均绑定此基线，恢复沿用该不可变基线。父层对照同一个 checkpoint 校验子状态，无需绕过 Single 的范围门禁。实际写入范围使用该基线到当前 commit 的 `git diff --no-renames --name-only -z`，重命名两端、删除和权限变化都参与核对。历史子状态若仍使用更早的计划基线则拒绝，不自动改写其已冻结状态或证据；需在正确检查点重新建立并验证 delegate。计划最终验收仍使用计划原始基线的全量 Source Receipt。
 
 capsule.verification 按 POSIX 引号解析为 argv，并逐项匹配正式 delegate 的 `ledger.acceptance[].evidence_receipts`。每条必需命令必须拥有绑定同一 Source Receipt 的有效成功回执；参数必须一致，顺序不受限，可包含额外有效回执。缺少必需命令或拿其他成功命令代替时禁止落盘完成；此校验不重新执行命令。
 

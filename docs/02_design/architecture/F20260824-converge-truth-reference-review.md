@@ -125,6 +125,19 @@
 复用 ExitStack 文件锁、Evidence Receipt argv 和进程组清理函数；不增加 schema、持久状态、代理、依赖或默认步骤。release 校验与删除在同一组锁内完成，控制器仍拥有写权和清场责任；身份或验证缺口阻止放行，selector 超时/清理异常有限退出。进程组清理不覆盖主动脱组或外部服务。审计只解析/比较命令，不执行它们。本地回归和同上下文复核不替代独立盲审、真实宿主 Eval 或尚未配置的覆盖率门禁。
 
 
+## 2026-09-06：执行基线、租约身份与恢复指引修复
+
+再次核对 [Skills.sh 排行榜](https://skills.sh/trending) 后，按本轮受影响能力复用并核对原始来源。只修复已复现边界，不增加 worker、状态副本或循环。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [planning-with-files 的计划目录解析](https://github.com/OthmanAdi/planning-with-files/blob/master/skills/planning-with-files/scripts/resolve-plan-dir.sh) | 采用恢复前绑定精确身份、错误选择不回退；复用现有 checkpoint 和 Single baseline，不增加并行记录 | Batch 两批独立目录经真实 writer、报告及父层验收；错误前驱、脏工作区不得派发 |
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用同一公共入口验证正确、错误及旁路结果；不以 helper 文案或 mock 成功替代状态副作用 | 租约失败前后文件逐字一致；模拟宿主 JSON 噪声后保留有效 task id；报告下一步变化可见 |
+| [Gradle JacocoLimit](https://docs.gradle.org/current/javadoc/org/gradle/testing/jacoco/tasks/rules/JacocoLimit.html) | 采用 counter/value/minimum 同 limit 绑定及默认指标；不实现完整 Gradle DSL 或动态求值 | 比率、计数、相邻 limit、重复字段、setter 与 Kotlin 字面量；离线真实 Gradle 复核 66.7% 覆盖率不能被计数门槛放行 |
+| 本机 OpenAI skill-creator | 采用行为回归和渐进披露；不追加普遍审批或安装第三方依赖 | 根路径拒绝与相对路径兼容；沿用现有 7 个 Skill validator |
+
+决定权和写权仍属于当前 controller；执行基线从既有状态派生，恢复沿用 managed state。身份/基线不一致即失败，投递异常仍不重派。正式 Eval bridge 与仓库 coverage 配置缺失继续标为 uncovered，不用本轮候选给自己签发发布通过。
+
 ## 2026-09-06：Batch 冻结契约与 JaCoCo 空执行修复
 
 复用本轮 Skills.sh 发现结果及原始实现核对，仅处理已复现的范围越界、漏跑验证和 JaCoCo SKIPPED 假通过。

@@ -129,6 +129,8 @@ def codex_thread_id(log_path):
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(event, dict):
+            continue
         task_id = event.get("thread_id") if event.get("type") == "thread.started" else None
         if nonblank_string(task_id):
             return task_id

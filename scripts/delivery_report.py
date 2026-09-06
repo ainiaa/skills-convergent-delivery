@@ -147,7 +147,7 @@ def build_report(state):
             "verification_evidence_levels", "attested_check_count",
             "verification_note_level", "completed_rounds", "repaired_issues",
             "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
-            "execution_metrics", "autonomy_audit",
+            "execution_metrics", "autonomy_audit", "reason", "next_action",
         )
     }
     fingerprint = hashlib.sha256(

@@ -334,7 +334,8 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt delegate state workspace does not match")
     if delegate_state.get("repo_id") != repo_id:
         raise ValueError("receipt delegate state repo_id does not match")
-    if delegate_state.get("baseline", {}).get("commit") != batch["capsule"]["baseline"]:
+    expected_parent = previous_commit or batch["capsule"]["baseline"]
+    if delegate_state.get("baseline", {}).get("commit") != expected_parent:
         raise ValueError("receipt delegate state baseline does not match")
     delegate_binding = delegate_state.get("provider_binding")
     capsule_binding = batch["capsule"]["provider_binding"]
@@ -352,7 +353,6 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
     if tree_hash != commit_tree:
         raise ValueError("receipt tree does not match its Git commit")
     validate_committed_source(workspace, source_receipt, commit_id)
-    expected_parent = previous_commit or batch["capsule"]["baseline"]
     diff = subprocess.run(
         ["git", "-C", workspace, "diff", "--name-only", "--no-renames", "-z", expected_parent, commit_id, "--"],
         capture_output=True, check=False,
@@ -365,7 +365,6 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("checkpoint changes exceed capsule scope")
     if validate_delegate_state(
         delegate_state, SimpleNamespace(), check_workspace=False, coverage_revision=commit_id,
-        scope_changed_paths=delta,
     ) != 'complete':
         raise ValueError('receipt delegate state is not complete')
     allowed = delegate_state["execution_control"]["routing"]["allowed_paths"]
@@ -373,7 +372,6 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("delegate routing exceeds capsule scope")
     if batch['status'] == 'validating-receipt':
         validate_committed_source(workspace, workspace_source(workspace, batch['capsule']['baseline']), commit_id)
-    expected_parent = previous_commit or batch["capsule"]["baseline"]
     if receipt.get("parent_commit_id") != expected_parent:
         raise ValueError("receipt parent commit does not match the batch chain")
     ancestor = subprocess.run(
@@ -726,9 +724,26 @@ def write_state(
     return path
 
 
+def execution_capsule(state):
+    validate_state(state)
+    if state['status'] != 'active' or state['current_batch'] is None:
+        raise ValueError('execution capsule requires an active plan with a current batch')
+    index = next(i for i, batch in enumerate(state['batches']) if batch['batch_id'] == state['current_batch'])
+    batch = state['batches'][index]
+    if batch['status'] != 'pending':
+        raise ValueError('execution capsule requires a pending batch; resume existing delegates from managed state')
+    baseline = state['batches'][index - 1]['receipt']['commit_id'] if index else batch['capsule']['baseline']
+    if git_output(state['workspace'], 'rev-parse', 'HEAD') != baseline:
+        raise ValueError('execution workspace does not match the previous checkpoint')
+    source = workspace_source(state['workspace'], baseline)
+    if source['changed_paths']:
+        raise ValueError('execution workspace has unverified changes since the checkpoint')
+    return {**batch['capsule'], 'baseline': baseline}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("path", "write"))
+    parser.add_argument("command", choices=("path", "write", "capsule"))
     parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--input")
     parser.add_argument("--repo")
@@ -746,7 +761,10 @@ def main():
             print(state_path(arguments.state_root, arguments.repo, arguments.plan_id, arguments.run_id))
             return 0
         if arguments.input != "-":
-            raise ValueError("write only accepts --input - from stdin")
+            raise ValueError("write/capsule only accepts --input - from stdin")
+        if arguments.command == "capsule":
+            print(json.dumps(execution_capsule(json.load(sys.stdin)), sort_keys=True))
+            return 0
         if arguments.expected_revision is None or not arguments.run_id or not arguments.writer_id:
             raise ValueError("write requires --expected-revision, --run-id, and --writer-id")
         candidate = json.load(sys.stdin)

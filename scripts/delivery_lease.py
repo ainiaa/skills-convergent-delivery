@@ -115,6 +115,12 @@ def same_owner(record, run_id, writer_id):
     return record.get("run_id") == run_id and record.get("writer_id") == writer_id
 
 
+def same_binding(record, expected):
+    return all(record.get(field) == expected.get(field) for field in (
+        "kind", "repo_id", "workspace", "task_key", "run_id", "writer_id",
+    ))
+
+
 def active_lease_attestation(paths, repo, workspace, task_key, run_id, writer_id):
     """Return a stable proof that both leases are currently owned and active."""
     expected = {
@@ -173,7 +179,7 @@ def acquire_one(path, record, *, takeover):
             return "acquired", record
 
         existing = read_record(path)
-        if same_owner(existing, record["run_id"], record["writer_id"]) and not is_expired(existing):
+        if same_binding(existing, record) and not is_expired(existing):
             return "already_acquired", existing
         if not is_expired(existing):
             return "active", existing
@@ -240,18 +246,25 @@ def acquire(arguments, paths, repo, workspace):
 
 
 def renew(arguments, paths):
-    for path in paths.values():
-        with lock_record(path):
-            record = read_record(path)
-            if not same_owner(record, arguments.run_id, arguments.writer_id):
+    expected = {
+        "repo_id": arguments.repo, "workspace": arguments.workspace,
+        "task_key": arguments.task_key, "run_id": arguments.run_id, "writer_id": arguments.writer_id,
+    }
+    with ExitStack() as stack:
+        for path in sorted(paths.values(), key=str):
+            stack.enter_context(lock_record(path))
+        records = {kind: read_record(path) for kind, path in paths.items()}
+        for kind, record in records.items():
+            if not same_binding(record, {**expected, "kind": kind}):
                 payload("blocked_owner", holder=record)
                 return 2
+        for kind, record in records.items():
             timestamp = now()
             record["renewed_at"] = as_timestamp(timestamp)
             record["lease_expires_at"] = as_timestamp(
                 timestamp + timedelta(seconds=arguments.ttl_seconds)
             )
-            replace_record(path, record)
+            replace_record(paths[kind], record)
     payload("renewed", lease_expires_at=record["lease_expires_at"])
     return 0
 
@@ -271,9 +284,7 @@ def release(arguments, paths):
             if not path.exists():
                 continue
             record = read_record(path)
-            if record.get("kind") != kind or any(
-                record.get(field) != value for field, value in expected.items()
-            ):
+            if not same_binding(record, {**expected, "kind": kind}):
                 payload("blocked_owner", holder=record)
                 return 2
         state = formal_state(arguments)
@@ -343,18 +354,19 @@ def move(arguments, paths, repo, workspace):
 
         old_workspace_record = read_record(old_paths["workspace"])
         task_record = read_record(paths["task"])
-        for record in (old_workspace_record, task_record):
-            if not same_owner(record, arguments.run_id, arguments.writer_id) or is_expired(record):
+        expected = {
+            "repo_id": repo, "workspace": from_workspace, "task_key": arguments.task_key,
+            "run_id": arguments.run_id, "writer_id": arguments.writer_id,
+        }
+        for kind, record in (("workspace", old_workspace_record), ("task", task_record)):
+            if not same_binding(record, {**expected, "kind": kind}) or is_expired(record):
                 payload("blocked_owner", holder=record)
                 return 2
 
         target_path = paths["workspace"]
         if target_path != old_paths["workspace"] and target_path.exists():
             target_record = read_record(target_path)
-            if (
-                not same_owner(target_record, arguments.run_id, arguments.writer_id)
-                or target_record.get("task_key") != arguments.task_key
-            ):
+            if not same_binding(target_record, {**expected, "kind": "workspace", "workspace": workspace}):
                 payload("blocked_workspace", holder=target_record)
                 return 2
             if is_expired(target_record):

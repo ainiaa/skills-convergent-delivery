@@ -17,6 +17,48 @@ SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
+    def test_acquire_rejects_same_owner_with_different_task_or_workspace(self):
+        for field in ("task_key", "workspace"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="task-a", run_id="run", writer_id="writer")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                before = {str(p): p.read_bytes() for p in root.rglob("*.json")}
+                changed = {**owner, field: owner[field] + "-other"}
+                result = self.run_lease(root, "acquire", **changed)
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob("*.json")})
+
+    def test_move_rejects_wrong_source_task_without_releasing_a_live_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner = dict(run_id="run", writer_id="writer")
+            for workspace, task in (("/repo/a", "task-a"), ("/repo/b", "task-b")):
+                self.assertEqual(0, self.run_lease(root, "acquire", workspace=workspace,
+                                                 task_key=task, **owner).returncode)
+            before = {str(p): p.read_bytes() for p in root.rglob("*.json")}
+            result = self.run_lease(root, "move", workspace="/repo/c", task_key="task-b",
+                                    from_workspace="/repo/a", **owner)
+            self.assertEqual(2, result.returncode, result.stdout)
+            self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob("*.json")})
+            self.assertEqual(2, self.run_lease(root, "acquire", workspace="/repo/a",
+                                              task_key="task-c").returncode)
+
+    def test_renew_validates_both_complete_identities_before_writing(self):
+        for field in ("task_key", "workspace", "repo_id", "kind"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="task-a", run_id="run", writer_id="writer")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                paths = delivery_lease.lease_paths(root, "/repo/common.git", "/repo/a", "task-a")
+                record = json.loads(paths["task"].read_text())
+                record[field] += "-wrong"
+                paths["task"].write_text(json.dumps(record))
+                before = {kind: path.read_bytes() for kind, path in paths.items()}
+                result = self.run_lease(root, "renew", **owner)
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual(before, {kind: path.read_bytes() for kind, path in paths.items()})
+
     def test_release_rejects_wrong_binding_without_removing_either_lease(self):
         for mismatch in ("task_key", "workspace", "repo_id", "kind"):
             with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as directory:

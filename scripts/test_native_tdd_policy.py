@@ -22,6 +22,34 @@ def maven_config(minimum="0.92"):
 
 
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_gradle_metric_and_minimum_must_belong_to_the_same_ratio_limit(self):
+        cases = [
+            ("counter = 'LINE'; minimum = 0.92", "ready"),
+            ('value = "COVEREDRATIO"; minimum = 0.92; counter = "INSTRUCTION"', "ready"),
+            ("counter = 'LINE'; minimum = 0.92; value = 'MISSEDCOUNT'", "uncovered"),
+            ("counter = 'LINE'; value = 'COVEREDCOUNT'; minimum = 0.92", "uncovered"),
+            ("counter = 'LINE'; value = 'MISSEDRATIO'; minimum = 0.92", "uncovered"),
+            ("counter = 'LINE'; value = selectedMetric; minimum = 0.92", "uncovered"),
+            ("counter = 'LINE'; setValue('MISSEDCOUNT'); minimum = 0.92", "uncovered"),
+            ('counter = "LINE"; minimum = 0.92.toBigDecimal()', "ready"),
+            ("counter = 'LINE'; value = 'COVEREDRATIO'; value = 'MISSEDCOUNT'; minimum = 0.92", "uncovered"),
+            ("counter = 'LINE'; minimum = 92", "uncovered"),
+            ("counter = 'LINE'; minimum = 0", "uncovered"),
+            ("counter = 'LINE' } limit { counter = 'BRANCH'; minimum = 0.92", "uncovered"),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                standard = root / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text("coverage: gradle test jacocoTestCoverageVerification\n")
+                (root / "build.gradle").write_text(
+                    "jacocoTestCoverageVerification { violationRules { rule { limit { " + body + " } } } }")
+                policy = native_tdd_policy.resolve(root)
+                self.assertEqual(expected, policy["status"])
+                if expected == "ready":
+                    self.assertEqual(92, policy["threshold"])
+
     def test_target_integer_comments_and_quotes_preserve_the_gate(self):
         for key in ("coverage", "coverage_min", "line_coverage"):
             for value, expected in (("95 # required minimum", 95), ('"95" # target', 95),
@@ -256,7 +284,8 @@ class NativeTddPolicyTest(unittest.TestCase):
     def test_existing_jacoco_gate_is_accepted_only_when_its_project_threshold_is_sufficient(self):
         for command, config, content in (
             ("mvn test jacoco:check", "pom.xml", maven_config()),
-            ("gradle test jacocoTestCoverageVerification", "build.gradle", "counter = 'LINE'\nminimum = 0.92\n"),
+            ("gradle test jacocoTestCoverageVerification", "build.gradle",
+             "jacocoTestCoverageVerification { violationRules { rule { limit { counter = 'LINE'; minimum = 0.92 } } } }"),
         ):
             with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
                 workspace = Path(directory)

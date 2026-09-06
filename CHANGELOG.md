@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复 6 项已确认缺陷：Batch 执行 capsule 从上一批已验证检查点派生基线，真实 Single 写入、恢复和父验收使用同一范围；旧累计基线的后续批次回执不自动迁移，须在正确检查点重新建立并验证。
+- Gradle coverage 将指标和阈值绑定到同一 limit，只接受覆盖比率，拒绝 MISSEDCOUNT 等计数、跨 limit 拼接与不可解析的动态写法；Routing 和 Plan 在规范化前拒绝绝对根路径，避免 `/`、`\\` 扩大为整个工作区。
+- acquire、renew、move 统一核对完整租约归属，续租先校验两份记录再写入；错误来源不能释放其他任务工作区。Capsule 日志忽略非对象 JSON，保留后续有效创建确认；报告去重纳入阻塞原因和下一步，显示更新后的恢复指引。
+
 - Batch 完成门禁将子任务 routing 和真实 checkpoint delta 绑定冻结 capsule.scope；路径边界、删除、重命名和权限变化按 Git 差异复核，历史批次按各自检查点校验，不把前批累计改动误算为当前批次越界。
 - Batch 复用 Plan 的 verification argv 解析，逐项要求正式 delegate 验收中的新鲜成功 Evidence Receipt；漏跑、替换参数或非法命令不能完成，等价引号、不同回执顺序和额外有效检查保持兼容。
 - Evidence runner 从本次 JaCoCo 检查任务输出提取非空检查结果，并与命令、输出摘要和源码共同绑定；native 与 Trace 门禁拒绝仅 exit 0、SKIPPED、UP-TO-DATE、无数据、零类、仅生成报告及 stdout/stderr 中被降为警告的阈值违规。Gradle 使用 `--info --console=plain` 暴露检查输出；不读取旧报告补证据。
