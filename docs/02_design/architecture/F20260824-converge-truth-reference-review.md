@@ -98,3 +98,16 @@
 | [Anthropic run_eval](https://github.com/anthropics/skills/blob/main/skills/skill-creator/scripts/run_eval.py) | 保留真实工具事件与文字宣称的区分；不模拟正式宿主 bridge | 冻结 evaluator 预检仍返回 uncovered；本地回归与 Maven help 实验不计为真实宿主 Eval 或覆盖率达标 |
 
 复用现有命令解析、worker_status、revision 和逐项 final_acceptance，不增加字段、代理、循环或执行步骤。控制器保有写权和清场责任；终态只允许结束既有 worker，不能借清场重启业务。静态构建配置识别有明确边界，不实现 Maven/Gradle 解释器，也不把 ready 当作实际采集证明。
+
+## 2026-09-06 目标解析与租约恢复修复
+
+复用本会话审查中核对的 Skills.sh 分类、排行榜和原始材料。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用不变量和有限状态组合；沿用 unittest，不增加生成器依赖 | 目标加注释或配对引号不降阈值；缺值/非法/重复目标不回退。过期 × owner × 终态 × 清场组合验证持久状态和历史 worker 来源 |
+| [Eval Architect audit](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/audit.md) | 采用错误输入误放行与合法恢复误拒绝反例；不复制文本扫描作为行为证明 | 全部新增主回归先红后绿；过期重获不能假报 acquired，返回的有效期限必须来自真实磁盘记录 |
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) | 采用最低成本的真实脚本/落盘测试；不安装 Node harness 或调用模型 | lease CLI、Batch managed write 与 active attestation 走真实 helper；冻结正式 Eval 预检缺少 bridge 仍为 uncovered |
+| [Rstest performance-measurement](https://github.com/rstackjs/agent-skills/blob/main/skills/rstest-debugging/references/performance-measurement.md) | 暂不采用性能测量层，本轮验收是三项正确性修复 | 不新增计时字段或成本报告；本地回归耗时不解释为模型执行成本改善 |
+
+复用 target、run_id/writer_id、worker_owner_run_id 和既有 lease 文件。默认路径不增加动作；错误目标停止，过期租约要求显式恢复，Batch 终态接管只能延续清场。无新 schema、依赖、代理或第二套状态；不扩展完整 YAML 解释器。

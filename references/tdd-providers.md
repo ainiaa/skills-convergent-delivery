@@ -55,4 +55,6 @@ coverage 解析只识别实际入口、受支持的 `python -m` 和 Vitest launc
 
 Maven 静态解析只接受有效 POM 中 `build/plugins` 直接声明的 `org.jacoco:jacoco-maven-plugin`，及其 configuration 下 LINE/INSTRUCTION 的字面量 COVEREDRATIO 最低阈值。注释、仅在 pluginManagement/profile 内的声明、禁用检查或 default-cli 配置覆盖都不能据此返回 ready；继承、属性和动态配置需要有效配置证据，本解析器不展开 Maven effective model。Gradle 的行注释和块注释不计入阈值，静态识别不等于已验证整个构建脚本的执行语义。
 
+`quality-targets.yml` 的 coverage/coverage_min/line_coverage 目标仅接受一个 1..100 十进制整数字面量，可带配对单/双引号及由空白分隔的行尾注释。不展开复杂 YAML；已识别目标的缺值、非法值或重复声明（含不同别名）返回 `uncovered`、`argv=null`、`threshold=null`，不能回退或用 argv 掩盖错误。目标未声明时才使用既有默认规则；有效显式 argv 阈值的优先级不变。
+
 阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。暂不支持带 `--` 参数分隔符的 coverage 命令。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。

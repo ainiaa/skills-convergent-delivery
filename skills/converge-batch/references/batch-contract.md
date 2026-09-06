@@ -81,6 +81,8 @@ checkpoint 的真实 Git tree 必须等于 Source Receipt 的基线加逐文件�
 
 blocked/stopped 后仅允许将已登记的 working worker 状态更新为 completed/interrupted/blocked；控制器须先按公共清场协议取得对应宿主观测。下一动作继续查询待清场 worker，全部终结后返回 block，不恢复派发或业务执行。计划终态、worker 身份、Batch 业务状态、回执和历史阻塞原因保持不变；complete 仍完全不可改写。
 
+旧调度器已停止且 scheduler lease 过期后，blocked/stopped 可用 `--takeover` 转移 run_id/writer_id，先保留 working worker 再继续查询和记录清场。worker_owner_run_id 保留原派发来源，不能改成接管者；接管不改变计划终态或业务权限，未过期租约与缺少显式接管标志仍拒绝写入。
+
 最终 `final_acceptance` 的 criterion 列表从初始化起固定，不能添加、删除、替换、重排或重复。只有 evidence/result/freshness/source_fingerprint 可以在未通过时补充；各项可以在不同 revision 依次通过，已经通过的单项仍不可改写。
 
 计划 complete 时，每项 `final_acceptance[].evidence` 必须是 `evidence_contract.py run` 真实执行生成的 observed Evidence Receipt 对象，退出码为 0，回执来源和 fingerprint 有效，且 source 精确等于当前工作区相对最后 Batch baseline 的 Source Receipt；外层 source_fingerprint 也必须一致。文本、缺失、失败、篡改或旧源码回执均不能放行。最终源码仍必须对应最后 Batch 的已验证提交；各 Batch receipt 内的 evidence 摘要继续由正式 delegate state 和提交链复核，不能替代最终检查。

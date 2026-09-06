@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- coverage 目标支持整数、配对引号和行尾注释；已声明但非法、缺值或重复的目标返回 uncovered，不再静默回退为默认 85%。
+- Batch blocked/stopped 支持租约过期后的显式 owner 接管，保留原 worker 来源并允许后续清场落盘；仍禁止恢复业务或改写 worker 身份。
+- writer lease 同身份重试返回磁盘中两份有效租约的最早到期时间；过期租约明确阻塞，需续租或显式接管。获取 task lease 失败时保留原先已持有的 workspace lease。
 - coverage 预检拒绝 help/version、Maven fail-never 等不执行或不强制检查的命令；Maven 按 XML 结构校验直接声明的 JaCoCo 比率规则，注释、非生效位置和禁用配置不能冒充门禁，Gradle 注释也不再贡献阈值。
 - Batch 的 blocked/stopped 终态允许仅将既有 working worker 更新为终态，并继续查询待清场 worker；禁止恢复执行、替换身份或改写业务状态。
 - Batch 最终验收按项冻结已通过结果，允许剩余验收在后续 revision 补齐真实证据并完成计划。

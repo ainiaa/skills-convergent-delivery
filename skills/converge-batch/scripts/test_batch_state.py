@@ -198,6 +198,42 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_terminal_takeover_preserves_worker_provenance_and_allows_cleanup(self):
+        for status in ("blocked", "stopped"):
+            for outcome in ("completed", "interrupted", "blocked"):
+                with self.subTest(status=status, outcome=outcome), tempfile.TemporaryDirectory() as root:
+                    before = candidate(self.workspace)
+                    before["batches"][0].update(status="running", dispatch_id="dispatch-B1")
+                    register_worker(before, 0, "thread-1")
+                    before["status"] = status
+                    if status == "blocked": before["blocked_reason"] = "manual cleanup: thread-1"
+                    path = batch_state.write_state(root, before, -1)
+                    replacement = copy.deepcopy(before)
+                    replacement.update(revision=1, run_id="replacement-run", writer_id="replacement-writer")
+                    with self.assertRaises(ValueError):
+                        batch_state.write_state(root, replacement, 0, takeover=True)
+                    lease = batch_state.scheduler_lease_path(root, before["repo_id"], before["plan"]["plan_id"])
+                    record = json.loads(lease.read_text())
+                    record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                    lease.write_text(json.dumps(record))
+                    with self.assertRaises(ValueError):
+                        batch_state.write_state(root, replacement, 0)
+                    batch_state.write_state(root, replacement, 0, takeover=True)
+                    self.assertEqual(before["batches"], json.loads(path.read_text())["batches"])
+                    cleaned = copy.deepcopy(replacement)
+                    cleaned["revision"] = 2
+                    cleaned["batches"][0]["worker_status"] = outcome
+                    batch_state.write_state(root, cleaned, 1)
+                    self.assertEqual(cleaned, json.loads(path.read_text()))
+                    for mutation in ("status", "worker_ref", "worker_owner_run_id"):
+                        invalid = copy.deepcopy(cleaned)
+                        invalid["revision"] = 3
+                        if mutation == "status": invalid["status"] = "active"
+                        else: invalid["batches"][0][mutation] = "replacement"
+                        with self.assertRaises(ValueError):
+                            batch_state.write_state(root, invalid, 2, takeover=True)
+                    self.assertEqual(cleaned, json.loads(path.read_text()))
+
     def test_terminal_cleanup_can_only_finish_existing_workers(self):
         for status in ("blocked", "stopped"):
             for outcome in ("completed", "interrupted", "blocked"):

@@ -38,11 +38,18 @@ def scalar(content, names):
 
 
 def target_threshold(workspace, revision=None):
-    value = scalar(config_text(workspace, TARGET_FILE, revision), ("coverage", "coverage_min", "line_coverage"))
-    if value is None or not value.isdigit():
+    content = config_text(workspace, TARGET_FILE, revision)
+    values = re.findall(r"^[ \t]*(?:coverage|coverage_min|line_coverage)[ \t]*:([^\n]*)$", content, re.MULTILINE)
+    if not values:
         return None
-    candidate = int(value)
-    return candidate if 1 <= candidate <= 100 else None
+    # ponytail: parse literal target values only; extend YAML support when required.
+    match = re.fullmatch(r'''(?:"([0-9]{1,3})"|'([0-9]{1,3})'|([0-9]{1,3}))(?:[ \t]+#.*)?''', values[0].strip())
+    if len(values) != 1 or match is None:
+        raise ValueError("quality-targets.yml coverage must be one literal integer in 1..100")
+    candidate = int(next(value for value in match.groups() if value is not None))
+    if not 1 <= candidate <= 100:
+        raise ValueError("quality-targets.yml coverage must be one literal integer in 1..100")
+    return candidate
 
 
 def resolved_threshold(command_threshold, target):
@@ -216,7 +223,11 @@ def maven_gate_threshold(content):
 def resolve(workspace, *, revision=None):
     workspace = Path(workspace).expanduser().resolve()
     configured = scalar(config_text(workspace, COMMAND_FILE, revision), ("coverage",))
-    target = target_threshold(workspace, revision)
+    try:
+        target = target_threshold(workspace, revision)
+    except ValueError as error:
+        return {"status": "uncovered", "source": "quality-targets.yml", "argv": None,
+                "threshold": None, "threshold_source": "quality-targets.yml", "reason": str(error)}
     threshold_value, threshold_source = resolved_threshold(None, target)
     if configured:
         if SHELL_SYNTAX.search(configured):

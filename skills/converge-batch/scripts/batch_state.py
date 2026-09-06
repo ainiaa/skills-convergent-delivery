@@ -482,7 +482,8 @@ def validate_state(state):
             if worker_role != "controller-delegate":
                 raise ValueError("worker_role must be controller-delegate")
             require_string(worker_owner_run_id, "worker_owner_run_id")
-            if worker_status == "working" and worker_owner_run_id != state["run_id"]:
+            if worker_status == "working" and worker_owner_run_id != state["run_id"] \
+                    and status not in {"blocked", "stopped"}:
                 raise ValueError("working worker_owner_run_id must match the current run")
             if worker_status not in WORKER_STATUSES:
                 raise ValueError("worker_status is invalid")
@@ -559,6 +560,8 @@ def validate_transition(previous, candidate, *, takeover=False):
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
         if previous["status"] in {"blocked", "stopped"}:
+            if takeover:
+                expected.update(run_id=candidate["run_id"], writer_id=candidate["writer_id"])
             expected["batches"] = [dict(batch) for batch in previous["batches"]]
             for old, new in zip(expected["batches"], candidate["batches"]):
                 if old["worker_status"] == "working" and new["worker_status"] in TERMINAL_WORKER_STATUSES:

@@ -22,6 +22,36 @@ def maven_config(minimum="0.92"):
 
 
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_target_integer_comments_and_quotes_preserve_the_gate(self):
+        for key in ("coverage", "coverage_min", "line_coverage"):
+            for value, expected in (("95 # required minimum", 95), ('"95" # target', 95),
+                                    ("'95' # target", 95), ("1", 1), ("100 # maximum", 100)):
+                with self.subTest(key=key, value=value), tempfile.TemporaryDirectory() as directory:
+                    standard = Path(directory) / "docs/00_standards"
+                    standard.mkdir(parents=True)
+                    (standard / "test-commands.yml").write_text("coverage: pytest --cov=src\n")
+                    (standard / "quality-targets.yml").write_text(f"{key}: {value}\n")
+                    policy = native_tdd_policy.resolve(directory)
+                    self.assertEqual("ready", policy["status"])
+                    self.assertEqual(expected, policy["threshold"])
+                    self.assertEqual(f"--cov-fail-under={expected}", policy["argv"][-1])
+
+    def test_invalid_or_ambiguous_target_never_falls_back_to_default(self):
+        for content in ("coverage: 101", "coverage: 0", "coverage: -1", "coverage: 95.5",
+                        "coverage: invalid", "coverage:", "coverage: # missing", "coverage: '95",
+                        "coverage: 95#not-a-comment", 'coverage: "95 # not numeric"',
+                        "coverage: 95\ncoverage_min: 90", "coverage: 95\ncoverage: 95"):
+            for command in ("pytest --cov=src", "pytest --cov=src --cov-fail-under=95"):
+                with self.subTest(content=content, command=command), tempfile.TemporaryDirectory() as directory:
+                    standard = Path(directory) / "docs/00_standards"
+                    standard.mkdir(parents=True)
+                    (standard / "test-commands.yml").write_text(f"coverage: {command}\n")
+                    (standard / "quality-targets.yml").write_text(content + "\n")
+                    policy = native_tdd_policy.resolve(directory)
+                    self.assertEqual("uncovered", policy["status"])
+                    self.assertIsNone(policy["argv"])
+                    self.assertIn("quality-targets.yml", policy["reason"])
+
     def test_informational_commands_cannot_supply_coverage_evidence(self):
         for command in (
             "mvn --help jacoco:check", "mvn -h jacoco:check", "mvn --version jacoco:check",

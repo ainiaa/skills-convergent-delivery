@@ -17,6 +17,60 @@ SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
+    def test_same_owner_retry_reports_the_persisted_pair_expiry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+            self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+            paths = delivery_lease.lease_paths(root, "/repo/common.git", owner["workspace"], owner["task_key"])
+            for name, path in paths.items():
+                record = json.loads(path.read_text())
+                record["lease_expires_at"] = "2099-01-01T00:00:00Z" if name == "workspace" else "2099-01-02T00:00:00Z"
+                path.write_text(json.dumps(record))
+            before = {name: path.read_bytes() for name, path in paths.items()}
+            retry = self.run_lease(root, "acquire", **owner)
+            self.assertEqual(0, retry.returncode, retry.stderr)
+            self.assertEqual("2099-01-01T00:00:00Z", json.loads(retry.stdout)["lease_expires_at"])
+            self.assertEqual(before, {name: path.read_bytes() for name, path in paths.items()})
+
+    def test_expired_same_owner_retry_blocks_until_renewed(self):
+        for expired in (("workspace",), ("task",), ("workspace", "task")):
+            with self.subTest(expired=expired), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                paths = delivery_lease.lease_paths(root, "/repo/common.git", owner["workspace"], owner["task_key"])
+                for name in expired:
+                    record = json.loads(paths[name].read_text())
+                    record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                    paths[name].write_text(json.dumps(record))
+                before = {name: path.read_bytes() for name, path in paths.items()}
+                retry = self.run_lease(root, "acquire", **owner)
+                self.assertEqual(2, retry.returncode, retry.stdout)
+                self.assertTrue(json.loads(retry.stdout)["status"].endswith("_expired"))
+                self.assertEqual(before, {name: path.read_bytes() for name, path in paths.items()})
+                self.assertEqual(0, self.run_lease(root, "renew", **owner).returncode)
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                proof = delivery_lease.active_lease_attestation(
+                    paths, "/repo/common.git", owner["workspace"], owner["task_key"], owner["run_id"], owner["writer_id"])
+                self.assertEqual(owner["run_id"], proof["run_id"])
+
+    def test_expired_acquire_requires_explicit_takeover(self):
+        for replacement in ("run-1", "run-2"):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "lease.json"
+                original = delivery_lease.make_record("workspace", "/repo", "/repo/a", "task", "run-1", "writer-1", 7200)
+                original["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                path.write_text(json.dumps(original))
+                wanted = delivery_lease.make_record("workspace", "/repo", "/repo/a", "task", replacement, "writer-1", 7200)
+                status, _ = delivery_lease.acquire_one(path, wanted, takeover=False)
+                self.assertEqual("expired", status)
+                self.assertEqual(original, json.loads(path.read_text()))
+                status, saved = delivery_lease.acquire_one(path, wanted, takeover=True)
+                self.assertEqual("taken_over", status)
+                self.assertEqual(saved, json.loads(path.read_text()))
+                self.assertFalse(delivery_lease.is_expired(saved))
+
     def test_release_requires_a_valid_determinate_result_for_every_runner(self):
         launch = freeze_launch(profile(
             runner_id="codex-exec-v1",

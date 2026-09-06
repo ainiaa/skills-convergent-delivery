@@ -51,6 +51,8 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 这不是针对恶意篡改本地文件、宿主或调用链的安全承诺。不为恶意篡改额外引入签名服务、后台守护、平行日志或第二状态；当前范围内优先让正常控制路径不能因模型自述而放行。若未来需要对抗恶意来源，先由宿主提供可验证 provenance，再单独设计和授权。
 
+writer lease 的同身份 acquire 重试不续租，只返回两份已持有租约中最早的真实到期时间。任一租约已过期时返回 blocked_*_expired；原 owner 可显式 renew，或在确认旧执行停止后显式 takeover。task lease 获取失败不能删除此前已持有的 workspace lease；本次新获取的 workspace lease 仍按原有回滚规则释放。
+
 ## 1.2 显式自治交付
 
 用户明确要求闭环执行时，`autonomy_begin.py` 先创建对应运行模式的不可变 Controller Snapshot，再在内存中冻结并 arm Schema v11，取得 writer lease 后一次写入唯一 active run；创建失败必须释放刚取得的 lease，并确认唯一成功回执 `{"status":"released"}`，否则输出 lease cleanup 诊断，不能留下 v10/v11 之间的活跃状态窗口。没有该 active run，Hook 必须视为普通任务，不能假定安装 Skill 就会续跑。`autonomy_gate.py` 只读该状态并返回一个 Runtime Action；它不会执行模型文本、推进业务状态或以 DONE 字样放行。Codex Stop Hook 只在 active run 且取得 `session_id` 时用 `codex queue` 将这个唯一 action 投递回同一 task，并以 state path/stage/action 的私有回执保证元数据 revision 不会重新投递同一动作。投递失败、缺少 session 或重复 Stop 无进展时不重投，而是确定性写为 `blocked/no_progress` 并释放 lease。Claude Code 2.1.246+ Stop Hook 直接返回带同一 action 的 `decision:block`，由宿主继续当前会话，不能从 Hook 另起 `--resume` 进程。控制器执行后再以新状态重新裁决，不能把完整流程塞回下一段 prompt；native 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主上限。active run 未到 `complete|blocked` 时，控制器不得输出 final。安装必须显式使用 `bash install.sh --target <codex|claude> --autonomy`，可用 `--autonomy-uninstall` 精确撤销；未通过本机预检的宿主仍走普通模式。无进展、无效状态、多个 active run 或权限边界必须成为有证据的 `blocked`，不能无限重试。详见 [自治 Stop Hook 适配](runtime-adapters.md)。

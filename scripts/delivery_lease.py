@@ -173,7 +173,7 @@ def acquire_one(path, record, *, takeover):
             return "acquired", record
 
         existing = read_record(path)
-        if same_owner(existing, record["run_id"], record["writer_id"]):
+        if same_owner(existing, record["run_id"], record["writer_id"]) and not is_expired(existing):
             return "already_acquired", existing
         if not is_expired(existing):
             return "active", existing
@@ -202,13 +202,13 @@ def acquire(arguments, paths, repo, workspace):
     workspace_record = make_record(
         "workspace", repo, workspace, arguments.task_key, run_id, writer_id, arguments.ttl_seconds
     )
-    workspace_result, holder = acquire_one(
+    workspace_result, workspace_holder = acquire_one(
         paths["workspace"], workspace_record, takeover=arguments.takeover
     )
     if workspace_result in {"active", "expired"}:
         payload(
             f"blocked_workspace{('_expired' if workspace_result == 'expired' else '')}",
-            holder=holder,
+            holder=workspace_holder,
             recommended_action="use an independent git worktree or explicitly take over an expired lease",
         )
         return 2
@@ -218,7 +218,8 @@ def acquire(arguments, paths, repo, workspace):
     )
     task_result, holder = acquire_one(paths["task"], task_record, takeover=arguments.takeover)
     if task_result in {"active", "expired"}:
-        remove_if_owned(paths["workspace"], run_id, writer_id)
+        if workspace_result != "already_acquired":
+            remove_if_owned(paths["workspace"], run_id, writer_id)
         payload(
             f"blocked_task{('_expired' if task_result == 'expired' else '')}",
             holder=holder,
@@ -230,7 +231,9 @@ def acquire(arguments, paths, repo, workspace):
         "acquired",
         run_id=run_id,
         writer_id=writer_id,
-        lease_expires_at=task_record["lease_expires_at"],
+        lease_expires_at=min(
+            (workspace_holder, holder), key=lambda item: parse_timestamp(item["lease_expires_at"])
+        )["lease_expires_at"],
         state_root=str(Path(arguments.root).expanduser().resolve()),
     )
     return 0
