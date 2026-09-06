@@ -11,7 +11,111 @@ from unittest.mock import patch
 import evidence_contract
 
 
+def pit_output(generated=2, killed=2, outcome='SURVIVED'):
+    statuses = {key: 0 for key in ('SURVIVED', 'TIMED_OUT', 'NON_VIABLE', 'MEMORY_ERROR',
+                                  'NOT_STARTED', 'STARTED', 'RUN_ERROR', 'NO_COVERAGE')}
+    statuses[outcome] = generated - killed
+    return (f'>> KILLED {killed} ' + ' '.join(f'{key} {count}' for key, count in statuses.items()) +
+            f'\n>> Generated {generated} mutations Killed {killed} (100%)\n>> Ran 3 tests (1.5 tests per mutation)\n')
+
+
 class EvidenceContractTest(unittest.TestCase):
+    def test_pit_requires_a_scoped_nonempty_executed_campaign(self):
+        from tdd_impact_guard import mutation_receipt
+        tool = self.workspace / 'mvn'
+        argv = [str(tool), 'org.pitest:pitest-maven:mutationCoverage', '-DtargetTests=PaymentTest']
+        cases = [(pit_output(), [], True), ('', [], False), (pit_output(0, 0), [], False),
+                 (pit_output().replace('Ran 3', 'Ran 0'), [], False),
+                 (pit_output(), ['-Dpit.dryRun=true'], False), (pit_output(), ['-DwithHistory'], False),
+                 (pit_output(), ['-DtargetTests=OtherTest'], False)]
+        cases += [(pit_output(2, 1, outcome), [], False) for outcome in
+                  ('SURVIVED', 'TIMED_OUT', 'NON_VIABLE', 'RUN_ERROR', 'NO_COVERAGE', 'NOT_STARTED')]
+        for output, extra, expected in cases:
+            with self.subTest(output=output, extra=extra):
+                tool.write_text(f'#!{sys.executable}\nprint({output!r})\n')
+                tool.chmod(0o700)
+                receipt = evidence_contract.run_evidence(self.workspace, self.baseline, argv + extra)
+                value = {'tool': 'mvn', 'receipt': receipt}
+                if expected:
+                    self.assertTrue(mutation_receipt(value, receipt['source'], 'PaymentTest'))
+                    with self.assertRaisesRegex(ValueError, 'mutation'):
+                        mutation_receipt(value, receipt['source'], 'OtherTest')
+                else:
+                    with self.assertRaisesRegex(ValueError, 'mutation'):
+                        mutation_receipt(value, receipt['source'], 'PaymentTest')
+
+    def test_test_summary_counts_execution_not_collection_or_skips(self):
+        cases = [('unittest', 'Ran 0 tests in 0.01s\nOK', False),
+                 ('unittest', 'Ran 2 tests in 0.01s\nOK (skipped=2)', False),
+                 ('unittest', 'Ran 2 tests in 0.01s\nOK (skipped=1)', True),
+                 ('pytest', 'collected 2 items\n2 skipped in 0.01s', False),
+                 ('pytest', '1 passed, 1 skipped in 0.01s', True),
+                 ('mvn', 'Tests run: 0, Failures: 0, Errors: 0, Skipped: 0', False),
+                 ('mvn', 'Tests run: 2, Failures: 0, Errors: 0, Skipped: 1', True),
+                 ('jest', 'Tests: 2 skipped, 2 total', False),
+                 ('vitest', ' Tests  2 passed (2)', True),
+                 ('gradle', '2 tests completed, 2 skipped', False)]
+        for runner, output, expected in cases:
+            with self.subTest(runner=runner, output=output):
+                argv = [sys.executable, '-m', runner] if runner == 'unittest' else [runner]
+                result = evidence_contract.test_execution_result(argv, output.encode(), b'')
+                self.assertEqual(expected, bool(result))
+
+    def test_closure_graph_uses_indexed_files_and_caller_edges(self):
+        tool = self.workspace / 'codegraph'
+        (self.workspace / 'caller.py').write_text('pass\n')
+        chains = [{'id': 'chain', 'entrypoints': ['seed.txt'], 'callers': ['caller.py']}]
+        for mode in ('good', 'unrelated', 'missing', 'stale', 'malformed', 'bad-edge'):
+            with self.subTest(mode=mode):
+                tool.write_text(f'#!{sys.executable}\n' + f'mode = {mode!r}\n' + '''import json, sys
+from pathlib import Path
+command = sys.argv[1]
+if command == 'status':
+    print(json.dumps({'initialized': True, 'lastIndexed': 'now', 'projectPath': str(Path.cwd()),
+        'pendingChanges': {'added': 0, 'modified': int(mode == 'stale'), 'removed': 0},
+        'worktreeMismatch': None, 'index': {'reindexRecommended': False}}))
+elif command == 'files':
+    print(json.dumps(None if mode == 'malformed' else [] if mode == 'missing' else
+                     [{'path': 'seed.txt'}, {'path': 'caller.py'}]))
+elif command == 'callers':
+    print(json.dumps({'callers': [None] if mode == 'bad-edge' else [] if mode == 'unrelated' else
+                     [{'filePath': 'caller.py', 'kind': 'file', 'name': 'caller.py', 'startLine': 1}]}))
+else: print('unrelated successful explore output')
+''')
+                tool.chmod(0o700)
+                query = evidence_contract.closure_graph_request(chains)
+                receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+                                                         [str(tool), 'explore', query])
+                self.assertEqual(mode == 'good', bool(receipt.get('graph_check')))
+                if mode == 'good':
+                    self.assertEqual(receipt, evidence_contract.require_graph_execution(receipt, query))
+
+    def test_graph_json_shapes_fail_closed_without_raw_exceptions(self):
+        tool = self.workspace / 'codegraph'
+        for status in ([], None, 1, 'status', {'index': []}):
+            with self.subTest(status=status):
+                tool.write_text(f'#!{sys.executable}\nimport json, sys\n'
+                                f'print("ok" if sys.argv[1] == "explore" else json.dumps({status!r}))\n')
+                tool.chmod(0o700)
+                receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+                    [str(tool), 'explore', 'CodeGraph impact chains: entrypoint:demo'])
+                self.assertNotIn('graph_check', receipt)
+
+    def test_secondary_graph_timeout_cleans_up_descendants(self):
+        tool = self.workspace / 'codegraph'
+        marker = self.workspace / 'late-write.txt'
+        child = f'import time;from pathlib import Path;time.sleep(1.4);Path({str(marker)!r}).write_text("late")'
+        tool.write_text(f'#!{sys.executable}\nimport subprocess, sys, time\n'
+                        'if sys.argv[1] == "explore": print("ok")\n'
+                        f'else:\n subprocess.Popen([sys.executable, "-c", {child!r}])\n time.sleep(10)\n')
+        tool.chmod(0o700)
+        receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+            [str(tool), 'explore', 'CodeGraph impact chains: entrypoint:demo'], timeout_seconds=.5)
+        self.assertNotIn('graph_check', receipt)
+        time.sleep(1.6)
+        self.assertFalse(marker.exists(), 'secondary query left a background writer')
+        self.assertEqual(receipt['source'], evidence_contract.workspace_source(self.workspace, self.baseline))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.workspace = Path(self.temporary.name)
@@ -209,8 +313,16 @@ class EvidenceContractTest(unittest.TestCase):
 
     def test_cleanup_failure_cannot_issue_an_evidence_receipt(self):
         with patch('codex_exec_runner._terminate_process', side_effect=PermissionError('cleanup denied')):
-            with self.assertRaises(PermissionError):
+            with self.assertRaises(evidence_contract.EvidenceCleanupError) as failure:
                 evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', 'pass'])
+            self.assertIsInstance(failure.exception.__cause__, PermissionError)
+
+    def test_secondary_cleanup_failure_cannot_be_downgraded_to_missing_graph(self):
+        with patch.object(evidence_contract, '_run_command', side_effect=[
+                (0, b'ok', b''), evidence_contract.EvidenceCleanupError('cleanup unknown')]):
+            with self.assertRaisesRegex(evidence_contract.EvidenceCleanupError, 'cleanup unknown'):
+                evidence_contract.run_evidence(self.workspace, self.baseline,
+                    ['codegraph', 'explore', 'CodeGraph impact chains: entrypoint:demo'])
 
 
     def test_cli_executes_the_command_without_a_shell(self):

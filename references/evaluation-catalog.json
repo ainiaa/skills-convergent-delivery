@@ -126,6 +126,52 @@
       ],
       "source": "docs/04_testing/defects/B20260824-132900-converge-document-execution-defect.md",
       "scenario": "A selector crash or invalid output must be reported as an execution error and must not preserve a perfect trigger F1."
+    },
+    {
+      "id": "zero-test-green-borrows-unrelated-results",
+      "control_surfaces": [
+        "evidence.completion",
+        "tdd.selector"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "Zero or wholly skipped tests and option values masquerading as selectors must not pass GREEN. Unrelated selected tests must not supply an empty target count."
+    },
+    {
+      "id": "mutation-command-success-without-killed-mutants",
+      "control_surfaces": [
+        "evidence.completion",
+        "tdd.mutation"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "Echo, unknown tools, zero mutations, surviving or inconclusive mutants and mismatched campaign selectors must not satisfy mutation evidence."
+    },
+    {
+      "id": "plan-and-closure-graph-observation-gap",
+      "control_surfaces": [
+        "plan.validation",
+        "completion.gate",
+        "evidence.graph"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "Plan and final closure must reject self-attested hashes and successful explore output without current structured file and caller-edge observations."
+    },
+    {
+      "id": "secondary-graph-query-leaves-background-writer",
+      "control_surfaces": [
+        "evidence.freshness",
+        "evidence.cleanup"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "A timed-out graph subquery must not leave descendants writing after a receipt; unconfirmed cleanup must prevent receipt issuance."
+    },
+    {
+      "id": "malformed-graph-json-escapes-validation",
+      "control_surfaces": [
+        "evidence.graph",
+        "evidence.validation"
+      ],
+      "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
+      "scenario": "Valid JSON with invalid object or nested element shapes must return no graph proof without an unhandled AttributeError."
     }
   ]
 }

@@ -33,7 +33,7 @@
     }
   ],
   "final_acceptance": ["integrated observable behavior"],
-  "closure_matrix": {"schema_version": 3, "chains": [{"id": "main", "description": "affected control chain", "entrypoints": ["scripts/example.py"], "callers": ["external"], "coverage": {"input": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "freeze": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "effect": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "receipt": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "recovery": {"status": "covered", "acceptance": ["integrated observable behavior"]}}}], "graph_receipt": {"schema_version": 1, "tool": "codegraph", "source_fingerprint": "<baseline source sha256>", "chains_fingerprint": "<chain projection sha256>", "receipt_fingerprint": "<receipt sha256>"}},
+  "closure_matrix": {"schema_version": 3, "chains": [{"id": "main", "description": "affected control chain", "entrypoints": ["scripts/example.py"], "callers": ["external"], "coverage": {"input": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "freeze": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "effect": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "receipt": {"status": "covered", "acceptance": ["integrated observable behavior"]}, "recovery": {"status": "covered", "acceptance": ["integrated observable behavior"]}}}], "graph_receipt": {"schema_version": 1, "tool": "codegraph", "source_fingerprint": "<baseline source sha256>", "chains_fingerprint": "<chain projection sha256>", "evidence": "<observed Evidence Receipt with graph_check>", "receipt_fingerprint": "<receipt sha256>"}},
   "decisions": [{
     "id": "D1",
     "status": "resolved",
@@ -155,3 +155,5 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit \
 每个 task 新增但不属于自身 `owned_paths` 的变更列入 `task_scope_drift`；所有 task 之外的净新增变更列入 `scope_drift`。只有源码链闭合到当前工作区、所有任务为 `DONE`、两类 drift 均为空，并且每条计划级 `final_acceptance` 都有绑定当前源码指纹的新鲜通过证据时，才能交付。
 
 `verification` 中每条字符串按 POSIX shell 引号规则拆分为 argv，仅比较参数，不执行或展开 shell 语法。等价引号和分隔空白不影响匹配，参数值及顺序必须一致；多条命令的回执顺序不限。非法引号、空命令或空参数不能冻结；需要 shell 语法时显式冻结 `bash -c '...'` 或项目脚本入口，回执必须来自相同 argv。
+
+规划图回执的 `evidence` 必须是公共 Evidence runner 实际执行 `closure_graph_request(chains)` 所得的对象，含新鲜索引与实际调用关系的 `graph_check`，并匹配冻结基线 Source Receipt；示例中的字符串只表示该对象的插入位置。单独计算 chains/source/receipt 哈希不构成图证明。最终 closure gate 复用相同校验，对当前源码重新执行绑定 allowed_paths 与 scope_fingerprint 的派生查询；不能拿规划时的旧观察完成交付。输入形状、静态图能力与数量/超时边界见根目录 `references/tdd-providers.md` 的“非空执行与统一图证据”。

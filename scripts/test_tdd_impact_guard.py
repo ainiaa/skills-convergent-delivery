@@ -82,6 +82,44 @@ def trace(workspace, baseline, *, risks=None):
 
 
 class TddImpactGuardTest(unittest.TestCase):
+    def test_zero_or_skipped_tests_cannot_satisfy_green(self):
+        # Real unittest discovery of an importable module without any TestCase.
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, '-m', 'unittest', 'json.tool'])
+        with self.assertRaisesRegex(ValueError, 'pass|executed'):
+            tdd_impact_guard.green_receipts({'receipts': [receipt, receipt]},
+                                          receipt['source'], 'json.tool', 2)
+        tool = self.workspace / 'pytest'
+        for output in ('', '1 skipped in 0.01s', 'no tests ran in 0.01s'):
+            tool.write_text(f'#!{sys.executable}\nprint({output!r})\n')
+            receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+                                                     [str(tool), 'tests/test_payment.py'])
+            with self.assertRaisesRegex(ValueError, 'executed'):
+                tdd_impact_guard.green_receipts({'receipts': [receipt, receipt]},
+                                              receipt['source'], 'tests/test_payment.py', 2)
+
+    def test_output_option_value_is_not_a_test_selector(self):
+        for option in ('--junitxml', '--basetemp', '-o'):
+            self.assertFalse(tdd_impact_guard.runner_selector_matches(
+                ['pytest', option, 'tests/test_payment.py'], 'tests/test_payment.py'))
+
+    def test_unrelated_tests_cannot_supply_a_zero_target_execution_count(self):
+        (self.workspace / 'implementation.txt').write_text('implemented\n')
+        receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+            [sys.executable, '-m', 'unittest', 'json.tool', 'test_cases.Tests.test_payment_normal'])
+        self.assertEqual(0, receipt['exit_code'])
+        with self.assertRaisesRegex(ValueError, 'selector'):
+            tdd_impact_guard.green_receipts({'receipts': [receipt, receipt]}, receipt['source'], 'json.tool', 2)
+        self.assertFalse(tdd_impact_guard.runner_selector_matches(
+            ['pytest', 'tests/empty.py', 'tests/other.py'], 'tests/empty.py'))
+
+    def test_echo_cannot_satisfy_mutation(self):
+        receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+                                                 ['/bin/echo', 'payment-normal'])
+        with self.assertRaisesRegex(ValueError, 'mutation'):
+            tdd_impact_guard.mutation_receipt({'tool': 'echo', 'receipt': receipt},
+                                            receipt['source'], 'payment-normal')
+
     def test_native_candidate_can_be_refreshed_before_immutable_completion(self):
         from delivery_next import validate_state
         from delivery_state import validate_transition
@@ -220,13 +258,16 @@ class TddImpactGuardTest(unittest.TestCase):
             check=True,
         )
         (self.workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
-        for name in ("codegraph", "coverage", "mutmut", "pytest", "python"):
+        for name in ("codegraph", "coverage", "mvn", "pytest", "python"):
             tool = self.workspace / name
-            tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            tool.write_text("#!/bin/sh\necho '1 passed in 0.01s'\n", encoding="utf-8")
             tool.chmod(0o755)
+        from test_evidence_contract import pit_output
+        (self.workspace / 'mvn').write_text(f'#!{sys.executable}\nprint({pit_output()!r})\n')
         (self.workspace / "test_cases.py").write_text(
             "import os, unittest\nfrom pathlib import Path\n"
             "class Tests(unittest.TestCase):\n"
+            "    def test_always_fails(self): self.fail('fixture assertion')\n"
             "    def test_payment_normal(self):\n"
             "        print(os.environ.get('TRACE_RUN', 'fixture'))\n"
             "        self.assertTrue(Path('implementation.txt').is_file())\n"
@@ -274,9 +315,9 @@ else:
 
     def mutation(self, selector):
         return {
-            "tool": "mutmut",
+            "tool": "mvn",
             "receipt": evidence_contract.run_evidence(
-                self.workspace, self.baseline, [str(self.workspace / "mutmut"), selector]
+                self.workspace, self.baseline, [str(self.workspace / "mvn"), "org.pitest:pitest-maven:mutationCoverage", "-DtargetTests=" + selector]
             ),
         }
 
@@ -364,7 +405,7 @@ else:
         for name in ("mvn", "mvnw"):
             with self.subTest(runner=name):
                 tool = self.workspace / name
-                tool.write_text("#!/bin/sh\ntest -f implementation.txt\n", encoding="utf-8")
+                tool.write_text("#!/bin/sh\necho 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'\ntest -f implementation.txt\n", encoding="utf-8")
                 tool.chmod(0o755)
                 value = self.trace()
                 test = value["acceptance"][0]["tests"][0]
@@ -615,10 +656,11 @@ else:
 
     def test_red_receipt_must_precede_the_final_trace_source(self):
         value = self.trace()
+        value["acceptance"][0]["tests"][0]["selector"] = 'test_cases.Tests.test_always_fails'
         value["acceptance"][0]["tests"][0]["red"] = {
             "receipt": evidence_contract.run_evidence(
                 self.workspace, self.baseline,
-                [sys.executable, "-m", "unittest", "test_cases.Tests.test_payment_normal", "test_cases.Tests.missing"],
+                [sys.executable, "-m", "unittest", "test_cases.Tests.test_always_fails"],
             ),
             "failure_class": "assertion",
         }

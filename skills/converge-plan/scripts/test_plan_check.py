@@ -119,6 +119,12 @@ def task(task_id, paths, depends_on=None, execution="auto", provider=None):
     }
 
 
+def graph_evidence(source, chains, tool):
+    # Plan schema fixture, independent of an installed graph and its index.
+    from test_delivery_next import trace_receipt
+    return trace_receipt(source, [tool, 'explore', evidence_contract.closure_graph_request(chains)])
+
+
 def graph_receipt(source, chains, tool="codegraph"):
     projection = [
         {key: chain[key] for key in ("id", "entrypoints", "callers")}
@@ -128,6 +134,7 @@ def graph_receipt(source, chains, tool="codegraph"):
         "schema_version": 1,
         "tool": tool,
         "source_fingerprint": source["source_fingerprint"],
+        "evidence": graph_evidence(source, chains, tool),
         "chains_fingerprint": hashlib.sha256(
             json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -211,6 +218,15 @@ def final_evidence(source):
 
 
 class PlanCheckTest(unittest.TestCase):
+    def test_plan_cannot_accept_a_self_attested_graph_hash(self):
+        value = plan([task('T1', ['src'])])
+        receipt = value['closure_matrix']['graph_receipt']
+        receipt.pop('evidence', None)
+        receipt['receipt_fingerprint'] = canonical_fingerprint({
+            key: item for key, item in receipt.items() if key != 'receipt_fingerprint'})
+        result = self.run_check('validate', value)
+        self.assertNotEqual(0, result.returncode)
+
     def test_plan_rejects_absolute_root_before_normalizing_scope(self):
         for path in ("/", "///", "\\", "\\\\", "/tmp", "../outside"):
             with self.subTest(path=path):

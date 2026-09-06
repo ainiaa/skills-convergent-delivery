@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复本轮五项证据缺陷：GREEN 要求实际非空测试汇总，pytest 输出选项值不能冒充 selector；mutation 要求作用域绑定的 PIT 执行和 KILLED 结果，echo/未知工具/零变异/异常变异均不能放行。
+- Plan 和全量收口与 TDD 共用结构化图证据校验，核对新鲜索引、真实路径、调用边和遗漏 caller；图子查询统一进程组清理及总超时，畸形 JSON 受控失败，清场不明时不签发回执。
+- 兼容性收紧：旧 GREEN、mutation 和 Plan 图回执缺少执行证明时必须重新采集。未知 mutation 工具及无法识别的测试汇总保持 uncovered；不自动安装工具或降低门槛。
+
 - 修复本轮八项已知问题：测试 selector 只识别实际 runner 与选择语法；CodeGraph 增加当前索引、唯一符号与直接边的结构化观察；native 拒绝独立旧 coverage 报告和追加历史数据。
 - 普通和自治 run 统一 Git common-dir 身份，workspace 写锁跨 repo 别名共享并兼容旧租约；Claude 与 Codex 共用无进展收束；blocked 报告可独立保存去重历史。
 - 安装升级先检查本地改动与候选必需文件，再切换源码；tag/release 后可回到 latest/main，非快进和不完整候选不替换当前安装。正式宿主 Eval 仍为 uncovered。

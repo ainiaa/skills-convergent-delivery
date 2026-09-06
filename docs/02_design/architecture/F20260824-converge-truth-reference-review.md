@@ -150,3 +150,18 @@
 | [JaCoCo CheckMojo](https://github.com/jacoco/jacoco/blob/master/jacoco-maven-plugin/src/org/jacoco/maven/CheckMojo.java) / [ReportTask](https://github.com/jacoco/jacoco/blob/master/org.jacoco.ant/src/org/jacoco/ant/ReportTask.java) | 采用真实加载、分析和检查结果输出；不读取旧 XML 报告冒充本次检查，不新增通用 report adapter 或第二份证据文件 | Evidence runner 的真实子进程输出协议测试；Gradle 正常/跳过的离线实验。Maven 为原始实现核对与输出协议回归，本机未执行完整 Maven JaCoCo 集成 |
 
 决定权、状态写权和清场责任仍在现有控制器。复用 Source Receipt、checkpoint、acceptance receipts 和进程超时；仅 JaCoCo Evidence 增加有界的检查摘要，普通任务不增加命令、文件或代理。未知输出保守拒绝，要求可识别 INFO/plain 输出后重跑，不自动采样重试。当前仓库原生 coverage 配置与正式 Eval 宿主桥接仍缺失；本地回归和临时 Java 实验不计为 Suite 覆盖率达标或正式 Eval。
+
+
+## 2026-09-06 五项执行证据缺陷修复
+
+沿用本会话 Skills.sh 发现记录，本轮重核原始 verifier/mutation Skill 及 PIT 官方实现。
+
+| 参考 | 采用 / 不采用 / 原因 | 对应行为测试 |
+|---|---|---|
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用正确结果、投机绕过、缺损证据的成对验证；不引入 Harbor，已有 unittest 和 runner 足够 | 零测试、全跳过、输出参数冒充 selector、echo 冒充 mutation 被拒绝；真实 unittest 与正常协议结果仍通过 |
+| [Trail of Bits variant-analysis](https://github.com/trailofbits/skills/blob/master/plugins/variant-analysis/skills/variant-analysis/SKILL.md) | 采用同根因跨调用点检查；不增加代理或独立状态 | Plan 与 closure 同时拒绝仅哈希和没有 graph_check 的证据 |
+| [Trail of Bits mutation-testing](https://github.com/trailofbits/skills/blob/master/plugins/mutation-testing/skills/mutation-testing/SKILL.md) | 采用区分生成、执行、捕获、存活和超时；不照搬 mewt/muton，优先本项目 JVM 使用者的 PIT 接口 | 正数 KILLED 结果通过；零变异、存活、超时、运行错误、未覆盖、未执行、重复作用域全部拒绝 |
+| [PIT Maven](https://pitest.org/quickstart/maven/) 与 [MutationStatistics.java](https://github.com/hcoles/pitest/blob/master/pitest-entry/src/main/java/org/pitest/mutationtest/statistics/MutationStatistics.java) | 采用官方目标测试参数和实际输出语义；不把汇总 detected 当作全部 KILLED，额外核对状态计数；不安装依赖 | `test_pit_requires_a_scoped_nonempty_executed_campaign` 用真实子进程承载协议夹具；不声称已在真实 JVM 上跑 PIT |
+| Trail of Bits property-based-testing（上文已核实） | 采用有限非法类型/结果变体；不增加 Hypothesis | 异常 JSON 无原始 AttributeError；图查询超时后后代进程不能继续写文件 |
+
+复用现有 Evidence v2 的可选观察字段和唯一 runner，不增加代理、循环或运行时状态文件。图查询主命令和子查询共享显式超时；无法确认清场时抛出独立清场错误，不能降级为普通图不可用后签发成功回执。简单任务仅解析已有命令输出，图查询追加确定性验证；不重复 Provider 的实现流程。PIT 当前仅支持单个明确 scope 的完整成功 campaign；其他工具无适配即 uncovered，不伪造通用变异分数。正式宿主 Eval bridge 缺失保持 uncovered。

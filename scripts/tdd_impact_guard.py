@@ -81,6 +81,8 @@ def observed_receipt(value, name, source, selector, *, passing, test_command=Tru
         if observed["source"] != source:
             raise ValueError(f"{name} must bind the final trace source")
         raise ValueError(f"{name} must pass")
+    if passing and test_command and not observed.get('test_check'):
+        raise ValueError(f"{name} must prove nonempty executed tests")
     return observed
 
 
@@ -97,21 +99,54 @@ def runner_selector_matches(argv, selector):
         return False
     runner = coverage_runner(argv)
     if runner in {"mvn", "mvnw"}:
-        return f"-Dtest={selector}" in argv and any(item in argv for item in ("test", "package", "verify", "install"))
+        return [item for item in argv if item.startswith("-Dtest=")] == [f"-Dtest={selector}"] and any(item in argv for item in ("test", "package", "verify", "install"))
     if selector not in argv:
         return False
     index = argv.index(selector)
     if runner in {"pytest", "py.test"}:
-        return not selector.startswith('-') and (
-            "::" in selector or "/" in selector or selector.endswith('.py')
-            or index > 0 and argv[index - 1] in {"-k", "--keyword"}
-        )
+        arguments = argv[3:] if len(argv) > 2 and argv[1] == '-m' else argv[1:]
+        values = {'-k', '--keyword', '-m', '-c', '-o', '--override-ini', '--junitxml', '--junit-xml',
+                  '--basetemp', '--rootdir', '--confcutdir', '--import-mode', '--color', '--capture',
+                  '--tb', '--maxfail', '--cov', '--cov-report', '--cov-config', '--cov-fail-under',
+                  '--durations', '--durations-min', '-n', '--dist'}
+        flags = {'--verbose', '--exitfirst', '--disable-warnings', '--strict-config', '--strict-markers',
+                 '--showlocals', '--no-header', '--no-summary', '--no-cov-on-fail'}
+        paths, keywords = [], []
+        cursor = 0
+        while cursor < len(arguments):
+            argument = arguments[cursor]
+            if argument == '--':
+                paths.extend(arguments[cursor + 1:])
+                break
+            if argument.startswith('-'):
+                option = argument.split('=', 1)[0]
+                if option in values:
+                    if '=' in argument:
+                        value = argument.split('=', 1)[1]
+                    else:
+                        cursor += 1
+                        if cursor >= len(arguments):
+                            return False
+                        value = arguments[cursor]
+                    if option in {'-k', '--keyword'}:
+                        keywords.append(value)
+                elif argument not in flags and not re.fullmatch(r'-[qvsxl]+', argument):
+                    return False
+            else:
+                paths.append(argument)
+            cursor += 1
+        if keywords == [selector]:
+            return True
+        return paths == [selector] and not selector.startswith('-') and (
+            '::' in selector or '/' in selector or selector.endswith('.py'))
     if runner == "unittest":
-        return index > 2 and bool(re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", selector))
+        return index > 2 and bool(re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", selector)) \
+            and [item for item in argv[3:] if item not in {'-v', '-q', '-f', '-c', '-b', '--locals',
+                '--verbose', '--quiet', '--failfast', '--catch', '--buffer'}] == [selector]
     if runner in {"gradle", "gradlew"}:
-        return index > 0 and argv[index - 1] == "--tests" and "test" in argv
+        return index > 0 and argv[index - 1] == "--tests" and argv.count("--tests") == 1 and "test" in argv
     if runner in {"vitest", "jest"}:
-        return index > 0 and argv[index - 1] in {"-t", "--testNamePattern"}
+        return index > 0 and argv[index - 1] in {"-t", "--testNamePattern"} and sum(item in {"-t", "--testNamePattern"} for item in argv) == 1
     return False
 
 
@@ -143,7 +178,10 @@ def mutation_receipt(value, source, selector):
     if not isinstance(value, dict) or set(value) != {"tool", "receipt"}:
         raise ValueError("mutation receipt fields are invalid")
     tool = require_string(value.get("tool"), "mutation receipt tool")
-    observed = observed_receipt(value["receipt"], "mutation receipt", source, selector, passing=True, test_command=False)
+    observed = validate_observed_evidence_receipt(value['receipt'])
+    if observed['source'] != source or observed['exit_code'] != 0 \
+            or not observed.get('mutation_check') or observed['mutation_check']['selector'] != selector:
+        raise ValueError('mutation receipt requires a scoped, executed and killed nonempty campaign')
     if Path(observed["argv"][0]).name != tool:
         raise ValueError("mutation receipt tool must bind the executed command")
     return True
@@ -164,8 +202,8 @@ def graph_receipt(value, source, impacts):
         raise ValueError("CodeGraph receipt must execute CodeGraph")
     if observed["argv"][:3] != [observed["argv"][0], "explore", query]:
         raise ValueError("CodeGraph receipt must execute the derived query")
-    if not observed.get("graph_check"):
-        raise ValueError("CodeGraph requires a fresh index, uniquely resolved symbols and verified impact edges")
+    from evidence_contract import require_graph_execution
+    require_graph_execution(observed, query)
     if value["impacts_fingerprint"] != fingerprint(impacts):
         raise ValueError("CodeGraph receipt impact fingerprint is invalid")
     return True

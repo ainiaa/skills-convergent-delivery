@@ -253,12 +253,16 @@ def validate_closure_matrix(value, final_acceptance, source_fingerprint):
             if any(criterion not in final_acceptance for criterion in criteria):
                 raise ValueError("closure_matrix acceptance must be a final_acceptance criterion")
     receipt = value["graph_receipt"]
-    fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "receipt_fingerprint"}
+    fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "evidence", "receipt_fingerprint"}
     if not isinstance(receipt, dict) or set(receipt) != fields or receipt.get("schema_version") != 1 \
             or receipt.get("tool") not in GRAPH_RECEIPT_TOOLS:
         raise ValueError("closure_matrix graph_receipt is invalid")
     if require_sha256(receipt["source_fingerprint"], "closure_matrix graph source") != source_fingerprint:
         raise ValueError("closure_matrix graph receipt must match the frozen Source Receipt")
+    from evidence_contract import closure_graph_request, require_graph_execution
+    observed = require_graph_execution(receipt['evidence'], closure_graph_request(chains))
+    if observed['source']['source_fingerprint'] != source_fingerprint:
+        raise ValueError('closure_matrix graph observation must match frozen source')
     if receipt["chains_fingerprint"] != canonical_fingerprint(graph_projection(chains)):
         raise ValueError("closure_matrix graph receipt does not bind the chain projection")
     expected = canonical_fingerprint({

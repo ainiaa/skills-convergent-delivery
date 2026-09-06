@@ -19,7 +19,7 @@ from delivery_next import (
     validate_closure_gate, validate_closure_plan, validate_state,
 )
 from delivery_state import validate_transition
-from evidence_contract import run_evidence, workspace_source
+from evidence_contract import run_evidence, workspace_source, closure_graph_request
 from role_result import review_result, result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from run_contract import action
@@ -62,10 +62,14 @@ EVIDENCE = run_evidence(WORKSPACE, HEAD, [sys.executable, "-c", "pass"])
 def trace_receipt(source, argv, exit_code=0):
     receipt = copy.deepcopy(EVIDENCE)
     receipt.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=source)
-    if len(argv) >= 3 and argv[:2] == ["codegraph", "explore"] and argv[2].startswith("CodeGraph impact chains: "):
+    if len(argv) >= 3 and argv[:2] == ["codegraph", "explore"] and argv[2].startswith(("CodeGraph impact chains: ", "CodeGraph closure chains: ")):
         # Schema fixture only; actual index/symbol/edge observations are exercised in evidence tests.
         receipt["graph_check"] = {"query": argv[2], "index_fingerprint": "a" * 64,
                                   "bindings_fingerprint": "b" * 64}
+    if argv[0] == 'pytest':
+        receipt['test_check'] = {'executed': 1}
+    if argv[0] == 'mvn':
+        receipt['mutation_check'] = {'selector': argv[-1].split('=', 1)[1], 'generated': 2, 'killed': 2, 'tests': 2}
     receipt["receipt_fingerprint"] = runner_fingerprint({
         key: value for key, value in receipt.items() if key != "receipt_fingerprint"
     })
@@ -109,8 +113,8 @@ def tdd_trace(source, risks=(), criterion="Requested behavior"):
             )
         primary = tests[0]
         primary["mutation"] = {
-            "tool": "mutmut",
-            "receipt": trace_receipt(source, ["mutmut", primary["selector"]]),
+            "tool": "mvn",
+            "receipt": trace_receipt(source, ["mvn", "org.pitest:pitest-maven:mutationCoverage", "-DtargetTests=" + primary["selector"]]),
         }
     if {"public-api", "cross-service", "release-contract"} & set(risks):
         primary = tests[0]
@@ -157,15 +161,8 @@ def routing(profile=None, allowed_paths=None):
 
 
 def graph_receipt(source_fingerprint, routing_value, plan, tool="codegraph", query=None):
-    # Test receipt binding independently of a locally installed graph service.
-    with tempfile.TemporaryDirectory() as directory:
-        executable = Path(directory) / tool
-        executable.write_text(f"#!{sys.executable}\nprint('fixture graph output')\n", encoding="utf-8")
-        executable.chmod(0o700)
-        with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ.get("PATH", "")}):
-            evidence = run_evidence(WORKSPACE, HEAD, [
-                tool, "explore", query or closure_graph_query(routing_value, plan),
-            ])
+    # State schema fixture; real structured reads are exercised by test_evidence_contract.
+    evidence = trace_receipt(SOURCE, [tool, 'explore', query or closure_graph_query(routing_value, plan)])
     evidence["receipt_fingerprint"] = runner_fingerprint({
         key: item for key, item in evidence.items() if key != "receipt_fingerprint"
     })
@@ -199,6 +196,7 @@ def closure_plan(requirement_fingerprint=None):
     projection = [{key: chain[key] for key in ("id", "entrypoints", "callers")}]
     receipt = {
         "schema_version": 1, "tool": "codegraph", "source_fingerprint": SOURCE["source_fingerprint"],
+        "evidence": trace_receipt(SOURCE, ['codegraph', 'explore', closure_graph_request([chain])]),
         "chains_fingerprint": hashlib.sha256(json.dumps(
             projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest(),
@@ -506,6 +504,17 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_full_closure_cannot_complete_without_structured_graph_observation(self):
+        payload = reviewed_complete_state(full_closure=True)
+        graph = payload['execution_control']['closure']['graph_receipt']
+        graph['evidence'].pop('graph_check', None)
+        graph['evidence']['receipt_fingerprint'] = runner_fingerprint({
+            key: value for key, value in graph['evidence'].items() if key != 'receipt_fingerprint'})
+        graph['receipt_fingerprint'] = runner_fingerprint({
+            key: value for key, value in graph.items() if key != 'receipt_fingerprint'})
+        with self.assertRaisesRegex(ValueError, 'graph|Graph'):
+            validate_state(payload, SimpleNamespace())
+
     def test_default_validator_import_does_not_load_autonomy_contract(self):
         result = subprocess.run(
             [
@@ -725,6 +734,8 @@ class DeliveryNextTest(unittest.TestCase):
         ).encode()).hexdigest()
         receipt = plan["closure_matrix"]["graph_receipt"]
         receipt["source_fingerprint"] = source["source_fingerprint"]
+        receipt['evidence'] = trace_receipt(source, ['codegraph', 'explore',
+            closure_graph_request(plan['closure_matrix']['chains'])])
         receipt["receipt_fingerprint"] = runner_fingerprint({
             key: value for key, value in receipt.items() if key != "receipt_fingerprint"
         })
@@ -737,6 +748,8 @@ class DeliveryNextTest(unittest.TestCase):
         plan = payload["execution_control"]["closure"]["plan"]
         plan["closure_matrix"]["chains"][0]["entrypoints"] = ["scripts/test_delivery_next.py"]
         receipt = plan["closure_matrix"]["graph_receipt"]
+        receipt['evidence'] = trace_receipt(SOURCE, ['codegraph', 'explore',
+            closure_graph_request(plan['closure_matrix']['chains'])])
         receipt["chains_fingerprint"] = hashlib.sha256(json.dumps([{
             "id": "main", "entrypoints": ["scripts/test_delivery_next.py"], "callers": ["external"],
         }], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -798,6 +811,7 @@ class DeliveryNextTest(unittest.TestCase):
         graph = closure["graph_receipt"]
         evidence = graph["evidence"]
         evidence["argv"] = ["codegraph", "--version"]
+        evidence.pop('graph_check')
         evidence["command"] = shlex.join(evidence["argv"])
         evidence["receipt_fingerprint"] = runner_fingerprint({
             key: value for key, value in evidence.items() if key != "receipt_fingerprint"

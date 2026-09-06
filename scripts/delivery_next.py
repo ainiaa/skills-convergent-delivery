@@ -279,18 +279,9 @@ def validate_closure_plan(plan, routing, baseline, provider_binding):
 
 def closure_graph_query(routing, plan):
     """Build the only CodeGraph query accepted for a frozen closure gate."""
-    chains = [
-        {key: chain[key] for key in ("id", "entrypoints", "callers")}
-        for chain in plan["closure_matrix"]["chains"]
-    ]
-    frozen = {
-        "allowed_paths": routing["allowed_paths"],
-        "chains": chains,
-        "scope_fingerprint": routing["profile_fingerprint"],
-    }
-    return "Map callers, callees, and affected paths for this frozen closure: " + json.dumps(
-        frozen, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    from evidence_contract import closure_graph_request
+    return closure_graph_request(plan['closure_matrix']['chains'], allowed_paths=routing['allowed_paths'],
+                                 scope_fingerprint=routing['profile_fingerprint'])
 
 
 def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline, provider_binding):
@@ -331,6 +322,8 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
     if Path(argv[0]).name != graph["tool"] or argv[:2] != ["codegraph", "explore"] \
             or argv != ["codegraph", "explore", closure_graph_query(routing, value["plan"])]:
         raise ValueError("closure gate graph-tool query does not bind frozen scope and matrix")
+    from evidence_contract import require_graph_execution
+    require_graph_execution(graph['evidence'], closure_graph_query(routing, value['plan']))
     if graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
         raise ValueError("closure gate graph receipt does not bind its graph-tool output")
     if graph["receipt_fingerprint"] != runner_fingerprint({

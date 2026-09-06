@@ -41,7 +41,7 @@ class AutonomyServiceTest(unittest.TestCase):
         self.tool_dir = Path(temporary.name)
         for name in ("pytest", "codegraph"):
             tool = self.tool_dir / name
-            tool.write_text("#!/bin/sh\nexit 0\n")
+            tool.write_text("#!/bin/sh\necho '1 passed in 0.01s'\n")
             tool.chmod(0o755)
         (self.tool_dir / "codegraph").write_text(f"#!{sys.executable}\n" + """import json, sys
 from pathlib import Path

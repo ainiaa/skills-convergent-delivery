@@ -163,85 +163,72 @@ def require_jacoco_execution(receipt):
         raise ValueError("coverage requires an executed nonempty JaCoCo check; use Gradle --info --console=plain")
 
 
-def graph_check_result(workspace, argv, timeout_seconds):
-    """Resolve declared direct impact edges through CodeGraph's structured read API."""
-    prefix = "CodeGraph impact chains: "
-    if len(argv) < 3 or Path(argv[0]).name != "codegraph" or argv[1] != "explore" \
-            or not argv[2].startswith(prefix):
+def test_execution_result(argv, stdout, stderr):
+    """Count executed tests from this invocation's runner summary, never old reports."""
+    from native_tdd_policy import coverage_runner
+    runner = coverage_runner(argv)
+    output = re.sub(r'\x1b\[[0-9;]*m', '', (stdout + b'\n' + stderr).decode('utf-8', 'replace'))
+    counts = []
+    if runner == 'unittest':
+        counts = [int(n) for n in re.findall(r'^Ran (\d+) tests? in ', output, re.M)]
+        skipped = re.findall(r'\bskipped=(\d+)', output)
+        if len(counts) == 1:
+            counts[0] -= sum(map(int, skipped))
+    elif runner in {'pytest', 'py.test'}:
+        for line in output.splitlines():
+            if re.search(r'\bin \d+(?:\.\d+)?s\b', line):
+                counts.append(sum(int(n) for n in re.findall(r'\b(\d+) (?:passed|failed)\b', line)))
+    elif runner in {'mvn', 'mvnw'}:
+        # Surefire prints per-suite and aggregate summaries; only the final aggregate is counted.
+        summaries = re.findall(r'Tests run: (\d+), Failures: \d+, Errors: \d+, Skipped: (\d+)', output)
+        counts = [int(n) - int(skipped) for n, skipped in summaries[-1:]]
+    elif runner in {'jest', 'vitest'}:
+        for line in output.splitlines():
+            if re.match(r'^\s*Tests\s*:?\s+', line):
+                counts.append(sum(int(n) for n in re.findall(r'\b(\d+) (?:passed|failed)\b', line)))
+    elif runner in {'gradle', 'gradlew'}:
+        counts = [int(n) - int(skipped or 0) for n, skipped in re.findall(
+            r'^\s*(\d+) tests completed(?:, \d+ failed)?(?:, (\d+) skipped)?\s*$', output, re.M)]
+    return {'executed': sum(counts)} if counts and sum(counts) > 0 else None
+
+
+def _pit_selector(argv):
+    if Path(argv[0]).name not in {'mvn', 'mvnw'} or not any(
+            re.fullmatch(r'(?:org\.pitest:)?pitest-maven(?::[^:]+)?:mutationCoverage|pitest:mutationCoverage', a)
+            for a in argv[1:]):
         return None
-    deadline = time.monotonic() + min(timeout_seconds or 60, 60)
-
-    def query(*arguments):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ValueError("CodeGraph verification timed out")
-        result = subprocess.run([argv[0], *arguments], cwd=workspace, capture_output=True,
-                                text=True, timeout=remaining, check=True)
-        return json.loads(result.stdout)
-
-    try:
-        status = query("status", "--json", str(workspace))
-        if status.get("initialized") is not True or not status.get("lastIndexed") \
-                or Path(status.get("projectPath", "")).resolve() != workspace \
-                or status.get("pendingChanges") != {"added": 0, "modified": 0, "removed": 0} \
-                or status.get("worktreeMismatch") is not None \
-                or status.get("index", {}).get("reindexRecommended") is not False:
-            return None
-        claims = [item.split(":", 1) for item in argv[2][len(prefix):].split("; ")]
-        if not 1 <= len(claims) <= 100 or any(len(item) != 2 for item in claims):
-            return None
-        nodes = {}
-        for relation, identifier in claims:
-            if relation not in {"entrypoint", "caller", "shared-effect", "external-contract"}:
-                return None
-            results = query("query", identifier, "--json", "--limit", "101", "--path", str(workspace))
-            if not isinstance(results, list) or len(results) >= 101:
-                return None
-            matches = [item["node"] for item in results if item.get("node", {}).get("name") == identifier]
-            if len(matches) != 1:
-                return None
-            node = matches[0]
-            path = (workspace / node["filePath"]).resolve()
-            if not path.is_relative_to(workspace) or not path.is_file():
-                return None
-            nodes[identifier] = node
-        entries = [identifier for relation, identifier in claims if relation == "entrypoint"]
-        if not entries:
-            return None
-        edges = {}
-        for relation, identifier in claims:
-            if relation == "entrypoint":
-                continue
-            origins, targets = ([identifier], entries) if relation == "caller" else (entries, [identifier])
-            found = False
-            for origin in origins:
-                if origin not in edges:
-                    edges[origin] = query("callees", origin, "--json", "--limit", "1000",
-                                          "--path", str(workspace))["callees"]
-                for target in targets:
-                    node = nodes[target]
-                    found |= any(all(edge.get(key) == node.get(key) for key in ("name", "filePath", "startLine"))
-                                 for edge in edges[origin])
-            if not found:
-                return None
-        if query("status", "--json", str(workspace)) != status:
-            return None
-        return {"query": argv[2], "index_fingerprint": _fingerprint(status),
-                "bindings_fingerprint": _fingerprint({"nodes": nodes, "edges": edges})}
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+    targets = [a.split('=', 1)[1] for a in argv if a.startswith('-DtargetTests=')]
+    if len(targets) != 1 or not targets[0] or any(
+            a in {'--help', '-h', '--version', '-v', '-fn', '--fail-never'}
+            or re.match(r'-D(?:pit\.dryRun|withHistory|skipPitest)(?:=true)?$', a) for a in argv):
         return None
+    return targets[0]
 
 
-def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
-    """Run one argv command and bind its outcome to the resulting workspace source."""
-    workspace = Path(workspace).expanduser().resolve()
-    if not isinstance(argv, list) or not argv or len(argv) > MAX_ARGV_ITEMS or any(
-        not isinstance(item, str) or not item or len(item) > MAX_ARGUMENT_LENGTH for item in argv
-    ):
-        raise ValueError("evidence argv must be a non-empty string list")
-    if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
-        raise ValueError("evidence argv must not contain sensitive command arguments")
-    source_before = workspace_source(workspace, baseline_commit)
+def mutation_execution_result(argv, stdout):
+    """Observe a scoped PIT Maven campaign. Unknown tools have no mutation proof."""
+    selector = _pit_selector(argv)
+    if selector is None:
+        return None
+    output = stdout.decode('utf-8', 'replace')
+    totals = re.findall(r'^>> Generated (\d+) mutations Killed (\d+) \(', output, re.M)
+    tests = re.findall(r'^>> Ran (\d+) tests \(', output, re.M)
+    killed = re.findall(r'^>> KILLED (\d+)\b', output, re.M)
+    bad = re.findall(r'\b(?:SURVIVED|TIMED_OUT|NON_VIABLE|MEMORY_ERROR|NOT_STARTED|STARTED|RUN_ERROR|NO_COVERAGE) (\d+)\b', output)
+    if len(totals) != 1 or len(tests) != 1 or not killed or not bad:
+        return None
+    generated, detected = map(int, totals[0])
+    if generated <= 0 or generated != detected or sum(map(int, killed)) != generated \
+            or any(map(int, bad)) or int(tests[0]) <= 0:
+        return None
+    return {'selector': selector, 'generated': generated, 'killed': generated, 'tests': int(tests[0])}
+
+
+class EvidenceCleanupError(ValueError):
+    """A process group may still be alive; no receipt may be issued."""
+
+
+def _run_command(workspace, argv, timeout_seconds):
     process = None
     try:
         from codex_exec_runner import _terminate_process
@@ -262,10 +249,190 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
             try:
                 _terminate_process(process)
                 process.wait(timeout=1)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                raise EvidenceCleanupError('evidence process cleanup could not be confirmed') from error
             finally:
                 process.stdout.close()
                 process.stderr.close()
-    graph_check = graph_check_result(workspace, argv, timeout_seconds) if exit_code == 0 else None
+    return exit_code, stdout, stderr
+
+
+def closure_graph_request(chains, *, allowed_paths=None, scope_fingerprint=None):
+    frozen = {'chains': [{key: chain[key] for key in ('id', 'entrypoints', 'callers')} for chain in chains]}
+    if allowed_paths is not None:
+        frozen.update(allowed_paths=allowed_paths, scope_fingerprint=scope_fingerprint)
+    return 'CodeGraph closure chains: ' + json.dumps(frozen, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _closure_graph_bindings(workspace, request, query):
+    """Resolve path groups and file dependency edges using the same current index."""
+    chains = request['chains']
+    if not isinstance(chains, list) or not 1 <= len(chains) <= 16:
+        raise ValueError('invalid closure chains')
+    files = query('files', '--format', 'flat', '--json', '--path', str(workspace))
+    if not isinstance(files, list) or not 1 <= len(files) <= 4096 \
+            or any(not isinstance(item, dict) or not isinstance(item.get('path'), str) for item in files):
+        raise ValueError('invalid indexed files')
+    paths = {item['path'] for item in files}
+    if any(not (workspace / path).resolve().is_relative_to(workspace)
+           or not (workspace / path).is_file() for path in paths):
+        raise ValueError('indexed file is missing or outside workspace')
+
+    def resolve(group):
+        if not isinstance(group, list) or not group or any(not isinstance(path, str) for path in group):
+            raise ValueError('invalid closure paths')
+        matched = set()
+        for path in group:
+            found = {item for item in paths if path == '.' or item == path or item.startswith(path.rstrip('/') + '/')}
+            if not found:
+                raise ValueError('closure path has no indexed files')
+            matched.update(found)
+        return matched
+
+    edges = {}
+    def callers(path):
+        if path not in edges:
+            result = query('callers', path, '--json', '--limit', '1000', '--path', str(workspace))
+            if not isinstance(result, dict) or not isinstance(result.get('callers'), list) \
+                    or len(result['callers']) >= 1000 or any(
+                        not isinstance(item, dict) or item.get('filePath') not in paths
+                        for item in result['callers']):
+                raise ValueError('invalid closure callers')
+            edges[path] = result['callers']
+        return {item['filePath'] for item in edges[path]}
+
+    for chain in chains:
+        if not isinstance(chain, dict):
+            raise ValueError('invalid closure chain')
+        entries = resolve(chain['entrypoints'])
+        declared = chain['callers']
+        if not isinstance(declared, list) or not declared:
+            raise ValueError('invalid closure callers')
+        observed = set().union(*(callers(path) for path in entries))
+        for caller in declared:
+            if caller == 'external':
+                if observed - entries:
+                    raise ValueError('external-only claim omits repository callers')
+            elif not resolve([caller]) & observed:
+                raise ValueError('declared caller has no edge to entrypoints')
+        internal = [caller for caller in declared if caller != 'external']
+        covered = resolve(internal) if internal else set()
+        if observed - entries - covered:
+            raise ValueError('closure omits observed callers')
+    return {'files': files, 'edges': edges}
+
+
+def require_graph_execution(receipt, query):
+    observed = validate_observed_evidence_receipt(receipt)
+    if observed['exit_code'] != 0 or not observed.get('graph_check') \
+            or observed['graph_check']['query'] != query:
+        raise ValueError('CodeGraph requires a fresh index and verified graph bindings')
+    return observed
+
+
+def graph_check_result(workspace, argv, timeout_seconds):
+    """Resolve declared direct impact edges through CodeGraph's structured read API."""
+    prefix = "CodeGraph impact chains: "
+    closure_prefix = 'CodeGraph closure chains: '
+    if len(argv) < 3 or Path(argv[0]).name != "codegraph" or argv[1] != "explore" \
+            or not argv[2].startswith((prefix, closure_prefix)):
+        return None
+    deadline = time.monotonic() + min(60 if timeout_seconds is None else timeout_seconds, 60)
+
+    def query(*arguments):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("CodeGraph verification timed out")
+        exit_code, stdout, _ = _run_command(workspace, [argv[0], *arguments], remaining)
+        if exit_code:
+            raise ValueError("CodeGraph query failed or timed out")
+        return json.loads(stdout)
+
+    try:
+        status = query("status", "--json", str(workspace))
+        if not isinstance(status, dict) or not isinstance(status.get("index"), dict) \
+                or status.get("initialized") is not True or not status.get("lastIndexed") \
+                or Path(status.get("projectPath", "")).resolve() != workspace \
+                or status.get("pendingChanges") != {"added": 0, "modified": 0, "removed": 0} \
+                or status.get("worktreeMismatch") is not None \
+                or status.get("index", {}).get("reindexRecommended") is not False:
+            return None
+        if argv[2].startswith(closure_prefix):
+            request = json.loads(argv[2][len(closure_prefix):])
+            if not isinstance(request, dict):
+                return None
+            bindings = _closure_graph_bindings(workspace, request, query)
+            if query('status', '--json', str(workspace)) != status:
+                return None
+            return {'query': argv[2], 'index_fingerprint': _fingerprint(status),
+                    'bindings_fingerprint': _fingerprint(bindings)}
+        claims = [item.split(":", 1) for item in argv[2][len(prefix):].split("; ")]
+        if not 1 <= len(claims) <= 100 or any(len(item) != 2 for item in claims):
+            return None
+        nodes = {}
+        for relation, identifier in claims:
+            if relation not in {"entrypoint", "caller", "shared-effect", "external-contract"}:
+                return None
+            results = query("query", identifier, "--json", "--limit", "101", "--path", str(workspace))
+            if not isinstance(results, list) or len(results) >= 101:
+                return None
+            if any(not isinstance(item, dict) or not isinstance(item.get("node"), dict) for item in results):
+                return None
+            matches = [item["node"] for item in results if item["node"].get("name") == identifier]
+            if len(matches) != 1:
+                return None
+            node = matches[0]
+            path = (workspace / node["filePath"]).resolve()
+            if not path.is_relative_to(workspace) or not path.is_file():
+                return None
+            nodes[identifier] = node
+        entries = [identifier for relation, identifier in claims if relation == "entrypoint"]
+        if not entries:
+            return None
+        edges = {}
+        for relation, identifier in claims:
+            if relation == "entrypoint":
+                continue
+            origins, targets = ([identifier], entries) if relation == "caller" else (entries, [identifier])
+            found = False
+            for origin in origins:
+                if origin not in edges:
+                    result = query("callees", origin, "--json", "--limit", "1000", "--path", str(workspace))
+                    if not isinstance(result, dict) or not isinstance(result.get("callees"), list) \
+                            or len(result["callees"]) >= 1000 \
+                            or any(not isinstance(edge, dict) for edge in result["callees"]):
+                        return None
+                    edges[origin] = result["callees"]
+                for target in targets:
+                    node = nodes[target]
+                    found |= any(all(edge.get(key) == node.get(key) for key in ("name", "filePath", "startLine"))
+                                 for edge in edges[origin])
+            if not found:
+                return None
+        if query("status", "--json", str(workspace)) != status:
+            return None
+        return {"query": argv[2], "index_fingerprint": _fingerprint(status),
+                "bindings_fingerprint": _fingerprint({"nodes": nodes, "edges": edges})}
+    except EvidenceCleanupError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        return None
+
+
+def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
+    """Run one argv command and bind its outcome to the resulting workspace source."""
+    workspace = Path(workspace).expanduser().resolve()
+    if not isinstance(argv, list) or not argv or len(argv) > MAX_ARGV_ITEMS or any(
+        not isinstance(item, str) or not item or len(item) > MAX_ARGUMENT_LENGTH for item in argv
+    ):
+        raise ValueError("evidence argv must be a non-empty string list")
+    if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
+        raise ValueError("evidence argv must not contain sensitive command arguments")
+    source_before = workspace_source(workspace, baseline_commit)
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+    exit_code, stdout, stderr = _run_command(workspace, argv, timeout_seconds)
+    remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
+    graph_check = graph_check_result(workspace, argv, remaining) if exit_code == 0 else None
     source_after = workspace_source(workspace, baseline_commit)
     if source_after != source_before:
         raise ValueError("verification changed the workspace source; rerun on the final source")
@@ -282,6 +449,12 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
     }
     if graph_check is not None:
         receipt["graph_check"] = graph_check
+    test_check = test_execution_result(argv, stdout, stderr)
+    if test_check is not None:
+        receipt['test_check'] = test_check
+    mutation_check = mutation_execution_result(argv, stdout) if exit_code == 0 else None
+    if mutation_check is not None:
+        receipt['mutation_check'] = mutation_check
     jacoco_check = jacoco_check_result(argv, stdout, stderr) if exit_code == 0 else None
     if jacoco_check is not None:
         receipt["jacoco_check"] = jacoco_check
@@ -294,7 +467,8 @@ def validate_observed_evidence_receipt(item):
         "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
         "receipt_fingerprint",
     }
-    if not isinstance(item, dict) or set(item) not in (fields, fields | {"jacoco_check"}, fields | {"graph_check"}) \
+    if not isinstance(item, dict) or not fields <= set(item) \
+            or set(item) - fields - {'jacoco_check', 'graph_check', 'test_check', 'mutation_check'} \
             or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError("Evidence Receipt fields are invalid")
     if not isinstance(item.get("argv"), list) or not item["argv"] \
@@ -315,6 +489,21 @@ def validate_observed_evidence_receipt(item):
     if item["runner_fingerprint"] != _runner_fingerprint() \
             or item.get("evidence_level") != "observed":
         raise ValueError("Evidence Receipt provenance is invalid")
+    if 'test_check' in item:
+        check = item['test_check']
+        from native_tdd_policy import coverage_runner
+        if not isinstance(check, dict) or set(check) != {'executed'} \
+                or type(check['executed']) is not int or check['executed'] <= 0 \
+                or coverage_runner(item['argv']) not in {'unittest', 'pytest', 'py.test', 'mvn', 'mvnw',
+                                                        'gradle', 'gradlew', 'vitest', 'jest'}:
+            raise ValueError('Evidence Receipt executed test result is invalid')
+    if 'mutation_check' in item:
+        check = item['mutation_check']
+        if not isinstance(check, dict) or set(check) != {'selector', 'generated', 'killed', 'tests'} \
+                or any(type(check[key]) is not int or check[key] <= 0 for key in ('generated', 'killed', 'tests')) \
+                or check['generated'] != check['killed'] or not isinstance(check['selector'], str) \
+                or not check['selector'] or _pit_selector(item['argv']) != check['selector'] or item['exit_code'] != 0:
+            raise ValueError('Evidence Receipt mutation result is invalid')
     if "jacoco_check" in item:
         check = item["jacoco_check"]
         if not isinstance(check, dict) or set(check) != {"checks", "classes"} \
@@ -329,7 +518,7 @@ def validate_observed_evidence_receipt(item):
                 or len(item["argv"]) < 3 or Path(item["argv"][0]).name != "codegraph" \
                 or item["argv"][1:3] != ["explore", check.get("query")] or item["exit_code"] != 0 \
                 or not isinstance(check.get("query"), str) \
-                or not check["query"].startswith("CodeGraph impact chains: ") \
+                or not check["query"].startswith(("CodeGraph impact chains: ", 'CodeGraph closure chains: ')) \
                 or any(not isinstance(check.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", check[key])
                        for key in ("index_fingerprint", "bindings_fingerprint")):
             raise ValueError("Evidence Receipt CodeGraph result is invalid")
