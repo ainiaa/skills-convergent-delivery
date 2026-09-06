@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import subprocess
+import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -101,7 +102,7 @@ def coverage_runner(argv):
 def collection_disabled(argv):
     runner = coverage_runner(argv)
     lowered = [item.casefold() for item in argv]
-    if '--' in argv:
+    if any(item in argv for item in ('--', '--help', '-h', '--version')):
         return True
     if runner in {'pytest', 'py.test'}:
         enabled = False
@@ -124,7 +125,10 @@ def collection_disabled(argv):
         )
         return not enabled or disabled
     if runner in {'mvn', 'mvnw'}:
-        return any(item in lowered for item in ('-djacoco.skip=true', '-dskiptests', '-dskiptests=true', '-dmaven.test.skip=true'))
+        return '-v' in argv or any(item in lowered for item in (
+            '--fail-never', '-fn', '-djacoco.skip=true', '-djacoco.haltonfailure=false',
+            '-dskiptests', '-dskiptests=true', '-dmaven.test.skip=true',
+        ))
     if runner in {'gradle', 'gradlew'}:
         return '--dry-run' in argv or '-m' in argv or any(
             item in {'--exclude-task=test', '--exclude-task=jacocoTestCoverageVerification'} for item in argv
@@ -153,8 +157,7 @@ def project_gate_threshold(workspace, argv, revision=None):
     gate_files = ()
     pattern = None
     if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
-        gate_files = ("pom.xml",)
-        pattern = r"<counter>\s*(?:LINE|INSTRUCTION)\s*</counter>.*?<minimum>\s*([0-9.]+)\s*</minimum>"
+        return maven_gate_threshold(config_text(workspace, "pom.xml", revision))
     elif {"gradle", "gradlew"} & runners and "jacocoTestCoverageVerification" in argv:
         gate_files = ("build.gradle", "build.gradle.kts")
         pattern = r"counter\s*=\s*['\"](?:LINE|INSTRUCTION)['\"].*?minimum\s*=\s*([0-9.]+)"
@@ -163,6 +166,7 @@ def project_gate_threshold(workspace, argv, revision=None):
     for path in gate_files:
         content = config_text(workspace, path, revision)
         if content:
+            content = re.sub(r'/\*.*?\*/|//[^\n]*', '', content, flags=re.DOTALL)
             thresholds = [
                 candidate for candidate in (
                     percentage(match.group(1))
@@ -172,6 +176,41 @@ def project_gate_threshold(workspace, argv, revision=None):
             if thresholds:
                 return min(thresholds)
     return None
+
+
+def maven_gate_threshold(content):
+    try:
+        project = ET.fromstring(content)
+    except ET.ParseError:
+        return None
+    for element in project.iter():
+        element.tag = element.tag.rsplit('}', 1)[-1]
+    if project.tag != 'project':
+        return None
+    plugins = [plugin for plugin in project.findall('./build/plugins/plugin')
+               if plugin.findtext('groupId') == 'org.jacoco'
+               and plugin.findtext('artifactId') == 'jacoco-maven-plugin']
+    if len(plugins) != 1:
+        return None
+    plugin = plugins[0]
+    # Only a direct literal configuration is resolved; execution overrides need effective-model evidence.
+    if any(execution.findtext('id') == 'default-cli' and execution.find('configuration') is not None
+           for execution in plugin.findall('./executions/execution')):
+        return None
+    config = plugin.find('configuration')
+    if config is None or config.findtext('skip', 'false').strip().lower() != 'false' \
+            or config.findtext('haltOnFailure', 'true').strip().lower() != 'true':
+        return None
+    thresholds = []
+    for limit in config.findall('./rules/rule/limits/limit'):
+        if limit.findtext('counter', 'INSTRUCTION').strip() not in {'LINE', 'INSTRUCTION'} \
+                or limit.findtext('value', 'COVEREDRATIO').strip() != 'COVEREDRATIO':
+            continue
+        minimum = limit.findtext('minimum', '').strip()
+        threshold = percentage(minimum) if re.fullmatch(r'[0-9.]+', minimum) else None
+        if threshold is not None:
+            thresholds.append(threshold)
+    return min(thresholds) if thresholds else None
 
 
 def resolve(workspace, *, revision=None):

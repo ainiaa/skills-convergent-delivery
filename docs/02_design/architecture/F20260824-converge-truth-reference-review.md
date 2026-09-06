@@ -85,3 +85,16 @@
 | [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用有限状态不变量，复用 unittest，不新增 Hypothesis | 实际存活进程加 running 恢复不能释放租约；缺失/unknown/篡改结果拒绝清场，确定退出失败可释放；active 状态两种最终输出格式均拒绝 |
 
 唯一新增状态字段是同一 ledger 内的可恢复候选 Trace，正式 Trace 仍是完成证据真源。复用现有 Trace 校验及 rerun、runner 契约和租约屏障；不新增 PID 注册表、自动接管、代理或循环。简单非服务任务不增加执行步骤。控制器持有候选写权、完成判定及清场责任；未知执行停止并保留租约，手工确认旧执行停止后才可显式接管。
+
+## 2026-09-06 覆盖率误放行与 Batch 终态修复
+
+沿用本会话 Skills.sh 分类和排行榜发现结果，核对原始 Skill、测试说明和脚本；只采用本轮三个已复现问题需要的机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Eval Architect audit](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/audit.md) / [calibration](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/calibration.md) | 采用植入错误检查误放行、合法路径检查误拒绝；不复制 audit_checks.py 的文件名/文本启发式作为行为门禁 | `test_native_tdd_policy.py` 拒绝 help/version、注释、非生效位置和禁用配置，保留有效 JaCoCo 比率规则与不足阈值边界 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用状态不变量与有限组合；沿用 unittest，不新增依赖 | `test_batch_state.py` 实际写入 blocked/stopped 的清场结果，拒绝复活、换 worker 和改写验收；真实命令回执支持最终验收逐项通过 |
+| [Vigiles writing-tests](https://github.com/zernie/vigiles/blob/main/skills/test-harness/references/writing-tests.md) | 采用真实控制器执行与外部边界替身；不引入另一套 harness | `test_batch_next.py` 验证终态只查询待清场 worker，全部结束后仍 block；持久写入测试核对最终磁盘状态 |
+| [Anthropic run_eval](https://github.com/anthropics/skills/blob/main/skills/skill-creator/scripts/run_eval.py) | 保留真实工具事件与文字宣称的区分；不模拟正式宿主 bridge | 冻结 evaluator 预检仍返回 uncovered；本地回归与 Maven help 实验不计为真实宿主 Eval 或覆盖率达标 |
+
+复用现有命令解析、worker_status、revision 和逐项 final_acceptance，不增加字段、代理、循环或执行步骤。控制器保有写权和清场责任；终态只允许结束既有 worker，不能借清场重启业务。静态构建配置识别有明确边界，不实现 Maven/Gradle 解释器，也不把 ready 当作实际采集证明。

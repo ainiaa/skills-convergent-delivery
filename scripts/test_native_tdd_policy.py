@@ -10,7 +10,78 @@ native_tdd_policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(native_tdd_policy)
 
 
+def maven_config(minimum="0.92"):
+    return (
+        '<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>'
+        '<build><plugins><plugin><groupId>org.jacoco</groupId><artifactId>jacoco-maven-plugin</artifactId>'
+        '<configuration><rules><rule><element>BUNDLE</element><limits><limit>'
+        '<counter>LINE</counter><value>COVEREDRATIO</value>'
+        f'<minimum>{minimum}</minimum></limit></limits></rule></rules></configuration>'
+        '</plugin></plugins></build></project>'
+    )
+
+
 class NativeTddPolicyTest(unittest.TestCase):
+    def test_informational_commands_cannot_supply_coverage_evidence(self):
+        for command in (
+            "mvn --help jacoco:check", "mvn -h jacoco:check", "mvn --version jacoco:check",
+            "mvn -v jacoco:check", "mvn --fail-never jacoco:check",
+            "pytest --cov --cov-fail-under=85 --help", "pytest --cov --version --cov-fail-under=85",
+            "python3 -m coverage report --fail-under=85 --help",
+            "npx vitest run --coverage --coverage.thresholds.lines=85 --help",
+            "gradle test jacocoTestCoverageVerification --help",
+        ):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                standard = root / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text(f"coverage: {command}\n")
+                (root / "pom.xml").write_text(maven_config())
+                (root / "build.gradle").write_text("counter = 'LINE'\nminimum = 0.92")
+                self.assertEqual("uncovered", native_tdd_policy.resolve(root)["status"])
+
+    def test_maven_threshold_must_belong_to_an_active_jacoco_ratio_rule(self):
+        valid = maven_config()
+        for content in (
+            "<counter>LINE</counter><minimum>0.92</minimum>",
+            "<project><!-- <counter>LINE</counter><minimum>0.92</minimum> --></project>",
+            valid.replace("<plugins>", "<pluginManagement><plugins>").replace("</plugins>", "</plugins></pluginManagement>"),
+            valid.replace("<build>", "<profiles><profile><build>").replace("</build>", "</build></profile></profiles>"),
+            valid.replace("org.jacoco", "other.plugin"),
+            valid.replace("COVEREDRATIO", "MISSEDCOUNT"),
+            valid.replace("<configuration>", "<configuration><skip>true</skip>"),
+            valid.replace("<configuration>", "<configuration><haltOnFailure>false</haltOnFailure>"),
+            valid.replace("</plugin>", "<executions><execution><id>default-cli</id>"
+                          "<configuration><skip>true</skip></configuration>"
+                          "</execution></executions></plugin>"),
+        ):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                standard = root / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text("coverage: mvn test jacoco:check\n")
+                (root / "pom.xml").write_text(content)
+                self.assertEqual("uncovered", native_tdd_policy.resolve(root)["status"])
+
+    def test_maven_show_version_preserves_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            standard = root / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text("coverage: mvn -V test jacoco:check\n")
+            (root / "pom.xml").write_text(maven_config())
+            self.assertEqual("ready", native_tdd_policy.resolve(root)["status"])
+
+    def test_gradle_comments_cannot_supply_a_threshold(self):
+        for content in ("// counter = 'LINE'\n// minimum = 0.92", "/* counter = 'LINE'\nminimum = 0.92 */"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                standard = root / "docs/00_standards"
+                standard.mkdir(parents=True)
+                (standard / "test-commands.yml").write_text("coverage: gradle test jacocoTestCoverageVerification\n")
+                (root / "build.gradle").write_text(content)
+                self.assertEqual("uncovered", native_tdd_policy.resolve(root)["status"])
+
     def test_conflicting_thresholds_and_inactive_gates_are_rejected(self):
         commands = (
             'pytest --cov --cov-fail-under=85 --cov-fail-under=1',
@@ -154,7 +225,7 @@ class NativeTddPolicyTest(unittest.TestCase):
 
     def test_existing_jacoco_gate_is_accepted_only_when_its_project_threshold_is_sufficient(self):
         for command, config, content in (
-            ("mvn test jacoco:check", "pom.xml", "<counter>LINE</counter><minimum>0.92</minimum>\n"),
+            ("mvn test jacoco:check", "pom.xml", maven_config()),
             ("gradle test jacocoTestCoverageVerification", "build.gradle", "counter = 'LINE'\nminimum = 0.92\n"),
         ):
             with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
@@ -181,7 +252,7 @@ class NativeTddPolicyTest(unittest.TestCase):
             )
             (standard / "quality-targets.yml").write_text("coverage: 90\n", encoding="utf-8")
             (workspace / "pom.xml").write_text(
-                "<counter>LINE</counter><minimum>0.85</minimum>\n", encoding="utf-8"
+                maven_config("0.85"), encoding="utf-8"
             )
 
             policy = native_tdd_policy.resolve(workspace)
@@ -198,8 +269,7 @@ class NativeTddPolicyTest(unittest.TestCase):
             )
             (standard / "quality-targets.yml").write_text("coverage: 90\n", encoding="utf-8")
             (workspace / "pom.xml").write_text(
-                "<counter>BRANCH</counter><minimum>0.95</minimum>"
-                "<counter>LINE</counter><minimum>0.85</minimum>\n",
+                maven_config("0.85").replace("<limits>", "<limits><limit><counter>BRANCH</counter><minimum>0.95</minimum></limit>"),
                 encoding="utf-8",
             )
 

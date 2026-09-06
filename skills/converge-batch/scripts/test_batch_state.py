@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import hashlib
 import json
 import subprocess
@@ -197,6 +198,64 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_terminal_cleanup_can_only_finish_existing_workers(self):
+        for status in ("blocked", "stopped"):
+            for outcome in ("completed", "interrupted", "blocked"):
+                with self.subTest(status=status, outcome=outcome), tempfile.TemporaryDirectory() as root:
+                    before = candidate(self.workspace)
+                    before["batches"][0].update(status="running", dispatch_id="dispatch-B1")
+                    register_worker(before, 0, "thread-1")
+                    path = batch_state.write_state(root, before, -1)
+                    terminal = copy.deepcopy(before)
+                    terminal.update(status=status, revision=1)
+                    if status == "blocked":
+                        terminal["blocked_reason"] = "manual cleanup required: thread-1"
+                    batch_state.write_state(root, terminal, 0)
+                    cleaned = copy.deepcopy(terminal)
+                    cleaned["revision"] = 2
+                    cleaned["batches"][0]["worker_status"] = outcome
+                    batch_state.write_state(root, cleaned, 1)
+                    self.assertEqual(outcome, json.loads(path.read_text())["batches"][0]["worker_status"])
+                    for mutation in ("status", "worker_ref", "acceptance", "goal", "worker_status"):
+                        invalid = copy.deepcopy(cleaned)
+                        invalid["revision"] = 3
+                        if mutation == "status": invalid["status"] = "active"
+                        elif mutation == "worker_ref": invalid["batches"][0]["worker_ref"] = "replacement"
+                        elif mutation == "acceptance": invalid["final_acceptance"][0]["evidence"] = "rewritten"
+                        elif mutation == "goal": invalid["batches"][0]["capsule"]["goal"] = "new task"
+                        else: invalid["batches"][0]["worker_status"] = "working"
+                        with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                            batch_state.write_state(root, invalid, 2)
+                    self.assertEqual(cleaned, json.loads(path.read_text()))
+
+    def test_final_acceptance_can_pass_incrementally_without_rewriting_prior_passes(self):
+        before = candidate(self.workspace)
+        before["final_acceptance"].append(dict(before["final_acceptance"][0], criterion="second acceptance"))
+        for index, batch in enumerate(before["batches"]):
+            batch.update(status="completed", dispatch_id="dispatch-" + batch["batch_id"])
+            register_worker(before, index, "thread-" + str(index))
+            batch["worker_status"] = "completed"
+            batch["receipt"] = receipt(batch["batch_id"], batch["dispatch_id"], self.commit_id, self.tree_hash, self.workspace)
+        before["current_batch"] = None
+        path = self.write(before, -1)
+        for index in range(2):
+            after = copy.deepcopy(before)
+            after["revision"] += 1
+            observed = run_evidence(self.workspace, self.commit_id, [sys.executable, "-c", f"print({index})"])
+            after["final_acceptance"][index].update(
+                result="pass", freshness="fresh", evidence=observed,
+                source_fingerprint=observed["source"]["source_fingerprint"],
+            )
+            if index == 1:
+                after["status"] = "complete"
+                rewritten = copy.deepcopy(after)
+                rewritten["final_acceptance"][0]["evidence"] = observed
+                with self.assertRaises(ValueError):
+                    self.write(rewritten, before["revision"])
+            self.write(after, before["revision"])
+            before = after
+        self.assertEqual("complete", json.loads(path.read_text())["status"])
+
     def test_receipt_acceptance_must_match_the_verified_delegate(self):
         for mismatch in ("criterion", "evidence", "missing_receipt", "failed", "stale"):
             with self.subTest(mismatch=mismatch):

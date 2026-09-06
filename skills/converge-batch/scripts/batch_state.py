@@ -492,7 +492,7 @@ def validate_state(state):
             seen_delegate_runs.add(delegate_run_id)
         if batch_status == "completed" and worker_status != "completed":
             raise ValueError("completed batch requires worker_status completed")
-        if batch_status == "running" and worker_status != "working":
+        if batch_status == "running" and worker_status != "working" and status not in {"blocked", "stopped"}:
             raise ValueError("running batch requires a working worker")
         if batch_status in {"validating-receipt", "completed"}:
             completed = [item for item in batches[:index] if item.get("status") == "completed"]
@@ -558,6 +558,11 @@ def validate_transition(previous, candidate, *, takeover=False):
     if previous["status"] in {"complete", "blocked", "stopped"}:
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
+        if previous["status"] in {"blocked", "stopped"}:
+            expected["batches"] = [dict(batch) for batch in previous["batches"]]
+            for old, new in zip(expected["batches"], candidate["batches"]):
+                if old["worker_status"] == "working" and new["worker_status"] in TERMINAL_WORKER_STATUSES:
+                    old["worker_status"] = new["worker_status"]
         if candidate != expected:
             raise ValueError("terminal plan state is immutable")
         return
@@ -622,8 +627,8 @@ def validate_transition(previous, candidate, *, takeover=False):
         item["criterion"] for item in candidate["final_acceptance"]
     ]:
         raise ValueError("final acceptance criteria are immutable")
-    if any(item.get("result") == "pass" for item in previous["final_acceptance"]) \
-            and candidate["final_acceptance"] != previous["final_acceptance"]:
+    if any(old.get("result") == "pass" and new != old
+           for old, new in zip(previous["final_acceptance"], candidate["final_acceptance"])):
         raise ValueError("passing final acceptance is immutable")
 
 

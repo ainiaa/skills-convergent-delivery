@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- coverage 预检拒绝 help/version、Maven fail-never 等不执行或不强制检查的命令；Maven 按 XML 结构校验直接声明的 JaCoCo 比率规则，注释、非生效位置和禁用配置不能冒充门禁，Gradle 注释也不再贡献阈值。
+- Batch 的 blocked/stopped 终态允许仅将既有 working worker 更新为终态，并继续查询待清场 worker；禁止恢复执行、替换身份或改写业务状态。
+- Batch 最终验收按项冻结已通过结果，允许剩余验收在后续 revision 补齐真实证据并完成计划。
 - Batch 完成回执逐项绑定正式 delegate 的真实验收，拒绝验收项或 evidence 摘要不一致；继续要求真实、当前源码的 passing Evidence Receipt。
 - 普通与 Hook native run 复用候选 Trace 生命周期，最终 rerun 后在同一 complete revision 固化正式 Trace 并移除候选；保留正式证据不可覆盖约束，修正文档提前写入 Trace 和旧 Review v2 转换的过时指令。
 - TDD Trace 的风险、场景、测试引用和枚举，以及嵌套 Source Receipt 的类型与权限字段先校验类型再做集合操作；畸形模型 JSON 返回受控校验失败，service 正常进入 blocked 并按既有清场屏障释放租约。
