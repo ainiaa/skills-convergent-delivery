@@ -5,6 +5,11 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import io
+import os
+import tarfile
+import tempfile
+import time
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -428,14 +433,177 @@ def _evaluate_receipts(request, repository_root):
     }
 
 
+
+def deterministic_evaluate(request, repository_root):
+    """Execute control-owned unittest judges against two immutable trees, without models."""
+    scripts = str(CONTROL_ROOT / 'scripts')
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from controller_snapshot import validate_snapshot
+    from evidence_contract import _run_command, test_execution_result
+    if not isinstance(request, dict) or set(request) != {
+            'controller_snapshot', 'control_source', 'candidate_source', 'suite', 'timeout_seconds'}:
+        raise ValueError('deterministic request fields are invalid')
+    root = Path(repository_root).resolve()
+    snapshot = validate_snapshot(request['controller_snapshot'])
+    if Path(snapshot['root']) != CONTROL_ROOT or CONTROL_ROOT.is_relative_to(root):
+        raise ValueError('run the evaluator from its frozen snapshot outside the repository')
+    timeout = request['timeout_seconds']
+    if type(timeout) not in (int, float) or not 0 < timeout <= 600:
+        raise ValueError('deterministic total timeout must be in (0, 600]')
+    deadline = time.monotonic() + timeout
+    def git(*args):
+        code, out, err = _run_command(root, ['git', *args], max(0, deadline - time.monotonic()))
+        if code:
+            raise ValueError('frozen Git input unavailable or timed out')
+        return out
+    if Path(git('rev-parse', '--show-toplevel').decode().strip()).resolve() != root:
+        raise ValueError('repository must be the Git worktree root')
+    def relative(value):
+        if (not isinstance(value, str) or not value or '\\' in value
+                or PurePosixPath(value).is_absolute() or '..' in PurePosixPath(value).parts
+                or value != str(PurePosixPath(value))):
+            raise ValueError('judge and suite paths must be canonical repository paths')
+        return value
+    control = _git_source(root, request['control_source'], 'control_source')['tree']
+    candidate = _git_source(root, request['candidate_source'], 'candidate_source')['tree']
+    if control == candidate:
+        raise ValueError('control and candidate must be different frozen trees')
+    suite_path = relative(request['suite'])
+    suite_raw = git('show', f'{control}:{suite_path}')
+    suite = json.loads(suite_raw)
+    if not isinstance(suite, dict) or set(suite) != {'allowed_scope', 'touched_control_surfaces', 'scenarios'}:
+        raise ValueError('frozen suite fields are invalid')
+    scope = _clean_scope(suite['allowed_scope'])
+    touched = _string_list(suite['touched_control_surfaces'], 'touched_control_surfaces', True)
+    scenarios = suite['scenarios']
+    if not isinstance(scenarios, list) or not 1 <= len(scenarios) <= 32:
+        raise ValueError('suite requires 1..32 scenarios')
+    ids, judges = set(), {}
+    for case in scenarios:
+        if (not isinstance(case, dict) or set(case) != {'id', 'class', 'judge'}
+                or not isinstance(case['id'], str) or not case['id'].strip()
+                or case['id'] in ids or case['class'] not in SCENARIO_CLASSES):
+            raise ValueError('scenario identity or class is invalid')
+        ids.add(case['id'])
+        judge_path = relative(case['judge'])
+        if not judge_path.endswith('.py'):
+            raise ValueError('judge must be a standalone unittest Python file')
+        judges[judge_path] = git('show', f'{control}:{judge_path}')
+    if not any(case['class'] == 'known_acceptance' for case in scenarios):
+        raise ValueError('suite requires known acceptance')
+    catalog_raw = LOCKED_CATALOG.read_bytes()
+    history = {item['id'] for item in json.loads(catalog_raw)['escaped_defects']
+               if set(touched).intersection(item['control_surfaces'])}
+    if history - {case['id'] for case in scenarios if case['class'] == 'history'}:
+        raise ValueError('suite omits required historical regressions')
+    changed = git('diff', '--name-only', '-z', control, candidate).decode().split('\0')
+    if any(path and (not _in_scope(scope, path) or path in {*judges, suite_path}) for path in changed):
+        raise ValueError('candidate changes frozen judges, suite, or files outside allowed scope')
+    archives = {side: git('archive', tree) for side, tree in [('control', control), ('candidate', candidate)]}
+    def export(raw, destination):
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            members = archive.getmembers()
+            if len(members) > 10000 or sum(item.size for item in members) > 128 * 1024 * 1024:
+                raise ValueError('evaluation tree exceeds disposable workspace budget')
+            links = []
+            for member in members:
+                path = destination / relative(member.name.rstrip('/'))
+                if member.isdir():
+                    path.mkdir(parents=True, exist_ok=True)
+                elif member.isfile():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.extractfile(member).read())
+                    path.chmod(member.mode & 0o777)
+                elif member.issym():
+                    links.append((path, member.linkname))
+                else:
+                    raise ValueError('evaluation trees cannot contain special files')
+            for path, target in links:
+                if Path(target).is_absolute() or not (path.parent / target).resolve().is_relative_to(destination):
+                    raise ValueError('evaluation symlink leaves the disposable workspace')
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to(target)
+    program = """import importlib.util, sys, unittest
+sys.path.insert(0, sys.argv[1])
+spec = importlib.util.spec_from_file_location('frozen_judge', sys.argv[2])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromModule(module))
+sys.exit(0 if result.wasSuccessful() and result.testsRun else 1)
+"""
+    samples = []
+    for case in scenarios:
+        sample = {'id': case['id'], 'class': case['class'],
+                  'judge_fingerprint': hashlib.sha256(judges[case['judge']]).hexdigest()}
+        for side in ('control', 'candidate'):
+            with tempfile.TemporaryDirectory(prefix='converge-eval-') as directory:
+                base = Path(directory).resolve()
+                workspace = base / 'workspace'
+                workspace.mkdir()
+                export(archives[side], workspace)
+                judge = base / 'judge.py'
+                judge.write_bytes(judges[case['judge']])
+                code, out, err = _run_command(workspace,
+                    [sys.executable, '-I', '-c', program, str(workspace), str(judge)],
+                    max(0, deadline - time.monotonic()))
+                counts = test_execution_result([sys.executable, '-m', 'unittest'], out, err)
+                valid = (counts is not None and
+                         not any(counts[key] for key in ('errors', 'skipped', 'xfailed', 'xpassed')))
+                passed = valid and code == 0 and counts['passed'] > 0 and counts['failed'] == 0
+                failed = valid and code == 1 and counts['failed'] > 0
+                outcome = 'pass' if passed else 'fail' if failed else 'uncovered'
+                if judge.read_bytes() != judges[case['judge']]:
+                    raise ValueError('frozen judge changed during evaluation')
+                sample[side] = {'pass': bool(passed), 'outcome': outcome, 'exit_code': code, 'test_check': counts,
+                                'stdout_fingerprint': hashlib.sha256(out).hexdigest(),
+                                'stderr_fingerprint': hashlib.sha256(err).hexdigest()}
+        samples.append(sample)
+    validate_snapshot(snapshot)
+    differential = {key: [] for key in ('fixed', 'regressions', 'both_pass', 'both_fail')}
+    uncovered = [f"{item['id']}:{side}" for item in samples for side in ('control', 'candidate')
+                 if item[side]['outcome'] == 'uncovered']
+    for item in samples:
+        if any(item[side]['outcome'] == 'uncovered' for side in ('control', 'candidate')):
+            continue
+        key = { (False, True): 'fixed', (True, False): 'regressions',
+                (True, True): 'both_pass', (False, False): 'both_fail'}[(item['control']['pass'], item['candidate']['pass'])]
+        differential[key].append(item['id'])
+    passed = all(item['candidate']['pass'] for item in samples if item['class'] != 'exploration')
+    missing = any(item[side]['outcome'] == 'uncovered' for item in samples
+                  if item['class'] != 'exploration' for side in ('control', 'candidate'))
+    return {'schema_version': 'deterministic-eval-v1', 'status': 'uncovered' if missing else 'pass' if passed else 'fail',
+            'evidence_level': 'process_observed', 'release_status': 'uncovered',
+            'control_tree': control, 'candidate_tree': candidate,
+            'controller_fingerprint': snapshot['protocol_fingerprint'],
+            'suite_fingerprint': hashlib.sha256(suite_raw).hexdigest(),
+            'catalog_fingerprint': hashlib.sha256(catalog_raw).hexdigest(),
+            'samples': samples, 'differential': differential,
+            **{name: [item['id'] for item in samples if item['class'] == name] for name in SCENARIO_CLASSES},
+            'uncovered': ['model_behavior', 'host_evaluator_lifecycle', *uncovered],
+            'stop_reason': 'evidence_uncovered' if missing else 'complete' if passed else 'candidate_failed'}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input")
     parser.add_argument("--repository")
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--deterministic", action="store_true")
     arguments = parser.parse_args()
     if not arguments.preflight and (not arguments.input or not arguments.repository):
         parser.error("evaluation requires --input and --repository, or --preflight")
+    if arguments.deterministic:
+        try:
+            if arguments.preflight:
+                result = {'status': 'ready' if hasattr(os, 'killpg') else 'uncovered',
+                          'mode': 'deterministic-eval-v1', 'uncovered': ['model_behavior', 'host_evaluator_lifecycle']}
+            else:
+                result = deterministic_evaluate(json.loads(Path(arguments.input).read_text()), arguments.repository)
+        except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as error:
+            result = {'status': 'uncovered', 'stop_reason': str(error)}
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result['status'] in {'ready', 'pass'} else 2
     print(json.dumps(preflight(), ensure_ascii=False, sort_keys=True))
     return 2
 

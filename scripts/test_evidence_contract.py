@@ -22,6 +22,88 @@ def pit_output(generated=2, killed=2, outcome='SURVIVED'):
 
 
 class EvidenceContractTest(unittest.TestCase):
+    def test_real_mutmut_campaigns_are_fresh_scoped_and_fail_closed(self):
+        import importlib.util
+        if importlib.util.find_spec('mutmut') is None:
+            self.skipTest('install requirements-dev.txt with Python 3.10+ for real mutmut')
+        (self.workspace / 'calc.py').write_text('def value(x):\n    return x + 1\n')
+        (self.workspace / 'alias').symlink_to('calc.py')
+        helper = self.workspace / 'helper.sh'
+        helper.write_text('#!/bin/sh\necho ready\n')
+        helper.chmod(0o755)
+        selector = 'test_calc.py::test_value'
+        argv = [sys.executable, str(Path(evidence_contract.__file__).resolve()),
+                'mutmut', '--source-file', 'calc.py', '--selector', selector]
+        for assertion, passing in [('calc.value(3) == 4', True),
+                                   ('calc.value(3) is not None', False), ('False', False)]:
+            with self.subTest(assertion=assertion):
+                (self.workspace / 'test_calc.py').write_text(
+                    'import calc, subprocess\ndef test_value():\n'
+                    '    assert subprocess.check_output(["./helper.sh"]).strip() == b"ready"\n'
+                    '    assert ' + assertion + '\n')
+                observations = []
+                execute = evidence_contract._run_command
+                def record(*arguments):
+                    result = execute(*arguments)
+                    observations.append(result)
+                    return result
+                with patch.object(evidence_contract, '_run_command', side_effect=record):
+                    receipt = evidence_contract.run_evidence(self.workspace, self.baseline, argv, 90)
+                self.assertEqual(passing, receipt['exit_code'] == 0, observations)
+                self.assertEqual(passing, 'mutation_check' in receipt)
+                if passing:
+                    cli = subprocess.run(argv, cwd=self.workspace, capture_output=True, text=True, timeout=90)
+                    self.assertEqual(0, cli.returncode, cli.stderr)
+                    self.assertEqual(receipt['mutation_check'], json.loads(cli.stdout))
+                    self.assertEqual(selector, receipt['mutation_check']['selector'])
+                    self.assertGreater(receipt['mutation_check']['generated'], 0)
+                    evidence_contract.validate_observed_evidence_receipt(receipt)
+                    from tdd_impact_guard import mutation_receipt
+                    self.assertTrue(mutation_receipt({'tool': Path(sys.executable).name, 'receipt': receipt},
+                                                     receipt['source'], selector))
+                self.assertFalse((self.workspace / 'mutants').exists())
+
+    def test_mutmut_rejects_invalid_scope_and_version_before_launch(self):
+        (self.workspace / 'calc.py').write_text('def value(): return 2\n')
+        (self.workspace / 'test_calc.py').write_text('def test_value(): assert True\n')
+        with patch('importlib.metadata.version', return_value='3.7.0'), \
+             patch.object(evidence_contract, '_run_command', side_effect=AssertionError('unexpected launch')):
+            for source, selector in [('../calc.py', 'test_calc.py'), ('missing.py', 'test_calc.py'),
+                                     ('calc.py', 'calc.py'), ('calc.py', 'test_calc.py::two names')]:
+                with self.subTest(source=source, selector=selector), self.assertRaises(ValueError):
+                    evidence_contract.run_mutmut(self.workspace, source, selector)
+            (self.workspace / 'outside').symlink_to('/tmp')
+            with self.assertRaisesRegex(ValueError, 'outside'):
+                evidence_contract.run_mutmut(self.workspace, 'calc.py', 'test_calc.py')
+        with patch('importlib.metadata.version', return_value='0'):
+            with self.assertRaisesRegex(ValueError, 'version'):
+                evidence_contract.run_mutmut(self.workspace, 'calc.py', 'test_calc.py')
+
+    def test_mutmut_cli_reports_missing_dependency_without_traceback(self):
+        import io
+        from importlib.metadata import PackageNotFoundError
+        stderr = io.StringIO()
+        with patch('importlib.metadata.version', side_effect=PackageNotFoundError('mutmut')), \
+             patch.object(sys, 'argv', ['evidence_contract.py', 'mutmut', '--source-file', 'calc.py',
+                                        '--selector', 'test_calc.py']), patch.object(sys, 'stderr', stderr):
+            self.assertEqual(2, evidence_contract.main())
+        self.assertIn('evidence run blocked', stderr.getvalue())
+        self.assertNotIn('Traceback', stderr.getvalue())
+
+    def test_mutmut_selector_cannot_be_spoofed_by_an_unrelated_script(self):
+        helper = str(Path(evidence_contract.__file__).resolve())
+        argv = [sys.executable, helper, 'mutmut', '--source-file', 'calc.py',
+                '--selector', 'test_calc.py::test_value']
+        good = {'selector': argv[-1], 'generated': 2, 'killed': 2, 'tests': 1}
+        self.assertEqual(good, evidence_contract.mutation_execution_result(argv, json.dumps(good).encode()))
+        for changed in ([*argv[:1], '/tmp/fake.py', *argv[2:]], [*argv, '--help'],
+                        ['echo', *argv[1:]]):
+            self.assertIsNone(evidence_contract.mutation_execution_result(changed, json.dumps(good).encode()))
+        for payload in ({**good, 'generated': 0}, {**good, 'killed': 1}, {**good, 'tests': True},
+                        {**good, 'selector': 'another_test'}, []):
+            self.assertIsNone(evidence_contract.mutation_execution_result(argv, json.dumps(payload).encode()))
+        self.assertIsNone(evidence_contract.mutation_execution_result(argv, b'invalid json'))
+
     def test_real_expected_failure_is_not_green(self):
         from tdd_impact_guard import green_receipts
         (self.workspace / 'pending.py').write_text(

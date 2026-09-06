@@ -77,7 +77,7 @@ native coverage 要求同一调用采集并检查阈值：独立 `coverage repor
 
 Evidence v2 的可选 `test_check={executed,passed,failed,errors,skipped,xfailed,xpassed}` 只由本次 stdout/stderr 的 runner 汇总生成，并加入指纹；各字段为非负整数，executed 为除 skipped 外的结果之和且必须大于 0。GREEN 要求 passed > 0 且 failed/errors/xfailed/xpassed 全为 0，退出码 0 不能掩盖失败；预期失败不构成目标行为已实现的证据。unittest 读取 Ran 与 OK/FAILED 结果段；pytest 读取结果分类；Maven 使用最后一个 Surefire 汇总计数，但前面任一失败或错误汇总都阻止签发（避免后续成功模块掩盖失败）；Jest/Vitest 使用 Tests 汇总；Gradle 需要项目本次输出 `N tests completed[, M failed][, K skipped]`。静默、定制或无法解析的输出保持 uncovered，不读取历史报告补证据。此结果不证明断言质量；selector 仍须绑定真实选择参数。pytest 的输出路径选项值不能冒充测试路径；unittest 只允许一个点分目标；pytest 文件模式只允许该单个位置目标，或使用唯一 -k/--keyword 表达式过滤实际执行。未知 pytest 选项不猜测其参数含义。Maven/Gradle/Jest/Vitest 拒绝重复测试选择参数。旧的 executed-only 回执必须重新采集，不手工补零。
 
-当前 mutation 结果适配器支持 Maven/mvnw 的 PIT `org.pitest:pitest-maven[:version]:mutationCoverage` / `pitest:mutationCoverage`，且必须只有一个 `-DtargetTests=<selector>`。从本次 PIT 汇总及状态计数读取 `mutation_check={selector,generated,killed,tests}`：有限作用域内 generated、killed、tests 均正数，所有变异为 KILLED；存活、超时、未覆盖、未执行、运行错误和非有效变异均不能通过。拒绝 dry-run、历史复用和重复 targetTests。不安装 PIT；其他工具尚无结果适配，必须保持 uncovered，不能继续使用旧 mutmut/echo 的成功退出回执。状态级 fixture 不是实际 JVM 变异执行证明。
+当前 mutation 结果适配器支持 Maven/mvnw 的 PIT `org.pitest:pitest-maven[:version]:mutationCoverage` / `pitest:mutationCoverage`，且必须只有一个 `-DtargetTests=<selector>`。从本次 PIT 汇总及状态计数读取 `mutation_check={selector,generated,killed,tests}`：有限作用域内 generated、killed、tests 均正数，所有变异为 KILLED；存活、超时、未覆盖、未执行、运行错误和非有效变异均不能通过。拒绝 dry-run、历史复用和重复 targetTests。不自动安装 PIT；除下述 Python 适配器外的其他工具保持 uncovered，不能使用裸 mutmut/echo 的成功退出回执。状态级 fixture 不是实际 JVM 变异执行证明。
 
 TDD、Plan 和 closure gate 共用 `require_graph_execution`。Plan/closure 查询通过 `closure_graph_request` 生成，使用 `CodeGraph closure chains: ` 加规范 JSON，公共 runner 读取新鲜索引的 files/callers 结果，核对路径、调用边及遗漏 caller；目录展开为索引内实际文件，最多 4096 个，外部声明不代替存在的仓库调用方。图只能证明索引中的关系，不保证静态分析发现所有动态调用。计划回执新增必需的 observed `evidence`，冻结基线与最终收口分别采集，不复用旧哈希声明。
 
@@ -89,3 +89,11 @@ TDD、Plan 和 closure gate 共用 `require_graph_execution`。Plan/closure 查�
 status 中无 pending changes 不证明索引内容新鲜。公共 runner 只读已有 `.codegraph/codegraph.db` 的 files 表，逐个核对路径、content_hash 和无解析错误；哈希必须等于当前文件字节的 SHA-256。CodeGraph 1.0.1 / extraction-v24 已知源码后缀对应的 Git tracked/untracked 文件必须包含在索引中，包含已提交的新增文件；索引排除了这些源码时保持 uncovered，不把缺失调用方视为不存在。索引内容核对不保证静态分析能发现所有动态关系。
 
 查询前后状态、文件内容清单及数据库/WAL 摘要必须一致；Plan/closure 的 CLI files 清单还须与数据库清单一致。无数据库、未知表结构、畸形或不匹配哈希、源文件删除、解析错误、查询期间重建均不能签发 graph_check。index_fingerprint 绑定状态与上述内容快照，不新增持久状态，不自动 sync/index。读取有界：最多 4096 个索引文件、单源码文件 1 MiB、数据库/WAL 各 64 MiB，并沿用图查询总预算；超出范围保持 uncovered。未来 CodeGraph 改变文件格式或支持新的源码类型时，需要验证适配再扩展后缀清单。旧图回执因 runner 指纹变化必须重新执行。
+
+### Python mutation 与本仓 coverage
+
+Python 3.10+ / POSIX 使用固定 `mutmut==3.7.0`；开发推荐 Python 3.11+ 安装 `requirements-dev.txt`。Trace mutation 的 argv 为 `[当前 Python 绝对路径, 冻结 Snapshot/scripts/evidence_contract.py 绝对路径, "mutmut", "--source-file", "src/module.py", "--selector", "tests/test_module.py::test_case"]`，tool 为该 Python 可执行文件的 basename。通过同一冻结 `evidence_contract.py run` 或 Trace rerun 收集证据；不能手填摘要或直接提交 `mutmut results` 的旧缓存。
+
+适配器只变异指定 Python 文件，用唯一 pytest node selector 执行测试；复制 Git 可见的当前文件到全新临时目录，保留文件权限及 pytest 配置，排除旧 mutants 缓存。mutmut 3.7.0 的配置读取与 `.meta`/stats 文件格式属于固定适配契约。只有非空变异全为 pytest 退出 1 且实际关联测试非空才通过；pytest 内部错误、存活、无覆盖、超时或未知结果拒绝。调用复用 Evidence runner 的进程组清理和超时，原工作区保持不变。Python 3.9 仍可运行核心控制器，不能运行此 mutation 工具。
+
+本仓 coverage 命令在 `docs/00_standards/test-commands.yml`，85% 目标在 `quality-targets.yml`。pytest-cov 包装原有 `bash scripts/check.sh --full`，coverage subprocess patch 收集其子进程；`.coveragerc` 纳入 scripts、skills、extensions 全部生产 Python，排除测试文件。每次重新采集，不 append 历史数据；CI 使用同一命令执行完整 gate 并检查阈值。

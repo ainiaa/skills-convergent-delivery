@@ -8,6 +8,8 @@ import os
 import re
 import shlex
 import sqlite3
+import shutil
+import tempfile
 from contextlib import closing
 import subprocess
 import sys
@@ -233,8 +235,27 @@ def _pit_selector(argv):
     return targets[0]
 
 
+def _mutmut_selector(argv):
+    if (len(argv) == 7 and re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', Path(argv[0]).name)
+            and Path(argv[1]).resolve() == Path(__file__).resolve()
+            and argv[2:4] == ['mutmut', '--source-file'] and argv[5] == '--selector'):
+        return argv[6]
+    return None
+
+
 def mutation_execution_result(argv, stdout):
-    """Observe a scoped PIT Maven campaign. Unknown tools have no mutation proof."""
+    """Observe a scoped PIT or isolated, pinned mutmut campaign."""
+    if _mutmut_selector(argv) is not None:
+        try:
+            result = json.loads(stdout)
+        except (ValueError, UnicodeError):
+            return None
+        if (isinstance(result, dict) and set(result) == {'selector', 'generated', 'killed', 'tests'}
+                and result['selector'] == argv[6]
+                and all(type(result[key]) is int and result[key] > 0 for key in ('generated', 'killed', 'tests'))
+                and result['generated'] == result['killed']):
+            return result
+        return None
     selector = _pit_selector(argv)
     if selector is None:
         return None
@@ -519,7 +540,20 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         raise ValueError("evidence argv must not contain sensitive command arguments")
     source_before = workspace_source(workspace, baseline_commit)
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-    exit_code, stdout, stderr = _run_command(workspace, argv, timeout_seconds)
+    if _mutmut_selector(argv) is not None:
+        # Keep the actual campaign in the controller-owned process group cleanup path.
+        # A nested helper process could be killed before cleaning its separate group.
+        if Path(shutil.which(argv[0]) or argv[0]).absolute() != Path(sys.executable).absolute():
+            raise ValueError('mutation evidence must use the current Python environment')
+        try:
+            stdout = json.dumps(run_mutmut(workspace, argv[4], argv[6], timeout_seconds)).encode()
+            exit_code, stderr = 0, b''
+        except EvidenceCleanupError:
+            raise
+        except (OSError, ValueError, ImportError) as error:
+            exit_code, stdout, stderr = 2, b'', str(error).encode()
+    else:
+        exit_code, stdout, stderr = _run_command(workspace, argv, timeout_seconds)
     remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
     graph_check = graph_check_result(workspace, argv, remaining) if exit_code == 0 else None
     source_after = workspace_source(workspace, baseline_commit)
@@ -593,7 +627,7 @@ def validate_observed_evidence_receipt(item):
         if not isinstance(check, dict) or set(check) != {'selector', 'generated', 'killed', 'tests'} \
                 or any(type(check[key]) is not int or check[key] <= 0 for key in ('generated', 'killed', 'tests')) \
                 or check['generated'] != check['killed'] or not isinstance(check['selector'], str) \
-                or not check['selector'] or _pit_selector(item['argv']) != check['selector'] or item['exit_code'] != 0:
+                or not check['selector'] or (_pit_selector(item['argv']) or _mutmut_selector(item['argv'])) != check['selector'] or item['exit_code'] != 0:
             raise ValueError('Evidence Receipt mutation result is invalid')
     if "jacoco_check" in item:
         check = item["jacoco_check"]
@@ -682,6 +716,65 @@ def validate_source_receipt(source):
     return source
 
 
+def run_mutmut(workspace, source_file, selector, timeout_seconds=None):
+    """Pinned mutmut campaign in a disposable copy; never accept a previous cache."""
+    from importlib.metadata import version
+    deadline = time.monotonic() + (300 if timeout_seconds is None else timeout_seconds)
+    if version('mutmut') != '3.7.0' or not hasattr(os, 'fork'):
+        raise ValueError('mutmut requires version 3.7.0 and POSIX fork')
+    root = Path(workspace).resolve()
+    test_file = selector.split('::')[0]
+    for name in (source_file, test_file):
+        path = Path(name)
+        if (path.is_absolute() or '..' in path.parts or '\\' in name
+                or not name.endswith('.py') or not (root / path).is_file()
+                or not (root / path).resolve().is_relative_to(root)):
+            raise ValueError('mutation source and test must be repository Python files')
+    if source_file == test_file or any(c.isspace() for c in selector) or selector.startswith('-'):
+        raise ValueError('mutation requires a distinct source and one pytest node selector')
+    files = _git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').decode().split('\0')
+    with tempfile.TemporaryDirectory(prefix='converge-mutmut-') as directory:
+        target = Path(directory)
+        for name in filter(None, files):
+            relative = Path(name)
+            if relative.parts[0] in {'.git', 'mutants', '.venv', '.codegraph', '.pytest_cache'}:
+                continue
+            source = root / relative
+            if (not source.resolve().is_relative_to(root)
+                    or source.is_symlink() and Path(os.readlink(source)).is_absolute()):
+                raise ValueError('mutation copy cannot follow links outside the workspace')
+            if not source.is_file() and not source.is_symlink():
+                continue
+            for destination in (target / relative, target / 'mutants' / relative):
+                if destination == target / 'mutants' / source_file:
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_symlink():
+                    destination.symlink_to(os.readlink(source))
+                else:
+                    shutil.copy2(source, destination)
+        # ponytail: pin the tool's config reader; preserve the project's pytest configuration.
+        program = """import sys
+import mutmut.configuration as config
+settings = {'source_paths': [sys.argv[1]], 'pytest_add_cli_args_test_selection': [sys.argv[2]],
+            'also_copy': [], 'max_stack_depth': -1}
+config._config_reader = lambda: lambda key, default: settings.get(key, default)
+import mutmut.__main__ as m
+m._run((), 1)
+"""
+        code, stdout, stderr = _run_command(target, [sys.executable, '-c', program, source_file, selector], max(0, deadline - time.monotonic()))
+        if code != 0:
+            raise ValueError('mutmut execution failed: ' + (stdout + stderr).decode('utf-8', 'replace')[-3000:])
+        data = json.loads((target / 'mutants' / (source_file + '.meta')).read_text())
+        stats = json.loads((target / 'mutants/mutmut-stats.json').read_text())
+        results = data['exit_code_by_key']
+        tests = stats['duration_by_test']
+        # mutmut labels pytest internal errors as kills; only assertion-failure exit 1 is evidence here.
+        if not results or any(type(value) is not int or value != 1 for value in results.values()) or not tests:
+            raise ValueError('mutmut requires nonempty mutations, all killed without errors or missing tests: ' + repr(results))
+        return {'selector': selector, 'generated': len(results), 'killed': len(results), 'tests': len(tests)}
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -689,13 +782,19 @@ def main():
     run.add_argument("--workspace", required=True)
     run.add_argument("--baseline", required=True)
     run.add_argument("argv", nargs=argparse.REMAINDER)
+    mutation = commands.add_parser('mutmut')
+    mutation.add_argument('--source-file', required=True)
+    mutation.add_argument('--selector', required=True)
     arguments = parser.parse_args()
     try:
+        if arguments.command == 'mutmut':
+            print(json.dumps(run_mutmut(Path.cwd(), arguments.source_file, arguments.selector), sort_keys=True))
+            return 0
         argv = arguments.argv[1:] if arguments.argv[:1] == ["--"] else arguments.argv
         receipt = run_evidence(arguments.workspace, arguments.baseline, argv)
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return 0 if receipt["exit_code"] == 0 else receipt["exit_code"]
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, ImportError) as error:
         print(f"evidence run blocked: {error}", file=sys.stderr)
         return 2
 

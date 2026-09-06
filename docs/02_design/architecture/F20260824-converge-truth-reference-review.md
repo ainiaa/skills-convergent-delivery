@@ -165,3 +165,16 @@
 | Trail of Bits property-based-testing（上文已核实） | 采用有限非法类型/结果变体；不增加 Hypothesis | 异常 JSON 无原始 AttributeError；图查询超时后后代进程不能继续写文件 |
 
 复用现有 Evidence v2 的可选观察字段和唯一 runner，不增加代理、循环或运行时状态文件。图查询主命令和子查询共享显式超时；无法确认清场时抛出独立清场错误，不能降级为普通图不可用后签发成功回执。简单任务仅解析已有命令输出，图查询追加确定性验证；不重复 Provider 的实现流程。PIT 当前仅支持单个明确 scope 的完整成功 campaign；其他工具无适配即 uncovered，不伪造通用变异分数。正式宿主 Eval bridge 缺失保持 uncovered。
+
+
+## 2026-09-06：coverage、Python mutation 与确定性 Eval bridge
+
+| 来源与机制 | 采用 / 不采用及原因 | 对应行为验证 |
+|---|---|---|
+| [pytest-cov subprocess support](https://pytest-cov.readthedocs.io/en/latest/subprocess-support.html)、[coverage 子进程](https://coverage.readthedocs.io/en/latest/subprocess.html) | 采用 coverage subprocess patch，沿用完整 shell gate，避免重写 unittest 收集和忽略 CLI 子进程 | test_coverage_gate.py 执行完整 gate，实际生产覆盖率 >=85% |
+| [mutmut 原始实现](https://github.com/boxed/mutmut)、[官方用法](https://mutmut.readthedocs.io/en/latest/) | 采用固定 3.7.0 的实际运行与元数据；不复用增量缓存，不把 pytest 内部错误当作 kill。3.3.1 在 macOS fork 后设置进程名会崩溃，采用上游已修复版本，不添加本地绕过 | real_mutmut_campaigns 覆盖杀死、存活、失败与原目录不变 |
+| [LangChain eval calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用可知好坏样本校准与实际 harness；不使用模型自评分替代进程结果 | DeterministicBridgeTest 实际 control 失败/candidate 成功，反向回归及超时 |
+| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用新鲜命令及客观结果；不把新 bridge 的集成测试宣称为旧判定器已正式验收自身 | 冻结 snapshot、相同 control judge、非空 unittest 结果 |
+| [Stryker JS](https://stryker-mutator.io/docs/stryker-js/introduction/) | 不加入：本仓为 Python，保留现有 Java PIT 支持；有实际 JS 项目需求时再做对应适配与真实 smoke | 未知工具继续拒绝；PIT 现有回归保留 |
+
+决定：复用 Evidence runner 清理进程组；不增加 worker 角色、守护服务或自动修订循环。suite、judge 和源码身份由 Git/control Snapshot 冻结；每侧 fresh 临时目录，32 场景/600 秒总预算。简单任务不经过此可选模式。模型行为和宿主 lifecycle 仍须真实模型 bridge 与单独授权，不合并到确定性结果。

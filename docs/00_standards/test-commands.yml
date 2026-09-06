@@ -1,0 +1,2 @@
+test: bash scripts/check.sh --full
+coverage: python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85

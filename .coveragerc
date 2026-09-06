@@ -1,0 +1,16 @@
+[run]
+source =
+    scripts
+    skills
+    extensions
+patch = subprocess
+relative_files = True
+omit =
+    */test_*.py
+    */tests/*
+
+[report]
+include_namespace_packages = True
+fail_under = 85
+show_missing = True
+precision = 2

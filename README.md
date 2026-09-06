@@ -143,3 +143,11 @@ Converge Suite 没有复制上游完整流程；它吸收公开实践后，用�
 ## 许可与反馈
 
 [MIT License](LICENSE) · [Security Policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [GitHub Issues](https://github.com/ainiaa/skills-convergent-delivery/issues)
+
+开发验证使用 Python 3.11+ 创建虚拟环境并安装 `requirements-dev.txt`，随后运行：
+
+```bash
+python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85
+```
+
+该命令执行原有完整 gate，并采集全部生产 Python 及子进程覆盖率。Python mutation 用法见 [TDD 证据](references/tdd-providers.md#python-mutation-与本仓-coverage)；确定性双侧评估见 [Eval bridge](skills/converge-eval/SKILL.md#确定性进程-bridge)。

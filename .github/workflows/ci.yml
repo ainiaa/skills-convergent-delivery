@@ -25,6 +25,6 @@ jobs:
             https://raw.githubusercontent.com/openai/skills/49f948faa9258a0c61caceaf225e179651397431/skills/.system/skill-creator/scripts/quick_validate.py \
             --output "$RUNNER_TEMP/quick_validate.py"
           echo "6cc9dc3199c935916cf6f73fcbbbb0e3bb1b58c8f5109fefa499978908164f51  $RUNNER_TEMP/quick_validate.py" | sha256sum --check
-      - run: bash scripts/check.sh --full
+      - run: python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85
         env:
           CONVERGE_QUICK_VALIDATE: ${{ runner.temp }}/quick_validate.py

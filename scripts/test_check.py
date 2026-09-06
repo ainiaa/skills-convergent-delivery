@@ -11,10 +11,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):
+    def test_repository_has_an_executable_full_suite_coverage_gate(self):
+        import native_tdd_policy
+        policy = native_tdd_policy.resolve(ROOT)
+        self.assertEqual("ready", policy["status"])
+        self.assertEqual(85, policy["threshold"])
+        self.assertIn("scripts/test_coverage_gate.py", policy["argv"])
+        self.assertIn("--cov", policy["argv"])
+
     def test_ci_prepares_a_pinned_validator_and_passes_it_to_the_gate(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
         steps = workflow["jobs"]["verify"]["steps"]
-        gate_index = next(i for i, step in enumerate(steps) if step.get("run") == "bash scripts/check.sh --full")
+        gate_index = next(i for i, step in enumerate(steps) if step.get("run") == "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85")
         gate = steps[gate_index]
         self.assertEqual("${{ runner.temp }}/quick_validate.py", gate.get("env", {}).get("CONVERGE_QUICK_VALIDATE"))
         setup = next(step["run"] for step in steps[:gate_index] if "quick_validate.py" in step.get("run", ""))
@@ -39,7 +47,7 @@ class CheckScriptTest(unittest.TestCase):
         content = workflow.read_text(encoding="utf-8")
         self.assertIn("pull_request:", content)
         self.assertIn('\"v*\"', content)
-        self.assertIn("bash scripts/check.sh --full", content)
+        self.assertIn("python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85", content)
         self.assertIn("scripts/test_multi_model_repo_eval.py", check)
 
     def test_runtime_lock_files_are_not_tracked(self):

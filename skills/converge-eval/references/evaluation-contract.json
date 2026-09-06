@@ -161,5 +161,34 @@
       "exit_code": 2
     },
     "offline_receipt_bookkeeping": "diagnostic only; release_status remains uncovered"
+  },
+  "deterministic_bridge": {
+    "schema_version": "deterministic-eval-v1",
+    "preflight": "eval_contract.py --preflight --deterministic",
+    "entrypoint": "eval_contract.py --deterministic --input <request.json> --repository <repo>",
+    "request_fields": [
+      "controller_snapshot",
+      "control_source",
+      "candidate_source",
+      "suite",
+      "timeout_seconds"
+    ],
+    "suite_fields": [
+      "allowed_scope",
+      "touched_control_surfaces",
+      "scenarios"
+    ],
+    "scenario_fields": [
+      "id",
+      "class",
+      "judge"
+    ],
+    "evidence_level": "process_observed",
+    "max_scenarios": 32,
+    "max_total_seconds": 600,
+    "judge_source": "standalone unittest files from control Git tree",
+    "release_status": "uncovered",
+    "model_behavior": false,
+    "host_worker_lifecycle": false
   }
 }
