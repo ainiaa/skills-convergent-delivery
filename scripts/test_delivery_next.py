@@ -82,7 +82,8 @@ def trace_receipt(source, argv, exit_code=0):
         receipt["graph_check"] = {"query": argv[2], "index_fingerprint": "a" * 64,
                                   "bindings_fingerprint": "b" * 64}
     if argv[0] == 'pytest':
-        receipt['test_check'] = {'executed': 1, 'passed': 1, 'failed': 0, 'errors': 0,
+        receipt['test_check'] = {'executed': 1, 'passed': int(exit_code == 0),
+                                 'failed': int(exit_code == 1), 'errors': 0,
                                  'skipped': 0, 'xfailed': 0, 'xpassed': 0}
     if argv[0] == 'mvn':
         receipt['mutation_check'] = {'selector': argv[-1].split('=', 1)[1], 'generated': 2, 'killed': 2, 'tests': 2}

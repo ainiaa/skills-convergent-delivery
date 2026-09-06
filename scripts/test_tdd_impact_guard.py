@@ -365,6 +365,27 @@ else:
         with self.assertRaisesRegex(ValueError, "target behavior"):
             tdd_impact_guard.validate(value)
 
+    def test_timeout_cannot_supply_red_evidence(self):
+        selector = "test_cases.Tests.test_always_fails"
+        (self.workspace / "test_cases.py").write_text(
+            "import time, unittest\n"
+            "class Tests(unittest.TestCase):\n"
+            "    def test_always_fails(self): time.sleep(5)\n",
+            encoding="utf-8",
+        )
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-m", "unittest", selector],
+            timeout_seconds=0.01,
+        )
+        self.assertEqual(124, receipt["exit_code"])
+        (self.workspace / "implementation.txt").write_text("implemented\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "target behavior"):
+            tdd_impact_guard.red_receipt(
+                {"receipt": receipt, "failure_class": "assertion"},
+                evidence_contract.workspace_source(self.workspace, self.baseline), selector,
+            )
+
     def test_each_receipt_must_execute_its_test_selector(self):
         value = self.trace()
         value["acceptance"][0]["tests"][0]["selector"] = "different-test"
@@ -407,7 +428,16 @@ else:
         for name in ("mvn", "mvnw"):
             with self.subTest(runner=name):
                 tool = self.workspace / name
-                tool.write_text("#!/bin/sh\necho 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'\ntest -f implementation.txt\n", encoding="utf-8")
+                tool.write_text(
+                    "#!/bin/sh\n"
+                    "if test -f implementation.txt; then\n"
+                    "  echo 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'\n"
+                    "else\n"
+                    "  echo 'Tests run: 1, Failures: 1, Errors: 0, Skipped: 0'\n"
+                    "  exit 1\n"
+                    "fi\n",
+                    encoding="utf-8",
+                )
                 tool.chmod(0o755)
                 value = self.trace()
                 test = value["acceptance"][0]["tests"][0]

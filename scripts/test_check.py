@@ -38,6 +38,26 @@ class CheckScriptTest(unittest.TestCase):
         self.assertIn("Official Skill validator missing", result.stderr)
         self.assertNotIn("All checks passed", result.stdout)
 
+    def test_coverage_gate_timeout_cleans_its_descendants(self):
+        import test_coverage_gate
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            scripts = workspace / "scripts"
+            scripts.mkdir()
+            (scripts / "check.sh").write_text(
+                "python3 -c \"import time; from pathlib import Path; time.sleep(.4); Path('late.txt').write_text('late')\" &\n"
+                "wait\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(test_coverage_gate, "ROOT", workspace), \
+                    mock.patch.object(test_coverage_gate, "GATE_TIMEOUT_SECONDS", 0.1):
+                with self.assertRaises(AssertionError):
+                    test_coverage_gate.CoverageGateTest("test_full_gate").test_full_gate()
+            import time
+            time.sleep(.5)
+            self.assertFalse((workspace / "late.txt").exists())
+
     def test_ci_runs_the_full_release_gate_without_a_fixed_python_minor(self):
         check = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
         workflow = ROOT / ".github/workflows/ci.yml"

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复 TDD RED 误放行：RED 必须是所选测试实际执行后以标准失败码结束，并包含 failure/error 结果；超时、启动失败和没有测试汇总的回执不能再伪装成 assertion 或 missing behavior。
+- 修复 coverage 门禁超时清场：完整检查改由既有独立进程组执行器启动，超时后会终止并确认清理所有后代进程。
 - 接入本仓真实 coverage：固定开发依赖，使用原有完整检查命令及子进程采集，生产 Python 全范围 85% 门槛进入 CI。
 - 新增固定 mutmut 3.7.0 的 Python mutation 适配：隔离当前源码并保留文件执行权限、清空历史缓存、绑定唯一测试与指定源文件，拒绝存活、空变异、内部错误和超时，并复用有界进程清理。核心 Python 3.9 兼容性不变，此工具需 Python 3.10+。
 - 新增确定性 Eval 进程 bridge：从外部冻结快照运行 control-owned unittest 场景，比较不同 Git tree，验证作用域、历史场景和判定器锁定，限制场景数与总时间。默认模型 Eval 契约不变；本地进程证据不能替代真实模型行为或发布验收。

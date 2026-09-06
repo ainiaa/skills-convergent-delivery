@@ -158,7 +158,11 @@ def red_receipt(value, source, selector):
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError("red receipt fields are invalid")
     observed = observed_receipt(value["receipt"], "red receipt", source, selector, passing=False)
-    if observed["exit_code"] == 0 or not isinstance(value.get("failure_class"), str) \
+    outcomes = observed.get("test_check")
+    if observed["exit_code"] != 1 or not outcomes \
+            or outcomes["failed"] + outcomes["errors"] <= 0 \
+            or any(outcomes[key] for key in ("xfailed", "xpassed")) \
+            or not isinstance(value.get("failure_class"), str) \
             or value["failure_class"] not in VALID_RED_FAILURE_CLASSES:
         raise ValueError("red receipt must show a target behavior failure")
     if observed["source"]["source_fingerprint"] == source["source_fingerprint"]:
