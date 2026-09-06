@@ -4,7 +4,6 @@
 import argparse
 import hashlib
 import json
-import shlex
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -13,7 +12,7 @@ SUITE_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
-from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source
+from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source, verification_argv
 from delivery_next import (
     GRAPH_RECEIPT_TOOLS,
     validate_provider_binding as validate_complete_provider_binding,
@@ -67,16 +66,6 @@ def require_sha256(value, name):
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError(f"{name} must be a lowercase sha256")
     return value
-
-
-def verification_argv(command):
-    try:
-        argv = shlex.split(command)
-    except ValueError as error:
-        raise ValueError(f"verification command is invalid: {error}") from error
-    if not argv or not all(argv):
-        raise ValueError("verification command must form a non-empty argv")
-    return argv
 
 
 def clean_path(value, name):

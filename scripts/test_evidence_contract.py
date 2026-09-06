@@ -40,6 +40,51 @@ class EvidenceContractTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_jacoco_warning_on_stderr_cannot_pass_with_exit_zero(self):
+        from tdd_impact_guard import coverage_receipt
+        executable = self.workspace / 'gradle'
+        stdout = "> Task :jacocoTestCoverageVerification\n[ant:jacocoReport] Loading execution data file build/test.exec\n[ant:jacocoReport] Writing bundle 'demo' with 1 classes\nBUILD SUCCESSFUL\n"
+        stderr = "[ant:jacocoReport] Rule violated for bundle demo: lines covered ratio is 0.66, but expected minimum is 0.85"
+        executable.write_text(f'#!{sys.executable}\nimport sys\nprint({stdout!r})\nprint({stderr!r}, file=sys.stderr)\n')
+        executable.chmod(0o700)
+        observed = evidence_contract.run_evidence(self.workspace, self.baseline,
+                                                 [str(executable), 'jacocoTestCoverageVerification'])
+        self.assertEqual(0, observed['exit_code'])
+        with self.assertRaisesRegex(ValueError, 'coverage'):
+            coverage_receipt({'status': 'covered', 'threshold': 85, 'receipt': observed}, observed['source'])
+
+    def test_jacoco_coverage_requires_an_executed_nonempty_check(self):
+        from tdd_impact_guard import coverage_receipt
+        gradle_good = "> Task :jacocoTestCoverageVerification\n[ant:jacocoReport] Loading execution data file build/test.exec\n[ant:jacocoReport] Writing bundle 'demo' with 1 classes\nBUILD SUCCESSFUL\n"
+        maven_good = "[INFO] --- jacoco:0.8.13:check (default-cli) @ demo ---\n[INFO] Loading execution data file target/jacoco.exec\n[INFO] Analyzed bundle 'demo' with 1 classes\n[INFO] All coverage checks have been met.\n[INFO] BUILD SUCCESS\n"
+        cases = [
+            ('gradle', gradle_good, 0, True), ('mvn', maven_good, 0, True),
+            ('gradle', '> Task :jacocoTestCoverageVerification SKIPPED\nBUILD SUCCESSFUL\n', 0, False),
+            ('gradle', gradle_good.replace('Verification\n', 'Verification UP-TO-DATE\n'), 0, False),
+            ('gradle', gradle_good.replace('Verification', 'Report'), 0, False),
+            ('gradle', gradle_good + '> Task :other:jacocoTestCoverageVerification SKIPPED\n', 0, False),
+            ('mvn', maven_good.replace('check (', 'report ('), 0, False),
+            ('mvn', maven_good.replace('Loading execution data file target/jacoco.exec', 'Skipping JaCoCo execution due to missing execution data file.'), 0, False),
+            ('mvn', maven_good.replace('1 classes', '0 classes'), 0, False),
+            ('mvn', maven_good.replace('All coverage checks have been met.', 'Coverage checks have not been met.'), 0, False),
+            ('gradle', gradle_good, 1, False), ('mvn', '[INFO] BUILD SUCCESS\n', 0, False),
+        ]
+        for runner, output, exit_code, expected in cases:
+            with self.subTest(runner=runner, output=output, exit_code=exit_code):
+                executable = self.workspace / runner
+                # Real process receipt; output is a protocol fixture, not a real Java coverage claim.
+                executable.write_text(f'#!{sys.executable}\nprint({output!r})\nraise SystemExit({exit_code})\n')
+                executable.chmod(0o700)
+                argv = [str(executable), 'jacoco:check' if runner == 'mvn' else 'jacocoTestCoverageVerification']
+                observed = evidence_contract.run_evidence(self.workspace, self.baseline, argv)
+                coverage = {'status': 'covered', 'threshold': 85, 'receipt': observed}
+                if expected:
+                    self.assertTrue(coverage_receipt(coverage, observed['source']))
+                    self.assertEqual({'checks': 1, 'classes': 1}, observed['jacoco_check'])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'coverage'):
+                        coverage_receipt(coverage, observed['source'])
+
     def test_source_receipt_is_versioned_and_uses_the_frozen_baseline(self):
         (self.workspace / "committed.txt").write_text("committed\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(self.workspace), "add", "committed.txt"], check=True)

@@ -100,6 +100,16 @@ def workspace_source(workspace, baseline_commit="HEAD"):
     return source
 
 
+def verification_argv(command):
+    try:
+        argv = shlex.split(command)
+    except ValueError as error:
+        raise ValueError(f"verification command is invalid: {error}") from error
+    if not argv or not all(argv):
+        raise ValueError("verification command must form a non-empty argv")
+    return argv
+
+
 def _fingerprint(value):
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -108,6 +118,48 @@ def _fingerprint(value):
 
 def _runner_fingerprint():
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def jacoco_check_result(argv, stdout, stderr=b""):
+    """Recognize nonempty checks within their own task block, never a sibling report."""
+    runner = Path(argv[0]).name.lower()
+    if runner not in {"gradle", "gradlew", "mvn", "mvnw"}:
+        return None
+    if any(re.search(rb"Rule violated|Coverage check failed", stream) for stream in (stdout, stderr)):
+        return None
+    output = re.sub(r"\x1b\[[0-9;]*m", "", stdout.decode("utf-8", "replace"))
+    gradle = runner in {"gradle", "gradlew"}
+    header_pattern = r"(?m)^> Task ([^\n]+)$" if gradle else r"(?m)^\[INFO\] --- ([^\n]+) ---\s*$"
+    headers = list(re.finditer(header_pattern, output))
+    checks, classes = 0, 0
+    for index, header in enumerate(headers):
+        name = header.group(1).strip()
+        if gradle:
+            if not re.match(r":(?:[^ :]+:)*jacocoTestCoverageVerification(?: |$)", name):
+                continue
+            if not name.endswith(":jacocoTestCoverageVerification"):
+                return None
+        elif not re.search(r"(?:^|:)(?:jacoco|jacoco-maven-plugin):[^: ]+:check\b", name):
+            continue
+        body = output[header.end():headers[index + 1].start() if index + 1 < len(headers) else len(output)]
+        marker = r"\[ant:jacocoReport\] Writing bundle '.+' with ([0-9]+) classes" if gradle else \
+            r"\[INFO\] Analyzed bundle '.+' with ([0-9]+) classes"
+        counts = [int(value) for value in re.findall(marker, body)]
+        if not counts or not all(counts) or "Loading execution data file " not in body \
+                or re.search(r"SKIPPED|UP-TO-DATE|FROM-CACHE|Skipping JaCoCo|Rule violated|Coverage check failed", body) \
+                or (not gradle and "[INFO] All coverage checks have been met." not in body):
+            return None
+        checks += 1
+        classes += sum(counts)
+        if checks > 128:
+            return None
+    return {"checks": checks, "classes": classes} if checks else None
+
+
+def require_jacoco_execution(receipt):
+    if Path(receipt["argv"][0]).name.lower() in {"gradle", "gradlew", "mvn", "mvnw"} \
+            and not receipt.get("jacoco_check"):
+        raise ValueError("coverage requires an executed nonempty JaCoCo check; use Gradle --info --console=plain")
 
 
 def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
@@ -157,6 +209,9 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         "evidence_level": "observed",
         "source": source_after,
     }
+    jacoco_check = jacoco_check_result(argv, stdout, stderr) if exit_code == 0 else None
+    if jacoco_check is not None:
+        receipt["jacoco_check"] = jacoco_check
     return {**receipt, "receipt_fingerprint": _fingerprint(receipt)}
 
 
@@ -166,7 +221,7 @@ def validate_observed_evidence_receipt(item):
         "stderr_fingerprint", "runner_fingerprint", "evidence_level", "source",
         "receipt_fingerprint",
     }
-    if not isinstance(item, dict) or set(item) != fields \
+    if not isinstance(item, dict) or set(item) not in (fields, fields | {"jacoco_check"}) \
             or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError("Evidence Receipt fields are invalid")
     if not isinstance(item.get("argv"), list) or not item["argv"] \
@@ -187,6 +242,14 @@ def validate_observed_evidence_receipt(item):
     if item["runner_fingerprint"] != _runner_fingerprint() \
             or item.get("evidence_level") != "observed":
         raise ValueError("Evidence Receipt provenance is invalid")
+    if "jacoco_check" in item:
+        check = item["jacoco_check"]
+        if not isinstance(check, dict) or set(check) != {"checks", "classes"} \
+                or any(type(check[key]) is not int or check[key] <= 0 for key in check) \
+                or check["checks"] > 128 or check["classes"] < check["checks"] \
+                or Path(item["argv"][0]).name.lower() not in {"gradle", "gradlew", "mvn", "mvnw"} \
+                or item["exit_code"] != 0:
+            raise ValueError("Evidence Receipt JaCoCo coverage result is invalid")
     validate_source_receipt(item.get("source"))
     expected = _fingerprint({key: entry for key, entry in item.items() if key != "receipt_fingerprint"})
     if item["receipt_fingerprint"] != expected:

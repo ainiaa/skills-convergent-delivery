@@ -11,7 +11,7 @@ import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 
@@ -21,8 +21,10 @@ if str(ROOT_SCRIPTS) not in sys.path:
 from delivery_next import (
     validate_provider_binding as validate_complete_provider_binding,
     validate_state as validate_delegate_state,
+    _path_contains,
 )
-from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source
+from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source, verification_argv
+from task_profile import _canonical_paths
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -237,6 +239,12 @@ def validate_capsule(capsule, batch_id, plan_id, task_id):
         values = require_list(capsule[field], f"capsule.{field}", non_empty=True)
         for value in values:
             require_string(value, f"capsule.{field} item")
+    for path in capsule["scope"]:
+        if PurePosixPath(path.replace("\\", "/")).is_absolute():
+            raise ValueError("capsule.scope must stay inside the workspace")
+    _canonical_paths(capsule["scope"])
+    for command in capsule["verification"]:
+        verification_argv(command)
 
 
 def git_output(workspace, *arguments):
@@ -344,10 +352,25 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
     if tree_hash != commit_tree:
         raise ValueError("receipt tree does not match its Git commit")
     validate_committed_source(workspace, source_receipt, commit_id)
+    expected_parent = previous_commit or batch["capsule"]["baseline"]
+    diff = subprocess.run(
+        ["git", "-C", workspace, "diff", "--name-only", "--no-renames", "-z", expected_parent, commit_id, "--"],
+        capture_output=True, check=False,
+    )
+    if diff.returncode != 0:
+        raise ValueError("receipt checkpoint delta cannot be resolved")
+    delta = diff.stdout.decode("utf-8", "surrogateescape").split("\0")[:-1]
+    scope = _canonical_paths(batch["capsule"]["scope"])
+    if any(not any(_path_contains(owner, path) for owner in scope) for path in delta):
+        raise ValueError("checkpoint changes exceed capsule scope")
     if validate_delegate_state(
         delegate_state, SimpleNamespace(), check_workspace=False, coverage_revision=commit_id,
+        scope_changed_paths=delta,
     ) != 'complete':
         raise ValueError('receipt delegate state is not complete')
+    allowed = delegate_state["execution_control"]["routing"]["allowed_paths"]
+    if any(not any(_path_contains(owner, path) for owner in scope) for path in allowed):
+        raise ValueError("delegate routing exceeds capsule scope")
     if batch['status'] == 'validating-receipt':
         validate_committed_source(workspace, workspace_source(workspace, batch['capsule']['baseline']), commit_id)
     expected_parent = previous_commit or batch["capsule"]["baseline"]
@@ -376,6 +399,15 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("delegate acceptance does not match the capsule")
     if {item["criterion"]: item for item in receipt["acceptance"]} != verified:
         raise ValueError("receipt acceptance does not match the verified delegate")
+    required_commands = {tuple(verification_argv(command)) for command in batch["capsule"]["verification"]}
+    observed_commands = {
+        tuple(item["argv"])
+        for acceptance in delegate_state["ledger"]["acceptance"]
+        for item in acceptance.get("evidence_receipts", [])
+        if valid_evidence_receipts([item], source_receipt)
+    }
+    if not required_commands <= observed_commands:
+        raise ValueError("delegate verification does not cover capsule commands")
     if require_list(receipt.get("open_issues"), "receipt.open_issues"):
         raise ValueError("completed receipt cannot have open issues")
 

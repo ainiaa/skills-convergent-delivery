@@ -123,3 +123,17 @@
 | [Warp skill-doctor improvements](https://github.com/warpdotdev/common-skills/blob/main/.agents/skills/skill-doctor/references/skill-improvements.md) 与 scripts/test_collect_sessions.py | 采用先核实真实失败和归属、优先替换已有指导；本轮根因在代码，不扩写入口规则。不采用评分曲线、缺失证据默认分或扫描用户全部历史 | selector 真实派生子进程，成功/失败/超时返回后均不得继续写临时文件；保持正式 Eval uncovered，不用离线测试代替 |
 
 复用 ExitStack 文件锁、Evidence Receipt argv 和进程组清理函数；不增加 schema、持久状态、代理、依赖或默认步骤。release 校验与删除在同一组锁内完成，控制器仍拥有写权和清场责任；身份或验证缺口阻止放行，selector 超时/清理异常有限退出。进程组清理不覆盖主动脱组或外部服务。审计只解析/比较命令，不执行它们。本地回归和同上下文复核不替代独立盲审、真实宿主 Eval 或尚未配置的覆盖率门禁。
+
+
+## 2026-09-06：Batch 冻结契约与 JaCoCo 空执行修复
+
+复用本轮 Skills.sh 发现结果及原始实现核对，仅处理已复现的范围越界、漏跑验证和 JaCoCo SKIPPED 假通过。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Google agents-cli-eval](https://github.com/google/agents-cli/blob/main/skills/google-agents-cli-eval/SKILL.md) / [run](https://github.com/google/agents-cli/blob/main/src/google/agents/cli/eval/cmd_run.py) | 采用“执行成功不等于评价通过”；不引入迭代优化、云依赖或默认 LLM judge。JaCoCo 需要本次非空检查结果，类数不是覆盖率百分比 | `test_jacoco_coverage_requires_an_executed_nonempty_check`；离线 Gradle 8.14 实际编译 1 个类，无 exec 时 exit 0 仍被 native/Trace 双门禁拒绝；真实 agent 采集后检查通过；66% < 85% 且 `failOnViolation=false` 时 stdout/stderr 中的违规仍阻止通过 |
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用真实最终状态、附带越界改动、漏证据与合法对照；不增加 verifier 角色 | Batch scheduler 从冻结 capsule 写入 revision 0→2，越界 checkpoint 在 revision 3 拒绝并保留 revision 2；分离批次范围允许使用累计 Source Receipt |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用有限边界组合，继续用 unittest；不引入新测试依赖 | 路径前缀边界、绝对路径与逃逸、命令错参、等价引号、JaCoCo 空类/缺数据/兄弟 report/多任务跳过 |
+| [JaCoCo CheckMojo](https://github.com/jacoco/jacoco/blob/master/jacoco-maven-plugin/src/org/jacoco/maven/CheckMojo.java) / [ReportTask](https://github.com/jacoco/jacoco/blob/master/org.jacoco.ant/src/org/jacoco/ant/ReportTask.java) | 采用真实加载、分析和检查结果输出；不读取旧 XML 报告冒充本次检查，不新增通用 report adapter 或第二份证据文件 | Evidence runner 的真实子进程输出协议测试；Gradle 正常/跳过的离线实验。Maven 为原始实现核对与输出协议回归，本机未执行完整 Maven JaCoCo 集成 |
+
+决定权、状态写权和清场责任仍在现有控制器。复用 Source Receipt、checkpoint、acceptance receipts 和进程超时；仅 JaCoCo Evidence 增加有界的检查摘要，普通任务不增加命令、文件或代理。未知输出保守拒绝，要求可识别 INFO/plain 输出后重跑，不自动采样重试。当前仓库原生 coverage 配置与正式 Eval 宿主桥接仍缺失；本地回归和临时 Java 实验不计为 Suite 覆盖率达标或正式 Eval。

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Batch 完成门禁将子任务 routing 和真实 checkpoint delta 绑定冻结 capsule.scope；路径边界、删除、重命名和权限变化按 Git 差异复核，历史批次按各自检查点校验，不把前批累计改动误算为当前批次越界。
+- Batch 复用 Plan 的 verification argv 解析，逐项要求正式 delegate 验收中的新鲜成功 Evidence Receipt；漏跑、替换参数或非法命令不能完成，等价引号、不同回执顺序和额外有效检查保持兼容。
+- Evidence runner 从本次 JaCoCo 检查任务输出提取非空检查结果，并与命令、输出摘要和源码共同绑定；native 与 Trace 门禁拒绝仅 exit 0、SKIPPED、UP-TO-DATE、无数据、零类、仅生成报告及 stdout/stderr 中被降为警告的阈值违规。Gradle 使用 `--info --console=plain` 暴露检查输出；不读取旧报告补证据。
+
 - writer lease 释放在同一组文件锁内校验 repo/workspace/task/run/writer 和租约类型，再检查正式状态并删除租约；错填 task 或 workspace 不再绕过清场，身份不匹配时保留两份租约。
 - Plan 审计逐项匹配冻结 verification 命令与当前源码的成功 Evidence Receipt argv；缺项、参数不匹配或无关成功命令不能宣告 DONE。命令按 POSIX 引号拆分且不执行，非法引号和空参数在计划校验时拒绝。
 - 触发评估的 selector 在独立进程组运行，成功、失败和超时后都复用既有清理函数终止组内子进程；清理等待有界，异常不能产出成功评估。

@@ -58,3 +58,5 @@ Maven 静态解析只接受有效 POM 中 `build/plugins` 直接声明的 `org.j
 `quality-targets.yml` 的 coverage/coverage_min/line_coverage 目标仅接受一个 1..100 十进制整数字面量，可带配对单/双引号及由空白分隔的行尾注释。不展开复杂 YAML；已识别目标的缺值、非法值或重复声明（含不同别名）返回 `uncovered`、`argv=null`、`threshold=null`，不能回退或用 argv 掩盖错误。目标未声明时才使用既有默认规则；有效显式 argv 阈值的优先级不变。
 
 阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。暂不支持带 `--` 参数分隔符的 coverage 命令。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。
+
+JaCoCo 的命令退出 0 还不构成 coverage 证据。公共 Evidence runner 仅从本次 stdout 中对应 verification/check 的任务块提取可选 `jacoco_check={"checks":<1..128>,"classes":<positive int>}`，并纳入既有 receipt fingerprint；每个检查块必须显示加载 execution data 和分析非空类集合，Maven 还须出现检查全部通过的结果。stdout 或 stderr 出现阈值违规时不签发检查摘要，即使构建配置把失败降为警告且退出 0。Trace 与 native 门禁共同要求此结果；SKIPPED、UP-TO-DATE、FROM-CACHE、缺数据、零类、仅 report 和缺少可识别输出均不能通过。不读取历史报告文件补证据，也不把类数量解释成覆盖率百分比；阈值仍由冻结命令和项目配置校验。Gradle 冻结命令使用 `--info --console=plain --no-parallel`，需要重新执行时加入 `--rerun-tasks`；Maven 使用标准 INFO 输出。静默、定制或交错输出需要先恢复可核对的日志再重跑，不能手填此字段。非 JaCoCo 的原有 runner 契约保持不变。

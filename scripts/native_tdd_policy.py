@@ -302,6 +302,8 @@ def require_matching_coverage(coverage, workspace, *, revision=None):
         raise ValueError('native coverage policy is not ready')
     if coverage['threshold'] != policy['threshold'] or coverage['receipt']['argv'] != policy['argv']:
         raise ValueError('coverage receipt does not match the resolved native coverage command')
+    from evidence_contract import require_jacoco_execution, validate_observed_evidence_receipt
+    require_jacoco_execution(validate_observed_evidence_receipt(coverage["receipt"]))
 
 
 def main():

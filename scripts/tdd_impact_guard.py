@@ -11,6 +11,7 @@ from pathlib import Path
 
 from evidence_contract import (
     run_evidence,
+    require_jacoco_execution,
     validate_observed_evidence_receipt,
     validate_source_receipt,
     workspace_source,
@@ -175,6 +176,7 @@ def coverage_receipt(value, source):
         raise ValueError(f"coverage receipt must reference an observed Evidence Receipt: {error}") from error
     if observed["exit_code"] != 0 or observed["source"] != source:
         raise ValueError("coverage receipt must pass on the final trace source")
+    require_jacoco_execution(observed)
     return True
 
 

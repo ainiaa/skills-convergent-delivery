@@ -2,6 +2,7 @@ import importlib.util
 import copy
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,7 @@ from delivery_engine import provider_reference
 from delivery_next import upgrade_state
 from delivery_state import state_path as delegate_state_path
 from provider_contract import canonical_fingerprint
-from test_delivery_next import state as single_state, tdd_trace, configure_coverage_fixture
+from test_delivery_next import state as single_state, tdd_trace, configure_coverage_fixture, routing
 from evidence_contract import run_evidence, workspace_source
 
 
@@ -47,13 +48,13 @@ def capsule(batch_id, plan_id="plan-1", task_id=None, baseline="abc123"):
         "task_id": task_id or batch_id.replace("B", "T"),
         "batch_id": batch_id,
         "goal": f"goal-{batch_id}",
-        "scope": [f"module-{batch_id}"],
+        "scope": ["."],
         "global_constraints": ["keep compatibility"],
         "consumes": ["baseline"],
         "produces": [f"output-{batch_id}"],
         "baseline": baseline,
         "acceptance": [f"accept-{batch_id}"],
-        "verification": [f"test-{batch_id}"],
+        "verification": [shlex.join([sys.executable, "-c", "pass", batch_id])],
         "provider_binding": provider_binding(),
     }
 
@@ -198,6 +199,102 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_disjoint_batch_scopes_use_each_checkpoint_not_cumulative_source(self):
+        state = candidate(self.workspace)
+        parent = self.commit_id
+        for index, batch in enumerate(state['batches']):
+            module = f"module-{batch['batch_id']}"
+            batch['capsule']['scope'] = [module]
+            target = self.workspace / module / 'implementation.txt'
+            target.parent.mkdir()
+            target.write_text(module)
+            subprocess.run(['git', '-C', str(self.workspace), 'add', module], check=True)
+            subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', module], check=True)
+            commit = batch_state.git_output(str(self.workspace), 'rev-parse', 'HEAD')
+            tree = batch_state.git_output(str(self.workspace), 'rev-parse', 'HEAD^{tree}')
+            batch.update(status='completed', dispatch_id=f'dispatch-{index}')
+            register_worker(state, index, f'worker-{index}')
+            batch['worker_status'] = 'completed'
+            batch['receipt'] = receipt(batch['batch_id'], batch['dispatch_id'], commit, tree,
+                                       self.workspace, baseline=self.commit_id)
+            batch['receipt']['parent_commit_id'] = parent
+            path = delegate_state_path(state['delegate_state_root'], state['repo_id'],
+                                       batch['task_id'], batch['delegate_run_id'])
+            child = json.loads(path.read_text())
+            child['execution_control']['routing'] = routing(allowed_paths=[module])
+            path.write_text(json.dumps(child))
+            state['current_batch'] = 'B2' if index == 0 else None
+            batch_state.validate_state(state)
+            parent = commit
+        self.assertEqual(['module-B1/implementation.txt', 'module-B2/implementation.txt'],
+                         state['batches'][1]['receipt']['delegate_source_receipt']['changed_paths'])
+
+    def test_capsule_rejects_absolute_or_escaping_scope_before_dispatch(self):
+        for scope in ('/', '/tmp', '../outside', 'module/../../outside', '\\tmp'):
+            with self.subTest(scope=scope):
+                state = candidate(self.workspace)
+                state['batches'][0]['capsule']['scope'] = [scope]
+                with self.assertRaises(ValueError):
+                    self.write(state, -1)
+
+    def test_capsule_commands_must_be_executed_with_exact_arguments(self):
+        state = self.completed_first_batch()
+        batch_state.validate_state(state)
+        for command in (shlex.join([sys.executable, "-c", "raise SystemExit(1)"]),
+                        shlex.join([sys.executable, "-c", "pass", "B2"]), "unterminated '"):
+            with self.subTest(command=command):
+                invalid = copy.deepcopy(state)
+                invalid["batches"][0]["capsule"]["verification"].append(command)
+                with self.assertRaisesRegex(ValueError, 'verification'):
+                    batch_state.validate_state(invalid)
+        state["batches"][0]["capsule"]["verification"] = [f'"{sys.executable}" -c "pass" B1']
+        batch_state.validate_state(state)
+
+    def test_capsule_scope_rejects_broader_delegate_routing(self):
+        state = self.completed_first_batch()
+        state["batches"][0]["capsule"]["scope"] = ["module-B1"]
+        with self.assertRaisesRegex(ValueError, 'scope'):
+            batch_state.validate_state(state)
+
+    def test_scope_is_checked_on_real_checkpoint_delta_before_persisting(self):
+        for changed in ("outside.txt", "module-B10/file.txt", "module-B1/inside.txt"):
+            with self.subTest(changed=changed):
+                state = candidate(self.workspace)
+                batch = state["batches"][0]
+                batch["capsule"]["scope"] = ["module-B1"]
+                # Freeze scope and commands before any execution.
+                root = self.root / changed.replace('/', '-')
+                batch_state.write_state(root, state, -1)
+                batch.update(status="dispatching", dispatch_id="dispatch-B1")
+                state["revision"] = 1
+                batch_state.write_state(root, state, 0)
+                register_worker(state, 0, "fixture-worker")
+                batch["status"] = "running"
+                state["revision"] = 2
+                persisted = batch_state.write_state(root, state, 1)
+                target = self.workspace / changed
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(changed)
+                subprocess.run(['git', '-C', str(self.workspace), 'add', changed], check=True)
+                subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'checkpoint'], check=True)
+                commit = batch_state.git_output(str(self.workspace), 'rev-parse', 'HEAD')
+                tree = batch_state.git_output(str(self.workspace), 'rev-parse', 'HEAD^{tree}')
+                batch.update(status="validating-receipt", worker_status="completed")
+                batch["receipt"] = receipt('B1', 'dispatch-B1', commit, tree, self.workspace,
+                                           baseline=batch["capsule"]["baseline"])
+                path = delegate_state_path(state["delegate_state_root"], state["repo_id"], 'T1', 'delegate-B1')
+                child = json.loads(path.read_text())
+                child['execution_control']['routing'] = routing(allowed_paths=['module-B1'])
+                path.write_text(json.dumps(child))
+                state['revision'] = 3
+                if changed == 'module-B1/inside.txt':
+                    batch_state.write_state(root, state, 2)
+                    self.assertEqual(3, json.loads(persisted.read_text())['revision'])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'scope'):
+                        batch_state.write_state(root, state, 2)
+                    self.assertEqual(2, json.loads(persisted.read_text())['revision'])
+
     def test_terminal_takeover_preserves_worker_provenance_and_allows_cleanup(self):
         for status in ("blocked", "stopped"):
             for outcome in ("completed", "interrupted", "blocked"):
