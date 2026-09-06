@@ -184,7 +184,7 @@ def granular_plan(tasks, context="long", checkpoint="same_session"):
 
 
 def evidence_receipt(source, command="bash scripts/check.sh"):
-    argv = [sys.executable, "-c", "pass", command]
+    argv = shlex.split(command)
     receipt = {
         "schema_version": 2,
         "argv": argv,
@@ -211,6 +211,54 @@ def final_evidence(source):
 
 
 class PlanCheckTest(unittest.TestCase):
+    def test_audit_binds_every_verification_to_real_passing_command_evidence(self):
+        commands = [[sys.executable, "-c", "pass", "first check"],
+                    [sys.executable, "-c", "pass", "second check"]]
+        value = plan([task("T1", ["src"])])
+        value["tasks"][0]["verification"] = [shlex.join(argv) for argv in commands]
+        source = self.current_source(value)
+        receipts = [evidence_contract.run_evidence(self.workspace, self.baseline, argv) for argv in commands]
+        unrelated = evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, "-c", "pass"])
+        failed_argv = [sys.executable, "-c", "raise SystemExit(1)"]
+        failed = evidence_contract.run_evidence(self.workspace, self.baseline, failed_argv)
+        self.assertEqual(1, failed["exit_code"])
+        for case in ("complete", "quoted", "reordered", "missing", "unrelated", "failed", "wrong_argument"):
+            with self.subTest(case=case):
+                candidate = json.loads(json.dumps(value))
+                submitted = list(receipts)
+                if case == "quoted":
+                    candidate["tasks"][0]["verification"][0] = f'{shlex.quote(sys.executable)}  -c "pass" "first check"'
+                elif case == "reordered":
+                    submitted.reverse()
+                elif case == "missing":
+                    submitted.pop()
+                elif case == "unrelated":
+                    candidate["tasks"][0]["verification"] = [shlex.join(failed_argv)]
+                    submitted = [unrelated]
+                elif case == "failed":
+                    candidate["tasks"][0]["verification"] = [shlex.join(failed_argv)]
+                    submitted = [failed]
+                elif case == "wrong_argument":
+                    candidate["tasks"][0]["verification"][0] = shlex.join([*commands[0][:-1], "different check"])
+                result = self.run_check("audit", {
+                    "plan": candidate,
+                    "task_results": {"T1": {"status": "DONE", "fresh_pass": True,
+                        "source_before": source, "source_after": source, "evidence": submitted}},
+                    "final_acceptance": [{"criterion": "all checks pass", "result": "pass",
+                        "freshness": "fresh", "evidence": unrelated}],
+                }, self.workspace, require_complete=True)
+                expected = case in {"complete", "quoted", "reordered"}
+                self.assertEqual(0 if expected else 1, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(expected, json.loads(result.stdout)["complete"])
+
+    def test_plan_rejects_verification_that_cannot_form_an_argv(self):
+        for command in ("python -c 'unterminated", "''", "python ''"):
+            with self.subTest(command=command):
+                value = plan([task("T1", ["src"])])
+                value["tasks"][0]["verification"] = [command]
+                result = self.run_check("validate", value)
+                self.assertNotEqual(0, result.returncode)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.pdlc_root = Path(self.temporary.name) / "pdlc"

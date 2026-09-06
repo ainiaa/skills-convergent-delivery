@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from codex_exec_runner import _terminate_process
+
 
 def validate_selector(selector):
     if not isinstance(selector, dict) or set(selector) != {"argv", "artifacts"}:
@@ -83,10 +85,20 @@ def run_evals(dataset, selector, timeout=60):
     confusion = {}
     true_positive = true_negative = false_positive = false_negative = 0
     for case in cases:
-        completed = subprocess.run(
-            [*command, case["prompt"]], text=True, capture_output=True,
-            check=False, timeout=timeout,
+        process = subprocess.Popen(
+            [*command, case["prompt"]], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            completed = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+        finally:
+            try:
+                _terminate_process(process)
+                process.wait(timeout=1)
+            finally:
+                process.stdout.close()
+                process.stderr.close()
         selected = None
         error = None
         if completed.returncode == 0:

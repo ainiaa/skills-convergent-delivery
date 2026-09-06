@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import shlex
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -66,6 +67,16 @@ def require_sha256(value, name):
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError(f"{name} must be a lowercase sha256")
     return value
+
+
+def verification_argv(command):
+    try:
+        argv = shlex.split(command)
+    except ValueError as error:
+        raise ValueError(f"verification command is invalid: {error}") from error
+    if not argv or not all(argv):
+        raise ValueError("verification command must form a non-empty argv")
+    return argv
 
 
 def clean_path(value, name):
@@ -347,6 +358,8 @@ def validate_plan(plan):
                 raw.get("provider_run"), f"tasks[{index}].provider_run"
             ),
         }
+        for command in task["verification"]:
+            verification_argv(command)
         tasks.append(task)
 
     closure_matrix = validate_closure_matrix(
@@ -469,7 +482,10 @@ def audit(envelope, workspace):
                     cursor = after
                     evidence_source = after
             if result.get("fresh_pass") is not True \
-                    or not valid_evidence_receipts(result.get("evidence"), evidence_source):
+                    or not valid_evidence_receipts(result.get("evidence"), evidence_source) \
+                    or not {tuple(verification_argv(command)) for command in task["verification"]}.issubset(
+                        {tuple(item["argv"]) for item in result["evidence"]}
+                    ):
                 status = "PARTIAL"
         statuses[task_id] = status
 

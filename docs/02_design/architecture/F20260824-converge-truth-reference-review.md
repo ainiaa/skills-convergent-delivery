@@ -111,3 +111,15 @@
 | [Rstest performance-measurement](https://github.com/rstackjs/agent-skills/blob/main/skills/rstest-debugging/references/performance-measurement.md) | 暂不采用性能测量层，本轮验收是三项正确性修复 | 不新增计时字段或成本报告；本地回归耗时不解释为模型执行成本改善 |
 
 复用 target、run_id/writer_id、worker_owner_run_id 和既有 lease 文件。默认路径不增加动作；错误目标停止，过期租约要求显式恢复，Batch 终态接管只能延续清场。无新 schema、依赖、代理或第二套状态；不扩展完整 YAML 解释器。
+
+## 2026-09-06 租约释放、计划验收与 selector 清理修复
+
+沿用本会话全量审查的 Skills.sh 分类/排行榜发现及原始 Skill、脚本和测试核对结果，不以安装量判断机制正确性。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用取巧误放行和合理替代反例；不新增 verifier 服务或模型角色 | Plan CLI 使用真实执行回执：规定检查实际失败时无关成功回执不能放行；缺项和参数变化拒绝，等价引号和回执重排通过 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/main/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用完整身份与状态不变量，复用 unittest 有限组合；不引入生成器依赖 | lease CLI 错填 task/workspace 或租约 repo/kind 不匹配时保留两份租约，第二个 writer 仍受阻；匹配的 complete/blocked/无正式状态支持重复释放 |
+| [Warp skill-doctor improvements](https://github.com/warpdotdev/common-skills/blob/main/.agents/skills/skill-doctor/references/skill-improvements.md) 与 scripts/test_collect_sessions.py | 采用先核实真实失败和归属、优先替换已有指导；本轮根因在代码，不扩写入口规则。不采用评分曲线、缺失证据默认分或扫描用户全部历史 | selector 真实派生子进程，成功/失败/超时返回后均不得继续写临时文件；保持正式 Eval uncovered，不用离线测试代替 |
+
+复用 ExitStack 文件锁、Evidence Receipt argv 和进程组清理函数；不增加 schema、持久状态、代理、依赖或默认步骤。release 校验与删除在同一组锁内完成，控制器仍拥有写权和清场责任；身份或验证缺口阻止放行，selector 超时/清理异常有限退出。进程组清理不覆盖主动脱组或外部服务。审计只解析/比较命令，不执行它们。本地回归和同上下文复核不替代独立盲审、真实宿主 Eval 或尚未配置的覆盖率门禁。

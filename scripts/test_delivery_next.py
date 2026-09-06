@@ -208,7 +208,7 @@ def closure_plan(requirement_fingerprint=None):
             "task_id": "closure", "task_kind": "vertical_slice", "outcomes": ["close scope"],
             "goal": "close scope", "owned_paths": ["."], "depends_on": [],
             "steps": ["verify closure"], "acceptance": ["Requested behavior"],
-            "verification": ["python3 scripts/test_delivery_next.py"], "execution": "current",
+            "verification": [EVIDENCE["command"]], "execution": "current",
             "status": "pending", "provider_binding": provider_binding,
             "provider_run": {"scope": "task", "recursive_planning": False},
         }],
@@ -680,6 +680,14 @@ class DeliveryNextTest(unittest.TestCase):
         payload = reviewed_complete_state(full_closure=True)
 
         self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+
+    def test_full_closure_rejects_unexecuted_required_verification(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        for plan in (closure["plan"], closure["audit"]["plan"]):
+            plan["tasks"][0]["verification"] = [shlex.join([sys.executable, "-c", "raise SystemExit(1)"])]
+        with self.assertRaisesRegex(ValueError, "passing closure plan audit"):
+            validate_state(payload, SimpleNamespace())
 
     def test_full_closure_requires_a_plan_v6(self):
         payload = reviewed_complete_state(full_closure=True)

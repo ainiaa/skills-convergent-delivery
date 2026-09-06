@@ -257,23 +257,34 @@ def renew(arguments, paths):
 
 
 def release(arguments, paths):
-    for path in paths.values():
-        with lock_record(path):
+    expected = {
+        "repo_id": arguments.repo,
+        "workspace": arguments.workspace,
+        "task_key": arguments.task_key,
+        "run_id": arguments.run_id,
+        "writer_id": arguments.writer_id,
+    }
+    with ExitStack() as stack:
+        for path in sorted(paths.values(), key=str):
+            stack.enter_context(lock_record(path))
+        for kind, path in paths.items():
             if not path.exists():
                 continue
             record = read_record(path)
-            if not same_owner(record, arguments.run_id, arguments.writer_id):
+            if record.get("kind") != kind or any(
+                record.get(field) != value for field, value in expected.items()
+            ):
                 payload("blocked_owner", holder=record)
                 return 2
-    state = formal_state(arguments)
-    if state is not None:
-        try:
-            validate_cleanup_for_release(state, arguments)
-        except ValueError as error:
-            payload("blocked_cleanup", reason=str(error))
-            return 2
-    for path in paths.values():
-        remove_if_owned(path, arguments.run_id, arguments.writer_id)
+        state = formal_state(arguments)
+        if state is not None:
+            try:
+                validate_cleanup_for_release(state, arguments)
+            except ValueError as error:
+                payload("blocked_cleanup", reason=str(error))
+                return 2
+        for path in paths.values():
+            path.unlink(missing_ok=True)
     payload("released")
     return 0
 

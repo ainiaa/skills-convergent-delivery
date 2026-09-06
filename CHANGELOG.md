@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- writer lease 释放在同一组文件锁内校验 repo/workspace/task/run/writer 和租约类型，再检查正式状态并删除租约；错填 task 或 workspace 不再绕过清场，身份不匹配时保留两份租约。
+- Plan 审计逐项匹配冻结 verification 命令与当前源码的成功 Evidence Receipt argv；缺项、参数不匹配或无关成功命令不能宣告 DONE。命令按 POSIX 引号拆分且不执行，非法引号和空参数在计划校验时拒绝。
+- 触发评估的 selector 在独立进程组运行，成功、失败和超时后都复用既有清理函数终止组内子进程；清理等待有界，异常不能产出成功评估。
 - coverage 目标支持整数、配对引号和行尾注释；已声明但非法、缺值或重复的目标返回 uncovered，不再静默回退为默认 85%。
 - Batch blocked/stopped 支持租约过期后的显式 owner 接管，保留原 worker 来源并允许后续清场落盘；仍禁止恢复业务或改写 worker 身份。
 - writer lease 同身份重试返回磁盘中两份有效租约的最早到期时间；过期租约明确阻塞，需续租或显式接管。获取 task lease 失败时保留原先已持有的 workspace lease。

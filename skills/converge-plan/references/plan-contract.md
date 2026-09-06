@@ -147,9 +147,11 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit \
 
 状态语义：
 
-- `DONE`：验收已满足，任务证据为退出码 0 的结构化 receipt，且 receipt source 与该 task 的 `source_after` 完全一致。
+- `DONE`：验收已满足，任务证据为退出码 0 的结构化 receipt，且 receipt source 与该 task 的 `source_after` 完全一致；每条冻结的 `verification` 都必须匹配至少一份 receipt 的完整 argv，缺项或无关成功回执使任务降为 `PARTIAL`。
 - `PARTIAL`：只完成部分验收，或通过证据已经陈旧。
 - `NOT_DONE`：没有可信完成回执。
 - `CHANGED`：经授权改变了原计划目标，必须说明新目标和影响。
 
 每个 task 新增但不属于自身 `owned_paths` 的变更列入 `task_scope_drift`；所有 task 之外的净新增变更列入 `scope_drift`。只有源码链闭合到当前工作区、所有任务为 `DONE`、两类 drift 均为空，并且每条计划级 `final_acceptance` 都有绑定当前源码指纹的新鲜通过证据时，才能交付。
+
+`verification` 中每条字符串按 POSIX shell 引号规则拆分为 argv，仅比较参数，不执行或展开 shell 语法。等价引号和分隔空白不影响匹配，参数值及顺序必须一致；多条命令的回执顺序不限。非法引号、空命令或空参数不能冻结；需要 shell 语法时显式冻结 `bash -c '...'` 或项目脚本入口，回执必须来自相同 argv。
