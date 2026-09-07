@@ -15,8 +15,8 @@ from runner_registry import validate_runner_profile
 
 
 SMOKE_PROMPT = (
-    "This is a live smoke check. Do not modify files or run write-capable commands. "
-    "Inspect the workspace only as needed and return the required structured role result."
+    "This is a live smoke check. Do not modify files, inspect the workspace, or run commands. "
+    'Return exactly this JSON and nothing else: {"findings":[],"next_action":"verify"}.'
 )
 
 

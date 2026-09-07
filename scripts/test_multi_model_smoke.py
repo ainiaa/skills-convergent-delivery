@@ -57,6 +57,7 @@ class MultiModelSmokeTest(unittest.TestCase):
             return freeze_launch(dispatch["profile"], prompt, {})
 
         def execute(launch, _prompt, **_kwargs):
+            seen["prompt"] = _prompt
             value = {
                 "schema_version": 2, "runner_id": launch["runner_id"],
                 "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
@@ -84,6 +85,7 @@ class MultiModelSmokeTest(unittest.TestCase):
         self.assertEqual("passed", result["status"])
         self.assertTrue(result["worktree_clean"])
         self.assertEqual("requested", result["attestation"]["model"]["status"])
+        self.assertIn('{"findings":[],"next_action":"verify"}', seen["prompt"])
         self.assertNotIn("content", json.dumps(result))
         self.assertNotIn("prompt", json.dumps(result))
         self.assertFalse(seen["workspace"].exists())

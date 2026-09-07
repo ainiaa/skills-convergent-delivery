@@ -745,8 +745,8 @@ if arguments and arguments[0] == "clone":
 
         for marker in (
             "## 多模型协作", "使用多模型配合开发", "默认不启用",
-            "固定角色", "Terra medium", "Luna high", "Sol high", "[多模型协作](references/multi-model.md)",
-            "不能替代真实测试",
+            "固定角色", "Terra medium", "Luna high", "GPT-6 Astra low", "[多模型协作](references/multi-model.md)",
+            "不能替代真实测试", "Claude profile 为可选兼容配置", "不作为本次发布的已验收能力",
         ):
             self.assertIn(marker, readme)
 

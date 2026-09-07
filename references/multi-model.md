@@ -108,6 +108,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" config
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve --profile claude-code
 ```
 
+`claude-code` 是可选兼容 profile，不携带账号、token 或 Provider 配置。只有在用户环境完成真实 smoke 后，才可将其视为已验收能力；未验收时不阻塞 Codex-only 的发布，也不得在发布说明中声称 Claude 已验证可用。
+
 仅支持 `schema_version: 4`。Codex profile 支持 GPT-5.6 系列与 `gpt-6-astra`；Claude Code profile 支持 `haiku`、`fable`、`sonnet`、`opus` 及 `claude-*` 标识。旧的 v3 固定流水线配置会明确失败；使用 `multi_model.py config` 输出新模板后直接替换即可。
 
 单次任务可覆盖模型角色，例如：

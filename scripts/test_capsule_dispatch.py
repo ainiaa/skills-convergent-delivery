@@ -25,7 +25,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                 'cat >/dev/null\nprintf \'[]\\nnull\\n42\\n"noise"\\n\' >&2\n'
                 'printf \'{"type":"thread.started","thread_id":"thread-confirmed"}\\n\'\n')
             result = capsule_dispatch.dispatch_codex(
-                codex, root, "capsule", root / "receipts", "noisy", 1)
+                codex, root, "capsule", root / "receipts", "noisy", 5)
             self.assertEqual("delivered", result["status"])
             self.assertEqual("thread-confirmed", result["external_task_id"])
             self.assertEqual(result, capsule_dispatch.dispatch_codex(
@@ -379,7 +379,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                                 f'touch "{launched}"\n',
             )
             result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 5,
             )
 
         self.assertEqual("delivered", result["status"])
