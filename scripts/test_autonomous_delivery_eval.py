@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7,7 +8,9 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from autonomous_delivery_eval import evaluate, evaluate_trusted, validate
+from autonomous_delivery_eval import (
+    candidate_judge_root, evaluate, evaluate_trusted, execute_scenario, validate,
+)
 from controller_snapshot import create_snapshot
 from delivery_state import state_path
 
@@ -77,18 +80,95 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             def map(self, function, scenarios):
                 return [function(scenario) for scenario in scenarios]
 
-        def run(command, **_kwargs):
+        def run(_workspace, command, _timeout, env=None):
             commands.append(command)
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return 0, b"", b""
 
-        with patch("autonomous_delivery_eval.ThreadPoolExecutor", Pool), \
-                patch("autonomous_delivery_eval.subprocess.run", side_effect=run):
+        with patch("autonomous_delivery_eval.candidate_judge_root", wraps=candidate_judge_root) \
+                as stage_candidate, \
+                patch("autonomous_delivery_eval.ThreadPoolExecutor", Pool), \
+                patch("autonomous_delivery_eval._run_command", side_effect=run):
             report = evaluate(catalog, execute=True)
 
+        self.assertEqual(1, stage_candidate.call_count)
         self.assertEqual([4], created_workers)
         self.assertEqual(len(catalog["scenarios"]), len(commands))
         self.assertTrue(all(command[1:3] == ["-I", "-c"] for command in commands))
         self.assertTrue(all(item["status"] == "passed" for item in report["results"].values()))
+
+    def test_timeout_is_uncovered_instead_of_crashing_the_evaluation(self):
+        scenario = {
+            "id": "timed-out",
+            "check": [
+                "scripts/test_autonomy_gate.py",
+                "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+            ],
+        }
+        with patch("autonomous_delivery_eval._run_command", return_value=(124, b"", b"timed out")):
+            _scenario_id, result = execute_scenario(scenario, CATALOG.parent.parent, CATALOG.parent.parent)
+
+        self.assertEqual("uncovered", result["status"])
+
+    def test_frozen_judge_detects_a_broken_candidate_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                CATALOG.parent.parent, root / "control", extensions=("autonomy-eval",)
+            )
+            candidate = root / "candidate"
+            shutil.copytree(
+                CATALOG.parent.parent, candidate,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            scenario = {
+                "id": "candidate-regression",
+                "check": [
+                    "scripts/test_autonomy_gate.py",
+                    "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+                ],
+            }
+            _scenario_id, baseline = execute_scenario(
+                scenario, Path(snapshot["root"]), candidate
+            )
+            self.assertEqual("passed", baseline["status"])
+            (candidate / "scripts/autonomy_gate.py").write_text(
+                "raise RuntimeError('candidate regression')\n", encoding="utf-8"
+            )
+
+            _scenario_id, result = execute_scenario(
+                scenario,
+                Path(snapshot["root"]), candidate,
+            )
+
+        self.assertEqual("failed", result["status"])
+
+    def test_frozen_judge_ignores_candidate_test_fixtures(self):
+        scenario = {
+            "id": "candidate-test-fixture",
+            "check": [
+                "scripts/test_autonomy_gate.py",
+                "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                CATALOG.parent.parent, root / "control", extensions=("autonomy-eval",)
+            )
+            candidate = root / "candidate"
+            shutil.copytree(
+                CATALOG.parent.parent, candidate,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            (candidate / "scripts/test_delivery_next.py").write_text(
+                "raise RuntimeError('candidate test fixture must not run')\n", encoding="utf-8"
+            )
+
+            _scenario_id, result = execute_scenario(
+                scenario, Path(snapshot["root"]), candidate
+            )
+
+        self.assertEqual("passed", result["status"])
 
     def test_execute_marks_the_evaluation_failed_when_a_bound_check_fails(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
@@ -157,6 +237,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual("completed", report["status"])
+        self.assertRegex(report["candidate_source_fingerprint"], r"^[0-9a-f]{64}$")
         self.assertTrue(all(item["status"] == "passed" for item in report["results"].values()))
 
     def test_trusted_evaluation_rejects_the_mutable_workspace_evaluator(self):

@@ -279,12 +279,14 @@ class EvidenceCleanupError(ValueError):
     """A process group may still be alive; no receipt may be issued."""
 
 
-def _run_command(workspace, argv, timeout_seconds):
+def _run_command(workspace, argv, timeout_seconds, env=None):
     process = None
     try:
         from codex_exec_runner import _terminate_process
-        process = subprocess.Popen(argv, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   start_new_session=True)
+        process = subprocess.Popen(
+            argv, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True, env=env,
+        )
         try:
             stdout, stderr = process.communicate(timeout=timeout_seconds)
             exit_code = process.returncode

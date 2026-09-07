@@ -151,7 +151,8 @@ compatible no-op because its Skill is already registered; model runners still
 require an explicit user request.
 
 Remote install:
-  curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh | bash -s -- --latest --target all
+  curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh -o converge-install.sh
+  bash converge-install.sh --latest --target all
 EOF
 }
 
@@ -213,7 +214,6 @@ if [[ -n "$REMOTE_SELECTOR" && "$ACTION" != "install" && "$ACTION" != "upgrade" 
   echo "Error: ${REMOTE_SELECTOR} is only supported for install or upgrade." >&2
   exit 1
 fi
-
 if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
   SKILL_NAMES=()
 fi
@@ -486,7 +486,7 @@ prepare_source() {
           git -C "$MANAGED_SOURCE" checkout -b "$GITHUB_BRANCH" "$candidate"
         fi
       else
-        git -C "$MANAGED_SOURCE" checkout --detach "$REMOTE_REF"
+        git -C "$MANAGED_SOURCE" checkout --detach "$candidate"
       fi
     elif [[ -e "$MANAGED_SOURCE" ]]; then
       echo "Error: managed source exists but is not a Git checkout: $MANAGED_SOURCE" >&2

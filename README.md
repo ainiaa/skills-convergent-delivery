@@ -9,8 +9,8 @@
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.1.0/install.sh \
-     | bash -s -- --release 0.1.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.1.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.1.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。

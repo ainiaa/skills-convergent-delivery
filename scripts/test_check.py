@@ -95,6 +95,7 @@ class CheckScriptTest(unittest.TestCase):
             self.assertIn(
                 "Extension suite skipped; run bash scripts/check.sh --full before release.", check,
             )
+            self.assertIn('echo "Check duration: ${SECONDS}s"', check)
             return
 
         result = subprocess.run(

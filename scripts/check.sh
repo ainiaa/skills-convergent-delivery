@@ -127,4 +127,5 @@ if [[ ${CONVERGE_CHECK_SELF_TEST:-0} != 1 ]]; then
   echo "Check script self-test passed."
 fi
 
+echo "Check duration: ${SECONDS}s"
 echo "All checks passed."

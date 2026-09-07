@@ -5,13 +5,16 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from controller_snapshot import managed_state_snapshot
+from evidence_contract import _run_command
 
 
 ALLOWED_FIELDS = {"status", "duration_ms", "usage", "receipt_fingerprint"}
@@ -58,29 +61,65 @@ def validate(catalog):
     return scenarios
 
 
-def receipt(command, result, duration_ms):
-    value = {"command": command, "exit_code": result.returncode, "duration_ms": duration_ms}
+def receipt(command, exit_code, duration_ms):
+    value = {"command": command, "exit_code": exit_code, "duration_ms": duration_ms}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def execute_scenario(scenario, root, workspace):
-    command = [
-        sys.executable, "-I", "-c", ISOLATED_TEST_RUNNER, str(root / "scripts"),
-        str(root / scenario["check"][0]), scenario["check"][1],
-    ]
+def candidate_judge_root(root, workspace, destination):
+    """Copy frozen judges and replace only the candidate's production modules."""
+    shutil.copytree(
+        root,
+        destination,
+        ignore=shutil.ignore_patterns(
+            ".git", ".claude", ".codex", ".codegraph", ".venv", "__pycache__",
+        ),
+    )
+    for source in (workspace / "scripts").glob("*.py"):
+        if source.name.startswith("test_") or source.is_symlink() or not source.is_file():
+            continue
+        target = destination / "scripts" / source.name
+        if not target.is_file():
+            continue
+        target.chmod(target.stat().st_mode | 0o200)
+        shutil.copy2(source, target)
+        target.chmod(target.stat().st_mode & ~0o222)
+    return destination.resolve()
+
+
+def candidate_source_fingerprint(judge_root):
+    digest = hashlib.sha256()
+    for source in sorted((judge_root / "scripts").glob("*.py")):
+        if source.name.startswith("test_") or source.is_symlink():
+            continue
+        digest.update(source.name.encode("utf-8") + b"\0" + source.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def execute_staged_scenario(scenario, judge_root, workspace):
     started = time.monotonic_ns()
-    result = subprocess.run(
-        command, cwd=workspace, capture_output=True, check=False, timeout=60,
+    command = [
+        sys.executable, "-I", "-c", ISOLATED_TEST_RUNNER, str(judge_root / "scripts"),
+        str(judge_root / scenario["check"][0]), scenario["check"][1],
+    ]
+    exit_code, _stdout, _stderr = _run_command(
+        workspace, command, 60,
         env={**os.environ, "CONVERGE_EVAL_WORKSPACE": str(workspace),
              "PYTHONDONTWRITEBYTECODE": "1"},
     )
     duration_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
     return scenario["id"], {
-        "status": "passed" if result.returncode == 0 else "failed",
+        "status": "passed" if exit_code == 0 else "uncovered" if exit_code == 124 else "failed",
         "duration_ms": duration_ms,
         "usage": None,
-        "receipt_fingerprint": receipt(command, result, duration_ms),
+        "receipt_fingerprint": receipt(command, exit_code, duration_ms),
     }
+
+
+def execute_scenario(scenario, root, workspace):
+    with tempfile.TemporaryDirectory(prefix="converge-autonomy-eval-") as directory:
+        judge_root = candidate_judge_root(root, workspace, Path(directory) / "judge")
+        return execute_staged_scenario(scenario, judge_root, workspace)
 
 
 def _trusted_controller(path):
@@ -105,10 +144,13 @@ def evaluate(catalog, execute=False, controller_fingerprint=None, workspace=None
             results[scenario["id"]] = {"status": "planned", "duration_ms": None, "usage": None,
                                        "receipt_fingerprint": None}
     else:
-        with ThreadPoolExecutor(max_workers=min(4, len(scenarios))) as pool:
-            for scenario_id, result in pool.map(
-                    lambda scenario: execute_scenario(scenario, root, workspace), scenarios):
-                results[scenario_id] = result
+        with tempfile.TemporaryDirectory(prefix="converge-autonomy-eval-") as directory:
+            judge_root = candidate_judge_root(root, workspace, Path(directory) / "judge")
+            candidate_fingerprint = candidate_source_fingerprint(judge_root)
+            with ThreadPoolExecutor(max_workers=min(4, len(scenarios))) as pool:
+                for scenario_id, result in pool.map(
+                        lambda scenario: execute_staged_scenario(scenario, judge_root, workspace), scenarios):
+                    results[scenario_id] = result
     completed = all(result["status"] == "passed" for result in results.values())
     return {
         "status": "completed" if completed else "failed" if execute else "planned",
@@ -120,6 +162,7 @@ def evaluate(catalog, execute=False, controller_fingerprint=None, workspace=None
         "evaluator_fingerprint": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "trust_level": "snapshot" if controller_fingerprint is not None else "diagnostic",
         "controller_fingerprint": controller_fingerprint,
+        "candidate_source_fingerprint": candidate_fingerprint if execute else None,
     }
 
 

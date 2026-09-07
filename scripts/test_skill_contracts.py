@@ -345,6 +345,10 @@ class SkillContractTest(unittest.TestCase):
             "文字降级",
         ):
             self.assertIn(marker, skill + control)
+        self.assertIn("完成消息发送后，必须先结束该 commentary", skill)
+        self.assertIn("下一步的开始只能在随后新的 commentary 中发送", skill)
+        self.assertIn("不得在完成消息中声明、计划或调用下一步的动作", skill)
+        self.assertIn("一次真实调用可同时满足前步完成和后步开始，但不能免除独立的文字消息", control)
 
     def test_root_skill_no_longer_owns_plan_or_review_modes(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")

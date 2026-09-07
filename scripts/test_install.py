@@ -126,22 +126,29 @@ if arguments and arguments[0] == "clone":
 
     def test_remote_selectors_clone_the_requested_latest_release_or_tag(self):
         cases = (
-            (("--latest",), "main"),
-            (("--release", VERSION), f"v{VERSION}"),
-            (("--tag", "preview-202609"), "preview-202609"),
+            (("--latest",), "clone --depth 1 --branch main "),
+            (("--release", VERSION), f"clone --depth 1 --branch v{VERSION} "),
+            (("--tag", "preview-202609"), "clone --depth 1 --branch preview-202609 "),
         )
-        for arguments, expected_ref in cases:
+        for arguments, expected_command in cases:
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 home = Path(directory)
                 result, log = self.run_remote_installer(home, "--target", "codex", *arguments)
 
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn(
-                    f"clone --depth 1 --branch {expected_ref} "
-                    "https://github.com/ainiaa/skills-convergent-delivery.git",
+                    expected_command,
                     log,
                 )
                 self.assertTrue((home / ".codex/skills/converge").is_symlink())
+
+    def test_release_requires_only_a_version_before_network_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            result, log = self.run_remote_installer(home, "--target", "codex", "--release", VERSION)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"clone --depth 1 --branch v{VERSION} ", log)
 
     def test_remote_selector_cannot_be_combined_with_a_local_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -714,6 +721,13 @@ if arguments and arguments[0] == "clone":
         for marker in ("--latest", "--release <version>", "--tag <tag>"):
             self.assertIn(marker, readme)
             self.assertIn(marker, usage)
+
+    def test_bootstrap_downloads_the_stable_installer_without_piping_to_the_shell(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(f"v{VERSION}/install.sh -o converge-install.sh", readme)
+        self.assertIn(f"--release {VERSION} --target all", readme)
+        self.assertNotIn("| bash", readme)
 
     def test_readme_puts_newcomer_install_and_skill_choice_before_the_overview(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

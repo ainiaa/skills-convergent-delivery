@@ -22,8 +22,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 安装当前发布的稳定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.1.0/install.sh \
-  | bash -s -- --release 0.1.0 --target all
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.1.0/install.sh -o converge-install.sh
+bash converge-install.sh --release 0.1.0 --target all
 ```
 
 从本地 clone 安装：
@@ -43,8 +43,8 @@ bash install.sh --upgrade --target all
 已有远程安装可从 tag/release 用 `--upgrade --latest` 切回 main。升级先拒绝本地未保存改动并核对候选必需文件均为普通文件，再切换；不完整候选、损坏链接和非快进分支不会替换当前已安装源码。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v<version>/install.sh \
-  | bash -s -- --release <version> --target all
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v<version>/install.sh -o converge-install.sh
+bash converge-install.sh --release <version> --target all
 ```
 
 默认会注册全部七个 Skill，便于宿主发现和显式调用；这不会安装 Stop Hook、启动 service 或执行任何模型。`converge-autonomy` 与 `converge-multimodel` 仍只在用户明确请求时触发。只有需要自治续跑时，才执行 `bash install.sh --target <codex|claude> --autonomy` 启用对应 Stop Hook；多模型不需要额外安装步骤。
