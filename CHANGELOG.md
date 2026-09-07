@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 新增真实交互 smoke receipt 的只读 CLI 校验入口，并在使用指南定义按变更或逃逸触发的 fresh-host smoke 与 defect-driven catalog 维护流程；不新增后台采集、持久化记忆或宿主 lifecycle bridge。
 - 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
 - 补充多模型 smoke CLI 的只读计划与结构化错误回归，确保发布入口也纳入全量覆盖核验。
 

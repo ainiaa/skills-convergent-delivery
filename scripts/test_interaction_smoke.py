@@ -3,6 +3,9 @@
 
 import copy
 import json
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,6 +80,44 @@ class InteractionSmokeTest(unittest.TestCase):
         receipt["uncovered_reason"] = None
         with self.assertRaisesRegex(ValueError, "uncovered_reason"):
             validate_receipt(receipt, self.catalog)
+
+    def test_cli_validates_a_fresh_host_receipt(self):
+        receipt = {
+            "schema_version": 1,
+            "scenario_id": "explicit-review-only",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
+            "baseline_commit": "c" * 40,
+            "workspace_strategy": "desktop-worktree",
+            "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
+                              "verification_observed": [], "completion_claim": "findings_only"}],
+            "result": "uncovered",
+            "uncovered_reason": "No fresh host run was available.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = Path(directory) / "receipt.json"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "interaction_smoke.py"),
+                 "--receipt", str(receipt_path)],
+                text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual({"status": "valid"}, json.loads(result.stdout))
+
+    def test_cli_rejects_an_invalid_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = Path(directory) / "receipt.json"
+            receipt_path.write_text("[]", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "interaction_smoke.py"),
+                 "--receipt", str(receipt_path)],
+                text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(1, result.returncode)
+        self.assertEqual("invalid", json.loads(result.stdout)["status"])
 
 
 if __name__ == "__main__":

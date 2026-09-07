@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Validate replayable fresh-host interaction smoke inputs and receipts."""
 
+import argparse
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
 
@@ -19,6 +21,8 @@ QUESTIONS = {"none", "decision_required"}
 COMPLETIONS = {"verified_only", "findings_only", "not_complete"}
 SCOPES = {"in_scope", "out_of_scope", "not_applicable"}
 WORKSPACE_STRATEGIES = {"current-worktree", "desktop-worktree", "cli-isolated-worktree"}
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG_PATH = ROOT / "evals" / "converge-interaction-v1.json"
 RECEIPT_FIELDS = {
     "schema_version", "scenario_id", "catalog_fingerprint", "task_id", "baseline_commit",
     "workspace_strategy", "observations", "result", "uncovered_reason",
@@ -152,3 +156,23 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:
         raise ValueError("receipt requires observed verification")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--receipt", type=Path, required=True)
+    arguments = parser.parse_args()
+    try:
+        catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+        receipt = json.loads(arguments.receipt.read_text(encoding="utf-8"))
+        validate_catalog(catalog, ROOT)
+        validate_receipt(receipt, catalog)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"status": "invalid", "reason": str(error)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"status": "valid"}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

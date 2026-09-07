@@ -57,6 +57,25 @@ bash install.sh --doctor --target codex --offline
 
 `--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
 
+### 真实交互 smoke
+
+修改 Skill 触发、路由、决策或审查闭环后，在独立的 fresh Codex 会话中运行
+[`evals/converge-interaction-v1.json`](../evals/converge-interaction-v1.json) 的三条
+`critical_ids`。每条场景使用其冻结 fixture、前置决定与多轮输入，并将实际 task ID、
+baseline commit、逐轮写入/提问/验证观察和结果保存为临时 JSON receipt；不要用本地测试
+夹具或模型自述补写观察。
+
+校验 receipt：
+
+```bash
+python3 scripts/interaction_smoke.py --receipt /tmp/converge-interaction-receipt.json
+```
+
+`pass` 只证明该场景的当次观察；`uncovered` 必须保留原因，不能凭确定性回归改成通过。
+发现可复现的 Suite 行为逃逸时，先登记 defect，再补最小回归与对应 history catalog 条目。
+普通使用反馈、宿主能力缺失或未复现问题不创建新 catalog 项。此流程按变更或逃逸触发，
+不启动定时任务、后台采集或持久化记忆。
+
 ### 多模型 live smoke
 
 多模型 runner 的默认评测不会启动模型。需要确认当前 CLI 账号、冻结 profile 和只读权限可实际工作时，在无敏感的 Git 工作区显式执行：
