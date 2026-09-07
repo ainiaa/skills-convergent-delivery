@@ -39,7 +39,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                 )
                 self.assertEqual("failed", _verify(candidate, task["verify_argv"])["status"])
 
-    def probe(self, *, tamper=False, review_status="completed", review_output=True):
+    def probe(self, *, tamper=False, review_status="completed", review_output=True, review_content=None):
         workspaces = {}
 
         def plan(dispatch, prompt, *, workspace, **_kwargs):
@@ -69,7 +69,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                      "requested_model": launch["profile"]["effective"]["model"],
                      "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
             return {"receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                    "output": {"status": "available", "content": '{"findings":[],"next_action":"verify"}'}
+                    "output": {"status": "available", "content": review_content or '{"findings":[],"next_action":"verify"}'}
                     if review_output else {"status": "unavailable"}}
 
         return evaluate(self.profiles, mode="multi", execute=True, plan_launch=plan, execute_launch=execute)
@@ -91,6 +91,19 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                     self.assertEqual("passed", item["implementation_status"])
                     self.assertEqual("incomplete", item["execution_status"])
                     self.assertGreaterEqual(item["duration_ms"], item["verification"]["duration_ms"])
+
+    def test_reviewer_result_with_findings_or_repair_fails_multi_model_evaluation(self):
+        finding = {"summary": "implementation needs repair", "evidence": [{
+            "kind": "file", "reference": "app.py:1", "content_fingerprint": "c" * 64,
+        }]}
+        for findings, next_action in (([finding], "verify"), ([], "repair")):
+            with self.subTest(findings=findings, next_action=next_action):
+                report = self.probe(review_content=json.dumps({
+                    "findings": findings, "next_action": next_action,
+                }))
+
+                self.assertEqual("failed", report["status"])
+                self.assertTrue(all(item["status"] == "failed" for item in report["results"]))
 
     def test_plan_mode_does_not_create_a_repository_or_retain_a_prompt(self):
         report = evaluate(self.profiles)

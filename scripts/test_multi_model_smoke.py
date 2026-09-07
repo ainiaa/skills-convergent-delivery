@@ -100,6 +100,37 @@ class MultiModelSmokeTest(unittest.TestCase):
         self.assertNotIn("prompt", json.dumps(result))
         self.assertFalse(seen["workspace"].exists())
 
+    def test_execute_mode_rejects_a_scout_result_with_findings(self):
+        def plan(dispatch, prompt, *, workspace, **_kwargs):
+            return freeze_launch(dispatch["profile"], prompt, {})
+
+        def execute(launch, _prompt, **_kwargs):
+            value = {
+                "schema_version": 2, "runner_id": launch["runner_id"],
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "exit_code": 0, "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+                "attestation": {
+                    "model": {"status": "requested", "observed": None},
+                    "usage": {"status": "unavailable", "value": None},
+                },
+            }
+            return {
+                "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+                "output": {"status": "available", "content": json.dumps({
+                    "findings": [{"summary": "unexpected result", "evidence": [{
+                        "kind": "file", "reference": "README.md:1", "content_fingerprint": "c" * 64,
+                    }]}],
+                    "next_action": "verify",
+                })},
+            }
+
+        result = smoke(self.profiles, workspace=self.workspace, execute=True,
+                       plan_launch=plan, execute_launch=execute)
+
+        self.assertEqual("failed", result["status"])
+
     def test_cli_plans_a_read_only_smoke_without_starting_a_runner(self):
         with patch.object(sys, "argv", ["multi_model_smoke.py", "--workspace", str(self.workspace)]), \
                 patch.object(multi_model_smoke, "resolve", return_value=self.profiles), \

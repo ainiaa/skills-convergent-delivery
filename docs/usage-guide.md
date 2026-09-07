@@ -75,7 +75,7 @@ python3 scripts/interaction_smoke.py --receipt /tmp/converge-interaction-receipt
 目录中 `initial_diff` 不是 `none` 的场景必须指向 fixture 内可应用的 `.patch`；执行 fresh
 会话前先在该 fixture 目录用 `git apply --check <patch>` 验证，缺少或不可应用即保持 `uncovered`。
 若 Desktop 创建 worktree 时暂时只返回 `clientThreadId`，从同一宿主的 App Server `thread/list`
-观察中导出 `result.data`，再按**唯一标题**、创建后时间窗和（如适用）父 task 解析候选正式 ID：
+观察的完整 `result`（必须已翻完全部分页，`nextCursor=null`），再按**唯一标题**、创建后时间窗和（如适用）父 task 解析候选正式 ID：
 
 ```bash
 python3 scripts/interaction_smoke.py --host-thread-list /tmp/converge-host-threads.json \

@@ -89,9 +89,11 @@ def _validate_scenario(scenario, ids, fixture_path):
     if setup["fixture"] != "status-normalizer" or not all(_string(setup[key], f"setup.{key}") for key in ("baseline", "initial_diff")):
         raise ValueError("scenario setup is invalid")
     initial_diff = setup["initial_diff"]
+    patch_path = fixture_path / initial_diff
     if initial_diff != "none" and (
             Path(initial_diff).name != initial_diff or not initial_diff.endswith(".patch")
-            or not (fixture_path / initial_diff).is_file()):
+            or not patch_path.is_file()
+            or not patch_path.resolve().is_relative_to(fixture_path.resolve())):
         raise ValueError("scenario initial diff is unavailable")
     if initial_diff != "none":
         result = subprocess.run(
@@ -185,7 +187,10 @@ def _timestamp(value, name):
 
 def _host_timestamp(value, name):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return datetime.fromtimestamp(value, timezone.utc)
+        try:
+            return datetime.fromtimestamp(value, timezone.utc)
+        except (OSError, OverflowError, ValueError) as error:
+            raise ValueError(f"{name} is invalid") from error
     return _timestamp(value, name)
 
 
@@ -195,14 +200,16 @@ def resolve_host_threads(threads, title, updated_not_before, parent_thread_id=No
     threshold = _timestamp(updated_not_before, "updated_not_before")
     if parent_thread_id is not None:
         parent_thread_id = _string(parent_thread_id, "parent_thread_id")
-    if not isinstance(threads, list):
-        raise ValueError("host threads are invalid")
+    if not isinstance(threads, dict) or set(threads) != {"data", "nextCursor"} \
+            or not isinstance(threads["data"], list) or threads["nextCursor"] is not None:
+        raise ValueError("host thread list is incomplete")
     matches = []
-    for entry in threads:
+    for entry in threads["data"]:
         if not isinstance(entry, dict) or entry.get("name") != title:
             continue
-        updated_at = _host_timestamp(entry.get("updatedAt"), "host thread updatedAt")
-        if updated_at < threshold:
+        created_at = _host_timestamp(entry.get("createdAt"), "host thread createdAt")
+        _host_timestamp(entry.get("updatedAt"), "host thread updatedAt")
+        if created_at < threshold:
             continue
         if parent_thread_id is not None and entry.get("parentThreadId") != parent_thread_id:
             continue

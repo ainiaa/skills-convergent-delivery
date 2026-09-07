@@ -61,6 +61,23 @@ class InteractionSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "initial diff"):
                 validate_catalog(invalid, temporary_root)
 
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            fixture = temporary_root / "fixture"
+            fixture.mkdir()
+            source = ROOT / "evals" / "interaction-fixtures" / "status-normalizer"
+            for filename in self.catalog["fixture"]["baseline_files"]:
+                (fixture / filename).write_bytes((source / filename).read_bytes())
+            patch = source / "review-null-contract-regression.patch"
+            (fixture / "outside.patch").symlink_to(patch)
+            invalid = copy.deepcopy(self.catalog)
+            invalid["fixture"]["path"] = "fixture"
+            for scenario in invalid["scenarios"]:
+                if scenario["setup"]["initial_diff"] != "none":
+                    scenario["setup"]["initial_diff"] = "outside.patch"
+            with self.assertRaisesRegex(ValueError, "initial diff"):
+                validate_catalog(invalid, temporary_root)
+
     def test_named_initial_diff_is_a_replayable_fixture_patch(self):
         patch = ROOT / "evals/interaction-fixtures/status-normalizer/review-null-contract-regression.patch"
         result = subprocess.run(
@@ -158,28 +175,45 @@ class InteractionSmokeTest(unittest.TestCase):
     def test_host_thread_resolution_requires_a_fresh_exact_child_match(self):
         threads = [
             {"id": "client-pending", "name": "Smoke: local fix", "parentThreadId": "parent-1",
-             "updatedAt": 1788786000},
+             "createdAt": 1788786000, "updatedAt": 1788786000},
             {"id": "resolved", "name": "Smoke: local fix", "parentThreadId": "parent-1",
-             "updatedAt": 1788790400},
+             "createdAt": 1788790400, "updatedAt": 1788790400},
             {"id": "wrong-parent", "name": "Smoke: local fix", "parentThreadId": "parent-2",
-             "updatedAt": 1788790500},
+             "createdAt": 1788790500, "updatedAt": 1788790500},
             {"id": "partial-title", "name": "Smoke: local fix again", "parentThreadId": "parent-1",
-             "updatedAt": 1788790500},
+             "createdAt": 1788790500, "updatedAt": 1788790500},
         ]
 
         self.assertEqual(
             {"task_id": "resolved", "title": "Smoke: local fix", "parent_thread_id": "parent-1"},
-            resolve_host_threads(threads, "Smoke: local fix", "2026-09-07T14:00:00Z", "parent-1"),
+            resolve_host_threads(
+                {"data": threads, "nextCursor": None}, "Smoke: local fix",
+                "2026-09-07T14:00:00Z", "parent-1",
+            ),
         )
         with self.assertRaisesRegex(ValueError, "updated_not_before"):
-            resolve_host_threads(threads, "Smoke: local fix", None, "parent-1")
+            resolve_host_threads({"data": threads, "nextCursor": None}, "Smoke: local fix", None, "parent-1")
+        with self.assertRaisesRegex(ValueError, "complete"):
+            resolve_host_threads({"data": threads, "nextCursor": "more"}, "Smoke: local fix",
+                                 "2026-09-07T14:00:00Z", "parent-1")
+        old = [{"id": "old-thread", "name": "Smoke: local fix", "parentThreadId": "parent-1",
+                "createdAt": 1788700000, "updatedAt": 1788790400}]
+        with self.assertRaisesRegex(ValueError, "no host"):
+            resolve_host_threads({"data": old, "nextCursor": None}, "Smoke: local fix",
+                                 "2026-09-07T14:00:00Z", "parent-1")
+        with self.assertRaisesRegex(ValueError, "updatedAt"):
+            resolve_host_threads({"data": [{"id": "bad-time", "name": "Smoke: local fix",
+                                             "createdAt": 1788790400, "updatedAt": 1e100}],
+                                  "nextCursor": None},
+                                 "Smoke: local fix", "2026-09-07T14:00:00Z")
 
     def test_cli_resolves_host_thread_candidate_without_claiming_a_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             threads_path = Path(directory) / "threads.json"
-            threads_path.write_text(json.dumps([{
-                "id": "resolved", "name": "Smoke: local fix", "updatedAt": 1788790400,
-            }]), encoding="utf-8")
+            threads_path.write_text(json.dumps({"data": [{
+                "id": "resolved", "name": "Smoke: local fix", "createdAt": 1788790400,
+                "updatedAt": 1788790400,
+            }], "nextCursor": None}), encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(ROOT / "scripts" / "interaction_smoke.py"),
                  "--host-thread-list", str(threads_path), "--title", "Smoke: local fix",
