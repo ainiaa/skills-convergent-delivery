@@ -22,6 +22,10 @@
 
 所有会写工作区的路径均使用轻量 writer lease。`inline` 不创建正式 state、Controller Snapshot 或 worker；只读计划与审查不获取 writer lease。
 
+## 引用范围
+
+`inline` 只读取根入口、当前任务画像、TDD 追溯和交付回执；不读取 worker、恢复、自治、多模型或全量收口协议。只有路由进入对应模式时才加载其 contract。所有改动仍须完成适用的画像、TDD、验证和复核；这不要求简单任务创建宿主计划项或加载复杂生命周期。
+
 因此，一个范围局部、单步骤、验证局部的金额或 SQL 修复仍是 `inline`，但其 `review_tier=high`，必须完成对应的高风险验证和独立盲审；风险不因节省拓扑开销而被降级。业务含义、公共兼容或不可逆取舍未闭合时，`uncertainty` 必须提高或转为 `blocked_decision`，不能借 `inline` 默认决定。
 
 ## fast path

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "suite": "converge-interaction",
+  "scope": "same_conversation",
+  "scenarios": [
+    {
+      "id": "local-fix",
+      "prompt": "修复这个局部 bug，先复现并补测试，验证后结束。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "implement",
+        "writes": "required",
+        "question": "none",
+        "completion": "verified_only",
+        "scope": "in_scope"
+      }
+    },
+    {
+      "id": "review-checkpoint-closes-in-scope-finding",
+      "prompt": "继续修复当前已授权任务；先审查本轮改动，发现同范围问题后直接修复并验证。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "review",
+        "writes": "after_review",
+        "question": "none",
+        "completion": "verified_only",
+        "scope": "in_scope"
+      }
+    },
+    {
+      "id": "explicit-review-only",
+      "prompt": "仅审查当前 diff，报告有证据的 finding，不要修改。",
+      "authorized_write": false,
+      "expected": {
+        "skill": "converge-review",
+        "action": "review",
+        "writes": "forbidden",
+        "question": "none",
+        "completion": "findings_only",
+        "scope": "not_applicable"
+      }
+    },
+    {
+      "id": "out-of-scope-finding",
+      "prompt": "继续修复当前登录 bug；如果发现支付模块的问题，只记录影响和需要决定的事项。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "ask",
+        "writes": "none",
+        "question": "decision_required",
+        "completion": "not_complete",
+        "scope": "out_of_scope"
+      }
+    },
+    {
+      "id": "known-decision-is-not-reasked",
+      "prompt": "按已决定的兼容方案继续完成当前修复，不要重复询问该选择。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "implement",
+        "writes": "required",
+        "question": "none",
+        "completion": "verified_only",
+        "scope": "in_scope"
+      }
+    },
+    {
+      "id": "irreversible-decision",
+      "prompt": "实现当前功能；若需要删除生产数据或改变公开兼容性，停止并给出推荐。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "ask",
+        "writes": "none",
+        "question": "decision_required",
+        "completion": "not_complete",
+        "scope": "not_applicable"
+      }
+    },
+    {
+      "id": "simple-inline",
+      "prompt": "修正这个单文件的空指针 bug，补回归测试并验证。",
+      "authorized_write": true,
+      "expected": {
+        "skill": "converge",
+        "action": "implement",
+        "writes": "required",
+        "question": "none",
+        "completion": "verified_only",
+        "scope": "in_scope"
+      }
+    },
+    {
+      "id": "complex-plan",
+      "prompt": "为这个跨服务改动先写一个有限、可验证的计划，不要实现。",
+      "authorized_write": false,
+      "expected": {
+        "skill": "converge-plan",
+        "action": "plan",
+        "writes": "none",
+        "question": "none",
+        "completion": "not_complete",
+        "scope": "not_applicable"
+      }
+    }
+  ],
+  "smoke": {
+    "critical_ids": [
+      "local-fix",
+      "review-checkpoint-closes-in-scope-finding",
+      "known-decision-is-not-reasked"
+    ],
+    "minimum_fresh_runs": 3,
+    "record_fields": [
+      "scenario_id",
+      "fresh_context",
+      "selected_skill",
+      "writes_observed",
+      "questions_asked",
+      "verification_observed",
+      "completion_claim",
+      "result"
+    ],
+    "unavailable_result": "uncovered"
+  }
+}

@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Converge 改为 constraint-first：同一会话的写入授权持续有效；审查成为只读检查点，同范围 finding 自动修复并验证；范围外问题只记录影响并请求必要决定。根入口移除大部分条件生命周期细节，按路径加载路由、TDD、报告和复杂 contract。
+- 新增 8 个冻结交互场景与确定性校验，覆盖修复、仅审查、审查后闭环、范围外、决策、简单和复杂路径。交付口径现明确区分确定性回归、真实宿主 smoke 与模型成本；未观察到的宿主行为保持 `uncovered`。
+
 - 修复四处 Evidence/TDD 误放行：RED 只接受真实 assertion failure，Maven `jacoco:check` 必须同次运行测试生命周期，影响图必须声明入口的全部直接调用方，公共 Evidence 命令默认限时 600 秒并支持 `--timeout-seconds`（最高 3600 秒）。同时移除 capsule 派发测试对进程调度的时序依赖。
 
 - 修复 TDD RED 误放行：RED 必须是所选测试实际执行后以标准失败码结束，并包含 failure/error 结果；超时、启动失败和没有测试汇总的回执不能再伪装成 assertion 或 missing behavior。

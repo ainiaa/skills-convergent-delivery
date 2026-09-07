@@ -179,11 +179,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不能强制 child 作为 leaf", desktop)
         self.assertNotIn("spawn_agent({", desktop)
         self.assertNotIn("codex exec", desktop)
-        self.assertIn("chatgpt-desktop-subagent.md", root_skill)
+        self.assertIn("真实宿主 bridge", root_skill)
 
-    def test_planned_capsule_guard_precedes_task_profile_routing(self):
+    def test_planned_capsule_is_guarded_before_the_routing_helper_contract(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertLess(text.index("planned_task=true"), text.index("task_profile.py"))
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
+        self.assertIn("planned_task=true", text)
+        self.assertIn("task_profile.py", routing)
+        self.assertIn("禁止再次规划", (ROOT / "references/execution-control.md").read_text(encoding="utf-8"))
 
     def test_multi_model_contract_has_fixed_roles_and_dynamic_flow(self):
         model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
@@ -258,11 +261,11 @@ class SkillContractTest(unittest.TestCase):
     def test_root_skill_plans_bounded_provider_runs_without_splitting_pdlc_internals(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
         self.assertIn("converge-plan", text)
         self.assertIn("planned_task=true", text)
-        self.assertIn("独立可验收的业务切片", text)
-        self.assertIn("完整 PDLC v1", tdd)
-        self.assertIn("execution-control.md", text)
+        self.assertIn("独立可验收", control)
+        self.assertIn("pdlc-v1", tdd)
 
     def test_pdlc_selection_requires_explicit_frozen_entrypoint_activation(self):
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -288,48 +291,41 @@ class SkillContractTest(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
 
         self.assertIn("generic-tdd-v1` 仅允许显式选择", skill + tdd)
         self.assertIn("简单 `inline` 不创建宿主计划项", skill + control)
         self.assertNotIn("简单任务直接显示五阶段计划", skill + control)
-        self.assertIn("仅当路由不是 `inline`", skill)
-        self.assertNotIn("\n读取 [计划执行与无响应保护]", skill)
+        self.assertIn("简单 `inline` 只读路由、TDD 和报告", skill)
+        self.assertIn("不读取 worker、恢复、自治、多模型或全量收口协议", routing)
 
     def test_fast_path_is_disabled_without_a_semantics_aware_formatter(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
 
-        for marker in (
-            "fast path",
-            "通用 fast path 已停用",
-            "formatter",
-            "完整路径",
-        ):
-            self.assertIn(marker, skill + routing)
+        for marker in ("fast path", "通用 fast path 已停用", "formatter"):
+            self.assertIn(marker, routing)
         for reference in (
             "references/task-routing.md",
-            "references/execution-control.md",
-            "references/state-schema.md",
             "references/tdd-providers.md",
             "references/reporting.md",
         ):
             self.assertIn(reference, skill)
 
-    def test_writer_lease_has_an_exact_terminal_release_recipe(self):
+    def test_writer_lease_is_required_without_loading_a_cli_recipe_for_inline_work(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
 
-        self.assertIn("delivery_lease.py\" release", skill)
-        for argument in ("--root", "--repo", "--workspace", "--task-key", "--run-id", "--writer-id"):
-            self.assertIn(argument, skill)
-        self.assertIn('"status":"released"', skill)
+        self.assertIn("writer lease", skill)
+        self.assertIn("release", control)
+        self.assertNotIn("delivery_lease.py\" release", skill)
 
     def test_provider_and_progress_contracts_remain_controller_owned(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         state = (ROOT / "references/state-schema.md").read_text(encoding="utf-8")
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
 
-        for marker in ("Converge 始终是 controller", "Provider Schema v2", "不能成为第二真相"):
-            self.assertIn(marker, skill)
+        self.assertIn("Converge 始终是 controller", skill)
         for marker in ("Progress Receipt v1", "objective_revision", "不编造百分比或 ETA"):
             self.assertIn(marker, state + control)
         for marker in ("runner_launches", "runner_results", "completed"):
@@ -342,7 +338,7 @@ class SkillContractTest(unittest.TestCase):
         for marker in (
             "独立的 commentary 消息",
             "不得与下一步的开始合并",
-            "不依赖原生计划面板",
+            "文字降级",
         ):
             self.assertIn(marker, skill + control)
 
@@ -438,16 +434,13 @@ class SkillContractTest(unittest.TestCase):
         tdd = (ROOT / "references/tdd-providers.md").read_text(encoding="utf-8")
 
         for marker in (
-            "命令不存在、超时或无权限时标为 `uncovered`",
-            "不得以替换、删除或放松检查命令取得通过",
-            "P0 用户流程",
-            "实际 E2E 标识和本次运行回执",
+            "命令不可用、超时或权限不足为 `uncovered`",
+            "不得放松检查取得通过",
             "TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)",
             "--timeout-seconds",
-            "600 秒",
             "ledger.tdd_trace",
         ):
-            self.assertIn(marker, skill)
+            self.assertIn(marker, skill + tdd)
 
         for marker in (
             "每个 `criterion` 至少一个测试",
@@ -479,11 +472,7 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, tdd)
 
-        for marker in (
-            "修改 Converge Suite 自身的行为、入口、契约或兼容性时，必须更新本仓 `CHANGELOG.md` 的 `Unreleased`",
-            "必须更新对应的 changelog；不存在时在目标项目根目录创建 `CHANGELOG.md`",
-            "所有当前任务变更",
-        ):
+        for marker in ("Converge Suite", "CHANGELOG.md", "目标项目", "changelog"):
             self.assertIn(marker, skill)
 
     def test_activation_is_discoverable_but_never_edits_user_configuration(self):
@@ -497,21 +486,24 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不自动修改", activation)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
-    def test_latest_read_only_request_overrides_prior_write_authorization(self):
+    def test_active_write_authorization_survives_an_in_scope_review_checkpoint(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
 
         for marker in (
-            "最新用户请求优先",
-            "只读审查",
-            "历史写入授权",
-            "不得写入代码、测试、文档、状态、Git 历史或外部系统",
-            "finding、证据和建议修复",
-            "明确要求修复",
+            "同一会话的写入授权持续有效",
+            "仅审查",
+            "同范围 finding",
+            "不重复询问",
+            "本轮真实验证",
         ):
             self.assertIn(marker, skill)
-        self.assertIn("最新请求明确为只读", activation)
-        self.assertIn("不得沿用更早的写入授权", activation)
+        self.assertNotIn("历史写入授权不得延续", skill)
+        self.assertIn("持续中的写入任务", activation)
+        self.assertIn("明确“仅审查”", activation)
+        self.assertIn("审查检查点", protocol)
+        self.assertIn("in-scope finding", protocol)
 
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
@@ -593,7 +585,6 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, control)
         for path in (
-            ROOT / "SKILL.md",
             ROOT / "skills/converge-batch/SKILL.md",
             ROOT / "skills/converge-batch/references/runtime-adapters.md",
         ):
@@ -610,12 +601,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("全量收口请求", scenarios)
         self.assertIn("不得宣称全部完成", scenarios)
 
-    def test_root_routes_full_closure_claims_through_explicit_controller_input(self):
+    def test_full_closure_claims_stay_explicit_in_the_routing_contract(self):
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
 
-        self.assertIn("task_profile.py [--full-closure]", root)
-        self.assertNotIn("--request-file <raw-request>", root)
-        self.assertIn("full_closure_required=true", root)
+        self.assertIn("全量收口必须显式选择", root)
+        self.assertIn("task_profile.py", routing)
+        self.assertNotIn("--request-file <raw-request>", routing)
+        self.assertIn("full_closure_required=<bool>", routing)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,8 @@ bash scripts/check.sh
 bash scripts/check.sh --full
 ```
 
+这两个命令只代表**确定性回归**。它们不代表模型已遵守 Skill，也不代表桌面宿主自动续跑成功。交互行为以 [冻结场景](evals/converge-interaction-v1.json) 在 fresh Codex 会话中的实际观察为准；未做 smoke 时保持 `uncovered`。
+
 ## 参考与鸣谢
 
 Converge Suite 没有复制上游完整流程；它吸收公开实践后，用独立协议组合有限执行、只读审查和批次接力。感谢：

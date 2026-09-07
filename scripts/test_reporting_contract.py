@@ -10,8 +10,8 @@ class ReportingContractTest(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn("[交付回执](references/reporting.md)", skill)
-        self.assertIn("交付轮数 / 修复问题数 / 待处理项", skill)
-        self.assertIn("delivery_report.py", skill)
+        self.assertIn("只报告当前证据能证明的范围", skill)
+        self.assertIn("确定性回归、真实宿主 smoke 和模型成本分别说明", skill)
 
     def test_reporting_contract_protects_decisions_and_hides_internal_noise(self):
         report = (ROOT / "references/reporting.md").read_text(encoding="utf-8")
@@ -24,6 +24,12 @@ class ReportingContractTest(unittest.TestCase):
         self.assertIn("当前实现能做什么", report)
         self.assertIn("未验证范围和实际影响", report)
         self.assertIn("过程：<交付轮数", report)
+
+    def test_reporting_separates_deterministic_checks_from_host_behavior_and_cost(self):
+        report = (ROOT / "references/reporting.md").read_text(encoding="utf-8")
+
+        for marker in ("确定性回归", "真实宿主 smoke", "模型成本", "uncovered"):
+            self.assertIn(marker, report)
 
 
 if __name__ == "__main__":

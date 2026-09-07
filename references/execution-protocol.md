@@ -1,5 +1,11 @@
 # 原生单任务执行协议
 
+## 当前会话交互
+
+同一会话的已授权写入范围在执行期间持续有效。审查检查点本身只读；结束后，in-scope finding 必须自动进入本轮修复和验证。只有用户明确“仅审查/不要修改”、停止、取消，或 finding 超出冻结范围时才暂停写入。
+
+每个 finding 只能是 `in_scope_fix`、`blocked_decision` 或 `out_of_scope_record`。前者修复并回归；第二类一次提出推荐和决定；第三类记录影响但不扩大范围。已有决定不重复询问。没有本轮真实验证的验收不得称完成。
+
 仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。
 
 ## 状态机
