@@ -274,9 +274,9 @@ class TddImpactGuardTest(unittest.TestCase):
             "        print(os.environ.get('TRACE_RUN', 'fixture'))\n"
             "        self.assertTrue(Path('implementation.txt').is_file())\n"
             "    def test_payment_boundary(self):\n"
-            "        self.assertEqual('implemented\\n', Path('implementation.txt').read_text())\n"
+            "        self.assertEqual('implemented\\n', Path('implementation.txt').read_text() if Path('implementation.txt').is_file() else '')\n"
             "    def test_payment_error(self):\n"
-            "        self.assertGreater(Path('implementation.txt').stat().st_size, 0)\n"
+            "        self.assertGreater(Path('implementation.txt').stat().st_size if Path('implementation.txt').is_file() else 0, 0)\n"
         )
         # Protocol fixture for CodeGraph structured status, exact symbols and direct edges.
         (self.workspace / "codegraph").write_text(
@@ -293,6 +293,8 @@ elif command == 'query':
     print(json.dumps([] if mode == 'missing' else [{'node': node(sys.argv[2])}] * (2 if mode == 'ambiguous' else 1)))
 elif command == 'callees':
     print(json.dumps({'callees': [] if mode == 'no-edge' else [node('payment-contract')]}))
+elif command == 'callers':
+    print(json.dumps({'callers': []}))
 else:
     print('unrelated successful explore output')
 """
@@ -384,6 +386,23 @@ else:
             tdd_impact_guard.red_receipt(
                 {"receipt": receipt, "failure_class": "assertion"},
                 evidence_contract.workspace_source(self.workspace, self.baseline), selector,
+            )
+
+    def test_test_runner_error_cannot_supply_assertion_red_evidence(self):
+        selector = "test_cases.Tests.test_always_fails"
+        (self.workspace / "test_cases.py").write_text(
+            "import missing_test_dependency\n",
+            encoding="utf-8",
+        )
+        receipt = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [sys.executable, "-m", "unittest", selector],
+        )
+
+        self.assertEqual({"failed": 0, "errors": 1},
+                         {key: receipt["test_check"][key] for key in ("failed", "errors")})
+        with self.assertRaisesRegex(ValueError, "target behavior"):
+            tdd_impact_guard.red_receipt(
+                {"receipt": receipt, "failure_class": "assertion"}, receipt["source"], selector,
             )
 
     def test_each_receipt_must_execute_its_test_selector(self):

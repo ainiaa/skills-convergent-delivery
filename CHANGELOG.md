@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复四处 Evidence/TDD 误放行：RED 只接受真实 assertion failure，Maven `jacoco:check` 必须同次运行测试生命周期，影响图必须声明入口的全部直接调用方，公共 Evidence 命令默认限时 600 秒并支持 `--timeout-seconds`（最高 3600 秒）。同时移除 capsule 派发测试对进程调度的时序依赖。
+
 - 修复 TDD RED 误放行：RED 必须是所选测试实际执行后以标准失败码结束，并包含 failure/error 结果；超时、启动失败和没有测试汇总的回执不能再伪装成 assertion 或 missing behavior。
 - 修复 coverage 门禁超时清场：完整检查改由既有独立进程组执行器启动，超时后会终止并确认清理所有后代进程。
 - 接入本仓真实 coverage：固定开发依赖，使用原有完整检查命令及子进程采集，生产 Python 全范围 85% 门槛进入 CI。

@@ -21,6 +21,8 @@ SOURCE_SCHEMA_VERSION = 2
 EVIDENCE_SCHEMA_VERSION = 2
 MAX_ARGV_ITEMS = 128
 MAX_ARGUMENT_LENGTH = 4096
+DEFAULT_TIMEOUT_SECONDS = 600
+MAX_TIMEOUT_SECONDS = 3600
 SENSITIVE_ARGUMENT = re.compile(
     r"(?:^--?(?:api[-_]?key|access[-_]?token|token|password|secret|private[-_]?key)(?:=|$)"
     r"|^(?:api[-_]?key|access[-_]?token|token|password|secret)=[^=]"
@@ -499,6 +501,19 @@ def graph_check_result(workspace, argv, timeout_seconds):
         if not entries:
             return None
         edges = {}
+        declared_callers = [nodes[identifier] for relation, identifier in claims if relation == "caller"]
+        for entry in entries:
+            result = query("callers", entry, "--json", "--limit", "1000", "--path", str(workspace))
+            if not isinstance(result, dict) or not isinstance(result.get("callers"), list) \
+                    or len(result["callers"]) >= 1000 \
+                    or any(not isinstance(caller, dict) for caller in result["callers"]):
+                return None
+            edges[f"callers:{entry}"] = result["callers"]
+            if any(not any(all(caller.get(key) == declared.get(key)
+                               for key in ("name", "filePath", "startLine"))
+                           for declared in declared_callers)
+                   for caller in result["callers"]):
+                return None
         for relation, identifier in claims:
             if relation == "entrypoint":
                 continue
@@ -529,7 +544,7 @@ def graph_check_result(workspace, argv, timeout_seconds):
         return None
 
 
-def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
+def run_evidence(workspace, baseline_commit, argv, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
     """Run one argv command and bind its outcome to the resulting workspace source."""
     workspace = Path(workspace).expanduser().resolve()
     if not isinstance(argv, list) or not argv or len(argv) > MAX_ARGV_ITEMS or any(
@@ -538,6 +553,8 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=None):
         raise ValueError("evidence argv must be a non-empty string list")
     if any(SENSITIVE_ARGUMENT.search(item) for item in argv):
         raise ValueError("evidence argv must not contain sensitive command arguments")
+    if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= MAX_TIMEOUT_SECONDS:
+        raise ValueError(f"evidence timeout must be in 0..{MAX_TIMEOUT_SECONDS} seconds")
     source_before = workspace_source(workspace, baseline_commit)
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
     if _mutmut_selector(argv) is not None:
@@ -781,6 +798,7 @@ def main():
     run = commands.add_parser("run")
     run.add_argument("--workspace", required=True)
     run.add_argument("--baseline", required=True)
+    run.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     run.add_argument("argv", nargs=argparse.REMAINDER)
     mutation = commands.add_parser('mutmut')
     mutation.add_argument('--source-file', required=True)
@@ -791,7 +809,7 @@ def main():
             print(json.dumps(run_mutmut(Path.cwd(), arguments.source_file, arguments.selector), sort_keys=True))
             return 0
         argv = arguments.argv[1:] if arguments.argv[:1] == ["--"] else arguments.argv
-        receipt = run_evidence(arguments.workspace, arguments.baseline, argv)
+        receipt = run_evidence(arguments.workspace, arguments.baseline, argv, arguments.timeout_seconds)
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return 0 if receipt["exit_code"] == 0 else receipt["exit_code"]
     except (OSError, ValueError, ImportError) as error:

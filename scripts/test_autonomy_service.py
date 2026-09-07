@@ -55,6 +55,8 @@ if sys.argv[1] == 'status':
 elif sys.argv[1] == 'query':
     print(json.dumps([{'node': {'id': 'fixture', 'name': sys.argv[2],
         'filePath': 'docs/00_standards/test-commands.yml', 'startLine': 1}}]))
+elif sys.argv[1] == 'callers':
+    print(json.dumps({'callers': []}))
 else:
     print('fixture explore result')
 """)

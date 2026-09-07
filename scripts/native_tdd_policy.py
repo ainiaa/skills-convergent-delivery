@@ -141,6 +141,8 @@ def collection_disabled(argv):
         return '-v' in argv or any(item in lowered for item in (
             '--fail-never', '-fn', '-djacoco.skip=true', '-djacoco.haltonfailure=false',
             '-dskiptests', '-dskiptests=true', '-dmaven.test.skip=true',
+        )) or ('jacoco:check' in argv and not any(
+            goal in {'test', 'verify', 'package', 'install'} for goal in argv
         ))
     if runner in {'gradle', 'gradlew'}:
         return '--dry-run' in argv or '-m' in argv or any(

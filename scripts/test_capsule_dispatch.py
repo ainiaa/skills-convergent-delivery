@@ -228,25 +228,19 @@ class CapsuleDispatchTest(unittest.TestCase):
     def test_codex_does_not_repeat_an_attempt_that_cannot_be_confirmed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            capture = root / "calls"
             codex = self.executable(
-                root, "codex", f'echo call >> "{capture}"\ncat >/dev/null\n',
+                root, "codex", 'cat >/dev/null\n',
             )
             first = capsule_dispatch.dispatch_codex(
                 codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
             )
-            deadline = time.monotonic() + 0.5
-            while not capture.exists() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            self.assertTrue(capture.exists(), "Codex process did not start within the test deadline")
-            second = capsule_dispatch.dispatch_codex(
-                codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
-            )
-            calls = capture.read_text(encoding="utf-8").splitlines()
+            with patch.object(capsule_dispatch.subprocess, 'Popen', side_effect=AssertionError('must not replay')):
+                second = capsule_dispatch.dispatch_codex(
+                    codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
+                )
 
         self.assertEqual("indeterminate", first["status"])
         self.assertEqual(first, second)
-        self.assertEqual(["call"], calls)
 
     def test_rejects_non_finite_or_non_positive_startup_timeout(self):
         with tempfile.TemporaryDirectory() as directory:

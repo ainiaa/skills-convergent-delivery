@@ -329,6 +329,20 @@ class NativeTddPolicyTest(unittest.TestCase):
         self.assertEqual("uncovered", policy["status"])
         self.assertIn("below", policy["reason"])
 
+    def test_maven_jacoco_check_without_a_test_lifecycle_goal_stays_uncovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            standard = workspace / "docs/00_standards"
+            standard.mkdir(parents=True)
+            (standard / "test-commands.yml").write_text(
+                "coverage: mvn jacoco:check\n", encoding="utf-8"
+            )
+            (workspace / "pom.xml").write_text(maven_config(), encoding="utf-8")
+
+            policy = native_tdd_policy.resolve(workspace)
+
+        self.assertEqual("uncovered", policy["status"])
+
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             standard = workspace / "docs/00_standards"

@@ -160,7 +160,7 @@ def red_receipt(value, source, selector):
     observed = observed_receipt(value["receipt"], "red receipt", source, selector, passing=False)
     outcomes = observed.get("test_check")
     if observed["exit_code"] != 1 or not outcomes \
-            or outcomes["failed"] + outcomes["errors"] <= 0 \
+            or outcomes["failed"] <= 0 or outcomes["errors"] != 0 \
             or any(outcomes[key] for key in ("xfailed", "xpassed")) \
             or not isinstance(value.get("failure_class"), str) \
             or value["failure_class"] not in VALID_RED_FAILURE_CLASSES:

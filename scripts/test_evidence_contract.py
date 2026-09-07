@@ -302,6 +302,50 @@ else: print('unrelated successful explore output')
                     [str(tool), 'explore', 'CodeGraph impact chains: entrypoint:demo'])
                 self.assertNotIn('graph_check', receipt)
 
+    def test_impact_graph_requires_all_observed_entrypoint_callers(self):
+        tool = self.workspace / 'codegraph'
+        (self.workspace / 'entry.py').write_text('def entry(): pass\n')
+        (self.workspace / 'caller.py').write_text('from entry import entry\nentry()\n')
+        graph_index(self.workspace, ['entry.py', 'caller.py'])
+        tool.write_text(f'#!{sys.executable}\n' + '''import json, sys
+from pathlib import Path
+command = sys.argv[1]
+node = lambda value: {'id': value, 'name': value, 'filePath': value + '.py', 'startLine': 1}
+if command == 'status':
+    print(json.dumps({'initialized': True, 'lastIndexed': 'now', 'projectPath': str(Path.cwd()),
+        'pendingChanges': {'added': 0, 'modified': 0, 'removed': 0},
+        'worktreeMismatch': None, 'index': {'reindexRecommended': False}}))
+elif command == 'query': print(json.dumps([{'node': node(sys.argv[2])}]))
+elif command == 'callers': print(json.dumps({'callers': [node('caller')] if sys.argv[2] == 'entry' else []}))
+elif command == 'callees': print(json.dumps({'callees': [node('entry')] if sys.argv[2] == 'caller' else []}))
+else: print('explore succeeded')
+''')
+        tool.chmod(0o700)
+
+        omitted = evidence_contract.run_evidence(
+            self.workspace, self.baseline, [str(tool), 'explore', 'CodeGraph impact chains: entrypoint:entry'])
+        complete = evidence_contract.run_evidence(
+            self.workspace, self.baseline,
+            [str(tool), 'explore', 'CodeGraph impact chains: entrypoint:entry; caller:caller'])
+
+        self.assertNotIn('graph_check', omitted)
+        self.assertIn('graph_check', complete)
+
+    def test_evidence_run_uses_a_bounded_default_timeout(self):
+        with patch.object(evidence_contract, '_run_command', return_value=(0, b'', b'')) as execute:
+            evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', 'pass'])
+
+        self.assertEqual(evidence_contract.DEFAULT_TIMEOUT_SECONDS, execute.call_args.args[2])
+
+    def test_evidence_cli_accepts_an_explicit_timeout(self):
+        result = subprocess.run([
+            sys.executable, str(Path(evidence_contract.__file__).resolve()), 'run',
+            '--workspace', str(self.workspace), '--baseline', self.baseline,
+            '--timeout-seconds', '0.5', '--', sys.executable, '-c', 'pass',
+        ], capture_output=True, text=True)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_secondary_graph_timeout_cleans_up_descendants(self):
         tool = self.workspace / 'codegraph'
         marker = self.workspace / 'late-write.txt'
