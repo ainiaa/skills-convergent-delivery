@@ -297,6 +297,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("简单 `inline` 不创建宿主计划项", skill + control)
         self.assertNotIn("简单任务直接显示五阶段计划", skill + control)
         self.assertIn("简单 `inline` 只读路由、TDD 和报告", skill)
+        self.assertIn("简单 `inline` 不运行 `delivery_engine.py select`", skill)
         self.assertIn("不读取 worker、恢复、自治、多模型或全量收口协议", routing)
 
     def test_fast_path_is_disabled_without_a_semantics_aware_formatter(self):

@@ -22,8 +22,9 @@ Converge 始终是 controller，负责同一会话内已授权的软件交付；
 
 ## 开始与验证
 
-将本目录记为 `CONVERGE_SKILL_DIR`。冻结验收、范围和基线，只改任务 diff；外发和不可逆操作单独询问。运行时功能、修复和重构先写可执行测试，再改生产代码；完整 red/green、影响、覆盖率和 Provider 规则见 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)。
+将本目录记为 `CONVERGE_SKILL_DIR`。先按 [任务路由](references/task-routing.md) 分类，冻结验收、范围和基线，只改任务 diff；外发和不可逆操作单独询问。简单 `inline` 不运行 `delivery_engine.py select`，直接按 TDD 追溯完成局部红绿和报告。运行时功能、修复和重构先写可执行测试，再改生产代码；完整 red/green、影响、覆盖率和 Provider 规则见 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)。
 
+仅 `planned`、`delegated`、`batch` 路由或用户明确要求 Provider binding 时选择并冻结 Provider：
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
@@ -32,7 +33,7 @@ Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务�
 
 ## 路由与终态
 
-`planned_task=true` 只执行冻结 capsule；否则按 [任务路由](references/task-routing.md) 分类。复杂、未知或长任务先用 `converge-plan`；只有明确跨会话 checkpoint 才用 `converge-batch`。全量收口必须显式选择并使用 Plan matrix，不能由关键词推断。
+`planned_task=true` 只执行冻结 capsule。复杂、未知或长任务先用 `converge-plan`；只有明确跨会话 checkpoint 才用 `converge-batch`。全量收口必须显式选择并使用 Plan matrix，不能由关键词推断。
 
 持久状态使用既有 writer lease，并按 [执行协议](references/execution-protocol.md) 和 [状态](references/state-schema.md) 清场。 风险等级对应的复核边界见 [审查编排](references/review-orchestration.md)。没有真实宿主 bridge 时，不把本地 state、capsule、子任务或模型自述称为自动续跑、完成或清场证据。
 
