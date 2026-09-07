@@ -59,7 +59,11 @@ class SkillContractTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
-        self.assertEqual("0.1.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertRegex(version, r"\A\d+\.\d+\.\d+\Z")
+        for document in (readme, usage):
+            self.assertIn(f"v{version}/install.sh", document)
+            self.assertIn(f"--release {version}", document)
         self.assertIn(
             "CORE_SKILL_NAMES=(converge converge-plan converge-review converge-batch converge-eval)",
             installer,
