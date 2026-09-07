@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 - 新增真实交互 smoke receipt 的只读 CLI 校验入口，并在使用指南定义按变更或逃逸触发的 fresh-host smoke 与 defect-driven catalog 维护流程；不新增后台采集、持久化记忆或宿主 lifecycle bridge。
+- 真实交互 smoke 现可从同一宿主 App Server 的 `thread/list` 观察，以唯一标题、必填时间窗和可选父 task 解析候选正式 task ID；重复、缺失或后续 `thread/read` 核验不足仍保持 `uncovered`，该 bridge 不启用自动 worker lifecycle。
+- 补齐 review checkpoint 交互场景的具体、可应用初始回归补丁；catalog 现在拒绝缺失或越出 fixture 的命名 diff，避免把无法重放的场景误列为 critical smoke。
 - 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
 - 补充多模型 smoke CLI 的只读计划与结构化错误回归，确保发布入口也纳入全量覆盖核验。
 

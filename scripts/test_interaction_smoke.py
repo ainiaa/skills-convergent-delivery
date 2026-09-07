@@ -9,7 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from interaction_smoke import catalog_fingerprint, validate_catalog, validate_receipt
+from interaction_smoke import (
+    catalog_fingerprint,
+    resolve_host_threads,
+    validate_catalog,
+    validate_receipt,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +38,37 @@ class InteractionSmokeTest(unittest.TestCase):
         known["turns"] = known["turns"][1:]
         with self.assertRaisesRegex(ValueError, "at least two turns"):
             validate_catalog(invalid, ROOT)
+
+        invalid = copy.deepcopy(self.catalog)
+        review = next(item for item in invalid["scenarios"]
+                      if item["id"] == "review-checkpoint-closes-in-scope-finding")
+        review["setup"]["initial_diff"] = "missing.patch"
+        with self.assertRaisesRegex(ValueError, "initial diff"):
+            validate_catalog(invalid, ROOT)
+
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            fixture = temporary_root / "fixture"
+            fixture.mkdir()
+            for filename in self.catalog["fixture"]["baseline_files"]:
+                (fixture / filename).write_text("pass\n", encoding="utf-8")
+            (fixture / "broken.patch").write_text("not a patch\n", encoding="utf-8")
+            invalid = copy.deepcopy(self.catalog)
+            invalid["fixture"]["path"] = "fixture"
+            for scenario in invalid["scenarios"]:
+                if scenario["setup"]["initial_diff"] != "none":
+                    scenario["setup"]["initial_diff"] = "broken.patch"
+            with self.assertRaisesRegex(ValueError, "initial diff"):
+                validate_catalog(invalid, temporary_root)
+
+    def test_named_initial_diff_is_a_replayable_fixture_patch(self):
+        patch = ROOT / "evals/interaction-fixtures/status-normalizer/review-null-contract-regression.patch"
+        result = subprocess.run(
+            ["git", "apply", "--check", str(patch)],
+            cwd=patch.parent, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
 
     def test_receipt_requires_addressable_task_current_baseline_and_observations(self):
         receipt = {
@@ -118,6 +154,44 @@ class InteractionSmokeTest(unittest.TestCase):
 
         self.assertEqual(1, result.returncode)
         self.assertEqual("invalid", json.loads(result.stdout)["status"])
+
+    def test_host_thread_resolution_requires_a_fresh_exact_child_match(self):
+        threads = [
+            {"id": "client-pending", "name": "Smoke: local fix", "parentThreadId": "parent-1",
+             "updatedAt": 1788786000},
+            {"id": "resolved", "name": "Smoke: local fix", "parentThreadId": "parent-1",
+             "updatedAt": 1788790400},
+            {"id": "wrong-parent", "name": "Smoke: local fix", "parentThreadId": "parent-2",
+             "updatedAt": 1788790500},
+            {"id": "partial-title", "name": "Smoke: local fix again", "parentThreadId": "parent-1",
+             "updatedAt": 1788790500},
+        ]
+
+        self.assertEqual(
+            {"task_id": "resolved", "title": "Smoke: local fix", "parent_thread_id": "parent-1"},
+            resolve_host_threads(threads, "Smoke: local fix", "2026-09-07T14:00:00Z", "parent-1"),
+        )
+        with self.assertRaisesRegex(ValueError, "updated_not_before"):
+            resolve_host_threads(threads, "Smoke: local fix", None, "parent-1")
+
+    def test_cli_resolves_host_thread_candidate_without_claiming_a_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            threads_path = Path(directory) / "threads.json"
+            threads_path.write_text(json.dumps([{
+                "id": "resolved", "name": "Smoke: local fix", "updatedAt": 1788790400,
+            }]), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "interaction_smoke.py"),
+                 "--host-thread-list", str(threads_path), "--title", "Smoke: local fix",
+                 "--updated-not-before", "2026-09-07T14:00:00Z"],
+                text=True, capture_output=True, check=False,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            {"status": "resolved", "task_id": "resolved", "title": "Smoke: local fix"},
+            json.loads(result.stdout),
+        )
 
 
 if __name__ == "__main__":

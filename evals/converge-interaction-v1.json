@@ -15,13 +15,13 @@
     },
     {
       "id": "review-checkpoint-closes-in-scope-finding",
-      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression", "decisions": ["None normalizes to an empty string"]},
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": ["None normalizes to an empty string"]},
       "turns": [{"prompt": "继续已授权的状态标准化修复。审查当前 diff，发现同范围的 None 契约问题后直接修复并验证。", "authorized_write": true}],
       "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope"}
     },
     {
       "id": "explicit-review-only",
-      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression", "decisions": []},
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": []},
       "turns": [{"prompt": "仅审查当前 status-normalizer diff，报告有证据的 finding，不要修改。", "authorized_write": false}],
       "expected": {"skill": "converge-review", "action": "review", "writes": "forbidden", "question": "none", "completion": "findings_only", "scope": "not_applicable"}
     },

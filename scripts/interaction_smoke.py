@@ -5,7 +5,9 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -59,7 +61,7 @@ def validate_catalog(catalog, root):
         raise ValueError("fixture baseline_files are invalid")
     ids = set()
     for scenario in catalog["scenarios"]:
-        _validate_scenario(scenario, ids)
+        _validate_scenario(scenario, ids, fixture_path)
     if ids != SCENARIO_IDS:
         raise ValueError("scenario IDs are incomplete")
     smoke = catalog["smoke"]
@@ -74,7 +76,7 @@ def validate_catalog(catalog, root):
         raise ValueError("smoke policy is invalid")
 
 
-def _validate_scenario(scenario, ids):
+def _validate_scenario(scenario, ids, fixture_path):
     if not isinstance(scenario, dict) or set(scenario) != {"id", "setup", "turns", "expected"}:
         raise ValueError("scenario fields are invalid")
     scenario_id = _string(scenario["id"], "scenario.id")
@@ -86,6 +88,18 @@ def _validate_scenario(scenario, ids):
         raise ValueError("scenario setup fields are invalid")
     if setup["fixture"] != "status-normalizer" or not all(_string(setup[key], f"setup.{key}") for key in ("baseline", "initial_diff")):
         raise ValueError("scenario setup is invalid")
+    initial_diff = setup["initial_diff"]
+    if initial_diff != "none" and (
+            Path(initial_diff).name != initial_diff or not initial_diff.endswith(".patch")
+            or not (fixture_path / initial_diff).is_file()):
+        raise ValueError("scenario initial diff is unavailable")
+    if initial_diff != "none":
+        result = subprocess.run(
+            ["git", "apply", "--check", initial_diff], cwd=fixture_path,
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode:
+            raise ValueError("scenario initial diff is not replayable")
     if not isinstance(setup["decisions"], list) or any(not isinstance(item, str) or not item.strip() for item in setup["decisions"]):
         raise ValueError("scenario decisions are invalid")
     turns = scenario["turns"]
@@ -158,11 +172,71 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt requires observed verification")
 
 
+def _timestamp(value, name):
+    _string(value, name)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{name} is invalid") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{name} must include a timezone")
+    return parsed
+
+
+def _host_timestamp(value, name):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return datetime.fromtimestamp(value, timezone.utc)
+    return _timestamp(value, name)
+
+
+def resolve_host_threads(threads, title, updated_not_before, parent_thread_id=None):
+    """Resolve one host-observed thread using its exact unique title and time window."""
+    title = _string(title, "title")
+    threshold = _timestamp(updated_not_before, "updated_not_before")
+    if parent_thread_id is not None:
+        parent_thread_id = _string(parent_thread_id, "parent_thread_id")
+    if not isinstance(threads, list):
+        raise ValueError("host threads are invalid")
+    matches = []
+    for entry in threads:
+        if not isinstance(entry, dict) or entry.get("name") != title:
+            continue
+        updated_at = _host_timestamp(entry.get("updatedAt"), "host thread updatedAt")
+        if updated_at < threshold:
+            continue
+        if parent_thread_id is not None and entry.get("parentThreadId") != parent_thread_id:
+            continue
+        task_id = _string(entry.get("id"), "host thread task_id")
+        if task_id.startswith("client-"):
+            continue
+        matches.append(task_id)
+    if not matches:
+        raise ValueError("no host thread matches the requested title")
+    if len(set(matches)) != 1:
+        raise ValueError("host thread match is ambiguous")
+    result = {"task_id": matches[0], "title": title}
+    if parent_thread_id is not None:
+        result["parent_thread_id"] = parent_thread_id
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--receipt", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--receipt", type=Path)
+    source.add_argument("--host-thread-list", type=Path)
+    parser.add_argument("--title")
+    parser.add_argument("--updated-not-before")
+    parser.add_argument("--parent-thread-id")
     arguments = parser.parse_args()
     try:
+        if arguments.host_thread_list is not None:
+            threads = json.loads(arguments.host_thread_list.read_text(encoding="utf-8"))
+            result = resolve_host_threads(
+                threads, arguments.title, arguments.updated_not_before, arguments.parent_thread_id,
+            )
+            print(json.dumps({"status": "resolved", **result}, ensure_ascii=False))
+            return 0
         catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         receipt = json.loads(arguments.receipt.read_text(encoding="utf-8"))
         validate_catalog(catalog, ROOT)

@@ -72,6 +72,23 @@ python3 scripts/interaction_smoke.py --receipt /tmp/converge-interaction-receipt
 ```
 
 `pass` 只证明该场景的当次观察；`uncovered` 必须保留原因，不能凭确定性回归改成通过。
+目录中 `initial_diff` 不是 `none` 的场景必须指向 fixture 内可应用的 `.patch`；执行 fresh
+会话前先在该 fixture 目录用 `git apply --check <patch>` 验证，缺少或不可应用即保持 `uncovered`。
+若 Desktop 创建 worktree 时暂时只返回 `clientThreadId`，从同一宿主的 App Server `thread/list`
+观察中导出 `result.data`，再按**唯一标题**、创建后时间窗和（如适用）父 task 解析候选正式 ID：
+
+```bash
+python3 scripts/interaction_smoke.py --host-thread-list /tmp/converge-host-threads.json \
+  --title "Smoke: local fix <unique-run-id>" \
+  --updated-not-before 2026-09-07T14:00:00Z \
+  --parent-thread-id <parent-thread-id>
+```
+
+`--updated-not-before` 必填；候选必须是精确标题、同一父 task（未提供父 task 时不作该筛选）且窗口内唯一的
+正式 ID。该命令只返回候选，不是通过证据，也不放开 worker lifecycle。必须再用宿主的 `thread/read`
+核对相同标题、预期 worktree 与终态；同名、缺失或无法核对均为 `uncovered`。不要把本 CLI 输出或 App Server
+列表当作跨会话 worker lifecycle 回执。
+
 发现可复现的 Suite 行为逃逸时，先登记 defect，再补最小回归与对应 history catalog 条目。
 普通使用反馈、宿主能力缺失或未复现问题不创建新 catalog 项。此流程按变更或逃逸触发，
 不启动定时任务、后台采集或持久化记忆。
