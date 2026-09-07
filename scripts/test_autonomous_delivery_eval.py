@@ -64,12 +64,12 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
 
-    def test_execute_runs_the_frozen_behavior_checks_without_returning_transcripts(self):
-        report = evaluate(json.loads(CATALOG.read_text(encoding="utf-8")), execute=True)
+    def test_diagnostic_execution_runs_the_minimum_frozen_behavior_checks_without_transcripts(self):
+        report = evaluate(self.minimal_catalog(), execute=True)
 
         self.assertEqual("completed", report["status"])
         self.assertFalse(report["transcript_storage"])
-        self.assertEqual(51, len(report["results"]))
+        self.assertEqual(15, len(report["results"]))
         for result in report["results"].values():
             self.assertEqual({"status", "duration_ms", "usage", "receipt_fingerprint"}, set(result))
             self.assertEqual("passed", result["status"])

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 移除 full gate 的重复自治评测：诊断入口改跑最小合法 15 场真实隔离场景；trusted snapshot 仍完整运行 51 场，且全量派发契约继续逐项覆盖。
 - 继续缩短完整门禁：自治 service 测试夹具直接复用已覆盖的 lease/state 生产写入 API，保留真实锁、校验和落盘语义，避免每个用例额外启动三个状态管理 CLI 子进程。
 - 缩短 TDD impact guard 的反馈时间：纯 trace 契约校验复用同一专用的静态 receipt fixture；native coverage、真实 rerun、超时和 runner/图谱证据场景仍执行真实命令。
 - 减少自治 service 测试夹具的无效工作：默认不生成未消费的 native TDD trace，只有验证最终审计的场景才显式构造它。
