@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 交互 smoke 现使用带 fixture、前置决定和多轮输入的可重放 transcript，并只接受包含正式 task、基线和逐轮观察的结果回执；同仓库并行写入新增 worktree、路径隔离、集成人与联合验证约束。根入口区分 inline、Desktop 与 CLI 宿主能力，简单任务优先读取轻量 TDD 规则。
 - 交互契约校验现在固定三条关键 fresh-host smoke 场景，避免关键修复、审查闭环或既有决定被其他场景静默替换。
 - 交互 smoke 目录拒绝重复的关键场景 ID，避免以同一场景重复计入最小样本数。
 - 简单 `inline` 路由先分类并跳过 Provider 自动选择，避免局部修复自动加载完整 PDLC 工作流。

@@ -92,6 +92,8 @@ python3 scripts/test_reporting_contract.py
 python3 scripts/test_delivery_report.py
 python3 scripts/test_skill_contracts.py
 python3 scripts/test_interaction_contract.py
+python3 scripts/test_interaction_smoke.py
+python3 scripts/test_execution_topology.py
 python3 scripts/test_worker_profile.py
 python3 scripts/test_runner_registry.py
 python3 scripts/test_runner_contract.py
