@@ -52,6 +52,12 @@ class MultiModelSmokeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "read-only scout"):
             smoke(unsafe, workspace=self.workspace)
 
+    def test_smoke_rejects_a_missing_scout_profile_and_non_boolean_execution_flags(self):
+        with self.assertRaisesRegex(ValueError, "scout profile"):
+            smoke({"roles": {}}, workspace=self.workspace)
+        with self.assertRaisesRegex(ValueError, "execution flags"):
+            smoke(self.profiles, workspace=self.workspace, execute="yes")
+
     def test_execute_mode_uses_a_detached_worktree_and_returns_a_redacted_receipt(self):
         seen = {}
 
