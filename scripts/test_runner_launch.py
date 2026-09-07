@@ -76,7 +76,7 @@ class RunnerLaunchTest(unittest.TestCase):
         command = command_for_dispatch(launch, "Collect evidence")
 
         self.assertEqual("claude-code-v1", launch["runner_id"])
-        self.assertEqual("fable", command[command.index("--model") + 1])
+        self.assertEqual("haiku", command[command.index("--model") + 1])
 
     def test_rejects_a_dispatch_whose_profile_does_not_match_its_fingerprint(self):
         profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")

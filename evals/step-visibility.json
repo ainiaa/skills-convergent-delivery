@@ -701,7 +701,7 @@
     {
       "id": "native-merged-step-update",
       "prompt": "一次实际计划更新完成 T1 并开始 T2。",
-      "expected_status": "pass",
+      "expected_status": "fail",
       "trace": {
         "schema_version": 2,
         "evidence_level": "fixture",

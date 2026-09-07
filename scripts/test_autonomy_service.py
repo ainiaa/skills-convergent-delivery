@@ -20,8 +20,8 @@ from autonomy_begin import initial_state
 from autonomy_service import service_paths, service_runtime
 from controller_snapshot import create_snapshot
 from delivery_engine import controller_identity
-from delivery_lease import lease_paths
-from delivery_state import state_path
+from delivery_lease import acquire as acquire_lease, lease_paths
+from delivery_state import state_path, write as write_state
 from delivery_next import validate_state
 from evidence_contract import run_evidence, workspace_source
 from runner_contract import fingerprint, freeze_launch
@@ -175,6 +175,29 @@ else:
                 implementation.unlink(missing_ok=True)
                 test_file.unlink(missing_ok=True)
 
+    def test_fixture_builds_a_trace_only_when_requested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, _state_root, _lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(state["ledger"].get("tdd_trace_candidate"))
+
+    def test_fixture_seeds_service_state_without_starting_state_cli_processes(self):
+        original_run = subprocess.run
+        setup_scripts = {
+            str(Path(__file__).with_name("delivery_lease.py")),
+            str(Path(__file__).with_name("delivery_state.py")),
+        }
+
+        def run(command, *arguments, **keywords):
+            if any(str(value) in setup_scripts for value in command):
+                self.fail("service fixture must not start state setup CLIs")
+            return original_run(command, *arguments, **keywords)
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(subprocess, "run", side_effect=run):
+            path, _state_root, _lease_root = self.managed_service_state(directory)
+            self.assertTrue(path.is_file())
+
     def test_final_service_rejects_missing_invalid_stale_and_failing_trace(self):
         for failure in ("missing", "malformed", "unhashable", "oversized", "criteria", "stale", "coverage"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
@@ -312,7 +335,7 @@ else:
                 finally:
                     edited.unlink(missing_ok=True)
 
-    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None, with_trace=True):
+    def managed_service_state(self, directory, stage=None, audit_argv=None, runtime="service", controller=None, with_trace=False):
         root = WORKSPACE
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
@@ -326,19 +349,26 @@ else:
         )
         if stage is not None:
             initial["current_stage"] = stage
-        acquired = subprocess.run([
-            sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
-            "--root", str(lease_root), "--repo", initial["repo_id"], "--workspace", initial["workspace"],
-            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
-        ], text=True, capture_output=True, check=False)
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        created = subprocess.run([
-            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
-            "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
-            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
-            "--expected-revision", "-1",
-        ], input=json.dumps(initial), text=True, capture_output=True, check=False)
-        self.assertEqual(0, created.returncode, created.stderr)
+        lease_arguments = SimpleNamespace(
+            root=str(lease_root), task_key=initial["task_key"], run_id=initial["run_id"],
+            writer_id=initial["writer_id"], ttl_seconds=900, takeover=False,
+        )
+        paths = lease_paths(lease_root, initial["repo_id"], initial["workspace"], initial["task_key"])
+        with redirect_stdout(StringIO()):
+            self.assertEqual(0, acquire_lease(
+                lease_arguments, paths, initial["repo_id"], initial["workspace"],
+            ))
+
+        def write(candidate, expected_revision):
+            arguments = SimpleNamespace(
+                input="-", lease_root=str(lease_root), state_root=str(state_root),
+                repo_id=initial["repo_id"], task_key=initial["task_key"], run_id=initial["run_id"],
+                writer_id=initial["writer_id"], expected_revision=expected_revision,
+            )
+            with patch.object(sys, "stdin", StringIO(json.dumps(candidate))), redirect_stdout(StringIO()):
+                write_state(arguments)
+
+        write(initial, -1)
         if runtime == "service":
             armed = arm(
                 initial, ["complete task"], ["tests pass"], "service", "codex-exec-v1",
@@ -346,13 +376,7 @@ else:
             )
         else:
             armed = arm(initial, ["complete task"], ["tests pass"], runtime)
-        armed_write = subprocess.run([
-            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
-            "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
-            "--task-key", initial["task_key"], "--run-id", initial["run_id"], "--writer-id", initial["writer_id"],
-            "--expected-revision", "0",
-        ], input=json.dumps(armed), text=True, capture_output=True, check=False)
-        self.assertEqual(0, armed_write.returncode, armed_write.stderr)
+        write(armed, 0)
         path = state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"])
         if runtime == "service" and with_trace:
             trace = native_tdd_trace(root, initial["baseline"]["commit"], initial["source_receipt"])
@@ -646,7 +670,9 @@ else:
 
     def test_final_service_action_creates_the_current_passing_audit_before_completion(self):
         with tempfile.TemporaryDirectory() as directory:
-            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "round-2-risk-review", with_trace=True,
+            )
 
             with patch.object(
                     autonomy_service, "execute",
@@ -694,7 +720,9 @@ else:
 
     def test_completion_rejects_a_service_audit_receipt_from_an_unfrozen_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "round-2-risk-review", with_trace=True,
+            )
 
             with patch.object(
                     autonomy_service, "execute",
@@ -880,7 +908,9 @@ else:
 
     def test_service_persists_an_unexpected_finalization_error_as_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
-            path, state_root, lease_root = self.managed_service_state(directory, "round-2-risk-review")
+            path, state_root, lease_root = self.managed_service_state(
+                directory, "round-2-risk-review", with_trace=True,
+            )
 
             with patch.object(
                     autonomy_service, "execute",

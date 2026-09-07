@@ -75,6 +75,7 @@ def evaluate(trace):
     failed_sync_fallback = False
     persistent_fallback = None
     native_receipts = {}
+    native_plan_seen = False
     visible_messages = {}
 
     def result(status, violation=None):
@@ -100,12 +101,15 @@ def evaluate(trace):
                     return result("fail", f"event {index}: persisted fallback evidence changed")
                 persistent_fallback = plan["fallback"]
             if plan is None:
+                if native_plan_seen:
+                    return result("fail", f"event {index}: native plan sync is missing at a step boundary")
                 display_uncovered = True
                 modes.add("unknown")
             elif plan["capability"] == "available" and plan["result"] == "not_called" \
                     and not (failed_sync_fallback or persistent_fallback):
                 return result("fail", f"event {index}: available native plan tool was not called")
             elif plan["result"] == "success":
+                native_plan_seen = True
                 if persistent_fallback is not None:
                     return result("fail", f"event {index}: persisted text mode cannot switch to native")
                 modes.add("native")
@@ -113,20 +117,17 @@ def evaluate(trace):
                 display_uncovered |= receipt is None or projection is None
                 if projection is not None:
                     if receipt is not None:
-                        if receipt in native_receipts and native_receipts[receipt] != projection:
-                            return result("fail", f"event {index}: native receipt describes conflicting projections")
+                        if receipt in native_receipts:
+                            return result("fail", f"event {index}: native receipt covers multiple step boundaries")
                         native_receipts[receipt] = projection
                     position = steps.index(step)
                     statuses = [item["status"] for item in projection]
                     expected = "in_progress" if kind == "start" else \
                         "completed" if event["result"] == "done" else "pending"
                     suffix = ["pending"] * (len(steps) - position - 1)
-                    allowed_suffixes = [suffix]
-                    if kind == "report" and event["result"] == "done" and suffix:
-                        allowed_suffixes.append(["in_progress", *suffix[1:]])
                     if statuses[:position] != ["completed"] * position \
                             or statuses[position] != expected \
-                            or statuses[position + 1:] not in allowed_suffixes:
+                            or statuses[position + 1:] != suffix:
                         return result("fail", f"event {index}: native projection does not match step state")
                 failed_sync_fallback = False
             else:

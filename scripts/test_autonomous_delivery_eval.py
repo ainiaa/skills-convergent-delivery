@@ -19,6 +19,17 @@ CATALOG = Path(__file__).resolve().parent.parent / "references/autonomous-delive
 
 
 class AutonomousDeliveryEvalTest(unittest.TestCase):
+    def minimal_catalog(self):
+        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog["scenarios"] = catalog["scenarios"][:15]
+        return catalog
+
+    def test_minimal_catalog_keeps_the_required_execution_shape(self):
+        catalog = self.minimal_catalog()
+
+        self.assertEqual(15, len(validate(catalog)))
+        self.assertEqual("full-fix", catalog["scenarios"][0]["id"])
+
     def managed_snapshot_state(self, directory, descriptor):
         path = state_path(Path(directory) / "state", "/repo/eval.git", "autonomy-eval", "run-1")
         path.parent.mkdir(parents=True)
@@ -171,7 +182,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual("passed", result["status"])
 
     def test_execute_marks_the_evaluation_failed_when_a_bound_check_fails(self):
-        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog = self.minimal_catalog()
         catalog["scenarios"][0]["check"] = [
             "scripts/test_autonomy_gate.py", "AutonomyMissingTest.test_missing",
         ]
@@ -182,7 +193,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual("failed", report["results"]["full-fix"]["status"])
 
     def test_command_exits_nonzero_when_a_bound_check_fails(self):
-        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog = self.minimal_catalog()
         catalog["scenarios"][0]["check"] = [
             "scripts/test_autonomy_gate.py", "AutonomyMissingTest.test_missing",
         ]
@@ -266,7 +277,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             poison.mkdir()
             (poison / "sitecustomize.py").write_text("raise RuntimeError('poisoned')\n", encoding="utf-8")
             with patch.dict("os.environ", {"PYTHONPATH": str(poison)}):
-                report = evaluate(json.loads(CATALOG.read_text(encoding="utf-8")), execute=True)
+                report = evaluate(self.minimal_catalog(), execute=True)
 
         self.assertEqual("completed", report["status"])
 

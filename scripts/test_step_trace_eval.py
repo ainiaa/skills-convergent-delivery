@@ -59,6 +59,12 @@ class StepTraceEvalTest(unittest.TestCase):
         value["events"][3]["plan"]["receipt_ref"] = None
         self.assertEqual("uncovered", evaluate(value)["status"])
 
+    def test_native_sync_cannot_skip_an_intermediate_step_boundary(self):
+        value = native_trace()
+        value["events"][4].pop("plan")
+
+        self.assertEqual("fail", evaluate(value)["status"])
+
     def test_native_receipt_cannot_describe_different_projections(self):
         value = native_trace()
         for event in value["events"]:
@@ -74,10 +80,10 @@ class StepTraceEvalTest(unittest.TestCase):
             with self.subTest(event=event_index, item=item_index):
                 self.assertEqual("fail", evaluate(value)["status"])
 
-    def test_one_native_call_can_complete_previous_and_start_next_step(self):
+    def test_native_receipt_cannot_cover_completion_and_next_step_start(self):
         value = native_trace()
         value["events"][3]["plan"] = copy.deepcopy(value["events"][4]["plan"])
-        self.assertEqual("pass", evaluate(value)["status"])
+        self.assertEqual("fail", evaluate(value)["status"])
 
     def test_missing_projection_is_uncovered_and_malformed_projection_is_rejected(self):
         value = native_trace()

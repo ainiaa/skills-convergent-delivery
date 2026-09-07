@@ -117,6 +117,23 @@ class CheckScriptTest(unittest.TestCase):
         self.assertIn("Check script self-test passed.", result.stdout)
         self.assertIn("All checks passed.", result.stdout)
 
+    def test_check_runs_independent_test_files_with_bounded_parallelism(self):
+        check = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+
+        self.assertIn('MAX_TEST_JOBS="${CONVERGE_CHECK_JOBS:-4}"', check)
+        self.assertIn("run_test_files()", check)
+        self.assertIn('kill -0 "${pids[$index]}"', check)
+        self.assertNotIn('wait "${pids[0]}"', check)
+        self.assertIn('run_test_files "${TEST_FILES[@]}"', check)
+        self.assertLess(
+            check.index("scripts/test_tdd_impact_guard.py"),
+            check.index("scripts/test_install.py"),
+        )
+        self.assertLess(
+            check.index("scripts/test_autonomy_service.py"),
+            check.index("scripts/test_autonomy_gate.py"),
+        )
+
     def test_in_check_mode_does_not_reexecute_the_suite(self):
         with mock.patch.object(subprocess, "run") as run:
             with mock.patch.dict(os.environ, {"CONVERGE_CHECK_SELF_TEST": "1"}):

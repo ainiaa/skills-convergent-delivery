@@ -22,11 +22,11 @@ DEFAULT_CONFIG = {
             "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
             "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
             "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-            "adjudicator": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+            "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "high"},
         },
         "claude-code": {
-            "router": {"model": "fable", "reasoning_effort": "medium"},
-            "scout": {"model": "fable", "reasoning_effort": "medium"},
+            "router": {"model": "haiku", "reasoning_effort": "medium"},
+            "scout": {"model": "haiku", "reasoning_effort": "medium"},
             "specifier": {"model": "sonnet", "reasoning_effort": "high"},
             "implementer": {"model": "sonnet", "reasoning_effort": "high"},
             "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
@@ -34,8 +34,8 @@ DEFAULT_CONFIG = {
         },
     },
 }
-OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
-CLAUDE_ALIASES = {"fable", "sonnet", "opus"}
+OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
+CLAUDE_ALIASES = {"fable", "haiku", "sonnet", "opus"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CONFIG_FIELDS = {"schema_version", "default_profile", "profiles"}
 ROLE_FIELDS = {"model", "reasoning_effort"}
@@ -127,7 +127,7 @@ def _role_profile(role, model, effort):
         )
     if model not in OPENAI_MODELS:
         if model not in CLAUDE_ALIASES and not model.startswith("claude-"):
-            raise ValueError(f"{role} model must be a GPT-5.6 or Claude Code model")
+            raise ValueError(f"{role} model must be a GPT-5.6, GPT-6, or Claude Code model")
         is_implementer = role == "implementer"
         return _profile(
             f"{role}-1", role, "claude-code-v1", "anthropic", model, effort,

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import evidence_contract
+from test_delivery_next import graph_index, trace_receipt
 
 
 MODULE_PATH = Path(__file__).with_name("tdd_impact_guard.py")
@@ -83,6 +84,46 @@ def trace(workspace, baseline, *, risks=None):
     }
 
 
+def fixture_trace(workspace, baseline, *, risks=None):
+    risks = risks or []
+    (workspace / "implementation.txt").unlink(missing_ok=True)
+    previous_source = evidence_contract.workspace_source(workspace, baseline)
+    (workspace / "implementation.txt").write_text("implemented\n", encoding="utf-8")
+    source = evidence_contract.workspace_source(workspace, baseline)
+    graph_index(workspace, ['seed.txt', 'test_cases.py', 'docs/00_standards/test-commands.yml'])
+    tests = []
+    for test_id, kind, scenarios in (
+        ("payment-normal", "unit", ["normal"]),
+        ("payment-boundary", "unit", ["boundary"]),
+        ("payment-error", "integration", ["error"]),
+    ):
+        selector = "test_cases.Tests.test_" + test_id.replace("-", "_")
+        tests.append({
+            "id": test_id, "selector": selector, "kind": kind, "scenarios": scenarios,
+            "red": {"receipt": trace_receipt(previous_source, ["pytest", "-k", selector], 1),
+                    "failure_class": "assertion"},
+            "green": {"receipts": [
+                trace_receipt(source, ["pytest", "-k", selector])
+                for _ in range(3 if risks else 2)
+            ]},
+            "mutation": None,
+        })
+    impacts = [{
+        "id": "payment-api", "relation": "entrypoint",
+        "test_ids": ["payment-normal", "payment-boundary", "payment-error"],
+    }]
+    query = tdd_impact_guard.graph_query(impacts)
+    return {
+        "schema_version": 5, "source": source, "risk_flags": risks,
+        "acceptance": [{"criterion": "payment is rejected when the balance is insufficient", "tests": tests}],
+        "impacts": impacts,
+        "graph": {"status": "covered", "receipt": trace_receipt(source, ["codegraph", "explore", query]),
+                  "impacts_fingerprint": tdd_impact_guard.fingerprint(impacts), "query": query},
+        "coverage": {"status": "covered", "threshold": 85,
+                     "receipt": trace_receipt(source, ["pytest", "--cov=src", "--cov-fail-under=85"])},
+    }
+
+
 class TddImpactGuardTest(unittest.TestCase):
     def test_zero_or_skipped_tests_cannot_satisfy_green(self):
         # Real unittest discovery of an importable module without any TestCase.
@@ -127,7 +168,7 @@ class TddImpactGuardTest(unittest.TestCase):
         from delivery_state import validate_transition
         from test_delivery_next import state
 
-        candidate = self.trace()
+        candidate = self.trace(live=True)
         test = candidate["acceptance"][0]["tests"][0]
         argv = [sys.executable, "-m", "unittest", test["selector"]]
         with patch.dict(os.environ, TRACE_RUN="build"):
@@ -232,7 +273,7 @@ class TddImpactGuardTest(unittest.TestCase):
 
     def test_native_completion_checks_the_same_coverage_policy_as_rerun(self):
         from delivery_next import validate_native_tdd_trace
-        value = self.trace()
+        value = self.trace(live=True)
         criteria = [item['criterion'] for item in value['acceptance']]
         validate_native_tdd_trace(value, value['source'], [], criteria, required=True,
                                   workspace=self.workspace)
@@ -314,8 +355,9 @@ else:
     def tearDown(self):
         self.temporary.cleanup()
 
-    def trace(self, *, risks=None):
-        return trace(self.workspace, self.baseline, risks=risks)
+    def trace(self, *, risks=None, live=False):
+        maker = trace if live else fixture_trace
+        return maker(self.workspace, self.baseline, risks=risks)
 
     def mutation(self, selector):
         return {
@@ -324,6 +366,10 @@ else:
                 self.workspace, self.baseline, [str(self.workspace / "mvn"), "org.pitest:pitest-maven:mutationCoverage", "-DtargetTests=" + selector]
             ),
         }
+
+    def test_static_trace_fixture_has_a_complete_valid_trace(self):
+        with patch("evidence_contract.run_evidence", side_effect=AssertionError("unexpected evidence run")):
+            self.assertEqual("pass", tdd_impact_guard.validate(self.trace())["status"])
 
     def test_valid_trace_covers_acceptance_baseline_and_impact(self):
         result = tdd_impact_guard.validate(self.trace())
@@ -547,13 +593,13 @@ else:
 
     def test_rerun_refreshes_final_checks_without_changing_the_workspace_source(self):
         refreshed = tdd_impact_guard.rerun(
-            self.trace(), self.workspace, self.baseline, native_coverage=True
+            self.trace(live=True), self.workspace, self.baseline, native_coverage=True
         )
 
         self.assertEqual("pass", tdd_impact_guard.validate(refreshed)["status"])
 
     def test_rerun_stops_a_hung_frozen_check_within_its_budget(self):
-        value = self.trace()
+        value = self.trace(live=True)
         test = value["acceptance"][0]["tests"][0]
         test["green"]["receipts"][0]["argv"] = [
             sys.executable, "-c", "import time; time.sleep(1)", test["selector"],
@@ -572,7 +618,7 @@ else:
                 )
 
     def test_rerun_requires_the_resolved_native_coverage_command(self):
-        value = self.trace()
+        value = self.trace(live=True)
         value["coverage"]["receipt"] = evidence_contract.run_evidence(
             self.workspace, self.baseline, [sys.executable, "-c", "pass"]
         )

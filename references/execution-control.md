@@ -18,7 +18,7 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 用户明确要求逐步或分步执行时，控制器先核对当前可调用工具（如 `update_plan`，以实际工具名为准），不能按宿主名称猜测、把“没有调用”当成“没有工具”，或沿用旧会话的能力结论。原生计划面板、计划文件和 commentary 文字汇报是三种不同产物。
 
-- 有原生工具：第一次修改前创建步骤清单，开始和完成时同步实际状态，并核对对应调用是否成功。阻塞终态遵守上文 `block` 约束。普通同会话计划也必须同步，不能因为没有持久 run 而跳过。输出投影 JSON 不算调用；调用返回失败、未知或缺失回执时，不得声称面板已同步。持久路径遵守上文 `sync-plan` 约束。
+- 有原生工具：第一次修改前创建步骤清单，开始和完成时同步实际状态，并核对对应调用是否成功。每个开始和完成边界都必须有一次成功的原生计划调用：完成 commentary 后先将当前项更新为 completed，下一步开始 commentary 之后立即调用并将其更新为 in_progress；不得只在初始建表或最终收口时批量更新，且下一步工具必须等待该开始同步成功。阻塞终态遵守上文 `block` 约束。普通同会话计划也必须同步，不能因为没有持久 run 而跳过。输出投影 JSON 不算调用；调用返回失败、未知或缺失回执时，不得声称面板已同步。持久路径遵守上文 `sync-plan` 约束。
 - 工具缺失、能力未知或调用失败：第一次修改前说明具体情况，以及“以下为文字清单，不是原生计划面板”；逐项列出已完成、进行中、待执行或阻塞。调用失败后可明确降级继续已授权业务，不为显示重试形成循环。已有 native 持久状态时，先按 [host_sync 降级契约](state-schema.md) 写入单向 text 转换，再请求下一动作，不能只改文字而留下待同步状态。此后保留文字降级标签，不能在最终回执中改称原生显示已修复。用户把原生面板本身作为验收时，该项保持未覆盖，Skill 不能凭空补出宿主工具。
 
 一次只推进当前可执行步骤，不把多步结果留到最终回复才一起公布：
@@ -37,7 +37,7 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 每个 `start/report` 的 `plan` 观测记录 `capability=available|unavailable|unknown`、`result=success|failed|unknown|not_called`、实际调用的 `receipt_ref`（无回执为 null）及在该展示点前是否已说明降级的 `fallback_disclosed`。首次有工具未调用、文字降级未告知均失败；轨迹中已观测到 failed/unknown 调用且告知降级后，后续允许 available + not_called，保留告知标注，无需重复调用。没有持久 text 约束时，实际恢复成功同步后再次按原生规则检查。任何调用缺少回执引用或旧轨迹没有 plan 观测均为 `uncovered`。字段必须从当前工具清单、对应调用结果和用户可见消息核对，不能由模型补填成功。
 
-成功调用还需观测 `plan.projection=[{step, status}, ...]`：将该调用实际提交的完整计划条目对应到 `trace.steps` 的标识和顺序，status 使用 pending/in_progress/completed，不得从预期事件反推补填。开始对应当前项 in_progress，完成对应 completed，阻塞对应 pending；阻塞原因在独立的终态文字消息中说明，投影步骤名称保持冻结值。前项保持 completed，后项保持 pending，完成报告允许同次调用将紧邻下一项设为 in_progress。`receipt_ref` 必须唯一定位一次调用（必要时包含会话标识）；同一引用只能对应同一投影。一次真实调用可同时满足前步完成和后步开始，但不能免除独立的文字消息。缺少投影的旧轨迹为 uncovered，投影矛盾或与事件状态不符为 fail。
+成功调用还需观测 `plan.projection=[{step, status}, ...]`：将该调用实际提交的完整计划条目对应到 `trace.steps` 的标识和顺序，status 使用 pending/in_progress/completed，不得从预期事件反推补填。开始对应当前项 in_progress，完成对应 completed，阻塞对应 pending；阻塞原因在独立的终态文字消息中说明，投影步骤名称保持冻结值。前项保持 completed，后项保持 pending；完成调用不得预先启动下一项。`receipt_ref` 必须唯一定位一次调用（必要时包含会话标识）；同一 `receipt_ref` 不得覆盖两个步骤边界。缺少投影的旧轨迹为 uncovered，投影矛盾、回执复用或与事件状态不符为 fail。
 
 已有持久 text 降级时，可在首个 `start/report.plan` 观测附上 managed state 中原样读取的 `fallback`（沿用 host_sync 的 reason/evidence_ref/disclosure_ref，不另建状态）。检查器复用同一字段校验；工具重连或轨迹恢复后仍允许 available + not_called，后续不可改写降级证据或切回 native，且持续要求已告知降级。没有该证据的普通轨迹仍须调用当前可用工具，不能仅凭 completed_before 推断已降级。
 

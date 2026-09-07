@@ -224,7 +224,7 @@ class RunnerLifecycleTest(unittest.TestCase):
                 "schema_version": 1, "runner_id": "claude-code-v1",
                 "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
                 "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
-                "requested_model": "fable", "requested_reasoning_effort": "medium",
+                "requested_model": "haiku", "requested_reasoning_effort": "medium",
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},

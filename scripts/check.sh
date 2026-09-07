@@ -49,78 +49,131 @@ done
 
 # Unit tests inspect CLI identities and inject process execution; never use live clients.
 TEST_BIN="$(mktemp -d "${TMPDIR:-/tmp}/converge-test-bin.XXXXXX")"
-trap 'rm -rf "$TEST_BIN"' EXIT
+TEST_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/converge-test-log.XXXXXX")"
+trap 'rm -rf "$TEST_BIN" "$TEST_LOG_DIR"' EXIT
 for client in codex claude; do
   printf '#!/bin/sh\nexit 127\n' > "$TEST_BIN/$client"
   chmod +x "$TEST_BIN/$client"
 done
 export PATH="$TEST_BIN:$PATH"
 
+MAX_TEST_JOBS="${CONVERGE_CHECK_JOBS:-4}"
+if [[ ! "$MAX_TEST_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CONVERGE_CHECK_JOBS must be a positive integer" >&2
+  exit 2
+fi
+
+run_test_files() {
+  local -a pids=()
+  local -a logs=()
+  local test_file log_file failed=0 index next=0 completed
+
+  while [[ $next -lt $# || ${#pids[@]} -gt 0 ]]; do
+    while [[ $next -lt $# && ${#pids[@]} -lt $MAX_TEST_JOBS ]]; do
+      test_file="${@:$((next + 1)):1}"
+      log_file="$TEST_LOG_DIR/$next.log"
+      (python3 "$test_file") >"$log_file" 2>&1 &
+      pids+=("$!")
+      logs+=("$log_file")
+      next=$((next + 1))
+    done
+    completed=false
+    for index in "${!pids[@]}"; do
+      if ! kill -0 "${pids[$index]}" 2>/dev/null; then
+        if ! wait "${pids[$index]}"; then
+          failed=1
+        fi
+        pids=("${pids[@]:0:index}" "${pids[@]:index + 1}")
+        completed=true
+        break
+      fi
+    done
+    if [[ $completed == false ]]; then
+      sleep 0.05
+    fi
+  done
+  for log_file in "${logs[@]}"; do
+    cat "$log_file"
+  done
+  return "$failed"
+}
+
 bash -n install.sh
-python3 scripts/test_install.py
-python3 scripts/test_delivery_next.py
+TEST_FILES=(
+  scripts/test_tdd_impact_guard.py
+  scripts/test_install.py
+  scripts/test_delivery_next.py
+)
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
-  python3 scripts/test_autonomy_gate.py
-  python3 scripts/test_autonomy_hook.py
-  python3 scripts/test_autonomy_hook_config.py
-  python3 scripts/test_autonomy_preflight.py
-  python3 scripts/test_autonomy_service_config.py
-  python3 scripts/test_autonomy_service.py
-  python3 scripts/test_autonomy_arm.py
-  python3 scripts/test_autonomy_begin.py
-  python3 scripts/test_autonomous_delivery_eval.py
+  TEST_FILES+=(
+    scripts/test_autonomy_service.py
+    scripts/test_autonomous_delivery_eval.py
+    scripts/test_autonomy_gate.py
+    scripts/test_autonomy_hook.py
+    scripts/test_autonomy_hook_config.py
+    scripts/test_autonomy_preflight.py
+    scripts/test_autonomy_service_config.py
+    scripts/test_autonomy_arm.py
+    scripts/test_autonomy_begin.py
+  )
 else
   echo "Extension suite skipped; run bash scripts/check.sh --full before release."
 fi
-python3 scripts/test_delivery_lease.py
-python3 scripts/test_delivery_task_key.py
-python3 scripts/test_delivery_engine.py
-python3 scripts/test_tdd_impact_guard.py
-python3 scripts/test_native_tdd_policy.py
-python3 scripts/test_provider_contract.py
-python3 scripts/test_runtime_adapter.py
-python3 scripts/test_capsule_dispatch.py
-python3 scripts/test_task_profile.py
-python3 scripts/test_run_contract.py
-python3 scripts/test_runtime_scenarios.py
-python3 scripts/test_controller_snapshot.py
-python3 scripts/test_evidence_contract.py
-python3 scripts/test_delivery_progress.py
-python3 scripts/test_step_trace_eval.py
-python3 scripts/test_delivery_state.py
-python3 scripts/test_reporting_contract.py
-python3 scripts/test_delivery_report.py
-python3 scripts/test_skill_contracts.py
-python3 scripts/test_interaction_contract.py
-python3 scripts/test_interaction_smoke.py
-python3 scripts/test_execution_topology.py
-python3 scripts/test_worker_profile.py
-python3 scripts/test_runner_registry.py
-python3 scripts/test_runner_contract.py
-python3 scripts/test_role_result.py
-python3 scripts/test_role_fanout.py
-python3 scripts/test_codex_exec_runner.py
-python3 scripts/test_claude_exec_runner.py
-python3 scripts/test_runner_launch.py
-python3 scripts/test_runner_lifecycle.py
+TEST_FILES+=(
+  scripts/test_delivery_lease.py
+  scripts/test_delivery_task_key.py
+  scripts/test_delivery_engine.py
+  scripts/test_native_tdd_policy.py
+  scripts/test_provider_contract.py
+  scripts/test_runtime_adapter.py
+  scripts/test_capsule_dispatch.py
+  scripts/test_task_profile.py
+  scripts/test_run_contract.py
+  scripts/test_runtime_scenarios.py
+  scripts/test_controller_snapshot.py
+  scripts/test_evidence_contract.py
+  scripts/test_delivery_progress.py
+  scripts/test_step_trace_eval.py
+  scripts/test_delivery_state.py
+  scripts/test_reporting_contract.py
+  scripts/test_delivery_report.py
+  scripts/test_skill_contracts.py
+  scripts/test_interaction_contract.py
+  scripts/test_interaction_smoke.py
+  scripts/test_execution_topology.py
+  scripts/test_worker_profile.py
+  scripts/test_runner_registry.py
+  scripts/test_runner_contract.py
+  scripts/test_role_result.py
+  scripts/test_role_fanout.py
+  scripts/test_codex_exec_runner.py
+  scripts/test_claude_exec_runner.py
+  scripts/test_runner_launch.py
+  scripts/test_runner_lifecycle.py
+)
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
-  python3 scripts/test_openai_compatible_runner.py
-  python3 scripts/test_multi_model.py
-  python3 scripts/test_multi_model_eval.py
-  python3 scripts/test_multi_model_smoke.py
-  python3 scripts/test_multi_model_repo_eval.py
-  python3 scripts/test_role_flow.py
-  python3 scripts/test_role_dispatch.py
+  TEST_FILES+=(
+    scripts/test_openai_compatible_runner.py
+    scripts/test_multi_model.py
+    scripts/test_multi_model_eval.py
+    scripts/test_multi_model_smoke.py
+    scripts/test_multi_model_repo_eval.py
+    scripts/test_role_flow.py
+    scripts/test_role_dispatch.py
+  )
 fi
-python3 scripts/test_trigger_evals.py
-python3 skills/converge-plan/scripts/test_plan_check.py
-python3 skills/converge-review/scripts/test_review_axes_contract.py
-python3 skills/converge-review/scripts/test_review_contract.py
-python3 skills/converge-batch/scripts/test_batch_state.py
-python3 skills/converge-batch/scripts/test_batch_next.py
-python3 skills/converge-batch/scripts/test_batch_runtime.py
-python3 skills/converge-eval/scripts/test_eval_contract.py
-python3 skills/converge-eval/scripts/test_eval_kernel.py
+TEST_FILES+=(
+  scripts/test_trigger_evals.py
+  skills/converge-plan/scripts/test_plan_check.py
+  skills/converge-review/scripts/test_review_axes_contract.py
+  skills/converge-review/scripts/test_review_contract.py
+  skills/converge-batch/scripts/test_batch_state.py
+  skills/converge-batch/scripts/test_batch_next.py
+  skills/converge-batch/scripts/test_batch_runtime.py
+  skills/converge-eval/scripts/test_eval_contract.py
+  skills/converge-eval/scripts/test_eval_kernel.py
+)
+run_test_files "${TEST_FILES[@]}"
 
 if [[ ${CONVERGE_CHECK_SELF_TEST:-0} != 1 ]]; then
   CONVERGE_CHECK_SELF_TEST=1 python3 scripts/test_check.py
