@@ -104,6 +104,8 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
 
                 self.assertEqual("failed", report["status"])
                 self.assertTrue(all(item["status"] == "failed" for item in report["results"]))
+                self.assertTrue(all(item["review"]["finding_count"] == len(findings)
+                                    for item in report["results"]))
 
     def test_plan_mode_does_not_create_a_repository_or_retain_a_prompt(self):
         report = evaluate(self.profiles)

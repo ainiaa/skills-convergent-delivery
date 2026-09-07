@@ -171,6 +171,8 @@ def compare_reports(reports):
                 or report.get("status") not in {"completed", "failed"} \
                 or not isinstance(report.get("results"), list):
             raise ValueError("multi-model comparison requires executed snapshot reports")
+        if report.get("stopped_early") not in {None, "runner_unavailable"}:
+            raise ValueError("multi-model comparison stop reason is invalid")
         identity = (report.get("controller_fingerprint"), report.get("scenario_fingerprint"))
         if not all(isinstance(value, str) and len(value) == 64 for value in identity):
             raise ValueError("multi-model comparison report fingerprint is invalid")
@@ -190,6 +192,8 @@ def compare_reports(reports):
             "status": report["status"],
             "passed": sum(item.get("status") == "passed" for item in results if isinstance(item, dict)),
             "failed": sum(item.get("status") == "failed" for item in results if isinstance(item, dict)),
+            "executed_count": len(results),
+            "stopped_early": report.get("stopped_early"),
             "total_duration_ms": sum(
                 item.get("duration_ms", 0) for item in results
                 if isinstance(item, dict) and isinstance(item.get("duration_ms", 0), int)

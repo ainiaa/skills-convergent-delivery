@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - 修复多模型 smoke 与仓库评测对只读结论的误放行：仅 `findings` 为空且 `next_action=verify` 才能通过；reviewer 明确要求修复时，评测保留实施验证状态但整体失败。
+- 补齐多模型评测诊断：仓库评测输出受限 reviewer finding 数量，横向场景比较保留已执行数量和 runner 提前停止原因；同步 reviewer 放行语义说明。
 - 新增真实交互 smoke receipt 的只读 CLI 校验入口，并在使用指南定义按变更或逃逸触发的 fresh-host smoke 与 defect-driven catalog 维护流程；不新增后台采集、持久化记忆或宿主 lifecycle bridge。
 - 真实交互 smoke 现可从同一宿主 App Server 的 `thread/list` 观察，以唯一标题、必填时间窗和可选父 task 解析候选正式 task ID；重复、缺失或后续 `thread/read` 核验不足仍保持 `uncovered`，该 bridge 不启用自动 worker lifecycle。
 - 收紧 host-thread 候选解析：仅接受已读完分页的完整响应、按 `createdAt` 而非可变的 `updatedAt` 绑定本次创建窗口，并将异常时间戳规范化为 `invalid`；fixture patch 同时拒绝指向目录外的符号链接。

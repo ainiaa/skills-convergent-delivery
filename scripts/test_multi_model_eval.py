@@ -265,6 +265,7 @@ class MultiModelEvalTest(unittest.TestCase):
         first["summary"] = {"planned": 0, "passed": 1, "failed": 0,
                             "total_duration_ms": 12, "scenario_count": 1, "status": "completed"}
         first["status"] = "completed"
+        first["stopped_early"] = "runner_unavailable"
         second = copy.deepcopy(first)
         second["results"][0]["profile_fingerprint"] = "b" * 64
         second["results"][0]["usage"] = {"input_tokens": 8, "output_tokens": 5}
@@ -274,7 +275,13 @@ class MultiModelEvalTest(unittest.TestCase):
         self.assertEqual("diagnostic", comparison["trust_level"])
         self.assertEqual(2, len(comparison["profiles"]))
         self.assertEqual({"input_tokens": 10, "output_tokens": 4}, comparison["profiles"][0]["usage"])
+        self.assertEqual(1, comparison["profiles"][0]["executed_count"])
+        self.assertEqual("runner_unavailable", comparison["profiles"][0]["stopped_early"])
         self.assertNotIn("cost", json.dumps(comparison))
+        invalid_stop = copy.deepcopy(first)
+        invalid_stop["stopped_early"] = "unknown"
+        with self.assertRaisesRegex(ValueError, "stop reason"):
+            compare_reports([first, invalid_stop])
         second["scenario_fingerprint"] = "c" * 64
         with self.assertRaisesRegex(ValueError, "same frozen"):
             compare_reports([first, second])

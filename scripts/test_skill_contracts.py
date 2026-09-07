@@ -210,6 +210,9 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("claude_exec_runner.py", model)
         self.assertIn("不把 `max_turns` 伪称为 Codex CLI", model)
         self.assertIn("只有 `implementer`", runners)
+        self.assertIn("空 findings 且 next_action=verify", runners)
+        extension = (ROOT / "extensions/converge-multimodel/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("findings or a next action other than `verify`", extension)
         self.assertIn("工具", model)
 
     def test_bounded_loops_have_distinct_termination_conditions(self):

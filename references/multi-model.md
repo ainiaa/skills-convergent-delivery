@@ -47,7 +47,7 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 需要把结果用于控制面决策时，必须从已冻结、只读的 Controller Snapshot 脚本运行，并将 `--snapshot-descriptor` 指向该 run 的 managed state 文件（而不是可任意制作的 snapshot JSON）。该模式拒绝自定义题库，验证该 state 的 canonical path 与其中冻结的 snapshot，并报告其聚合 `controller_fingerprint`；直接从候选工作区运行会标记为 `trust_level=diagnostic`，不能作为可信评测回执。
 
-对两个及以上已执行的 snapshot 报告，可用同一评测器的 `--compare-report` 生成横向摘要；它拒绝 controller 或题库指纹不同的报告，并只汇总 pass/fail、耗时和 provider 已返回的整数 usage 字段。比较产物固定标为 `trust_level=diagnostic`，不得用于控制面放行或模型路由；它不推断 token 价格或货币成本：缺少供应商可审计定价/用量时，报告必须保持该项为空而不是估算。
+对两个及以上已执行的 snapshot 报告，可用同一评测器的 `--compare-report` 生成横向摘要；它拒绝 controller 或题库指纹不同的报告，并汇总 pass/fail、已执行场景数、提前停止原因、耗时和 provider 已返回的整数 usage 字段。比较产物固定标为 `trust_level=diagnostic`，不得用于控制面放行或模型路由；它不推断 token 价格或货币成本：缺少供应商可审计定价/用量时，报告必须保持该项为空而不是估算。
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD"

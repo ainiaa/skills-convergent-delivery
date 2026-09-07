@@ -207,6 +207,8 @@ def _result(task, profiles, mode, *, execute, allow_network, plan_launch, execut
                 )
                 role_result = result_from_output(review_launch, review_output)
                 review = {"receipt": _receipt(review_receipt), "result_status": role_result["status"],
+                          "finding_count": len(role_result["findings"])
+                          if role_result["status"] == "available" else None,
                           "next_action": role_result.get("next_action")}
                 review_passed = review["receipt"]["status"] == "completed" \
                     and role_result["status"] == "available" and not role_result["findings"] \

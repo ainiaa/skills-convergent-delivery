@@ -44,7 +44,7 @@ stdout/stderr 读取或进度回调异常必须传回共享执行函数，终止
 
 首次 production smoke test 是单独的外发授权：使用非生产 worktree、最小无敏感 prompt、单个 profile 和明确费用上限；其结果只证明该 provider/account 的当时配置，不能替代代码回归测试或 host-native receipt。`multi_model_smoke.py` 默认只输出 planned；传入 `--allow-execute` 后才会创建 detached 临时 worktree、运行一个只读 scout，并返回不含 prompt/原始回答的脱敏 receipt。
 
-`multi_model_repo_eval.py` 是冻结的两题 Git 小型代码评测。默认只输出 planned；显式 `--allow-execute` 后，它在内部临时 Git 仓库为每题创建 candidate worktree，只让 implementer 写入，先冻结模型改动范围、再以固定 argv 运行 unittest。`--mode multi` 仅在实现与独立验证都通过且范围未越界后增加一个只读 reviewer；review 不会替代确定性验证或改变通过结论。报告只保留 task id、profile/receipt 指纹、验证状态、耗时、变更路径和受限 review 结论，不保留 prompt、源码、原始回答、密钥或成本估算。
+`multi_model_repo_eval.py` 是冻结的两题 Git 小型代码评测。默认只输出 planned；显式 `--allow-execute` 后，它在内部临时 Git 仓库为每题创建 candidate worktree，只让 implementer 写入，先冻结模型改动范围、再以固定 argv 运行 unittest。`--mode multi` 仅在实现与独立验证都通过且范围未越界后增加一个只读 reviewer；review 不会替代确定性验证，但 multi 评测只有 reviewer 返回空 findings 且 next_action=verify 才会通过。报告只保留 task id、profile/receipt 指纹、验证状态、耗时、变更路径和受限 review 结论（状态、下一动作与 finding 数量），不保留 prompt、源码、原始回答、密钥或成本估算。
 
 两个本地 runner 在主进程正常或非零退出后也会终止本次进程组内的残留子进程；清理失败返回 `unknown`，不能报告完成。该边界覆盖仍属于原进程组的后台进程，不保证清理由自行创建新 session/process group 的进程或宿主外部服务。
 
