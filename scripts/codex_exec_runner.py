@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
@@ -117,7 +118,9 @@ def command_for_launch(launch, prompt):
     effective = launch["profile"]["effective"]
     return [
         configuration["codex_bin"], "exec", "--json", "--ephemeral", "-c",
-        "features.respect_system_proxy=true", "--sandbox",
+        "features.respect_system_proxy=true",
+        "-c", "agents.enabled=false", "-c", "features.multi_agent=false",
+        "-c", "features.multi_agent_v2=false", "--sandbox",
         configuration["sandbox"], "-m", effective["model"],
         "-c", f'model_reasoning_effort="{effective["reasoning_effort"]}"', "-",
     ]
@@ -128,26 +131,35 @@ def _capture_bounded(process, limit, on_progress=None):
     lock = threading.Lock()
     total = [0]
     exceeded = threading.Event()
+    errors = []
     digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
     captured = {"stdout": bytearray(), "stderr": bytearray()}
 
     def drain(name, stream):
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                return
-            digests[name].update(chunk)
-            if on_progress is not None:
-                on_progress({"stream": name, "bytes": len(chunk)})
-            with lock:
-                total[0] += len(chunk)
-                over_limit = total[0] > limit
-                if not over_limit:
-                    captured[name].extend(chunk)
-            if over_limit:
-                exceeded.set()
+        try:
+            while True:
+                chunk = stream.read(8192)
+                if not chunk:
+                    return
+                digests[name].update(chunk)
+                if on_progress is not None:
+                    on_progress({"stream": name, "bytes": len(chunk)})
+                with lock:
+                    total[0] += len(chunk)
+                    over_limit = total[0] > limit
+                    if not over_limit:
+                        captured[name].extend(chunk)
+                if over_limit:
+                    exceeded.set()
+                    _terminate_process(process)
+                    return
+        except Exception as error:
+            # Thread exceptions must reach the receipt; also unblock process.wait().
+            errors.append(error)
+            try:
                 _terminate_process(process)
-                return
+            except OSError as cleanup_error:
+                errors.append(cleanup_error)
 
     threads = [
         threading.Thread(target=drain, args=(name, getattr(process, name)), daemon=True)
@@ -155,18 +167,18 @@ def _capture_bounded(process, limit, on_progress=None):
     ]
     for thread in threads:
         thread.start()
-    return threads, exceeded, digests, captured
+    return threads, exceeded, digests, captured, errors
 
 
 def _terminate_process(process):
-    """Kill the dedicated session so a timed-out CLI cannot leave model children behind."""
+    """Kill this launch's process group; a missing group is already cleaned up."""
     pid = getattr(process, "pid", None)
     if isinstance(pid, int) and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             return
-        except OSError:
-            pass
+        except ProcessLookupError:
+            return
     process.kill()
 
 
@@ -214,73 +226,88 @@ def _response_from_jsonl(stdout):
     return response
 
 
+def _join_io(threads, deadline):
+    for thread in threads:
+        thread.join(max(0, deadline - time.monotonic()))
+    return not any(thread.is_alive() for thread in threads)
+
+
+def _execute_process(command, workspace, prompt, budget, process_factory, on_progress):
+    threads = []
+    digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    process = None
+    error_type = None
+    deadline = time.monotonic() + budget["timeout_seconds"]
+    try:
+        process = process_factory(
+            command, cwd=workspace, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+        threads, exceeded, digests, captured, read_errors = _capture_bounded(
+            process, budget["max_output_chars"], on_progress
+        )
+        writer, write_errors = _start_prompt_writer(process, prompt)
+        threads.append(writer)
+        exit_code = process.wait(timeout=max(0, deadline - time.monotonic()))
+        if not _join_io(threads, deadline):
+            raise subprocess.TimeoutExpired(command, budget["timeout_seconds"])
+        if read_errors:
+            _terminate_process(process)
+            status, exit_code, error_type = "unknown", 127, type(read_errors[0]).__name__
+        elif exceeded.is_set():
+            status, exit_code = "output_exceeded", 125
+        elif write_errors:
+            raise write_errors[0]
+        else:
+            _terminate_process(process)
+            status = "completed" if exit_code == 0 else "failed"
+    except (subprocess.TimeoutExpired, OSError) as error:
+        status, exit_code = ("timed_out", 124) if isinstance(error, subprocess.TimeoutExpired) else ("unknown", 127)
+        error_type = type(error).__name__
+        if process is not None:
+            try:
+                _terminate_process(process)
+            except OSError as cleanup_error:
+                status, exit_code, error_type = "unknown", 127, type(cleanup_error).__name__
+            cleanup_deadline = time.monotonic() + 1
+            try:
+                process.wait(timeout=max(0, cleanup_deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                status, exit_code, error_type = "unknown", 127, "TimeoutExpired"
+            if not _join_io(threads, cleanup_deadline):
+                status, exit_code, error_type = "unknown", 127, "TimeoutExpired"
+    finally:
+        if process is not None and not any(thread.is_alive() for thread in threads):
+            for name in ("stdin", "stdout", "stderr"):
+                getattr(process, name).close()
+    return status, exit_code, error_type, digests, captured
+
+
 def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
                    capture_content=False, on_progress=None):
     """Start only the exact frozen local process after explicit caller opt-in."""
     if allow_execute is not True:
         raise ValueError("real Codex execution requires explicit allow_execute=True")
     command = command_for_launch(launch, prompt)
-    configuration = launch["configuration"]
-    threads = []
-    digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
-    process = None
-    writer = None
-    write_errors = []
-    error_type = None
-    try:
-        process = process_factory(
-            command, cwd=configuration["workspace"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        )
-        threads, exceeded, digests, captured = _capture_bounded(
-            process, launch["profile"]["budget"]["max_output_chars"], on_progress
-        )
-        writer, write_errors = _start_prompt_writer(process, prompt)
-        exit_code = process.wait(timeout=launch["profile"]["budget"]["timeout_seconds"])
-        for thread in threads:
-            thread.join()
-        writer.join()
-        if exceeded.is_set():
-            status, exit_code = "output_exceeded", 125
-        else:
-            if write_errors:
-                raise write_errors[0]
-            status = "completed" if exit_code == 0 else "failed"
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
-    except subprocess.TimeoutExpired as error:
-        _terminate_process(process)
-        for thread in threads:
-            thread.join()
-        if writer is not None:
-            writer.join()
-        process.wait()
-        status, exit_code = "timed_out", 124
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
-    except OSError as error:
-        error_type = type(error).__name__
-        if process is not None:
-            _terminate_process(process)
-            for thread in threads:
-                thread.join()
-            if writer is not None:
-                writer.join()
-            process.wait()
-        status, exit_code = "unknown", 127
-        stdout_fingerprint = digests["stdout"].hexdigest()
-        stderr_fingerprint = digests["stderr"].hexdigest()
+    status, exit_code, error_type, digests, captured = _execute_process(
+        command, launch["configuration"]["workspace"], prompt, launch["profile"]["budget"],
+        process_factory, on_progress,
+    )
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runner_id": "codex-exec-v1",
         "launch_fingerprint": launch["launch_fingerprint"],
         "status": status,
         "exit_code": exit_code,
-        "stdout_fingerprint": stdout_fingerprint,
-        "stderr_fingerprint": stderr_fingerprint,
+        "stdout_fingerprint": digests["stdout"].hexdigest(),
+        "stderr_fingerprint": digests["stderr"].hexdigest(),
         "requested_model": launch["profile"]["effective"]["model"],
         "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+        "attestation": {
+            "model": {"status": "requested", "observed": None},
+            "usage": {"status": "unavailable", "value": None},
+        },
     }
     if status == "unknown":
         value["error_type"] = error_type

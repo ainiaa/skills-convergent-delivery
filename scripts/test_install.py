@@ -63,6 +63,8 @@ from pathlib import Path
 arguments = sys.argv[1:]
 with Path(os.environ["FAKE_GIT_LOG"]).open("a", encoding="utf-8") as log:
     log.write(" ".join(arguments) + "\\n")
+if "ls-tree" in arguments:
+    print("100644 blob " + "a" * 40 + " " + arguments[-1])
 if arguments and arguments[0] == "clone":
     destination = Path(arguments[-1])
     shutil.copytree(
@@ -124,22 +126,29 @@ if arguments and arguments[0] == "clone":
 
     def test_remote_selectors_clone_the_requested_latest_release_or_tag(self):
         cases = (
-            (("--latest",), "main"),
-            (("--release", VERSION), f"v{VERSION}"),
-            (("--tag", "preview-202609"), "preview-202609"),
+            (("--latest",), "clone --depth 1 --branch main "),
+            (("--release", VERSION), f"clone --depth 1 --branch v{VERSION} "),
+            (("--tag", "preview-202609"), "clone --depth 1 --branch preview-202609 "),
         )
-        for arguments, expected_ref in cases:
+        for arguments, expected_command in cases:
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 home = Path(directory)
                 result, log = self.run_remote_installer(home, "--target", "codex", *arguments)
 
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn(
-                    f"clone --depth 1 --branch {expected_ref} "
-                    "https://github.com/ainiaa/skills-convergent-delivery.git",
+                    expected_command,
                     log,
                 )
                 self.assertTrue((home / ".codex/skills/converge").is_symlink())
+
+    def test_release_requires_only_a_version_before_network_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            result, log = self.run_remote_installer(home, "--target", "codex", "--release", VERSION)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"clone --depth 1 --branch v{VERSION} ", log)
 
     def test_remote_selector_cannot_be_combined_with_a_local_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +158,60 @@ if arguments and arguments[0] == "clone":
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("cannot be combined with --source", result.stderr)
+
+    def test_real_tag_upgrade_preserves_previous_install_until_candidate_is_valid(self):
+        # Exercise the actual preparation function against a local Git remote.
+        function = INSTALLER.read_text().split("prepare_source() {", 1)[1].split("\nsame_source()", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            origin, managed = root / "origin", root / "managed"
+            def git(*args):
+                return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main", origin)
+            git("-C", origin, "config", "user.name", "Test")
+            git("-C", origin, "config", "user.email", "test@example.com")
+            (origin / "VERSION").write_text("good")
+            (origin / "SKILL.md").write_text("skill")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "good")
+            git("-C", origin, "tag", "good")
+            git("clone", "-q", "--branch", "good", origin, managed)
+            (root / "installed").symlink_to(managed, target_is_directory=True)
+            (origin / "VERSION").unlink()
+            git("-C", origin, "commit", "-qam", "incomplete")
+            git("-C", origin, "tag", "incomplete")
+            (origin / "VERSION").symlink_to("missing")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "broken symlink")
+            git("-C", origin, "tag", "broken-link")
+            (origin / "VERSION").unlink()
+            (origin / "VERSION").write_text("latest")
+            git("-C", origin, "add", ".")
+            git("-C", origin, "commit", "-qm", "latest")
+            def prepare(selector, ref=""):
+                script = ("set -eu\nSOURCE_OVERRIDE=\nSCRIPT_DIR=/nonexistent\n"
+                          "GITHUB_BRANCH=main\nREQUIRED_SOURCE_FILES=(SKILL.md VERSION)\n"
+                          "prepare_source() {" + function + "\nprepare_source\n")
+                return subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                                      env=os.environ | {"MANAGED_SOURCE": str(managed),
+                                                        "REMOTE_SELECTOR": selector, "REMOTE_REF": ref})
+            before = git("-C", managed, "rev-parse", "HEAD")
+            invalid = prepare("--tag", "incomplete")
+            self.assertNotEqual(0, invalid.returncode)
+            self.assertEqual(before, git("-C", managed, "rev-parse", "HEAD"))
+            self.assertEqual("good", (root / "installed/VERSION").read_text())
+            broken_link = prepare("--tag", "broken-link")
+            self.assertNotEqual(0, broken_link.returncode)
+            self.assertEqual(before, git("-C", managed, "rev-parse", "HEAD"))
+            self.assertEqual("good", (root / "installed/VERSION").read_text())
+            latest = prepare("--latest")
+            self.assertEqual(0, latest.returncode, latest.stderr)
+            self.assertEqual("latest", (root / "installed/VERSION").read_text())
+            self.assertEqual("main", git("-C", managed, "symbolic-ref", "--short", "HEAD"))
+            (managed / "VERSION").write_text("local edit")
+            dirty = prepare("--tag", "good")
+            self.assertNotEqual(0, dirty.returncode)
+            self.assertEqual("local edit", (managed / "VERSION").read_text())
 
     def test_tagged_upgrade_fetches_and_detaches_the_requested_tag(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -528,6 +591,26 @@ if arguments and arguments[0] == "clone":
             self.assertIn("references/review-orchestration.md", result.stderr)
             self.assertFalse((home / ".codex/skills/converge").exists())
 
+    def test_install_rejects_a_suite_missing_capsule_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "source"
+            shutil.copytree(
+                ROOT,
+                source,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".claude", ".codex", ".codegraph", "__pycache__"
+                ),
+            )
+            (source / "scripts/capsule_dispatch.py").unlink()
+
+            result = self.run_installer_from(home, source, "--target", "codex")
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("scripts/capsule_dispatch.py", result.stderr)
+            self.assertFalse((home / ".codex/skills/converge").exists())
+
     def test_install_rejects_a_suite_missing_extension_invocation_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -610,6 +693,15 @@ if arguments and arguments[0] == "clone":
 
         self.assertIn(f"当前发布版本：[{VERSION}](VERSION)", readme)
 
+    def test_readme_leads_with_a_tagged_stable_install(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            f"https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v{VERSION}/install.sh",
+            readme,
+        )
+        self.assertIn(f"--release {VERSION} --target all", readme)
+
     def test_readme_links_to_the_usage_guide_and_changelog(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -630,6 +722,13 @@ if arguments and arguments[0] == "clone":
             self.assertIn(marker, readme)
             self.assertIn(marker, usage)
 
+    def test_bootstrap_downloads_the_stable_installer_without_piping_to_the_shell(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(f"v{VERSION}/install.sh -o converge-install.sh", readme)
+        self.assertIn(f"--release {VERSION} --target all", readme)
+        self.assertNotIn("| bash", readme)
+
     def test_readme_puts_newcomer_install_and_skill_choice_before_the_overview(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -646,8 +745,8 @@ if arguments and arguments[0] == "clone":
 
         for marker in (
             "## 多模型协作", "使用多模型配合开发", "默认不启用",
-            "固定角色", "Terra medium", "Luna high", "Sol high", "[多模型协作](references/multi-model.md)",
-            "不能替代真实测试",
+            "固定角色", "Terra medium", "Luna high", "GPT-6 Astra low", "[多模型协作](references/multi-model.md)",
+            "不能替代真实测试", "Claude profile 为可选兼容配置", "不作为本次发布的已验收能力",
         ):
             self.assertIn(marker, readme)
 
@@ -674,8 +773,7 @@ if arguments and arguments[0] == "clone":
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
-        self.assertIn("--writer-id <writer-id>", readme)
-        self.assertIn("--revision <revision>", readme)
+        self.assertIn("[单任务状态 Schema](references/state-schema.md)", readme)
         self.assertIn("~/.convergent-delivery/state/", usage)
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("pdlc-v1", skill)

@@ -11,7 +11,7 @@ import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 
@@ -21,8 +21,10 @@ if str(ROOT_SCRIPTS) not in sys.path:
 from delivery_next import (
     validate_provider_binding as validate_complete_provider_binding,
     validate_state as validate_delegate_state,
+    _path_contains,
 )
-from evidence_contract import validate_source_receipt
+from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source, verification_argv
+from task_profile import _canonical_paths
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -185,12 +187,16 @@ def write_private(path, payload):
         temporary.unlink(missing_ok=True)
 
 
-def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None):
+def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=None, source=None):
+    criteria = set()
     for index, entry in enumerate(require_list(entries, name, non_empty=True)):
         entry = require_mapping(entry, f"{name}[{index}]")
         if set(entry) != EVIDENCE_FIELDS:
             raise ValueError(f"{name}[{index}] fields are invalid")
-        require_string(entry.get("criterion"), f"{name}[{index}].criterion")
+        criterion = require_string(entry.get("criterion"), f"{name}[{index}].criterion")
+        if criterion in criteria:
+            raise ValueError(f"{name} criteria must be unique")
+        criteria.add(criterion)
         result = entry.get("result")
         freshness = entry.get("freshness")
         if result not in {"pass", "fail", "unknown"}:
@@ -198,7 +204,10 @@ def validate_evidence(entries, name, *, require_pass=False, source_fingerprint=N
         if freshness not in {"fresh", "stale", "unavailable"}:
             raise ValueError(f"{name}[{index}].freshness is invalid")
         if require_pass:
-            require_string(entry.get("evidence"), f"{name}[{index}].evidence")
+            if source is None:
+                require_string(entry.get("evidence"), f"{name}[{index}].evidence")
+            elif not valid_evidence_receipts([entry.get("evidence")], source):
+                raise ValueError(f"{name} requires current observed passing evidence")
             if result != "pass" or freshness != "fresh":
                 raise ValueError(f"{name} must contain only fresh passing evidence")
             if entry.get("source_fingerprint") != source_fingerprint:
@@ -230,6 +239,12 @@ def validate_capsule(capsule, batch_id, plan_id, task_id):
         values = require_list(capsule[field], f"capsule.{field}", non_empty=True)
         for value in values:
             require_string(value, f"capsule.{field} item")
+    for path in capsule["scope"]:
+        if PurePosixPath(path.replace("\\", "/")).is_absolute():
+            raise ValueError("capsule.scope must stay inside the workspace")
+    _canonical_paths(capsule["scope"])
+    for command in capsule["verification"]:
+        verification_argv(command)
 
 
 def git_output(workspace, *arguments):
@@ -251,6 +266,35 @@ def delegate_state_path(root, repo_id, task_id, run_id):
         / digest(task_id)
         / f"{digest(run_id)}.json"
     )
+
+
+def validate_committed_source(workspace, source, commit_id):
+    """Compare baseline plus observed edits with a checkpoint, without checking it out."""
+    def entries(revision):
+        result = {}
+        for record in git_output(workspace, 'ls-tree', '-rz', revision).split('\0'):
+            if record:
+                metadata, path = record.split('\t', 1)
+                result[path] = metadata.split()
+        return result
+
+    baseline = entries(source['baseline_commit'])
+    committed = entries(commit_id)
+    for entry in source['changed_entries']:
+        path = entry['path']
+        baseline.pop(path, None)
+        actual = committed.pop(path, None)
+        if entry['kind'] == 'deleted':
+            if actual is not None:
+                raise ValueError('checkpoint retains a deleted verified path')
+            continue
+        if actual is None or actual[0] != entry['mode'] or actual[1] != 'blob':
+            raise ValueError('checkpoint does not contain the verified path and mode')
+        content = subprocess.check_output(['git', '-C', workspace, 'cat-file', 'blob', actual[2]])
+        if hashlib.sha256(content).hexdigest() != entry['content_fingerprint']:
+            raise ValueError('checkpoint does not contain the verified content')
+    if baseline != committed:
+        raise ValueError('checkpoint differs outside the verified changes')
 
 
 def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, previous_commit=None):
@@ -290,7 +334,8 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt delegate state workspace does not match")
     if delegate_state.get("repo_id") != repo_id:
         raise ValueError("receipt delegate state repo_id does not match")
-    if delegate_state.get("baseline", {}).get("commit") != batch["capsule"]["baseline"]:
+    expected_parent = previous_commit or batch["capsule"]["baseline"]
+    if delegate_state.get("baseline", {}).get("commit") != expected_parent:
         raise ValueError("receipt delegate state baseline does not match")
     delegate_binding = delegate_state.get("provider_binding")
     capsule_binding = batch["capsule"]["provider_binding"]
@@ -299,8 +344,6 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         for field in ("task_kind", "binding", "binding_fingerprint")
     ):
         raise ValueError("receipt delegate state provider binding does not match")
-    if validate_delegate_state(delegate_state, SimpleNamespace()) != "complete":
-        raise ValueError("receipt delegate state is not complete")
     commit_id = require_string(receipt.get("commit_id"), "receipt.commit_id")
     commit_id = git_output(workspace, "rev-parse", "--verify", f"{commit_id}^{{commit}}")
     commit_tree = git_output(workspace, "rev-parse", f"{commit_id}^{{tree}}")
@@ -309,7 +352,26 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
         raise ValueError("receipt was not verified against the committed tree")
     if tree_hash != commit_tree:
         raise ValueError("receipt tree does not match its Git commit")
-    expected_parent = previous_commit or batch["capsule"]["baseline"]
+    validate_committed_source(workspace, source_receipt, commit_id)
+    diff = subprocess.run(
+        ["git", "-C", workspace, "diff", "--name-only", "--no-renames", "-z", expected_parent, commit_id, "--"],
+        capture_output=True, check=False,
+    )
+    if diff.returncode != 0:
+        raise ValueError("receipt checkpoint delta cannot be resolved")
+    delta = diff.stdout.decode("utf-8", "surrogateescape").split("\0")[:-1]
+    scope = _canonical_paths(batch["capsule"]["scope"])
+    if any(not any(_path_contains(owner, path) for owner in scope) for path in delta):
+        raise ValueError("checkpoint changes exceed capsule scope")
+    if validate_delegate_state(
+        delegate_state, SimpleNamespace(), check_workspace=False, coverage_revision=commit_id,
+    ) != 'complete':
+        raise ValueError('receipt delegate state is not complete')
+    allowed = delegate_state["execution_control"]["routing"]["allowed_paths"]
+    if any(not any(_path_contains(owner, path) for owner in scope) for path in allowed):
+        raise ValueError("delegate routing exceeds capsule scope")
+    if batch['status'] == 'validating-receipt':
+        validate_committed_source(workspace, workspace_source(workspace, batch['capsule']['baseline']), commit_id)
     if receipt.get("parent_commit_id") != expected_parent:
         raise ValueError("receipt parent commit does not match the batch chain")
     ancestor = subprocess.run(
@@ -327,6 +389,23 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
     actual = {item["criterion"] for item in receipt["acceptance"]}
     if expected != actual:
         raise ValueError("receipt acceptance does not cover the capsule")
+    verified = {
+        item["criterion"]: {field: item[field] for field in EVIDENCE_FIELDS}
+        for item in delegate_state["ledger"]["acceptance"]
+    }
+    if set(verified) != expected:
+        raise ValueError("delegate acceptance does not match the capsule")
+    if {item["criterion"]: item for item in receipt["acceptance"]} != verified:
+        raise ValueError("receipt acceptance does not match the verified delegate")
+    required_commands = {tuple(verification_argv(command)) for command in batch["capsule"]["verification"]}
+    observed_commands = {
+        tuple(item["argv"])
+        for acceptance in delegate_state["ledger"]["acceptance"]
+        for item in acceptance.get("evidence_receipts", [])
+        if valid_evidence_receipts([item], source_receipt)
+    }
+    if not required_commands <= observed_commands:
+        raise ValueError("delegate verification does not cover capsule commands")
     if require_list(receipt.get("open_issues"), "receipt.open_issues"):
         raise ValueError("completed receipt cannot have open issues")
 
@@ -433,7 +512,8 @@ def validate_state(state):
             if worker_role != "controller-delegate":
                 raise ValueError("worker_role must be controller-delegate")
             require_string(worker_owner_run_id, "worker_owner_run_id")
-            if worker_status == "working" and worker_owner_run_id != state["run_id"]:
+            if worker_status == "working" and worker_owner_run_id != state["run_id"] \
+                    and status not in {"blocked", "stopped"}:
                 raise ValueError("working worker_owner_run_id must match the current run")
             if worker_status not in WORKER_STATUSES:
                 raise ValueError("worker_status is invalid")
@@ -443,7 +523,7 @@ def validate_state(state):
             seen_delegate_runs.add(delegate_run_id)
         if batch_status == "completed" and worker_status != "completed":
             raise ValueError("completed batch requires worker_status completed")
-        if batch_status == "running" and worker_status != "working":
+        if batch_status == "running" and worker_status != "working" and status not in {"blocked", "stopped"}:
             raise ValueError("running batch requires a working worker")
         if batch_status in {"validating-receipt", "completed"}:
             completed = [item for item in batches[:index] if item.get("status") == "completed"]
@@ -477,10 +557,15 @@ def validate_state(state):
     if status == "complete":
         if completed_prefix != len(batches):
             raise ValueError("all batches must be completed")
-        final_source = batches[-1]["receipt"]["delegate_source_fingerprint"]
+        last = batches[-1]
+        current_source = workspace_source(state["workspace"], last["capsule"]["baseline"])
+        validate_committed_source(
+            state['workspace'], current_source,
+            last['receipt']['commit_id'],
+        )
         validate_evidence(
             state["final_acceptance"], "final_acceptance", require_pass=True,
-            source_fingerprint=final_source,
+            source_fingerprint=current_source["source_fingerprint"], source=current_source,
         )
     blocked_reason = state.get("blocked_reason")
     if status == "blocked":
@@ -504,6 +589,13 @@ def validate_transition(previous, candidate, *, takeover=False):
     if previous["status"] in {"complete", "blocked", "stopped"}:
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
+        if previous["status"] in {"blocked", "stopped"}:
+            if takeover:
+                expected.update(run_id=candidate["run_id"], writer_id=candidate["writer_id"])
+            expected["batches"] = [dict(batch) for batch in previous["batches"]]
+            for old, new in zip(expected["batches"], candidate["batches"]):
+                if old["worker_status"] == "working" and new["worker_status"] in TERMINAL_WORKER_STATUSES:
+                    old["worker_status"] = new["worker_status"]
         if candidate != expected:
             raise ValueError("terminal plan state is immutable")
         return
@@ -564,8 +656,12 @@ def validate_transition(previous, candidate, *, takeover=False):
                 raise ValueError("receipt workspace is not clean")
     if changed > 1:
         raise ValueError("only one batch may transition per revision")
-    if any(item.get("result") == "pass" for item in previous["final_acceptance"]) \
-            and candidate["final_acceptance"] != previous["final_acceptance"]:
+    if [item["criterion"] for item in previous["final_acceptance"]] != [
+        item["criterion"] for item in candidate["final_acceptance"]
+    ]:
+        raise ValueError("final acceptance criteria are immutable")
+    if any(old.get("result") == "pass" and new != old
+           for old, new in zip(previous["final_acceptance"], candidate["final_acceptance"])):
         raise ValueError("passing final acceptance is immutable")
 
 
@@ -628,9 +724,26 @@ def write_state(
     return path
 
 
+def execution_capsule(state):
+    validate_state(state)
+    if state['status'] != 'active' or state['current_batch'] is None:
+        raise ValueError('execution capsule requires an active plan with a current batch')
+    index = next(i for i, batch in enumerate(state['batches']) if batch['batch_id'] == state['current_batch'])
+    batch = state['batches'][index]
+    if batch['status'] != 'pending':
+        raise ValueError('execution capsule requires a pending batch; resume existing delegates from managed state')
+    baseline = state['batches'][index - 1]['receipt']['commit_id'] if index else batch['capsule']['baseline']
+    if git_output(state['workspace'], 'rev-parse', 'HEAD') != baseline:
+        raise ValueError('execution workspace does not match the previous checkpoint')
+    source = workspace_source(state['workspace'], baseline)
+    if source['changed_paths']:
+        raise ValueError('execution workspace has unverified changes since the checkpoint')
+    return {**batch['capsule'], 'baseline': baseline}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("path", "write"))
+    parser.add_argument("command", choices=("path", "write", "capsule"))
     parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--input")
     parser.add_argument("--repo")
@@ -648,7 +761,10 @@ def main():
             print(state_path(arguments.state_root, arguments.repo, arguments.plan_id, arguments.run_id))
             return 0
         if arguments.input != "-":
-            raise ValueError("write only accepts --input - from stdin")
+            raise ValueError("write/capsule only accepts --input - from stdin")
+        if arguments.command == "capsule":
+            print(json.dumps(execution_capsule(json.load(sys.stdin)), sort_keys=True))
+            return 0
         if arguments.expected_revision is None or not arguments.run_id or not arguments.writer_id:
             raise ValueError("write requires --expected-revision, --run-id, and --writer-id")
         candidate = json.load(sys.stdin)

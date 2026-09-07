@@ -36,7 +36,7 @@
     "binding_fingerprint": "<sha256>"
   },
   "runtime_binding": null,
-  "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null, "evidence_level": "controller_attested | host_observed"},
+  "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null, "evidence_level": "controller_attested | host_observed", "fallback": "optional: {reason, evidence_ref, disclosure_ref}; text only"},
   "execution_control": {
     "routing": {"schema_version": 2, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile": {"schema_version": 2, "assessment_phase": "frozen", "scope": "local", "coupling": "single", "uncertainty": "low", "verification": "local", "risk_flags": [], "cross_session": false, "delegable_tasks": 0, "context_isolation_benefit": false}, "allowed_paths": ["src"], "integration_required": false, "profile_fingerprint": "<sha256>"},
     "review": {"protocol_version": 3, "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "rounds": [{"source_fingerprint": "<source>", "requests": []}]}
@@ -63,7 +63,9 @@ Schema v11 仅用于用户明确启用自治交付的 run。在既有 `execution
 
 Review v3 将每次源码版本保存为一个不可变 round：旧 round 永不重写，只有最后一轮必须匹配当前源码，修复后追加新轮。每条内部结果额外保存 `task_id/request_fingerprint`，只能由 `review_contract.py` 对照完整冻结请求生成。adapter 新写入的 finding 结果还在同一 request 保存 `finding_records`：它与 `finding_fingerprints` 一一对应，只含有界 evidence/impact/root_cause 和分类字段；当前 round 的 finding 必须携带 records，历史 round 可只保留 fingerprint，不能伪造详情。普通/高风险完成态要求当前轮同时存在 spec 与 quality pass，quality 初审必须独立盲审，且二者由冻结 external runner 的同名 `profile.worker_id`、完整 canonical request 与 completed available role result 中完全相同的 Review v3 record 证明。reviewer 不进入 native worker registry，也不替代 host 清场。高风险的 spec 也必须独立盲审。integration 是否必需由 frozen profile 推导；必需时初始预算只能为 1，首次 integration 请求在同一转换减为 0。repair fingerprint、re-review/closure 请求也必须分别与对应预算的 1→0 同步，不能无动作消费或重复请求。
 
-`host_sync` 只保存宿主能力模式和已确认的 Plan Projection 指纹。投影由 `delivery_progress.py projection` 确定性生成，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。
+`host_sync` 保存宿主能力模式、已确认的 Plan Projection 指纹及可选降级证据。投影由 `delivery_progress.py projection` 确定性生成，覆盖全部合法阶段，未知阶段明确拒绝；步骤名称始终与冻结清单一致，不包含 state revision 或 `host_sync` 本身。`delivery_next.py` 返回 `sync-plan` 后，父控制器先调用宿主原生计划更新，只有宿主返回成功后才能以 `host_observed` 写回同一指纹；`controller_attested` 不能完成 native acknowledgement，`text|legacy_unavailable` 不进入等待循环。blocked 不走普通同步或降级转换；运行时不承诺终态原生展示，不能为显示重新进入执行循环。
+
+原生调用失败、结果未知或恢复后工具缺失时，控制器先告知文字降级，再通过既有 `delivery_state.py write` 在独立 revision 中将 `native → text`，同时把 `acknowledged_fingerprint` 清为 null、`evidence_level` 设为 `controller_attested`，加入 `fallback={reason: failed|unknown|unavailable, evidence_ref: <调用结果或能力观测引用>, disclosure_ref: <用户可见告知引用>}`。两个引用必须非空，控制器负责核对其真实性；它们不是宿主签名或业务通过证据。此转换不得同时推进阶段、改验收或业务事实。降级记录不可改写或删除，同一 run 不自动升回 native；重载沿用 text 并继续原有下一动作。旧的三字段状态仍兼容，初始 text 无需补 fallback。blocked 状态继续只允许既有清场动作，无需降级来绕过停止条件。
 
 异模型 worker 采用 [Worker Runner](worker-runners.md) 的冻结 profile。它的 `runner` receipt 不属于本节 `runtime_binding`、`workers[]` 或 `worker_tree_receipt`：这些字段只接受真实宿主 bridge 的原始观察。当前 package 没有该 bridge，普通 JSON 不会生成 `host_observed` binding。没有宿主 selector/tree receipt 时，runner 结果只能作为待主 controller 复核的外部工作产物，不能把 `runner` 标成 `host_observed` 或用来直接完成状态；需要新上下文时使用 [Capsule Dispatch v1](capsule-dispatch.md)，其 delivery ack 同样不属于这些字段。
 
@@ -157,11 +159,13 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 - append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
-`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`ledger.tdd_trace` 仅允许保存有界的 TDD/Impact Trace v5；native complete 时其 source、冻结 risk flags 和 criterion 集合必须分别等于当前 Source Receipt、Routing Receipt 与 `ledger.acceptance`，并返回 `pass`。最终验证通过 rerun 刷新该 trace 后才写入，避免旧绿灯、覆盖率或图谱回执完成新源码。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
+
+未完成的 native run（普通 Schema v10，以及 Schema v11 Hook/service）可保存 `ledger.tdd_trace_candidate`，内容为通过结构、大小、冻结风险与验收项校验的 Trace v5。它承载执行期间的候选，不能作为正式验收事实；后续动作改变源码时允许保留历史候选供恢复，最终必须与当前 Source Receipt 匹配并通过真实 rerun。控制器在同一 complete revision 中写入正式 `ledger.tdd_trace` 并删除候选。PDLC run 不接受 native 候选；blocked 保留候选便于诊断，不能据此继续执行。正式 Trace 写入后仍不可替换，不自动改写既有正式证据。
 
 交付报告中的 `verified` 范围只能从 `ledger.acceptance` 的 `fresh/pass` 项和 `ledger.checks` 的 `pass` 项派生。`handoff.last_verification` 是 `controller_attested` 自由文本说明，只能作为 note 展示，不能替代结构化验收、检查或 Evidence Receipt，也不能被渲染为“已验证”。
 
-Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-review → verify-round-1（高风险）→ round-2-risk-review → verify-final`。PDLC workflow 只使用 `pdlc-run`，其细粒度阶段仍由 PDLC 自己保存。终态 complete 必须位于最终阶段并具有全部 fresh/pass 验收证据；blocked 必须提供 `blocked_code/reason`。
+Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-review → verify-round-1（高风险）→ round-2-risk-review → verify-final`。第三方只替换 native workflow 内红绿方法，不绕过 native 的 TDD/Impact Trace v5 completion gate。PDLC workflow 只使用 `pdlc-run`，其细粒度阶段仍由 PDLC 自己保存。终态 complete 必须位于最终阶段并具有全部 fresh/pass 验收证据；blocked 必须提供 `blocked_code/reason`。
 
 ## 5. 路径、租约与原子写入
 
@@ -192,3 +196,5 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
 ```
 
 不得把 `/tmp` 文件、调用者指定的任意路径或自然语言回执当作状态真源。workspace 只有在同 owner 的有效 lease move 后才能改变；revision、worker 身份和终态均不可回退。
+
+普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。

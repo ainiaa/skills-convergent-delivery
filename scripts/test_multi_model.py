@@ -18,7 +18,18 @@ def delivery_profile(*, router="gpt-5.6-terra", reviewer="gpt-5.6-terra"):
         "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
         "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
         "reviewer": {"model": reviewer, "reasoning_effort": "high" if reviewer == "glm-5.2" else "high"},
-        "adjudicator": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+        "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"},
+    }
+
+
+def claude_profile():
+    return {
+        "router": {"model": "haiku", "reasoning_effort": "medium"},
+        "scout": {"model": "haiku", "reasoning_effort": "medium"},
+        "specifier": {"model": "sonnet", "reasoning_effort": "high"},
+        "implementer": {"model": "sonnet", "reasoning_effort": "high"},
+        "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
+        "adjudicator": {"model": "opus", "reasoning_effort": "xhigh"},
     }
 
 
@@ -36,7 +47,8 @@ class MultiModelTest(unittest.TestCase):
         self.assertEqual("high", value["roles"]["specifier"]["effective"]["reasoning_effort"])
         self.assertEqual("gpt-5.6-luna", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("high", value["roles"]["implementer"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-5.6-sol", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertEqual("gpt-6-astra", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertEqual("low", value["roles"]["adjudicator"]["effective"]["reasoning_effort"])
         self.assertNotIn("verifier", value["roles"])
 
     def test_selects_named_profile_and_allows_per_run_role_override(self):
@@ -61,10 +73,21 @@ class MultiModelTest(unittest.TestCase):
                 profile_name="claude-code",
             )
         self.assertEqual("claude-code", value["profile_name"])
-        self.assertEqual("fable", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual("haiku", value["roles"]["router"]["effective"]["model"])
         self.assertEqual("sonnet", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("opus", value["roles"]["adjudicator"]["effective"]["model"])
         self.assertEqual("claude-code-v1", value["roles"]["reviewer"]["runner_id"])
+
+    def test_configured_haiku_alias_uses_the_claude_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi-model.json"
+            path.write_text(json.dumps(config(
+                default="claude-code", profiles={"claude-code": claude_profile()}
+            )), encoding="utf-8")
+            value = resolve(path)
+
+        self.assertEqual("haiku", value["roles"]["scout"]["effective"]["model"])
+        self.assertEqual("claude-code-v1", value["roles"]["scout"]["runner_id"])
 
     def test_read_only_roles_do_not_receive_shell_access_for_either_cli_runner(self):
         with tempfile.TemporaryDirectory() as directory:

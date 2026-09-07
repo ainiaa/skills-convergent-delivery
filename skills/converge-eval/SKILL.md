@@ -9,6 +9,34 @@ metadata:
 
 只负责有限、可复现的行为评估。不得实现候选规则、修改被测工作区、替代 `converge-review` 做代码审查，或直接执行外部副作用。
 
+## 当前能力预检
+
+确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。只有模型行为评估才使用默认模式，开始收集模型样本前运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`；本目录变量按下一节解析。默认模型评测模式没有 concrete evaluator lifecycle bridge，该模式的公共 API 与 CLI 返回 `status=uncovered`、`eligible=false`、`stop_reason=unavailable_host_bridge`，CLI 退出码为 2，且不读取样本工件。不得要求用户构造不可生成的 worker registry，不能把 blocked legacy fixture 或离线统计测试当作正式 Eval 通过。
+
+此时停止模型 Eval，保留模型行为 locked differential 为 `uncovered`；已授权的本地实现、修复与回归测试可继续，但它们不能替代正式验收或发布门禁。以下是冻结的目标证据契约及离线统计规则，只有以后落地真实 bridge 并通过入口行为测试，才可启用采样。私有 `_evaluate_receipts` 仅用于离线 bookkeeping，输出 `evidence_level=diagnostic`、`release_status=uncovered`，不是替代入口。修改判定器时继续保留旧快照，不能用本次候选自证通过。
+
+## 确定性进程 bridge
+
+`--preflight --deterministic` 探测本地进程模式；此模式运行真实 unittest 判定器，不调用模型、不创建 worker。必须从仓库外的 Controller Snapshot 启动，复用上述 trusted runner，并在 Eval 参数中加入 `--deterministic`。请求文件包含：
+
+```json
+{
+  "controller_snapshot": {"...": "完整旧版 Snapshot descriptor"},
+  "control_source": "<完整 Git commit 或 tree>",
+  "candidate_source": "<不同的完整 Git commit 或 tree>",
+  "suite": "evals/local-suite.json",
+  "timeout_seconds": 600
+}
+```
+
+`suite` 只从 control tree 读取，须在候选修改前冻结；它包含 `allowed_scope`、`touched_control_surfaces` 和 `scenarios`。每个场景为 `{"id":"唯一验收或历史 ID","class":"known_acceptance|history|exploration","judge":"evals/test_case.py"}`。判定器使用独立、非空的标准库 unittest 文件，通过 cwd 或导入目标模块测试被测行为；判定逻辑不得从 candidate 的测试辅助文件动态加载。至少一个 known acceptance，且包含旧 catalog 中全部匹配 history ID。
+
+场景和判定器都来自 control；候选不得修改它们或超出 allowed_scope。helper 为每个场景的每一侧重新导出 Git tree，单独运行冻结判定器，退出后确认进程组清场并删除临时目录；仅支持指向临时工作区内部的相对符号链接。最多 32 个场景，总预算最多 600 秒；零测试、跳过、预期失败、错误、超时归为 uncovered；对照侧缺证据不能计为修复。exploration 单列且不抵消 gating 失败。不接受外部手填的结果样本。
+
+结果为 `deterministic-eval-v1`、`evidence_level=process_observed`，包含双侧退出码、测试分类、输出摘要、tree、suite、catalog 和 controller 指纹及四类结果；`release_status=uncovered` 保留模型行为和宿主 lifecycle 边界。临时目录与进程组是测试隔离，不是针对恶意代码的 OS sandbox；只运行已授权的本地测试。
+
+首次加入该 bridge 时，旧快照没有此入口，不能用新候选自证旧版 locked Eval 通过。该次实现以真实 bridge 集成回归验证；后续任务可以冻结已含 bridge 的旧版本后使用。默认模型模式和既有 v5 离线统计契约保持不变，以下 worker/multi-sample 规则仅适用于模型模式。
+
 ## 输入与冻结
 
 先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_EVAL_SKILL_DIR`；Suite helper 从其上两级目录解析，不能依赖被测仓库的 `scripts/`。

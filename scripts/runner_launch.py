@@ -11,7 +11,6 @@ from claude_exec_runner import plan_launch as plan_claude_launch
 from codex_exec_runner import command_for_launch as codex_command_for_launch
 from codex_exec_runner import execute_launch as execute_codex_launch
 from codex_exec_runner import plan_launch as plan_codex_launch
-from openai_compatible_runner import PROVIDERS, execute_request, plan_request
 from role_result import prompt_for_review, prompt_for_role
 from runner_contract import validate_launch
 from runner_registry import validate_runner_profile
@@ -57,6 +56,7 @@ def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", clau
             review_request_fingerprint=review_request_fingerprint,
             review_request=review_request,
         )
+    from openai_compatible_runner import PROVIDERS, plan_request
     provider = PROVIDERS.get(profile["effective"]["provider"])
     if profile["runner_id"] != "openai-compatible-v1" or provider is None:
         raise ValueError("external runner dispatch selects an unsupported runner")
@@ -94,6 +94,7 @@ def execute_dispatch_launch(launch, prompt, *, allow_execute=False, allow_networ
         )
         return {"receipt": receipt, "output": _output(content)}
     if launch["runner_id"] == "openai-compatible-v1":
+        from openai_compatible_runner import execute_request
         result = execute_request(
             launch, prompt, allow_network=allow_network, capture_content=True,
         )

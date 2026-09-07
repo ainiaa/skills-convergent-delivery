@@ -9,3 +9,12 @@
 
 __pycache__/
 *.py[cod]
+
+# Local verification output.
+.venv/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.pytest_cache/
+mutants/

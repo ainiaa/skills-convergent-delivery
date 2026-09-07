@@ -1,0 +1,575 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-progress-consistency",
+  "requirement_fingerprint": "c4c1753af277cd1144f10aa64bc45cb8f42a77b45efe239738538ac0f591b67c",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "commit_id": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "tree_hash": "7668c56564ed06adab3bb8395f49e222f1cb8000",
+      "diff_fingerprint": "5f987bd7c713a0c62926b9139e88fab90f8749701144978b4a36c12c3c0e5c85",
+      "changed_paths": [
+        "CHANGELOG.md",
+        "SKILL.md",
+        "docs/06_tasks/F20260905-host-sync-fallback-plan.json",
+        "docs/06_tasks/F20260905-host-sync-fallback-plan.md",
+        "docs/06_tasks/F20260905-native-plan-display-plan.json",
+        "docs/06_tasks/F20260905-native-plan-display-plan.md",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md",
+        "evals/step-visibility.json",
+        "references/evaluation-scenarios.md",
+        "references/execution-control.md",
+        "references/state-schema.md",
+        "references/worker-runners.md",
+        "scripts/check.sh",
+        "scripts/claude_exec_runner.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/delivery_next.py",
+        "scripts/delivery_state.py",
+        "scripts/step_trace_eval.py",
+        "scripts/test_claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_step_trace_eval.py",
+        "skills/converge-plan/SKILL.md"
+      ],
+      "changed_entries": [
+        {
+          "path": "CHANGELOG.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "d9e0919c571bd01d22cf163bafed5ef043feb2d58e777d0621d3810502e0f228"
+        },
+        {
+          "path": "SKILL.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "86b68aaa92e37ac29244e515541558d16350a8c7c336147fc2b31ca8e2d2e45b"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-host-sync-fallback-plan.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "a6e119b8f0e201cd9e1d95eefe61c6125c2b29d2ac61a3b3b84240a4bff831aa"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-host-sync-fallback-plan.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "79fe946218205958873d4b913a7480052bd36414f5df6d45b163c878c333cffc"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-native-plan-display-plan.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7c47f331ab7115ec87f99e2e6f2cb82e699caab04d37473860300b68988dd295"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-native-plan-display-plan.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "ca9a51dc509ba9337d150489e0e0028d065c5f5ae972b9bef6ee10381ce8e5bf"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "9cb27c47978d586c4edd3bc70cc1a77d0f9eb2effae63b51682e3b4b8ea818cd"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "695d1bcbfbc05a4f9ac963b36b5aa80071322fd218328071103653324c0b3ab3"
+        },
+        {
+          "path": "evals/step-visibility.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e230b1acae4d6b3b2c0451cc8fea1e967c4608f355a09ab3c277bf081c472e77"
+        },
+        {
+          "path": "references/evaluation-scenarios.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "27bd87f781eceb745f10eebe091e37ddbc699536bffc20acadcd3b27873fdc3d"
+        },
+        {
+          "path": "references/execution-control.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "2647957a39cca4a48d917b42f411e86c00b16d56ec0eb744760b52fb19cb21fb"
+        },
+        {
+          "path": "references/state-schema.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "1edd98b8b9305d124bc19eb07c003d1531bf936dfe940d2436e25c8d2544474d"
+        },
+        {
+          "path": "references/worker-runners.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "37e4bc950a8881f76a44d971be90c604a5020921199d47485dcdeabb20181661"
+        },
+        {
+          "path": "scripts/check.sh",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "0cc35fb6ca5bd23548cad3fbc79c39753abdaa81cd724e3cb7317659c528778d"
+        },
+        {
+          "path": "scripts/claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "fff5f23efc10be5f45c0ee07fd27ae43d673369d29ec0e43f78111a63e9e4e87"
+        },
+        {
+          "path": "scripts/codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7c1f8fe787b6db6a1d68f542780dc37f8f4b95c68ce1724dca6cd6289a6fbb34"
+        },
+        {
+          "path": "scripts/delivery_next.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "2a4e8184159232bf50b996263cdc29cc762da5b058cf6b02fae4517b69c06bdc"
+        },
+        {
+          "path": "scripts/delivery_state.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "2a813ad3181974c1fb565ce20b52e3eb8a51b5a150335b8f34cd316d0587ed15"
+        },
+        {
+          "path": "scripts/step_trace_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "0f3c47fb0f9f77f74aa84646d79c32fcc4f83dd5240c4ce8b5fb851ad20a23db"
+        },
+        {
+          "path": "scripts/test_claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "3cb2a88e6e4eb5b66669016bf0fd9bcf5c7a87816b617d4e79379c1cddab79f3"
+        },
+        {
+          "path": "scripts/test_codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "f8c109ba30b71ca88d53df76fb13abbf9e5928975d36f642aabad65e0deeb281"
+        },
+        {
+          "path": "scripts/test_delivery_state.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "88ef6a149403a20a17999f6911c2f6cdda16ffc5542277434d2894304a2e24b5"
+        },
+        {
+          "path": "scripts/test_step_trace_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "d663500ce1694ce9c4ddbf242c42ca5f8c2a01f2c4253c3f4818335ca8679743"
+        },
+        {
+          "path": "skills/converge-plan/SKILL.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "660a1a89fc44a87b9730dd34108fddc5e505876ac724fee25bf8b0f1f92ccbbf"
+        }
+      ],
+      "source_fingerprint": "d1a6e169538080ea00e4ce32949f3a020aea067455674d918253770ea95ae01b"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环"
+      ],
+      "goal": "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+      "owned_paths": [
+        "docs/06_tasks/F20260905-progress-consistency-plan.json",
+        "docs/06_tasks/F20260905-progress-consistency-plan.md",
+        "scripts/delivery_progress.py",
+        "scripts/test_delivery_progress.py",
+        "references/execution-control.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "添加行为回归",
+        "运行回归确认失败",
+        "实施最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest test_delivery_progress test_delivery_next"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行"
+      ],
+      "goal": "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+      "owned_paths": [
+        "scripts/step_trace_eval.py",
+        "scripts/test_step_trace_eval.py",
+        "evals/step-visibility.json",
+        "references/execution-control.md"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "添加行为回归",
+        "运行回归确认失败",
+        "实施最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest test_step_trace_eval test_delivery_state"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新"
+      ],
+      "goal": "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+      "owned_paths": [
+        "scripts/step_trace_eval.py",
+        "scripts/test_step_trace_eval.py",
+        "evals/step-visibility.json",
+        "references/execution-control.md"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "添加行为回归",
+        "运行回归确认失败",
+        "实施最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新"
+      ],
+      "verification": [
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest test_step_trace_eval"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T4",
+      "task_kind": "integration",
+      "outcomes": [
+        "契约及 changelog 一致，完整回归与计划审计通过"
+      ],
+      "goal": "契约及 changelog 一致，完整回归与计划审计通过",
+      "owned_paths": [
+        "CHANGELOG.md",
+        "references/state-schema.md"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "同步契约与变更日志",
+        "执行完整回归",
+        "审计计划结果"
+      ],
+      "acceptance": [
+        "契约及 changelog 一致，完整回归与计划审计通过"
+      ],
+      "verification": [
+        "bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+    "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+    "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+    "契约及 changelog 一致，完整回归与计划审计通过"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "progress-consistency",
+        "description": "机器状态→计划投影→原生调用或文字降级→恢复及轨迹验收",
+        "entrypoints": [
+          "docs/06_tasks/F20260905-progress-consistency-plan.json",
+          "docs/06_tasks/F20260905-progress-consistency-plan.md",
+          "scripts/delivery_progress.py",
+          "scripts/test_delivery_progress.py",
+          "references/execution-control.md",
+          "scripts/step_trace_eval.py",
+          "scripts/test_step_trace_eval.py",
+          "evals/step-visibility.json",
+          "CHANGELOG.md",
+          "references/state-schema.md"
+        ],
+        "callers": [
+          "scripts/delivery_next.py",
+          "scripts/delivery_state.py",
+          "scripts/check.sh",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+              "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+              "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+              "契约及 changelog 一致，完整回归与计划审计通过"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+              "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+              "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+              "契约及 changelog 一致，完整回归与计划审计通过"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+              "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+              "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+              "契约及 changelog 一致，完整回归与计划审计通过"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+              "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+              "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+              "契约及 changelog 一致，完整回归与计划审计通过"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "合法阶段与阻塞投影准确，阻塞不重新启动执行或同步循环",
+              "已有持久降级证据在工具重连及轨迹恢复后仍允许文字执行",
+              "原生调用回执绑定对应步骤状态，拒绝冒用并允许真实合并更新",
+              "契约及 changelog 一致，完整回归与计划审计通过"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "d1a6e169538080ea00e4ce32949f3a020aea067455674d918253770ea95ae01b",
+      "chains_fingerprint": "58d6b0527a66e68f757a7e14c8a03f1918c4d789c3832e0e7bc6a20cfe1d43ad",
+      "receipt_fingerprint": "01997c7bc0a5e287ffb134f49234014cf354c9d3301333291e7fd4ed406c6e87"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "阻塞展示是否进入运行循环",
+      "resolution": "不进入；block 仍停止业务，控制器仅在终态报告前尝试一次终态展示，失败文字告知且不等待 ack。",
+      "source": "reversible-default"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "如何区分重连与跳过工具",
+      "resolution": "轨迹复用现有 host_sync.fallback 作为只读观测；无降级依据不能跳过可用工具。",
+      "source": "code"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "如何避免回执误用与误拒绝合并更新",
+      "resolution": "原生回执关联完整步骤状态投影；同一调用只对应同一投影，可以覆盖多个匹配事件；旧轨迹缺投影保持 uncovered。",
+      "source": "reversible-default"
+    }
+  ]
+}

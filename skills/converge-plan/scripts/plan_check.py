@@ -12,7 +12,7 @@ SUITE_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
-from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source
+from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source, verification_argv
 from delivery_next import (
     GRAPH_RECEIPT_TOOLS,
     validate_provider_binding as validate_complete_provider_binding,
@@ -69,7 +69,7 @@ def require_sha256(value, name):
 
 
 def clean_path(value, name):
-    path = require_string(value, name).replace("\\", "/").rstrip("/") or "."
+    path = require_string(value, name).replace("\\", "/")
     parsed = PurePosixPath(path)
     if parsed.is_absolute() or ".." in parsed.parts:
         raise ValueError(f"{name} must stay inside the workspace")
@@ -253,12 +253,16 @@ def validate_closure_matrix(value, final_acceptance, source_fingerprint):
             if any(criterion not in final_acceptance for criterion in criteria):
                 raise ValueError("closure_matrix acceptance must be a final_acceptance criterion")
     receipt = value["graph_receipt"]
-    fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "receipt_fingerprint"}
+    fields = {"schema_version", "tool", "source_fingerprint", "chains_fingerprint", "evidence", "receipt_fingerprint"}
     if not isinstance(receipt, dict) or set(receipt) != fields or receipt.get("schema_version") != 1 \
             or receipt.get("tool") not in GRAPH_RECEIPT_TOOLS:
         raise ValueError("closure_matrix graph_receipt is invalid")
     if require_sha256(receipt["source_fingerprint"], "closure_matrix graph source") != source_fingerprint:
         raise ValueError("closure_matrix graph receipt must match the frozen Source Receipt")
+    from evidence_contract import closure_graph_request, require_graph_execution
+    observed = require_graph_execution(receipt['evidence'], closure_graph_request(chains))
+    if observed['source']['source_fingerprint'] != source_fingerprint:
+        raise ValueError('closure_matrix graph observation must match frozen source')
     if receipt["chains_fingerprint"] != canonical_fingerprint(graph_projection(chains)):
         raise ValueError("closure_matrix graph receipt does not bind the chain projection")
     expected = canonical_fingerprint({
@@ -347,6 +351,8 @@ def validate_plan(plan):
                 raw.get("provider_run"), f"tasks[{index}].provider_run"
             ),
         }
+        for command in task["verification"]:
+            verification_argv(command)
         tasks.append(task)
 
     closure_matrix = validate_closure_matrix(
@@ -469,7 +475,10 @@ def audit(envelope, workspace):
                     cursor = after
                     evidence_source = after
             if result.get("fresh_pass") is not True \
-                    or not valid_evidence_receipts(result.get("evidence"), evidence_source):
+                    or not valid_evidence_receipts(result.get("evidence"), evidence_source) \
+                    or not {tuple(verification_argv(command)) for command in task["verification"]}.issubset(
+                        {tuple(item["argv"]) for item in result["evidence"]}
+                    ):
                 status = "PARTIAL"
         statuses[task_id] = status
 

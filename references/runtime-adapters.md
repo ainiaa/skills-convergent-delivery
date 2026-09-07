@@ -28,12 +28,12 @@ service 只能执行 `execute-inline` 和带 `phase` 的 `verify`；其他宿主
 
 Hook 从 stdin 读取宿主提供的 `cwd`。仅当 `~/.convergent-delivery/state/` 中存在唯一的、同 workspace 的 Schema v11 `active` run 才接管 Stop：
 
-- `autonomy_gate.py` 返回下一 action：Codex Hook 使用 `codex queue --thread <session>` 将该 action 投递回当前 task；同一 state path、阶段和 action 只能成功投递一次，`report_history` 等非目标 revision 不能重新 queue。投递失败、缺少 session 或重复 Stop 无进展时，不重试不确定投递；Hook 仅通过确定性 `delivery_state.py write` 将该 run 终态化为 `blocked/no_progress` 并释放 lease。该私有回执只记录阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。Claude Hook 返回 `decision:block` 与同一 action，由宿主继续当前会话，并由宿主的连续 Stop 上限兜底。控制器只执行该动作后再进入下一轮。
+- `autonomy_gate.py` 返回下一 action：Codex Hook 使用 `codex queue --thread <session>` 将该 action 投递回当前 task；同一 state path、源码、阶段和 action 只能成功投递一次，`report_history` 等非目标 revision 不能重新 queue。投递失败、缺少 session 或重复 Stop 无进展时，不重试不确定投递；Hook 仅通过确定性 `delivery_state.py write` 将该 run 终态化为 `blocked/no_progress` 并释放 lease。该私有回执只记录源码、阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。Claude Hook 返回 `decision:block` 与同一 action，由宿主继续当前会话，同样使用该私有回执检测无进展；第二次相同动作将状态持久化为 blocked/no_progress，清场释放后允许 Stop，宿主上限仅作额外保护。控制器只执行该动作后再进入下一轮。
 - 状态经过 gate 验证为 `complete` 或 `blocked`：Hook approve，控制器生成由 `delivery_report.py` 派生的最终报告。
 - 多个 run、状态损坏（含不可解析或非对象 JSON）、scope/risk 漂移或证据不新鲜：block 并写明可恢复原因。
 - 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。
 
-Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是将 Codex continuation 的确定失败收束为 `blocked/no_progress`。Codex 必须收到宿主 `session_id`，否则拒绝把 active run 伪装为完成；Claude 原生 Stop continuation 不需要新进程或额外 session ID。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进 state 的 Codex run 在一次投递后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
+Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Codex 必须收到宿主 `session_id`，否则拒绝把 active run 伪装为完成；Claude 原生 Stop continuation 不需要新进程或额外 session ID。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次投递后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
 
 ## Arm
 

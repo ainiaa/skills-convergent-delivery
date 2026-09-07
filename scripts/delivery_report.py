@@ -47,6 +47,8 @@ def execution_metrics(state):
 
 def build_report(state):
     validate_state(state, SimpleNamespace(strict_evidence=True))
+    if state["status"] not in {"complete", "blocked"}:
+        raise ValueError("final report requires a terminal complete or blocked state")
     state = upgrade_state(state)
     acceptance = state["ledger"]["acceptance"]
     pending_acceptance = sum(
@@ -145,7 +147,7 @@ def build_report(state):
             "verification_evidence_levels", "attested_check_count",
             "verification_note_level", "completed_rounds", "repaired_issues",
             "key_changes", "pending_acceptance", "open_issues", "workspace_changes",
-            "execution_metrics", "autonomy_audit",
+            "execution_metrics", "autonomy_audit", "reason", "next_action",
         )
     }
     fingerprint = hashlib.sha256(

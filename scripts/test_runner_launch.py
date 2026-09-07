@@ -76,7 +76,7 @@ class RunnerLaunchTest(unittest.TestCase):
         command = command_for_dispatch(launch, "Collect evidence")
 
         self.assertEqual("claude-code-v1", launch["runner_id"])
-        self.assertEqual("fable", command[command.index("--model") + 1])
+        self.assertEqual("haiku", command[command.index("--model") + 1])
 
     def test_rejects_a_dispatch_whose_profile_does_not_match_its_fingerprint(self):
         profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
@@ -140,7 +140,7 @@ class RunnerLaunchTest(unittest.TestCase):
         }
         receipt = {**value, "receipt_fingerprint": fingerprint(value)}
 
-        with patch("runner_launch.execute_request", return_value=(receipt, "Review finding")):
+        with patch("openai_compatible_runner.execute_request", return_value=(receipt, "Review finding")):
             execution = execute_dispatch_launch(launch, "Review", allow_network=True)
 
         self.assertEqual(receipt, execution["receipt"])

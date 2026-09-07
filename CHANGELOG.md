@@ -4,6 +4,125 @@
 
 ## [Unreleased]
 
+- 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
+- 补充多模型 smoke CLI 的只读计划与结构化错误回归，确保发布入口也纳入全量覆盖核验。
+
+## [0.2.0] - 2026-09-07
+
+- 移除 full gate 的重复自治评测：诊断入口改跑最小合法 15 场真实隔离场景；trusted snapshot 仍完整运行 51 场，且全量派发契约继续逐项覆盖。
+- 继续缩短完整门禁：自治 service 测试夹具直接复用已覆盖的 lease/state 生产写入 API，保留真实锁、校验和落盘语义，避免每个用例额外启动三个状态管理 CLI 子进程。
+- 缩短 TDD impact guard 的反馈时间：纯 trace 契约校验复用同一专用的静态 receipt fixture；native coverage、真实 rerun、超时和 runner/图谱证据场景仍执行真实命令。
+- 减少自治 service 测试夹具的无效工作：默认不生成未消费的 native TDD trace，只有验证最终审计的场景才显式构造它。
+- 加速完整门禁：独立测试脚本改为最多四路的补位并发，保持原有测试集合、失败语义与有序日志回放；可用 `CONVERGE_CHECK_JOBS=1` 回退单路诊断。
+- 移除自治评测测试的重复全目录执行：保留普通 frozen judge 与 trusted snapshot 的完整 51 场景运行；失败传播、CLI 退出和 PythonPath 隔离改用最小合法 15 场景目录。
+- 收紧分步同步回执：一步完成与下一步开始必须使用不同的原生计划调用；评测拒绝回执跨边界复用或完成时预先启动下一项。
+- 修复分步计划只在开始和结束更新的假同步：原生计划现要求每个开始/完成边界都有成功调用；一旦已观测到原生同步，中间缺失同步观测会失败而非标记未覆盖。
+- 多模型配置现接受 Claude `haiku` 别名（继续兼容 `fable`），并将默认及本机 Codex adjudicator 升级为 `gpt-6-astra`；文档同步说明 GPT‑6 与 Claude 的支持模型范围。
+- 默认 `adjudicator` 调整为 `gpt-6-astra@low`；仅已证实的复杂裁决通过单次 role override 升级为 `@high`，不为模型覆盖目的重新引入 Sol。
+- README 与安装测试同步默认 adjudicator 为 `GPT-6 Astra low`，并说明复杂裁决的显式 `@high` 覆盖。
+- 将 Claude 多模型 profile 明确为不携带凭据的可选兼容配置：只有用户环境的真实 smoke 通过后才可宣称已验收；本次 Codex-only 发布不以它为前提。
+- 修复分步进度消息可被合并的问题：根 Skill 现在把完成与下一步开始设为强制 commentary 边界，下一步的计划更新或工具调用也必须在独立开始消息之后；契约测试覆盖该执行顺序。
+- 修复稳定版安装路径与发布选择器不一致：文档改为下载固定 tag 的安装脚本并仅传入版本号，升级始终切换到已验证的 candidate checkout。自治评测每次运行冻结一次候选源码、输出源码指纹，并忽略本地安装/索引目录以避免符号链接递归；完整检查输出实际耗时。
+
+- 交互 smoke 现使用带 fixture、前置决定和多轮输入的可重放 transcript，并只接受包含正式 task、基线和逐轮观察的结果回执；同仓库并行写入新增 worktree、路径隔离、集成人与联合验证约束。根入口区分 inline、Desktop 与 CLI 宿主能力，简单任务优先读取轻量 TDD 规则。
+- 交互契约校验现在固定三条关键 fresh-host smoke 场景，避免关键修复、审查闭环或既有决定被其他场景静默替换。
+- 交互 smoke 目录拒绝重复的关键场景 ID，避免以同一场景重复计入最小样本数。
+- 简单 `inline` 路由先分类并跳过 Provider 自动选择，避免局部修复自动加载完整 PDLC 工作流。
+- Converge 改为 constraint-first：同一会话的写入授权持续有效；审查成为只读检查点，同范围 finding 自动修复并验证；范围外问题只记录影响并请求必要决定。根入口移除大部分条件生命周期细节，按路径加载路由、TDD、报告和复杂 contract。
+- 新增 8 个冻结交互场景与确定性校验，覆盖修复、仅审查、审查后闭环、范围外、决策、简单和复杂路径。交付口径现明确区分确定性回归、真实宿主 smoke 与模型成本；未观察到的宿主行为保持 `uncovered`。
+
+- 修复四处 Evidence/TDD 误放行：RED 只接受真实 assertion failure，Maven `jacoco:check` 必须同次运行测试生命周期，影响图必须声明入口的全部直接调用方，公共 Evidence 命令默认限时 600 秒并支持 `--timeout-seconds`（最高 3600 秒）。同时移除 capsule 派发测试对进程调度的时序依赖。
+
+- 修复 TDD RED 误放行：RED 必须是所选测试实际执行后以标准失败码结束，并包含 failure/error 结果；超时、启动失败和没有测试汇总的回执不能再伪装成 assertion 或 missing behavior。
+- 修复 coverage 门禁超时清场：完整检查改由既有独立进程组执行器启动，超时后会终止并确认清理所有后代进程。
+- 接入本仓真实 coverage：固定开发依赖，使用原有完整检查命令及子进程采集，生产 Python 全范围 85% 门槛进入 CI。
+- 新增固定 mutmut 3.7.0 的 Python mutation 适配：隔离当前源码并保留文件执行权限、清空历史缓存、绑定唯一测试与指定源文件，拒绝存活、空变异、内部错误和超时，并复用有界进程清理。核心 Python 3.9 兼容性不变，此工具需 Python 3.10+。
+- 新增确定性 Eval 进程 bridge：从外部冻结快照运行 control-owned unittest 场景，比较不同 Git tree，验证作用域、历史场景和判定器锁定，限制场景数与总时间。默认模型 Eval 契约不变；本地进程证据不能替代真实模型行为或发布验收。
+
+- 修复 GREEN 误放行：保留通过、失败、错误、跳过与预期失败分类，拒绝 expectedFailure/xfail/xpass 和被成功退出码掩盖的测试失败；Surefire 前序失败不能被后续成功汇总覆盖。
+- 修复图谱新鲜度误判：只读 CodeGraph 已索引文件哈希，与当前源码和已知源码类型清单核对；查询前后绑定数据库/WAL 摘要，TDD、Plan 和收口共享同一检查。状态显示干净的过期索引、已提交新增源码、删除、损坏及并发变化均不能签发图证据。
+- 兼容性收紧：旧 executed-only 测试结果与旧 runner 图回执需重新采集；缺失或不可核对的 CodeGraph 数据库保持 uncovered。正式 Eval bridge、实际模型成本对照和未适配 mutation 工具的能力缺口保持明确，不用协议夹具充当真实运行证明。
+
+- 修复本轮五项证据缺陷：GREEN 要求实际非空测试汇总，pytest 输出选项值不能冒充 selector；mutation 要求作用域绑定的 PIT 执行和 KILLED 结果，echo/未知工具/零变异/异常变异均不能放行。
+- Plan 和全量收口与 TDD 共用结构化图证据校验，核对新鲜索引、真实路径、调用边和遗漏 caller；图子查询统一进程组清理及总超时，畸形 JSON 受控失败，清场不明时不签发回执。
+- 兼容性收紧：旧 GREEN、mutation 和 Plan 图回执缺少执行证明时必须重新采集。未知 mutation 工具及无法识别的测试汇总保持 uncovered；不自动安装工具或降低门槛。
+
+- 修复本轮八项已知问题：测试 selector 只识别实际 runner 与选择语法；CodeGraph 增加当前索引、唯一符号与直接边的结构化观察；native 拒绝独立旧 coverage 报告和追加历史数据。
+- 普通和自治 run 统一 Git common-dir 身份，workspace 写锁跨 repo 别名共享并兼容旧租约；Claude 与 Codex 共用无进展收束；blocked 报告可独立保存去重历史。
+- 安装升级先检查本地改动与候选必需文件，再切换源码；tag/release 后可回到 latest/main，非快进和不完整候选不替换当前安装。正式宿主 Eval 仍为 uncovered。
+
+- 修复 6 项已确认缺陷：Batch 执行 capsule 从上一批已验证检查点派生基线，真实 Single 写入、恢复和父验收使用同一范围；旧累计基线的后续批次回执不自动迁移，须在正确检查点重新建立并验证。
+- Gradle coverage 将指标和阈值绑定到同一 limit，只接受覆盖比率，拒绝 MISSEDCOUNT 等计数、跨 limit 拼接与不可解析的动态写法；Routing 和 Plan 在规范化前拒绝绝对根路径，避免 `/`、`\\` 扩大为整个工作区。
+- acquire、renew、move 统一核对完整租约归属，续租先校验两份记录再写入；错误来源不能释放其他任务工作区。Capsule 日志忽略非对象 JSON，保留后续有效创建确认；报告去重纳入阻塞原因和下一步，显示更新后的恢复指引。
+
+- Batch 完成门禁将子任务 routing 和真实 checkpoint delta 绑定冻结 capsule.scope；路径边界、删除、重命名和权限变化按 Git 差异复核，历史批次按各自检查点校验，不把前批累计改动误算为当前批次越界。
+- Batch 复用 Plan 的 verification argv 解析，逐项要求正式 delegate 验收中的新鲜成功 Evidence Receipt；漏跑、替换参数或非法命令不能完成，等价引号、不同回执顺序和额外有效检查保持兼容。
+- Evidence runner 从本次 JaCoCo 检查任务输出提取非空检查结果，并与命令、输出摘要和源码共同绑定；native 与 Trace 门禁拒绝仅 exit 0、SKIPPED、UP-TO-DATE、无数据、零类、仅生成报告及 stdout/stderr 中被降为警告的阈值违规。Gradle 使用 `--info --console=plain` 暴露检查输出；不读取旧报告补证据。
+
+- writer lease 释放在同一组文件锁内校验 repo/workspace/task/run/writer 和租约类型，再检查正式状态并删除租约；错填 task 或 workspace 不再绕过清场，身份不匹配时保留两份租约。
+- Plan 审计逐项匹配冻结 verification 命令与当前源码的成功 Evidence Receipt argv；缺项、参数不匹配或无关成功命令不能宣告 DONE。命令按 POSIX 引号拆分且不执行，非法引号和空参数在计划校验时拒绝。
+- 触发评估的 selector 在独立进程组运行，成功、失败和超时后都复用既有清理函数终止组内子进程；清理等待有界，异常不能产出成功评估。
+- coverage 目标支持整数、配对引号和行尾注释；已声明但非法、缺值或重复的目标返回 uncovered，不再静默回退为默认 85%。
+- Batch blocked/stopped 支持租约过期后的显式 owner 接管，保留原 worker 来源并允许后续清场落盘；仍禁止恢复业务或改写 worker 身份。
+- writer lease 同身份重试返回磁盘中两份有效租约的最早到期时间；过期租约明确阻塞，需续租或显式接管。获取 task lease 失败时保留原先已持有的 workspace lease。
+- coverage 预检拒绝 help/version、Maven fail-never 等不执行或不强制检查的命令；Maven 按 XML 结构校验直接声明的 JaCoCo 比率规则，注释、非生效位置和禁用配置不能冒充门禁，Gradle 注释也不再贡献阈值。
+- Batch 的 blocked/stopped 终态允许仅将既有 working worker 更新为终态，并继续查询待清场 worker；禁止恢复执行、替换身份或改写业务状态。
+- Batch 最终验收按项冻结已通过结果，允许剩余验收在后续 revision 补齐真实证据并完成计划。
+- Batch 完成回执逐项绑定正式 delegate 的真实验收，拒绝验收项或 evidence 摘要不一致；继续要求真实、当前源码的 passing Evidence Receipt。
+- 普通与 Hook native run 复用候选 Trace 生命周期，最终 rerun 后在同一 complete revision 固化正式 Trace 并移除候选；保留正式证据不可覆盖约束，修正文档提前写入 Trace 和旧 Review v2 转换的过时指令。
+- TDD Trace 的风险、场景、测试引用和枚举，以及嵌套 Source Receipt 的类型与权限字段先校验类型再做集合操作；畸形模型 JSON 返回受控校验失败，service 正常进入 blocked 并按既有清场屏障释放租约。
+- runner 缺少结果、结果为 unknown 或回执无效时禁止释放正式任务租约；service 中断持久化 blocked 后保留租约并报告手工恢复，防止旧进程仍可写入时放行第二个 writer。确定退出的失败结果仍允许清场。
+- native service 从模型 JSON 输出收集有界的 TDD/Impact Trace v5 候选，复用现有 managed ledger 恢复；最终按当前源码、风险与验收项校验，并真实重跑 GREEN、coverage、mutation 与图谱后才固化正式 Trace。缺失或失败的证据不能完成。
+- 最终报告拒绝 active 输入并返回退出码 2，避免把进行中的工作显示为“已完成，需关注”；blocked 报告仍支持 Git 不可读时的结构化降级。
+- 修复自治 service 在模型实际修改源码后无法保存结果或 blocked 状态的问题：落盘同步当前 Source Receipt，保留历史审查并为新源码建立空轮次；running/observed 中断恢复仍检查身份、租约与冻结约束，未知执行不重放，确认清场后才释放租约。
+- Batch 最终验收改为校验真实 observed Evidence Receipt、成功退出码与当前提交源码，拒绝自由文本冒充执行证据；验收项从初始化冻结并禁止重复，保留每批 delegate receipt 的独立校验。
+- Capsule 派发持久回执升级为 schema v2，将显式 attempt id 也绑定到规范化 workspace；跨工作区复用在返回缓存或重试前拒绝。缺少该绑定的旧 schema v1 不自动迁移或重派。
+
+- Batch 历史回执按已验证的 checkpoint 源码和覆盖率配置复核，后续批次修改不再使前一批误判失效；当前回执与最终验收仍检查工作区漂移。连续生命周期测试改为两批真实修改并提交。
+- Batch 将 Source Receipt 的基线与逐文件改动绑定到提交树，拒绝旧提交遗漏已验证内容、文件权限/符号链接不匹配，以及提交夹带未验证文件；支持验证后提交相同内容。
+- coverage 按实际 runner 的完整参数解析阈值，拒绝重复、非整数与歧义参数；识别 pytest collect-only/cov-reset、Vitest 未启用采集及 Gradle exclude-task 等失效门禁，不静默追加阈值覆盖错误配置。
+- native 完成入口与最终 rerun 共用 coverage 策略校验，拒绝缺失项目配置、错误命令或不匹配阈值；PDLC 保持自身策略。状态测试改用独立临时项目中的显式 coverage 配置。
+- coverage 只识别实际可执行入口及受支持的 Python module / Vitest launcher，拒绝参数中伪装的 runner 名称，以及关闭采集、跳过检查或 dry-run 的已知形式。
+- Evidence 命令使用独立进程组，超时及退出时清理本次派生的进程；清理等待有界，不能确认清理时不签发回执。
+- 支持 pytest 的普通 `.py` 文件 selector，同时保留不同文件与错误选择语法的拒绝检查。
+
+- 修复全量 closure 初审提前耗尽复核预算的问题；初审不扣额度，修复后的最终复核扣一次，仍禁止第三次审查。最终存在 finding 时允许保存 blocked 终态。
+- 正式 Eval 增加无副作用能力预检：缺少真实 evaluator bridge 时直接返回 uncovered/退出码 2，不再要求构造不可生成的 worker 证据；离线 bookkeeping 显式标为 diagnostic，不能用于发布放行。此变更不表示真实 Eval bridge 已实现。
+- Codex Capsule 复用现有异步 stdin writer，把大 capsule 写入纳入启动期限；写入未完成时不能以提前出现的 thread id 宣告投递成功，未知结果仍禁止重派。
+- 修复 Maven/mvnw 的 `-Dtest=...` 在完整 TDD Trace 中被误拒绝，统一由 runner-aware selector 校验参数绑定。
+- 公共 Evidence Receipt 对执行前后的源码作比较；验证期间源码改变时拒绝签发回执，避免把旧源码验证结果绑定给未检查的新版本。
+- 对齐 native 运行时对 CodeGraph CLI/索引与 coverage 的依赖声明，增加写入前只读预检；统一旧 Review Protocol 的拒绝规则。记录本轮机制借鉴及真实成本评测的未覆盖边界。
+
+- 修复任务模式越界：根入口现在以最新用户请求为准；最新请求明确为只读审查、检查、对比或仅报告时，必须转入 `converge-review` 并禁止沿用历史写入授权。只读路径只能报告 finding、证据和建议修复，后续明确要求修复才可重新进入写入流程。
+- TDD/Impact Trace 升级为 v5：trace criterion 必须精确覆盖当前验收项，状态拒绝重复验收项；coverage 也以最终源码 observed receipt 和阈值进入 completion gate，native rerun 还必须与项目解析出的 coverage argv/阈值一致；CodeGraph 必须执行由 impacts 派生的精确查询。新增无副作用 rerun，在 complete 前实际重跑最终绿灯、coverage、mutation 与图谱命令并拒绝生成工件污染源码；time、timezone、不可逆操作加入对应 integration 覆盖要求。Evidence Receipt 拒绝敏感 argv（含 Authorization/Bearer）并限制参数与 trace 总大小，trace CLI 在 JSON 解析前限制输入字节；最终复跑对每条冻结命令默认限时 600 秒、最多可调至 3600 秒。明确本地回执不提供同一工作区用户对抗篡改的密码学保证。修复 .NET coverage parser 误把任意 `threshold` 参数当作 gate 的问题，拒绝由任意命令伪造显式 coverage 阈值，并避免 native coverage 策略误拦截 PDLC。
+- TDD/Impact Trace 升级为 v2：红绿测试必须引用 `evidence_contract.py` 真实执行生成的 observed Evidence Receipt，红灯绑定不同于最终版本的源码、绿灯绑定最终源码；补充公共 seam、单一可观察行为和外部边界 mock 规则。原生 `native-v1` TDD coverage 默认门槛为 >=85%，项目配置优先使用 `docs/00_standards/test-commands.yml` 的 coverage 命令和 `quality-targets.yml` 阈值，无法运行时保持 `uncovered`。
+- TDD/Impact Trace 升级为 v3：每个测试以 selector 绑定红绿回执的实际 argv，红灯只接受 `missing_behavior` 或 `assertion`，拒绝编译、Mock 和环境失败；新增无副作用的原生 coverage 策略解析器，安全 argv 优先、配置阈值其次、默认 >=85%，无法解析或执行时保持 `uncovered`。
+- TDD/Impact Trace 升级为 v4：已知 runner 校验 selector 语法，绿灯固定重跑一次检测不稳定，最终影响链绑定 CodeGraph 执行回执；高风险 integration/contract 测试要求 mutation 回执。原生 coverage 为 pytest/Vitest 注入项目或默认阈值；Maven/Gradle 仅认可已执行且配置足够的 JaCoCo gate，无法证明其他 runner 的 gate 时保持 `uncovered`。
+- 原生 TDD completion gate 现接入实际控制器：native-v1 进入 `complete` 必须在 `ledger.tdd_trace` 保存与最终 Source Receipt、冻结风险一致且结果为 `pass` 的 Trace v4；trace 一经写入不可替换。PDLC workflow 不受该 gate 影响，第三方 TDD stage provider 仍受 native workflow gate 约束。高风险绿灯增加至三次，金额/支付增加 property 场景；coverage 识别 Rust `--fail-under` 与 .NET `/p:Threshold` 的显式阈值。
+- 新增轻量 TDD/Impact Trace 门禁：每条运行时验收项绑定测试标识、真实红绿命令回执和正常/边界/异常场景；冻结风险确定性要求权限、并发、幂等、事务、数据访问、契约、安全或敏感数据覆盖，并把改动入口及关联调用链绑定到最终回归测试。trace 不新增持久状态，缺少证据统一标为 `uncovered`。
+- PDLC workflow provider 改按稳定 Skill 路径、阶段完整性和任务语义兼容后续升级；新任务可接受兼容的内容变化，已冻结任务继续用逐文件指纹阻止运行中途漂移。
+- Superpowers 与 Matt Pocock 的 TDD adapter 同步改为按稳定入口与 TDD 语义兼容升级；已冻结 TDD 阶段仍拒绝中途替换 Skill 内容。
+- 明确日常交付的验证、测试与变更记录纪律：不可运行的检查和未证实范围保持 `uncovered`；运行时功能与修复必须把验收项映射为覆盖正常、边界和异常行为的测试，并按风险加入权限、并发或幂等场景；目标项目的写入任务必须更新对应 changelog，不存在时在项目根目录创建，并只记录当前任务变更。
+- 加固文字分步交付：触发“逐步修复 / 分步执行 / 按计划一步步做”后，每步开始与结果必须使用独立 commentary，完成消息不得合并下一步开始；原生计划面板不可用不豁免文字分步。分步轨迹升级为 v2，以评估者记录的唯一 `message_ref` 拒绝把多个可见步骤状态伪装成独立消息；v1 旧轨迹仅兼容读取并保持 `uncovered`。
+- 修复分步进度的一致性：计划投影覆盖 closure/autonomy 修复阶段，阻塞项停止显示进行中且保留冻结步骤名称，阻塞原因由文字终态报告表达，未知阶段明确拒绝；运行时不承诺不存在动作与回执的终态原生同步。轨迹可复用持久降级证据，在工具重连和恢复后继续 text；原生回执关联完整步骤投影，拒绝同一引用的矛盾状态，允许真实合并更新，缺少投影的旧轨迹保持 `uncovered`。补充状态、停止、恢复与 CLI 行为回归。
+- 打通原生计划同步失败后的文字降级：持久状态允许携带观测与告知引用的单向 `native → text` 转换，独立 revision 清除原生确认，恢复后继续业务而不重复同步；保留既有 lease、阶段及验收门禁。轨迹检查器同步接受有据降级后的持续文字进度，缺少调用回执仍为 `uncovered`，首次跳过可用工具仍失败；补充持久写入、恢复和 CLI 回归。
+- 修正“分步显示”与文字汇报混淆：执行前核对当前原生计划工具，可用时实际调用并检查回执；缺失、未知或调用失败时明确告知文字降级并逐项展示状态。计划文件、投影 JSON 和 commentary 不能冒充原生面板；离线轨迹另校验同步与降级观测，缺失证据标为 `uncovered`，不声称已验证 UI 渲染。
+- 修复本地 runner 输出读取线程或进度回调异常未传回主流程的问题：Codex、Claude 均清场并返回 `unknown`，不再将部分回答交付为成功结果。
+- 收紧 CLI 原生派发边界：Codex 覆盖 agents 与 multi-agent feature 开关，Claude 禁用 Agent/Task/TeamCreate；保留读取、编辑和验证工具，明确该边界不替代 shell/MCP 外部服务权限治理。
+- 新增离线分步轨迹检查及六个回归场景，覆盖结果隐藏、下一步抢跑、失败停止和恢复重做，并接入全量检查；区分 fixture/evaluator-attested，缺少轨迹或真实宿主发布证据仍标为 `uncovered`。
+- 补充分步可见交付规则：用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，先展示步骤清单，每步开始说明目标和范围，结束展示改动、验证结果和进度，再进入下一步；没有宿主计划工具时使用文本清单。已授权且无阻塞时自动继续，只有用户要求逐步确认或遇到既有决策门禁才暂停；恢复时不为补展示重做已完成工作。
+- 修复 Codex、Claude 共享 runner 在主进程正常或非零退出后遗留后台写入的问题：退出前终止本次进程组内的残留子进程，清理权限异常返回 `unknown`；不把此边界扩展为对脱离原进程组或宿主外部服务的清理保证。
+- 收紧 Git 代码评测的报告比较：拒绝缺失、重复或集合不一致的任务结果，以及与结果矛盾的状态、模式和摘要；保留完整失败报告及旧报告缺少整题耗时的兼容处理。说明 single/multi 仅测量单写入及追加只读审查的执行情况和耗时，不能据此宣称提高修复成功率。
+- 多模型 runner receipt 升级为 v2：本地 CLI 只声明冻结的 `requested` 模型，provider 返回且匹配模型时才标为 `observed`；usage 仅接受 provider 回执，不再将请求参数或估算当作事实。
+- 新增 `multi_model_smoke.py`：默认只计划；显式 `--allow-execute` 后在 detached 临时 Git worktree 中运行一个只读 scout，并输出不含 prompt 或原始回答的脱敏 receipt。临时 worktree 会在成功、失败或超时后清理。
+- 新增 `multi_model_repo_eval.py` 与两题冻结 Git 代码任务：默认只计划；显式执行时在内部临时仓库中比较 single/multi 拓扑。通过结论由固定 unittest 与模型改动范围决定；multi 只有在两项通过后追加只读 reviewer。
+- 修复安装完整性漏检：`install.sh` 将 `scripts/capsule_dispatch.py` 纳入运行时必需文件；源码副本缺失该脚本时安装会明确失败，不再生成表面成功、实际无法投递 successor task 的 Skill 链接。
+- 为上述安装边界补充回归测试，覆盖缺少 Capsule Dispatch 脚本的隔离源码安装失败场景。
+- 稳定安装文档现在固定指向已发布的 `v0.1.0` tag，并使用 `--release 0.1.0`；需要跟随开发分支时必须显式传入 `--latest`，避免无意安装浮动的 `main`。
+- 修复完整检查的解释器漂移：移除 `uv` 路径中硬编码的 Python 3.13；系统 `python3` 不具备 PyYAML 时，改为使用项目 `.venv`，并明确提示创建 Python 3.9+ 虚拟环境。
+- 新增 GitHub Actions 质量门禁：PR、推送至 `main` 和 `v*` tag 均安装开发依赖并执行 `bash scripts/check.sh --full`。
+- 精简 README：移除重复的协议、状态命令和调度细节，保留快速开始、入口选择、安装来源与授权边界，并链接到对应的权威参考文档。
+
 ## [0.1.0] - 2026-09-04
 
 - 安装器现在支持 `--latest`、`--release <version>` 与 `--tag <tag>` 三种远程来源选择；release 版本确定性映射到 `v<version>` tag，tag 安装/升级均使用精确 ref。`--source` 不能与远程选择混用；同时修复帮助文本中的 Markdown 反引号被 Shell 误执行的问题。

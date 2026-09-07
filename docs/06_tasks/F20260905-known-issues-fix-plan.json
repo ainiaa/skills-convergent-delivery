@@ -1,0 +1,910 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-known-issues-fix",
+  "requirement_fingerprint": "65ee890471cc66e1480543bc807c26bd2193fc9cfc4c1c6cf8c0c6f17fae180b",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "5a46384a0b81fc460a4d4ccf00ef5a54e9eade85",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "5a46384a0b81fc460a4d4ccf00ef5a54e9eade85",
+      "commit_id": "5a46384a0b81fc460a4d4ccf00ef5a54e9eade85",
+      "tree_hash": "51ba2e8e0ea967dc7c76d73a81750f0d1527e643",
+      "diff_fingerprint": "24e4a79f467c137a97e813db723809b666399a52f6e5d0d185d454722a3f9377",
+      "changed_paths": [
+        "CHANGELOG.md",
+        "docs/06_tasks/F20260905-multimodel-reliability-plan.md",
+        "docs/usage-guide.md",
+        "extensions/converge-multimodel/SKILL.md",
+        "install.sh",
+        "references/multi-model-repository-evaluation.json",
+        "references/worker-runners.md",
+        "scripts/check.sh",
+        "scripts/controller_snapshot.py",
+        "scripts/multi_model_repo_eval.py",
+        "scripts/test_check.py",
+        "scripts/test_controller_snapshot.py",
+        "scripts/test_multi_model_repo_eval.py",
+        "scripts/test_skill_contracts.py"
+      ],
+      "changed_entries": [
+        {
+          "path": "CHANGELOG.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "6af5cc121a5b7dba37eedcb8df42c565ec2b38315b4af4a89f026426e5846da0"
+        },
+        {
+          "path": "docs/06_tasks/F20260905-multimodel-reliability-plan.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "c76a78ffb913272a7b6a5d13537b57273ac05d1a9df0dcae6f51bb2942d52b26"
+        },
+        {
+          "path": "docs/usage-guide.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "2c904746ab90502498c008132d48556e9597fb18e1adbb5f17d841ab0da70c55"
+        },
+        {
+          "path": "extensions/converge-multimodel/SKILL.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "be7c11ffc9d6440916fa2d6d231cad42b7431dc6d31305d58dc4c2b6d7a08997"
+        },
+        {
+          "path": "install.sh",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "ed120b926b62ac4ac3683ce01836354b5a4f6b4f7434d5bced89447a069849ff"
+        },
+        {
+          "path": "references/multi-model-repository-evaluation.json",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "9efe8b3dd1fd48ad144def93405788c3610c20e6b9fd8cf32ea9d7f00b172921"
+        },
+        {
+          "path": "references/worker-runners.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "8c7bf069c240f0cfc4008816cf10a7c5f19c76536f15d540fa9eca127c1c8143"
+        },
+        {
+          "path": "scripts/check.sh",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "bc3e4d7e2c22b261af776f061ea05cab9353899c40f2edaf83a48048fd059de9"
+        },
+        {
+          "path": "scripts/controller_snapshot.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "b2b192c658979b8e1d3fb5a247738f1cbc7f3546cfd50d0443e170319ffd6533"
+        },
+        {
+          "path": "scripts/multi_model_repo_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "4e71e382fe32bcb9e47a510ef715af53e2bff0227b2337b9bc4c6a5f4e761137"
+        },
+        {
+          "path": "scripts/test_check.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "f8bb6efb44c02899db31eab308532e1e0dba478685aeafb6cef5e79718e9bf2e"
+        },
+        {
+          "path": "scripts/test_controller_snapshot.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "1226c62a376545e9c6b424da2f9a9b81526810a0de73d8af4661d61556437b0c"
+        },
+        {
+          "path": "scripts/test_multi_model_repo_eval.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "46c0c54243ecaa98daf238072fa111a4278854e806c7f6ea89c21f89e724e811"
+        },
+        {
+          "path": "scripts/test_skill_contracts.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "8fdb54b43ce9da7100910e004e0cd869c21adf1bcd5535aa2ab467ff2998084b"
+        }
+      ],
+      "source_fingerprint": "d5ff5a7e15294b9e07128f6caec58116d5d849699d9b26f99c8aa09f2dc06aa6"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "允许合法源码变化后的状态推进"
+      ],
+      "goal": "允许合法源码变化后的状态推进",
+      "owned_paths": [
+        "scripts/delivery_state.py",
+        "scripts/test_delivery_state.py",
+        "scripts/delivery_next.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "旧状态按历史证据校验，新候选按当前源码校验",
+        "陈旧候选、错误 revision、错误身份仍拒绝"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_delivery_state.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "单写入 runner 正常登记且只读扇出边界不变"
+      ],
+      "goal": "单写入 runner 正常登记且只读扇出边界不变",
+      "owned_paths": [
+        "scripts/delivery_state.py",
+        "scripts/test_delivery_state.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "单个 implementer launch 可登记",
+        "扇出含写权限仍拒绝，未知结果禁止重派"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_delivery_state.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "runner 整体执行受统一超时约束"
+      ],
+      "goal": "runner 整体执行受统一超时约束",
+      "owned_paths": [
+        "scripts/codex_exec_runner.py",
+        "scripts/claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_claude_exec_runner.py"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "父进程退出后子进程持管道仍有限返回 timeout",
+        "成功、启动异常、输出超限及进程组清理保持有效"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_*exec_runner.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T4",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "core 审查路径与扩展授权一致"
+      ],
+      "goal": "core 审查路径与扩展授权一致",
+      "owned_paths": [
+        "scripts/delivery_next.py",
+        "scripts/review_contract.py",
+        "scripts/review_orchestration.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/test_delivery_next.py",
+        "scripts/test_review_contract.py",
+        "scripts/test_review_orchestration.py",
+        "scripts/test_runner_lifecycle.py",
+        "scripts/test_runtime_scenarios.py",
+        "references/review-orchestration.md",
+        "references/execution-control.md",
+        "scripts/controller_snapshot.py",
+        "scripts/test_controller_snapshot.py",
+        "scripts/runner_launch.py",
+        "scripts/test_runner_launch.py"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "core 不要求只有多模型扩展才能产生的回执",
+        "显式多模型路径继续强制绑定真实审查结果",
+        "不放宽高风险验收或伪造独立审查"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_delivery_next.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T5",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "CI 在干净环境中执行同一校验"
+      ],
+      "goal": "CI 在干净环境中执行同一校验",
+      "owned_paths": [
+        "scripts/check.sh",
+        "scripts/test_check.py",
+        ".github/workflows/ci.yml",
+        "scripts/test_delivery_next.py"
+      ],
+      "depends_on": [
+        "T4"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "缺少本机官方 validator 时 CI 有明确可复现准备",
+        "validator 不可用时仍失败，不跳过校验"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_check.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T6",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "仓库评测冻结起点且拒绝样例投机"
+      ],
+      "goal": "仓库评测冻结起点且拒绝样例投机",
+      "owned_paths": [
+        "scripts/multi_model_repo_eval.py",
+        "scripts/test_multi_model_repo_eval.py",
+        "references/multi-model-repository-evaluation.json",
+        "extensions/converge-multimodel/SKILL.md"
+      ],
+      "depends_on": [
+        "T5"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "提交修改后的测试也不能逃过范围检查",
+        "常量实现不能通过正常、边界及异常验收",
+        "实现验证与拓扑执行完整性分别报告"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_multi_model_repo_eval.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T7",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "单上下文进度包含当前动作和验证摘要"
+      ],
+      "goal": "单上下文进度包含当前动作和验证摘要",
+      "owned_paths": [
+        "scripts/delivery_progress.py",
+        "scripts/test_delivery_progress.py"
+      ],
+      "depends_on": [
+        "T6"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "无 worker 时仍输出控制器阶段、下一步和验证",
+        "复用已有状态；进度去重和 worker 显示保持有效"
+      ],
+      "verification": [
+        "python3 -m unittest discover -s scripts -p test_delivery_progress.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    },
+    {
+      "task_id": "T8",
+      "task_kind": "integration",
+      "outcomes": [
+        "全部修复组合验证并记录限制"
+      ],
+      "goal": "全部修复组合验证并记录限制",
+      "owned_paths": [
+        "scripts/test_runtime_scenarios.py",
+        "docs/06_tasks/F20260905-known-issues-fix-plan.md",
+        "docs/06_tasks/F20260905-known-issues-fix-plan.json"
+      ],
+      "depends_on": [
+        "T7"
+      ],
+      "steps": [
+        "添加失败回归测试",
+        "实现最小修复",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "全部定向回归与全量检查通过",
+        "用户已有修改保留；未执行真实模型评估明确标注"
+      ],
+      "verification": [
+        "bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      },
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      }
+    }
+  ],
+  "final_acceptance": [
+    "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+    "冻结与权限边界不退化，失败和恢复有限退出",
+    "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "known-fixes-1",
+        "description": "受影响的状态、runner、审查和评测 CLI 链",
+        "entrypoints": [
+          ".github/workflows/ci.yml",
+          "docs/06_tasks/F20260905-known-issues-fix-plan.json",
+          "docs/06_tasks/F20260905-known-issues-fix-plan.md",
+          "extensions/converge-multimodel/SKILL.md",
+          "references/execution-control.md",
+          "references/multi-model-repository-evaluation.json",
+          "references/review-orchestration.md",
+          "scripts/check.sh",
+          "scripts/claude_exec_runner.py",
+          "scripts/codex_exec_runner.py",
+          "scripts/controller_snapshot.py",
+          "scripts/delivery_next.py"
+        ],
+        "callers": [
+          "scripts/autonomy_service.py",
+          "scripts/capsule_dispatch.py",
+          "scripts/claude_exec_runner.py",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          }
+        }
+      },
+      {
+        "id": "known-fixes-2",
+        "description": "受影响的状态、runner、审查和评测 CLI 链",
+        "entrypoints": [
+          "scripts/delivery_progress.py",
+          "scripts/delivery_state.py",
+          "scripts/multi_model_repo_eval.py",
+          "scripts/review_contract.py",
+          "scripts/review_orchestration.py",
+          "scripts/runner_launch.py",
+          "scripts/runner_lifecycle.py",
+          "scripts/test_check.py",
+          "scripts/test_claude_exec_runner.py",
+          "scripts/test_codex_exec_runner.py",
+          "scripts/test_controller_snapshot.py",
+          "scripts/test_delivery_next.py"
+        ],
+        "callers": [
+          "scripts/autonomy_service.py",
+          "scripts/capsule_dispatch.py",
+          "scripts/claude_exec_runner.py",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          }
+        }
+      },
+      {
+        "id": "known-fixes-3",
+        "description": "受影响的状态、runner、审查和评测 CLI 链",
+        "entrypoints": [
+          "scripts/test_delivery_progress.py",
+          "scripts/test_delivery_state.py",
+          "scripts/test_multi_model_repo_eval.py",
+          "scripts/test_review_contract.py",
+          "scripts/test_review_orchestration.py",
+          "scripts/test_runner_launch.py",
+          "scripts/test_runner_lifecycle.py",
+          "scripts/test_runtime_scenarios.py"
+        ],
+        "callers": [
+          "scripts/autonomy_service.py",
+          "scripts/capsule_dispatch.py",
+          "scripts/claude_exec_runner.py",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "合法状态推进和受限 runner 路径通过真实临时仓库回归",
+              "冻结与权限边界不退化，失败和恢复有限退出",
+              "定向测试及全量检查通过，未覆盖真实宿主行为明确记录"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "d5ff5a7e15294b9e07128f6caec58116d5d849699d9b26f99c8aa09f2dc06aa6",
+      "chains_fingerprint": "8c5ca9d4836273c13b2152b40166e5fcd102e1e31e5b8ac233fd79020a4ba64b",
+      "receipt_fingerprint": "60e6d50aba112cb082e5c5e5f4cee4a9ec7449080d58d41563f952c0eb12afbe"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "本轮修复与优化范围",
+      "resolution": "先修已复现功能缺陷和进度缺口；矩阵分层、规则消融、新状态 API 和触发宿主评测另行规划",
+      "source": "reversible-default"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "执行及外部动作",
+      "resolution": "同会话顺序 TDD；保留已有脏文件，不提交、不安装、不调用真实模型",
+      "source": "user"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "core 独立审查如何达到现有门禁",
+      "resolution": "复用单个本地只读 reviewer 执行链并纳入 core 快照；不放宽独立盲审，其他角色和扇出仍需 multimodel，实际执行仍需显式授权",
+      "source": "code"
+    }
+  ]
+}

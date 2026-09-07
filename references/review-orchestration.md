@@ -1,5 +1,7 @@
 # Review Orchestration Contract v1
 
+Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读 reviewer（Codex CLI 或 Claude Code）：冻结 profile、完整 Review v3 request，并显式提供 `--allow-execute`。该路径不要求启用多模型扩展，也不授予写入、shell 或扇出权限。其他角色、并发扇出和 OpenAI-compatible API runner 仍要求冻结 `multimodel` 扩展；无可用 CLI 或无执行授权时明确交接，不伪造独立审查回执。
+
 控制器按风险选择复核成本。需求符合性与实现质量仍分别保存结论；普通任务由同一个有冻结 profile、request binding 与 completed role result 的外部只读 fresh reviewer 接收两个有序单轴请求，先 `spec`，通过后再独立盲审 `quality`；它只是外部证据身份，不能伪称宿主 worker。低风险任务使用实现者自检和新鲜验证，不创建 reviewer。高风险任务使用一个 blind reviewer，同样按单轴顺序执行。只有多任务或跨服务计划才增加一次 integration review。任何源码变化都会使旧结果 stale。
 
 ```json
@@ -11,8 +13,8 @@
 }
 ```
 
-一轮 finding 按根因合并后只允许一次 repair 和一次定向 re-review；`closure` 与 `re_review` 共用唯一复核额度。修复后 `source_fingerprint 未变化`、没有原 defect 关闭、相同 finding 指纹重复或预算耗尽仍有 defect 时立即 blocked，不再循环。全量收口在最终验证后额外使用 `closure`：最多初审一次，若有 finding 只允许一次修复和一次最终 closure review；第三次请求或最终仍有 finding 时立即 `blocked/uncovered`。
+一轮 finding 按根因合并后只允许一次 repair 和一次定向 re-review；普通 `closure` 与 `re_review` 共用唯一复核额度。修复后 `source_fingerprint 未变化`、没有原 defect 关闭、相同 finding 指纹重复或预算耗尽仍有 defect 时立即 blocked，不再循环。全量收口在最终验证后额外使用 `closure`：首次是初审，不消费 re-review 额度；有 finding 时，修复后的最终 closure 才消费该唯一额度。第三次请求禁止，最终仍有 finding 或 blocked 时保存 `blocked/uncovered`，不能因无法通过而丢失终态。若此前已消费修复或复核预算，保持耗尽，不重置预算。
 
 仅当计划包含多个任务或跨服务契约，并且全部任务结论均为新鲜 pass 后，发起一次 integration 初审。integration 只审查跨任务风险：接口组合、数据映射、共享状态、迁移/执行顺序和端到端路径；task-local finding 不计入 integration 结论。integration 有跨任务 defect 时使用同一固定 repair/re-review 预算，但不得重新开启 initial review。
 
-旧 Protocol v2 结果必须先经确定性适配器转换；Protocol v1 的 intent、blind 与 closure 请求保持可读，但不自动映射到新轴，也不能据此跳过 v3 门禁。
+只接受 Protocol v3。旧 Protocol v1/v2 不转换、不用于推进状态；历史记录可供人工理解，但不能据此跳过 v3 门禁。

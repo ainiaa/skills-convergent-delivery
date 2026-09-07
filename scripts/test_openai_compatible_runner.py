@@ -88,6 +88,12 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
         self.assertEqual("completed", receipt["status"])
         self.assertEqual("request-1", receipt["response_id"])
         self.assertEqual("glm-5.2", receipt["response_model"])
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual(
+            {"model": {"status": "observed", "observed": "glm-5.2"},
+             "usage": {"status": "observed", "value": {"total_tokens": 12}}},
+            receipt["attestation"],
+        )
 
     def test_can_return_content_to_the_immediate_caller_without_putting_it_in_the_receipt(self):
         class Response:

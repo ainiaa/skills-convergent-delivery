@@ -127,11 +127,15 @@ def _response_bytes(response, limit):
 
 def _failure(launch, status, error_type):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runner_id": "openai-compatible-v1",
         "launch_fingerprint": launch["launch_fingerprint"],
         "status": status,
         "error_type": error_type,
+        "attestation": {
+            "model": {"status": "unavailable", "observed": None},
+            "usage": {"status": "unavailable", "value": None},
+        },
     }
     return {**value, "receipt_fingerprint": fingerprint(value)}
 
@@ -200,7 +204,7 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
     except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         return _failure(launch, "unknown", type(error).__name__)
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runner_id": "openai-compatible-v1",
         "launch_fingerprint": launch["launch_fingerprint"],
         "status": "completed",
@@ -208,6 +212,13 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
         "response_model": payload["model"],
         "usage": usage,
         "response_fingerprint": fingerprint(payload),
+        "attestation": {
+            "model": {"status": "observed", "observed": payload["model"]},
+            "usage": {
+                "status": "observed" if isinstance(usage, dict) else "unavailable",
+                "value": usage if isinstance(usage, dict) else None,
+            },
+        },
     }
     receipt = {**value, "receipt_fingerprint": fingerprint(value)}
     return (receipt, content) if capture_content else receipt

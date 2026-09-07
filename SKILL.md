@@ -1,44 +1,40 @@
 ---
 name: converge
-description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Excludes read-only review, autonomous continuation, multi-model execution, and multi-Batch."
+description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Excludes standalone read-only review, autonomous continuation, multi-model execution, and multi-Batch."
 metadata:
-  compatibility: Requires Git and Python 3.9+; full-closure audits require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
+  compatibility: Requires Git and Python 3.9+; native runtime tasks require an indexed CodeGraph CLI and configured coverage; full-closure audits also require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge：单任务闭环执行
 
-Converge 始终是 controller；规划/只读用 `converge-plan`、`converge-review`；见 `references/activation.md`。
+Converge 始终是 controller，负责同一会话内已授权的软件交付；规划用 `converge-plan`，独立只读审查用 `converge-review`。触发见 [激活](references/activation.md)。
 
-需要持久状态的显式闭环使用 arm v11；终态只认新鲜证据。简单 `inline` 不创建 run。显式闭环先 arm 当前 workspace 的唯一 active run；active run 未到 `complete|blocked` 时不得输出 final。
+## 每轮约束
 
-## 开始
+- 同一会话的写入授权持续有效，直到用户明确“仅审查/不要修改”、停止、取消，或提出范围外的新目标。
+- 已授权写入任务中的审查是只读检查点：审查本身不写入；完成后，同范围 finding 自动修复并验证。范围外 finding 只记录影响并一次提出所需决定。
+- 先从当前任务、代码、测试和已决事项取得答案；不重复询问。只在业务规则、公共兼容、权限、发布或不可逆操作需要决定时提问，并给出一个推荐。
+- 每个 finding 必须是修复、阻塞决策或范围外记录之一；不以建议替代同范围闭环。
+- 模型自述不放行。没有本轮真实验证的验收不得称完成；命令不可用、超时或权限不足为 `uncovered`，不得放松检查取得通过。
+- 按需读取 reference：简单 `inline` 只读路由、TDD 和报告，其中 TDD 先读 [Inline TDD](references/inline-tdd.md)；计划、跨会话、自治、多模型或全量收口才读对应 contract。
 
-Skill 根目录记为 `CONVERGE_SKILL_DIR`。冻结验收、路径和基线，仅改 task diff；不可逆问用户。模型自述不放行；验收实检，`unknown` 失败，走完整路径。
+用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，每步开始与结束各用一条独立的 commentary 消息，结束不得与下一步开始合并。完成消息发送后，必须先结束该 commentary；下一步的开始只能在随后新的 commentary 中发送。不得在完成消息中声明、计划或调用下一步的动作；任何用于下一步的计划更新或工具调用，都只能放在该开始消息之后。原生计划工具可用时，每个步骤边界都必须调用一次原生计划工具：初始创建后，每次完成消息之后先将当前项更新为 completed，每次下一步开始 commentary 之后立即调用，将该项更新为 in_progress；同一次原生调用不得同时覆盖前一步完成和下一步开始。不得只在初始建表或最终收口时批量更新，也不得在对应调用成功前执行下一步工具。原生计划工具不可用时明确文字降级，不把文字说成原生面板。
 
+## 开始与验证
+
+将本目录记为 `CONVERGE_SKILL_DIR`。先按 [任务路由](references/task-routing.md) 分类，冻结验收、范围和基线，只改任务 diff；外发和不可逆操作单独询问。简单 `inline` 不运行 `delivery_engine.py select`，直接按 [Inline TDD](references/inline-tdd.md) 完成局部红绿和报告。运行时功能、修复和重构先写可执行测试，再改生产代码；完整 red/green、影响、覆盖率和 Provider 规则见 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)。
+
+仅 `planned`、`delegated`、`batch` 路由或用户明确要求 Provider binding 时选择并冻结 Provider：
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdlc|native> --kind <feature|fix|refactor>
 ```
 
-Provider Schema v2；pdlc-v1/native-v1，`engine` 只由 binding 派生，不能成为第二真相；见 [TDD](references/tdd-providers.md)、[控制](references/execution-control.md)。
+Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务写入前执行 `tdd_impact_guard.py preflight`，最终使用其 `rerun` 绑定当前源码。没有 CodeGraph、coverage 或可执行检查时保持 `uncovered`，不安装、不建索引、不降门槛。修改 Converge Suite 时更新本仓 `CHANGELOG.md` 的 `Unreleased`；目标项目的写入任务按其约定更新 changelog。
 
-## 路由
+## 路由与终态
 
-`planned_task=true` 仅执行 capsule；否则按 [任务路由](references/task-routing.md) 用 `task_profile.py [--full-closure]` 分类；持久状态用 `freeze_routing` 冻结画像与请求摘要。全量收口只能由控制器作出明确决定，不能由关键词猜测；`full_closure_required=true` 禁止 `inline`，且必须先经 `converge-plan`。自治续跑使用 `converge-autonomy`，多模型 runner 使用 `converge-multimodel`；两者虽默认可发现，仍只在用户明确要求时触发并冻结对应扩展，自治 Hook 还须显式启用。仅当路由不是 `inline`、需 worker/恢复或请求并发/无响应时，读 [计划执行与无响应保护](references/execution-control.md)。
+`planned_task=true` 只执行冻结 capsule。复杂、未知或长任务先用 `converge-plan`；同仓库并发写入先通过 [执行拓扑](references/execution-topology.md)，否则顺序执行；只有明确跨会话 checkpoint 才用 `converge-batch`。全量收口必须显式选择并使用 Plan matrix，不能由关键词推断。
 
-按已选路径渐进读取引用：一次只读一个必要 reference，不得在单个命令中拼接多个完整协议。`inline` 或普通同会话计划不读 worker、恢复、自治或全量收口资料；只有实际进入对应路径时才读取其 contract。
+持久状态使用既有 writer lease，并按 [执行协议](references/execution-protocol.md) 和 [状态](references/state-schema.md) 清场。风险等级对应的复核边界见 [审查编排](references/review-orchestration.md)；Desktop、CLI 与 subagent 的可证明边界见 [宿主能力](references/host-capabilities.md)。没有真实宿主 bridge 时，不把本地 state、capsule、子任务或模型自述称为自动续跑、完成或清场证据。
 
-没有 worker lifecycle bridge 时，优先按 [Capsule Dispatch v1](references/capsule-dispatch.md) 用 `capsule_dispatch.py` 把冻结 capsule 投递到宿主实际创建的独立 task；仅 `delivered` 和稳定 task id 确认投递，不能当作 worker lifecycle、完成或清场证据。`indeterminate` 必须停止并交接，绝不重派。Codex CLI 与 Claude Code 的两个 concrete successor adapters 已可用；没有真实创建-task API 才输出同一 capsule 供用户启动。ChatGPT Desktop 当前仅有原生 subagent 工具、没有强制 leaf 能力，因此按 [Desktop Native Subagent v1](references/chatgpt-desktop-subagent.md) 视为 `unavailable`，不得创建 child。不得把 `spawn_agent`、wait timeout、消息投递或模型自述当作可恢复的 lifecycle 证据，`workers[]` 自动 lifecycle 仍保持关闭。
-
-复杂、未知或长任务用 `converge-plan`，按独立可验收的业务切片执行；仅 `cross_session` 进 `converge-batch` 并先获 commit 授权。全量收口必须先用 `converge-plan` 建矩阵，终态须当前源码的 closure gate；缺项标 `uncovered`，不得宣称全部完成；见 [Plan Contract](skills/converge-plan/references/plan-contract.md)。
-
-## 终态
-
-写入需 writer lease，原身份释放：
-
-```bash
-python3 "$CONVERGE_SKILL_DIR/scripts/delivery_lease.py" release --root <root> --repo <common-dir> --workspace <worktree> --task-key <task> --run-id <run> --writer-id <writer>
-```
-
-仅 `{"status":"released"}` 成功。按 [审查编排](references/review-orchestration.md) 复核；无进展停止，禁止删测试、降阈值或扩大范围造绿。
-
-Plan v6 审计见 [Plan Contract](skills/converge-plan/references/plan-contract.md) 与 [状态](references/state-schema.md)。`delivery_report.py` 按 [交付回执](references/reporting.md) 输出交付轮数 / 修复问题数 / 待处理项；外发另行授权。Suite 改动用 `converge-eval`。
+最终按 [交付回执](references/reporting.md) 只报告当前证据能证明的范围；确定性回归、真实宿主 smoke 和模型成本分别说明。外发另行授权；Suite 行为改动先运行 `converge-eval` 的 deterministic preflight，缺少冻结 control/candidate/judge 时将模型行为报告为 `uncovered`。

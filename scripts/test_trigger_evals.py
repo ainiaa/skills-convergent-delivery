@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,37 @@ SKILLS = {
 
 
 class TriggerEvalTest(unittest.TestCase):
+    def test_selector_exit_and_timeout_stop_descendants_before_return(self):
+        dataset = {"schema_version": 1, "suite": "converge", "evals": [
+            {"id": "negative", "prompt": "explain", "expected_skill": None, "should_trigger": False},
+        ]}
+        for outcome in ("timeout", "success", "failure"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                marker = root / "late.txt"
+                ready = root / "ready.txt"
+                source = root / "selector.py"
+                child = ("import time;from pathlib import Path;"
+                         f"Path({str(ready)!r}).touch();time.sleep(1.5);Path({str(marker)!r}).write_text('late')")
+                source.write_text(
+                    "import subprocess,sys,time\nfrom pathlib import Path\n"
+                    f"subprocess.Popen([sys.executable,'-c',{child!r}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+                    f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
+                    + ("time.sleep(10)\n" if outcome == "timeout" else
+                       "raise SystemExit(7)\n" if outcome == "failure" else
+                       "print('{\"selected_skill\":null}')\n")
+                )
+                selector = {"argv": [sys.executable, str(source)], "artifacts": [str(source)]}
+                if outcome == "timeout":
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        run_evals(dataset, selector, timeout=1)
+                else:
+                    result = run_evals(dataset, selector, timeout=3)
+                    self.assertEqual(1 if outcome == "failure" else 0, result["error_count"])
+                self.assertTrue(ready.exists())
+                time.sleep(1.6)
+                self.assertFalse(marker.exists(), "selector descendant wrote after evaluation returned")
+
     def test_dataset_has_valid_balanced_role_isolation_cases(self):
         payload = json.loads((ROOT / "evals/evals.json").read_text(encoding="utf-8"))
         self.assertEqual({"schema_version", "suite", "evals"}, set(payload))

@@ -1,0 +1,412 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20260905-runner-boundary-step-eval",
+  "requirement_fingerprint": "65ee890471cc66e1480543bc807c26bd2193fc9cfc4c1c6cf8c0c6f17fae180b",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "commit_id": "601ac9284750ffe5de25f0c0baadd09eaeb84958",
+      "tree_hash": "7668c56564ed06adab3bb8395f49e222f1cb8000",
+      "diff_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "changed_paths": [],
+      "changed_entries": [],
+      "source_fingerprint": "0ae3f3385a4155b38f1ca71bfb0f3474d33bd2ce8e6089771a9a5068e32e014d"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果"
+      ],
+      "goal": "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+      "owned_paths": [
+        "scripts/codex_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+        "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md"
+      ],
+      "depends_on": [],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_codex_exec_runner test_claude_exec_runner"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具"
+      ],
+      "goal": "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+      "owned_paths": [
+        "scripts/codex_exec_runner.py",
+        "scripts/claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_claude_exec_runner.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_codex_exec_runner test_claude_exec_runner test_runner_launch test_runner_lifecycle"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围"
+      ],
+      "goal": "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+      "owned_paths": [
+        "scripts/step_trace_eval.py",
+        "scripts/test_step_trace_eval.py",
+        "evals/step-visibility.json"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_step_trace_eval"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T4",
+      "task_kind": "integration",
+      "outcomes": [
+        "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+      ],
+      "goal": "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归",
+      "owned_paths": [
+        "references/worker-runners.md",
+        "references/execution-control.md",
+        "references/evaluation-scenarios.md",
+        "scripts/check.sh",
+        "CHANGELOG.md"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "补充可执行回归测试",
+        "运行测试确认目标失败",
+        "实施最小修复",
+        "运行定向验证并记录回执"
+      ],
+      "acceptance": [
+        "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+      ],
+      "verification": [
+        "CONVERGE_QUICK_VALIDATE=/tmp/converge-official-quick-validate.py bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "006759b5c0c7b71b151e81b4accdb03a54d9e6e0c783ff82a394166e74eb604e",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "d52e759f3a9d2274f323e2e5e32f8970184c7c856779a9b2da86e3f784758aeb",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+    "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+    "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+    "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+  ],
+  "closure_matrix": {
+    "schema_version": 3,
+    "chains": [
+      {
+        "id": "runner-and-step-evidence",
+        "description": "本地 runner→共享进程执行→回执；离线分步轨迹→验收摘要",
+        "entrypoints": [
+          "scripts/codex_exec_runner.py",
+          "scripts/test_codex_exec_runner.py",
+          "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.json",
+          "docs/06_tasks/F20260905-runner-boundary-step-eval-plan.md",
+          "scripts/claude_exec_runner.py",
+          "scripts/test_claude_exec_runner.py",
+          "scripts/step_trace_eval.py",
+          "scripts/test_step_trace_eval.py",
+          "evals/step-visibility.json",
+          "references/worker-runners.md",
+          "references/execution-control.md",
+          "references/evaluation-scenarios.md",
+          "scripts/check.sh",
+          "CHANGELOG.md"
+        ],
+        "callers": [
+          "scripts/runner_launch.py",
+          "scripts/runner_lifecycle.py",
+          "scripts/autonomy_service.py",
+          "scripts/multi_model_repo_eval.py",
+          "external"
+        ],
+        "coverage": {
+          "input": {
+            "status": "covered",
+            "acceptance": [
+              "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+              "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+              "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+              "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+            ]
+          },
+          "freeze": {
+            "status": "covered",
+            "acceptance": [
+              "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+              "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+              "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+              "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+            ]
+          },
+          "effect": {
+            "status": "covered",
+            "acceptance": [
+              "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+              "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+              "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+              "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+            ]
+          },
+          "receipt": {
+            "status": "covered",
+            "acceptance": [
+              "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+              "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+              "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+              "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+            ]
+          },
+          "recovery": {
+            "status": "covered",
+            "acceptance": [
+              "输出读取或进度回调失败时，两个本地 runner 均返回 unknown 并清场，不交付部分成功结果",
+              "本地 runner 显式禁止原生子代理派发，保留实施和只读验证所需工具",
+              "分步轨迹验收可拒绝先修改后汇报、失败后推进和恢复重做，并明确证据来源及未覆盖范围",
+              "文档和变更日志准确反映修复及证据边界，现有功能通过全量回归"
+            ]
+          }
+        }
+      }
+    ],
+    "graph_receipt": {
+      "schema_version": 1,
+      "tool": "codegraph",
+      "source_fingerprint": "0ae3f3385a4155b38f1ca71bfb0f3474d33bd2ce8e6089771a9a5068e32e014d",
+      "chains_fingerprint": "81f6949eb8e477d98e40bd7a551c43b31951205f14ed97333a6aeb35e884fc9e",
+      "receipt_fingerprint": "5873dd6c61042347d567f60d50bf005d5a4b8c260f2b91cdade4d26fec8c7768"
+    }
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "执行方式",
+      "resolution": "同会话按 T1→T2→T3→T4 顺序执行，每步先红后绿并展示结果，不提交或派生代理。",
+      "source": "user"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "真实宿主行为验收边界",
+      "resolution": "增加可离线运行的轨迹检查；无真实观测时报告 uncovered，不调用真实模型或冒充独立宿主评测。",
+      "source": "docs"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "MCP 收窄范围",
+      "resolution": "MCP 收窄属于优化建议而非已复现缺陷，本轮保留既有工具能力并准确记录边界，避免关闭必要工具导致功能回退。",
+      "source": "reversible-default"
+    }
+  ]
+}

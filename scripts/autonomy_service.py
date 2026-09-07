@@ -17,9 +17,10 @@ from contextlib import contextmanager
 from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
-from delivery_next import validate_active_lease, validate_state
+from delivery_next import validate_active_lease, validate_native_tdd_trace, validate_state
 from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
-from evidence_contract import run_evidence
+from evidence_contract import run_evidence, workspace_source
+from tdd_impact_guard import MAX_TRACE_BYTES, MAX_RERUN_TIMEOUT_SECONDS, rerun as rerun_tdd_trace
 
 
 def service_runtime(state):
@@ -80,9 +81,16 @@ def _write(state_path, state, state_root, lease_root):
     return json.loads(Path(state_path).read_text(encoding="utf-8"))
 
 
-def _update(state_path, state_root, lease_root, mutate):
+def _update(state_path, state_root, lease_root, mutate, *, refresh_source=False):
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
     mutate(state)
+    if refresh_source:
+        state["source_receipt"] = workspace_source(state["workspace"], state["baseline"]["commit"])
+        state["source_fingerprint"] = state["source_receipt"]["source_fingerprint"]
+    rounds = state["execution_control"]["review"]["rounds"]
+    if rounds and rounds[-1]["source_fingerprint"] != state["source_fingerprint"]:
+        # Preserve earlier reviews; a changed source starts with no review evidence.
+        rounds.append({"source_fingerprint": state["source_fingerprint"], "requests": []})
     return _write(state_path, state, state_root, lease_root)
 
 
@@ -134,7 +142,7 @@ def _observe(state_path, state_root, lease_root, receipt):
             "outcome": outcomes.get(receipt["status"], "unknown"),
             "receipt_fingerprint": receipt["receipt_fingerprint"],
         }
-    return _update(state_path, state_root, lease_root, mutate)
+    return _update(state_path, state_root, lease_root, mutate, refresh_source=True)
 
 
 def _commit(state_path, state_root, lease_root, verification):
@@ -168,7 +176,7 @@ def _advance_verified_action(state_path, state_root, lease_root, action, verific
     return _update(state_path, state_root, lease_root, mutate)
 
 
-def _complete(state_path, state_root, lease_root, verification, audit):
+def _complete(state_path, state_root, lease_root, verification, audit, tdd_trace=None):
     def mutate(state):
         source_receipt = verification["source"]
         source = source_receipt["source_fingerprint"]
@@ -211,6 +219,9 @@ def _complete(state_path, state_root, lease_root, verification, audit):
         elif autonomy is not None:
             raise ValueError("service final audit is not eligible for completion")
         ledger = state["ledger"]
+        if tdd_trace is not None:
+            ledger["tdd_trace"] = tdd_trace
+            ledger.pop("tdd_trace_candidate", None)
         ledger["checks"].append({
             "stage": "autonomy-audit", "command": audit["command"], "result": "pass",
             "evidence_receipts": [audit],
@@ -251,6 +262,12 @@ def prompt(state_path, next_action):
         "Work only within its frozen scope and use current evidence. Do not modify the managed "
         "state: the service controller records the verified source and advances the stage after "
         "this action exits. Do not report completion from prose, publish, or create another agent."
+        " For native work, preserve real RED/GREEN observed Evidence Receipts while implementing."
+        " Return only JSON {\"tdd_trace\": <TDD/Impact Trace v5>} after code changes and for verify-final."
+        " Read the frozen references/tdd-providers.md through the state's controller snapshot."
+        " Reuse ledger.tdd_trace_candidate from prior actions, update it for the current source,"
+        " and keep original RED receipts; never invent receipts. A scope-only action may return {}."
+        " The controller stores this untrusted candidate and reruns it before final completion."
     )
 
 
@@ -258,6 +275,7 @@ def _append_runner_record(state_path, state_root, lease_root, field, record):
     return _update(
         state_path, state_root, lease_root,
         lambda state: state["ledger"].setdefault(field, []).append(record),
+        refresh_source=field == "runner_results",
     )
 
 
@@ -275,8 +293,26 @@ def execute(state_path, state, next_action, state_root, lease_root):
     else:
         raise ValueError("autonomy service runner is unsupported")
     _append_runner_record(state_path, state_root, lease_root, "runner_launches", launch)
-    receipt, _content = run(launch, request, allow_execute=True, capture_content=True)
+    receipt, content = run(launch, request, allow_execute=True, capture_content=True)
     _append_runner_record(state_path, state_root, lease_root, "runner_results", receipt)
+    if receipt["status"] == "completed" and content:
+        if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TRACE_BYTES:
+            raise ValueError("service TDD output exceeds the trace size limit")
+        try:
+            output = json.loads(content)
+        except json.JSONDecodeError:
+            output = None
+        if isinstance(output, dict) and "tdd_trace" in output:
+            def store_trace(candidate):
+                trace = output["tdd_trace"]
+                validate_native_tdd_trace(
+                    trace, candidate["source_receipt"],
+                    candidate["execution_control"]["routing"]["profile"]["risk_flags"],
+                    [item["criterion"] for item in candidate["ledger"]["acceptance"]],
+                    required=False, workspace=candidate["workspace"],
+                )
+                candidate["ledger"]["tdd_trace_candidate"] = trace
+            _update(state_path, state_root, lease_root, store_trace)
     return receipt
 
 
@@ -291,7 +327,7 @@ def block(state_path, state, state_root, lease_root, reason, evidence=None, stag
 
     blocked = _update(
         state_path, state_root, lease_root,
-        mutate,
+        mutate, refresh_source=True,
     )
     _release(blocked, state_root, lease_root)
     return blocked
@@ -363,7 +399,20 @@ def _finalize_observed(state_path, state_root, lease_root):
         if audit["exit_code"] != 0:
             block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
-        completed = _complete(state_path, state_root, lease_root, verification, audit)
+        trace = None
+        if state["provider_binding"]["binding"]["workflow_provider"]["id"] == "native-v1":
+            trace = state["ledger"].get("tdd_trace_candidate", state["ledger"].get("tdd_trace"))
+            validate_native_tdd_trace(
+                trace, verification["source"], state["execution_control"]["routing"]["profile"]["risk_flags"],
+                [item["criterion"] for item in state["ledger"]["acceptance"]],
+                required=True, workspace=state["workspace"],
+            )
+            trace = rerun_tdd_trace(
+                trace, state["workspace"], state["baseline"]["commit"], native_coverage=True,
+                timeout_seconds=min(MAX_RERUN_TIMEOUT_SECONDS,
+                                    _time_policy(service_runtime(state)["runner_profile"])["absolute_seconds"]),
+            )
+        completed = _complete(state_path, state_root, lease_root, verification, audit, trace)
         _release(completed, state_root, lease_root)
         return {"status": "complete", "verification": verification, "audit": audit,
                 "revision": completed["revision"]}
@@ -374,9 +423,6 @@ def _finalize_observed(state_path, state_root, lease_root):
 
 def _run_once(state_path, state_root, lease_root):
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    action = decide(state, lease_root=lease_root)
-    if action["decision"] == "allow":
-        return {"status": "terminal", "terminal": action["terminal"]}
     attempts = state["execution_control"]["autonomy"]["action_attempts"]
     if attempts and attempts[-1]["status"] == "running":
         # A process may have changed the workspace before a crash; never replay an uncertain action.
@@ -386,6 +432,9 @@ def _run_once(state_path, state_root, lease_root):
         return _finalize_observed(state_path, state_root, lease_root)
     if attempts and attempts[-1]["status"] == "observed":
         return _finalize_observed(state_path, state_root, lease_root)
+    action = decide(state, lease_root=lease_root)
+    if action["decision"] == "allow":
+        return {"status": "terminal", "terminal": action["terminal"]}
     next_action = action["next_action"]
     executable = next_action["action"] == "execute-inline" or (
         next_action["action"] == "verify" and "phase" in next_action
@@ -410,6 +459,16 @@ def _run_once(state_path, state_root, lease_root):
     return _finalize_observed(state_path, state_root, lease_root)
 
 
+def recovering_action(state):
+    if not isinstance(state, dict) or state.get("status") != "active":
+        return False
+    control = state.get("execution_control")
+    autonomy = control.get("autonomy") if isinstance(control, dict) else None
+    attempts = autonomy.get("action_attempts") if isinstance(autonomy, dict) else None
+    return isinstance(attempts, list) and bool(attempts) and isinstance(attempts[-1], dict) \
+        and attempts[-1].get("status") in {"running", "observed"}
+
+
 def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
     state_path = Path(state_path).expanduser().resolve()
     state_root = Path(state_root).expanduser().resolve()
@@ -419,7 +478,8 @@ def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
             return {"status": "busy"}
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            validate_state(state, SimpleNamespace(strict_evidence=True))
+            validate_state(state, SimpleNamespace(strict_evidence=True),
+                           check_workspace=not recovering_action(state))
             if state_path != managed_state_path(
                     state_root, state["repo_id"], state["task_key"], state["run_id"]
             ).resolve():
@@ -470,7 +530,8 @@ def service_paths(root):
             continue
         try:
             if not has_frozen_snapshot(state):
-                validate_state(state, SimpleNamespace(strict_evidence=True))
+                validate_state(state, SimpleNamespace(strict_evidence=True),
+                               check_workspace=not recovering_action(state))
             service_runtime(state)
         except (KeyError, ValueError) as error:
             diagnostics.append(f"invalid autonomous service state {path}: {error}")

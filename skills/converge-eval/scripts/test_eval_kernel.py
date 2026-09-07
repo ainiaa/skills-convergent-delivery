@@ -8,10 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import eval_contract
-from eval_contract import evaluate
+from eval_contract import _evaluate_receipts as evaluate
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -127,6 +128,125 @@ def secure(request):
     return request
 
 
+class DeterministicBridgeTest(unittest.TestCase):
+    def test_real_frozen_differential_and_failure_boundaries(self):
+        from controller_snapshot import create_snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / 'repo'
+            repo.mkdir()
+            def git(*args):
+                return subprocess.run(['git', '-C', str(repo), *args], check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            git('init', '-q')
+            judge = "import unittest, calc\nclass Check(unittest.TestCase):\n def test_value(self): self.assertEqual(calc.value(), 2)\n"
+            (repo / 'judge.py').write_text(judge)
+            (repo / 'alias').symlink_to('calc.py')
+            suite = {'allowed_scope': ['calc.py'], 'touched_control_surfaces': [],
+                     'scenarios': [{'id': 'value', 'class': 'known_acceptance', 'judge': 'judge.py'}]}
+            (repo / 'suite.json').write_text(json.dumps(suite))
+            def tree(value):
+                (repo / 'calc.py').write_text(value)
+                git('add', '.')
+                return git('write-tree')
+            control = tree('def value(): return 1\n')
+            good = tree('def value(): return 2\n')
+            snapshot = create_snapshot(ROOT, root / 'controller')
+            request = {'controller_snapshot': snapshot, 'control_source': control,
+                       'candidate_source': good, 'suite': 'suite.json', 'timeout_seconds': 1}
+            with self.assertRaisesRegex(ValueError, 'frozen snapshot'):
+                eval_contract.deterministic_evaluate(request, repo)
+            request_file = root / 'request.json'
+            def run(overrides=None):
+                request_file.write_text(json.dumps({**request, **(overrides or {})}))
+                result = subprocess.run([sys.executable, str(Path(snapshot['root']) /
+                    'skills/converge-eval/scripts/eval_contract.py'), '--deterministic',
+                    '--input', str(request_file), '--repository', str(repo)],
+                    capture_output=True, text=True, timeout=30)
+                self.assertTrue(result.stdout, result.stderr)
+                observed = json.loads(result.stdout)
+                # Exercise the public function on its instrumented source as well as the frozen CLI.
+                with patch.object(eval_contract, 'CONTROL_ROOT', Path(snapshot['root'])), \
+                     patch.object(eval_contract, 'LOCKED_CATALOG', Path(snapshot['root']) / 'references/evaluation-catalog.json'):
+                    try:
+                        direct = eval_contract.deterministic_evaluate({**request, **(overrides or {})}, repo)
+                    except ValueError:
+                        self.assertEqual('uncovered', observed['status'])
+                    else:
+                        self.assertEqual(observed['status'], direct['status'])
+                return result.returncode, observed
+            code, result = run()
+            self.assertEqual(0, code, result)
+            self.assertEqual('process_observed', result['evidence_level'])
+            self.assertEqual(['value'], result['differential']['fixed'])
+            self.assertEqual('uncovered', result['release_status'])
+            broken = tree('import missing_dependency\n')
+            code, result = run({'control_source': broken})
+            self.assertEqual('uncovered', result['status'])
+            self.assertEqual([], result['differential']['fixed'])
+            code, result = run({'control_source': good, 'candidate_source': control})
+            self.assertNotEqual(0, code)
+            self.assertEqual(['value'], result['differential']['regressions'])
+            self.assertNotEqual(0, run({'candidate_source': control})[0])
+            hanging = tree('import time\ndef value(): time.sleep(5); return 2\n')
+            code, result = run({'candidate_source': hanging})
+            self.assertNotEqual(0, code)
+            self.assertEqual(124, result['samples'][0]['candidate']['exit_code'])
+            (repo / 'judge.py').write_text('import unittest\n')
+            changed_judge = tree('def value(): return 2\n')
+            self.assertNotEqual(0, run({'candidate_source': changed_judge})[0])
+            self.assertEqual('import unittest\n', (repo / 'judge.py').read_text())
+            self.assertNotEqual(0, run({'suite': '../suite.json'})[0])
+            for timeout in (0, True, 601):
+                self.assertNotEqual(0, run({'timeout_seconds': timeout})[0])
+            empty_control = changed_judge
+            empty_candidate = tree('def value(): return 3\n')
+            code, result = run({'control_source': empty_control, 'candidate_source': empty_candidate})
+            self.assertNotEqual(0, code)
+            self.assertFalse(result['samples'][0]['candidate']['pass'])
+            (repo / 'alias').unlink()
+            (repo / 'alias').symlink_to('/tmp')
+            escaped = tree('def value(): return 4\n')
+            self.assertNotEqual(0, run({'candidate_source': escaped})[0])
+
+
+class EvalAvailabilityTest(unittest.TestCase):
+    def test_deterministic_cli_preflight_and_invalid_input_are_structured(self):
+        script = str(Path(eval_contract.__file__))
+        result = subprocess.run([sys.executable, script, '--preflight', '--deterministic'],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('ready', json.loads(result.stdout)['status'])
+        self.assertIn('model_behavior', json.loads(result.stdout)['uncovered'])
+        with tempfile.TemporaryDirectory() as directory:
+            request = Path(directory) / 'request.json'
+            for content in ('{}', 'invalid json'):
+                request.write_text(content)
+                result = subprocess.run([sys.executable, script, '--deterministic',
+                                        '--input', str(request), '--repository', str(ROOT)],
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(2, result.returncode)
+                self.assertEqual('uncovered', json.loads(result.stdout)['status'])
+                self.assertTrue(json.loads(result.stdout)['stop_reason'])
+
+    def test_public_evaluation_reports_missing_bridge_before_reading_artifacts(self):
+        with patch.object(eval_contract, "_worker_state", side_effect=AssertionError("read artifacts")):
+            result = eval_contract.evaluate({}, ROOT)
+        self.assertEqual("uncovered", result["status"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual("unavailable_host_bridge", result["stop_reason"])
+
+    def test_cli_preflight_and_evaluation_cannot_claim_success(self):
+        for arguments in (["--preflight"], ["--input", "/missing/request", "--repository", str(ROOT)]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [sys.executable, str(Path(eval_contract.__file__)), *arguments],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(2, result.returncode)
+                self.assertEqual("uncovered", json.loads(result.stdout)["status"])
+
+
 class EvalKernelTest(unittest.TestCase):
     def test_selects_all_matching_history_and_computes_distribution(self):
         request = {
@@ -164,6 +284,8 @@ class EvalKernelTest(unittest.TestCase):
         }
 
         result = evaluate(secure(request), ROOT)
+        self.assertEqual("diagnostic", result["evidence_level"])
+        self.assertEqual("uncovered", result["release_status"])
 
         self.assertEqual(10, result["sample_distribution"]["sample_count"])
         self.assertEqual(9, result["sample_distribution"]["pass_count"])

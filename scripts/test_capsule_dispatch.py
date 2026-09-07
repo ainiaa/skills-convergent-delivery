@@ -8,7 +8,7 @@ import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).with_name("capsule_dispatch.py")
@@ -18,6 +18,57 @@ SPEC.loader.exec_module(capsule_dispatch)
 
 
 class CapsuleDispatchTest(unittest.TestCase):
+    def test_codex_ignores_non_object_json_before_creation_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex = self.executable(root, "codex",
+                'cat >/dev/null\nprintf \'[]\\nnull\\n42\\n"noise"\\n\' >&2\n'
+                'printf \'{"type":"thread.started","thread_id":"thread-confirmed"}\\n\'\n')
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "capsule", root / "receipts", "noisy", 5)
+            self.assertEqual("delivered", result["status"])
+            self.assertEqual("thread-confirmed", result["external_task_id"])
+            self.assertEqual(result, capsule_dispatch.dispatch_codex(
+                "/must-not-launch", root, "capsule", root / "receipts", "noisy", 1))
+
+    def test_explicit_attempt_rejects_a_different_workspace_for_both_hosts(self):
+        for host in ('codex', 'claude'):
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, second = root / 'first', root / 'second'
+                first.mkdir()
+                second.mkdir()
+                dispatch = getattr(capsule_dispatch, 'dispatch_' + host)
+                # Cache a failed launch without calling a real host.
+                if host == 'codex':
+                    dispatch('/nonexistent-host', first, 'capsule', root / 'receipts', 'shared', 1)
+                else:
+                    with patch.object(capsule_dispatch, 'claude_agents', return_value=[]):
+                        dispatch('/nonexistent-host', first, 'capsule', root / 'receipts', 'shared', 1)
+                with self.assertRaisesRegex(ValueError, 'different input|workspace'):
+                    dispatch('/nonexistent-host', second, 'capsule', root / 'receipts', 'shared', 1)
+
+    def test_cached_receipts_bind_workspace_before_reuse_or_retry(self):
+        for status in ('attempted', 'delivered', 'unavailable', 'failed', 'indeterminate'):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                path = root / 'attempt.json'
+                saved = capsule_dispatch.result(
+                    'codex-exec-v1', 'attempt', 'capsule', status, workspace=root,
+                    external_task_id='thread-1', reason='test observation',
+                )
+                capsule_dispatch.persist(path, saved)
+                with self.assertRaisesRegex(ValueError, 'different input'):
+                    capsule_dispatch.saved_or_new(path, 'codex-exec-v1', 'attempt', 'capsule', root / 'other')
+                self.assertEqual(saved, json.loads(path.read_text()))
+                reused = capsule_dispatch.saved_or_new(
+                    path, 'codex-exec-v1', 'attempt', 'capsule', root / '.',
+                )
+                if status == 'unavailable':
+                    self.assertIsNone(reused)
+                else:
+                    self.assertEqual('indeterminate' if status == 'attempted' else status, reused['status'])
+
     def executable(self, directory, name, body):
         path = Path(directory) / name
         path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
@@ -46,13 +97,51 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual(["exec", "--json", "-C", str(root.resolve()), "-"], arguments)
         self.assertNotIn("frozen capsule", receipt_text)
 
+    def test_codex_large_capsule_timeout_includes_stdin_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex = self.executable(
+                root, "codex", 'printf \'{"type":"thread.started","thread_id":"early"}\\n\'\n'
+                               'exec sleep 1\n',
+            )
+            started = time.monotonic()
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "x" * (1024 * 1024), root / "receipts", "large", 0.05,
+            )
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual("indeterminate", result["status"])
+            with patch.object(capsule_dispatch.subprocess, "Popen", side_effect=AssertionError("redispatch")):
+                replay = capsule_dispatch.dispatch_codex(
+                    codex, root, "x" * (1024 * 1024), root / "receipts", "large", 0.05,
+                )
+            self.assertEqual(result, replay)
+
+    def test_codex_checks_write_error_after_observing_writer_completion(self):
+        errors = []
+        writer = Mock()
+        def finished():
+            errors.append(BrokenPipeError("stdin closed"))
+            return False
+        writer.is_alive.side_effect = finished
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(capsule_dispatch.subprocess, "Popen"), \
+                patch.object(capsule_dispatch, "_start_prompt_writer", return_value=(writer, errors)), \
+                patch.object(capsule_dispatch, "codex_thread_id", return_value="early"):
+            result = capsule_dispatch.dispatch_codex(
+                "codex", directory, "capsule", Path(directory) / "receipts", "write-error", 1,
+            )
+        self.assertEqual("indeterminate", result["status"])
+        self.assertNotIn("external_task_id", result)
+
     def test_rejects_a_delivered_receipt_without_a_task_id(self):
         for task_id in (None, ""):
             with self.subTest(task_id=task_id), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "attempt-one.json"
                 capsule = "frozen capsule"
                 path.write_text(json.dumps({
-                    "schema_version": 1,
+                    "schema_version": 2,
+                    "workspace": str(Path(directory).resolve()),
                     "adapter": "codex-exec-v1",
                     "attempt_id": "attempt-one",
                     "capsule_fingerprint": capsule_dispatch.fingerprint(capsule),
@@ -62,7 +151,7 @@ class CapsuleDispatchTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(ValueError, "external_task_id"):
                     capsule_dispatch.saved_or_new(
-                        path, "codex-exec-v1", "attempt-one", capsule,
+                        path, "codex-exec-v1", "attempt-one", capsule, directory,
                     )
 
     def test_codex_ignores_a_blank_thread_id(self):
@@ -75,11 +164,15 @@ class CapsuleDispatchTest(unittest.TestCase):
             self.assertIsNone(capsule_dispatch.codex_thread_id(evidence))
 
     def test_rejects_a_receipt_from_an_unknown_schema(self):
+        for version in (1, 99):
+            self.check_rejected_schema(version)
+
+    def check_rejected_schema(self, version):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "attempt-one.json"
             capsule = "frozen capsule"
             path.write_text(json.dumps({
-                "schema_version": 2,
+                "schema_version": version,
                 "adapter": "codex-exec-v1",
                 "attempt_id": "attempt-one",
                 "capsule_fingerprint": capsule_dispatch.fingerprint(capsule),
@@ -89,7 +182,7 @@ class CapsuleDispatchTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "schema_version"):
                 capsule_dispatch.saved_or_new(
-                    path, "codex-exec-v1", "attempt-one", capsule,
+                    path, "codex-exec-v1", "attempt-one", capsule, directory,
                 )
 
     def test_recovery_persists_an_indeterminate_receipt(self):
@@ -97,7 +190,8 @@ class CapsuleDispatchTest(unittest.TestCase):
             path = Path(directory) / "attempt-one.json"
             capsule = "frozen capsule"
             path.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
+                "workspace": str(Path(directory).resolve()),
                 "adapter": "codex-exec-v1",
                 "attempt_id": "attempt-one",
                 "capsule_fingerprint": capsule_dispatch.fingerprint(capsule),
@@ -105,7 +199,7 @@ class CapsuleDispatchTest(unittest.TestCase):
             }), encoding="utf-8")
 
             recovered = capsule_dispatch.saved_or_new(
-                path, "codex-exec-v1", "attempt-one", capsule,
+                path, "codex-exec-v1", "attempt-one", capsule, directory,
             )
             persisted = json.loads(path.read_text(encoding="utf-8"))
 
@@ -117,7 +211,8 @@ class CapsuleDispatchTest(unittest.TestCase):
             path = Path(directory) / "attempt-one.json"
             capsule = "frozen capsule"
             path.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
+                "workspace": str(Path(directory).resolve()),
                 "adapter": "codex-exec-v1",
                 "attempt_id": "attempt-one",
                 "capsule_fingerprint": capsule_dispatch.fingerprint(capsule),
@@ -127,31 +222,25 @@ class CapsuleDispatchTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "reason"):
                 capsule_dispatch.saved_or_new(
-                    path, "codex-exec-v1", "attempt-one", capsule,
+                    path, "codex-exec-v1", "attempt-one", capsule, directory,
                 )
 
     def test_codex_does_not_repeat_an_attempt_that_cannot_be_confirmed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            capture = root / "calls"
             codex = self.executable(
-                root, "codex", f'echo call >> "{capture}"\ncat >/dev/null\n',
+                root, "codex", 'cat >/dev/null\n',
             )
             first = capsule_dispatch.dispatch_codex(
                 codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
             )
-            deadline = time.monotonic() + 0.5
-            while not capture.exists() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            self.assertTrue(capture.exists(), "Codex process did not start within the test deadline")
-            second = capsule_dispatch.dispatch_codex(
-                codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
-            )
-            calls = capture.read_text(encoding="utf-8").splitlines()
+            with patch.object(capsule_dispatch.subprocess, 'Popen', side_effect=AssertionError('must not replay')):
+                second = capsule_dispatch.dispatch_codex(
+                    codex, root, "frozen capsule", root / "receipts", "attempt-one", 0.5,
+                )
 
         self.assertEqual("indeterminate", first["status"])
         self.assertEqual(first, second)
-        self.assertEqual(["call"], calls)
 
     def test_rejects_non_finite_or_non_positive_startup_timeout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -290,7 +379,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                                 f'touch "{launched}"\n',
             )
             result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 5,
             )
 
         self.assertEqual("delivered", result["status"])
@@ -355,7 +444,7 @@ class CapsuleDispatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "attempt-one.json"
             receipt = capsule_dispatch.result(
-                "codex-exec-v1", "attempt-one", "frozen capsule", "failed", reason="   ",
+                "codex-exec-v1", "attempt-one", "frozen capsule", "failed", workspace=directory, reason="   ",
             )
 
             with self.assertRaisesRegex(ValueError, "reason"):

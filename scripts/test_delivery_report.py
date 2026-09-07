@@ -14,17 +14,12 @@ from task_profile import freeze_routing
 from provider_contract import canonical_fingerprint
 from role_result import result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
+from test_delivery_next import tdd_trace, WORKSPACE, HEAD, SOURCE, EVIDENCE
 from worker_profile import fingerprint as worker_profile_fingerprint
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts/delivery_report.py"
-HEAD = subprocess.run(
-    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
-    capture_output=True, text=True,
-).stdout.strip()
-SOURCE = workspace_source(ROOT, HEAD)
-EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
 
 
 def legacy_runtime_binding(query_id, capabilities):
@@ -69,7 +64,7 @@ def state(status="complete"):
         "task_key": "task-1",
         "writer_id": "writer-1",
         "revision": 3,
-        "workspace": str(ROOT),
+        "workspace": str(WORKSPACE),
         "baseline": {"commit": HEAD, "diff_fingerprint": "clean"},
         "scope_fingerprint": "scope-1",
         "source_fingerprint": SOURCE["source_fingerprint"],
@@ -94,6 +89,7 @@ def state(status="complete"):
         "ledger": {
             "completed_rounds": 2,
             "repair_fingerprints": ["issue-a", "issue-b"],
+            "tdd_trace": tdd_trace(SOURCE, criterion="doctor detects incomplete Suite"),
             "key_changes": ["统一 Provider 契约", "增加可见进度"],
             "checks": [{"stage": "final", "command": "check", "result": "pass"}],
             "acceptance": [
@@ -133,6 +129,30 @@ def state(status="complete"):
 
 
 class DeliveryReportTest(unittest.TestCase):
+    def test_changed_recovery_details_are_not_hidden_by_report_deduplication(self):
+        for field in ("blocked_reason", "next_action"):
+            with self.subTest(field=field):
+                payload = state("blocked")
+                first = json.loads(self.run_report(payload).stdout)
+                payload["ledger"]["report_history"] = first["next_report_history"]
+                target = payload if field == "blocked_reason" else payload["handoff"]
+                target[field] = "Refresh the unavailable credential"
+                result = self.run_report(payload)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertFalse(json.loads(result.stdout)["unchanged"])
+                self.assertIn(target[field], self.run_report(payload, "text").stdout)
+
+    def test_active_state_cannot_render_a_final_report(self):
+        for output_format in ("text", "json"):
+            with self.subTest(output_format=output_format):
+                payload = state("active")
+                payload["current_stage"] = "scope"
+                payload["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
+                result = self.run_report(payload, output_format)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn("已完成", result.stdout)
+                self.assertIn("terminal", result.stderr)
+
     def test_json_reports_only_usage_present_in_fingerprint_validated_runner_receipts(self):
         payload = state()
         profile = {
@@ -198,7 +218,8 @@ class DeliveryReportTest(unittest.TestCase):
             payload["baseline"]["diff_fingerprint"] = "dirty-at-start"
             payload.pop("source_receipt")
             payload["ledger"]["acceptance"][0].pop("evidence_receipts")
-            payload.update(status="active", current_stage="round-1-semantic-review")
+            payload.update(status="blocked", current_stage="round-1-semantic-review",
+                           blocked_code="environment", blocked_reason="verification unavailable")
 
             report = json.loads(self.run_report(payload, "json").stdout)
             rendered = self.run_report(payload, "text").stdout
@@ -224,7 +245,8 @@ class DeliveryReportTest(unittest.TestCase):
         payload["workspace"] = "/missing/worktree"
         payload.pop("source_receipt")
         payload["ledger"]["acceptance"][0].pop("evidence_receipts")
-        payload.update(status="active", current_stage="round-1-semantic-review")
+        payload.update(status="blocked", current_stage="round-1-semantic-review",
+                       blocked_code="environment", blocked_reason="workspace unavailable")
 
         result = self.run_report(payload, "json")
 
@@ -232,7 +254,7 @@ class DeliveryReportTest(unittest.TestCase):
         summary = json.loads(result.stdout)["workspace_changes"]
         self.assertEqual("unavailable", summary["status"])
         self.assertEqual("git_read_failed", summary["error"])
-        self.assertEqual("attention", json.loads(result.stdout)["outcome"])
+        self.assertEqual("blocked", json.loads(result.stdout)["outcome"])
 
     def test_default_report_hides_diagnostics_but_detail_includes_them(self):
         summary = self.run_report(state(), "text")

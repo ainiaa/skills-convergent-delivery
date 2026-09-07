@@ -67,7 +67,13 @@ Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopp
 }
 ```
 
-Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源，并要求回执中的 Source Receipt v2 与正式状态完全一致。completed receipt 必须覆盖 capsule 全部 acceptance，全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
+Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 从 `delegate_state_root + repo_id + task_id + delegate_run_id` 派生正式 Single State 路径并读取真源，并要求回执中的 Source Receipt v2 与正式状态完全一致。completed receipt、capsule 和正式 delegate 的 criterion 集合必须完全一致；receipt 中每项 criterion/evidence/result/freshness/source_fingerprint 必须逐项等于正式 delegate 的对应字段，不能自行补写摘要冒充子任务验收。delegate 每项仍须通过 observed Evidence Receipt 校验；全部为源码绑定的 fresh pass，且没有 open issues。`parent_commit_id` 必须等于前一 Batch commit（首批为计划 baseline），且 Git ancestry 必须成立。Batch 从 `validating-receipt` 进入 `completed` 还要求同一 `worker_ref` 的 `worker_status=completed`。
+
+冻结 capsule 的 scope 必须是工作区内的相对路径；子任务 routing.allowed_paths 可以更窄，但不能扩大父范围。派发前使用 `batch_state.py capsule --input -` 从正式状态生成当前 pending Batch 的执行 capsule；不修改计划内原 capsule。执行 baseline 为前一个已验证 checkpoint（首批为计划 capsule.baseline），子任务 Single State、Source Receipt、Trace 和 Evidence Receipt 均绑定此基线，恢复沿用该不可变基线。父层对照同一个 checkpoint 校验子状态，无需绕过 Single 的范围门禁。实际写入范围使用该基线到当前 commit 的 `git diff --no-renames --name-only -z`，重命名两端、删除和权限变化都参与核对。历史子状态若仍使用更早的计划基线则拒绝，不自动改写其已冻结状态或证据；需在正确检查点重新建立并验证 delegate。计划最终验收仍使用计划原始基线的全量 Source Receipt。
+
+capsule.verification 按 POSIX 引号解析为 argv，并逐项匹配正式 delegate 的 `ledger.acceptance[].evidence_receipts`。每条必需命令必须拥有绑定同一 Source Receipt 的有效成功回执；参数必须一致，顺序不受限，可包含额外有效回执。缺少必需命令或拿其他成功命令代替时禁止落盘完成；此校验不重新执行命令。
+
+checkpoint 的真实 Git tree 必须等于 Source Receipt 的基线加逐文件改动，包含内容、删除、权限和符号链接；不能遗漏验证内容或夹带额外文件。允许先验证再提交相同内容。历史 delegate 仍完整校验身份、Trace 和 Evidence，但 coverage 配置从对应 checkpoint 读取，不要求旧源码等于后续批次的工作区。当前 `validating-receipt` 与计划最终 `complete` 仍要求工作区内容匹配对应 checkpoint。此检查不切换 checkout，也不产生第二套状态。
 
 ## Final acceptance
 
@@ -76,3 +82,11 @@ Receipt v4 不接受调用者内嵌的 `delegate_state` 或自算 hash。helper 
 ## Cleanup barrier
 
 公共 worker/watchdog/清场行为以 [执行控制](../../../references/execution-control.md) 为唯一真源。Batch 额外要求把无法完成的清场结果写为 blocked，并在 `blocked_reason` 保留需 manual cleanup 的精确 ref。
+
+blocked/stopped 后仅允许将已登记的 working worker 状态更新为 completed/interrupted/blocked；控制器须先按公共清场协议取得对应宿主观测。下一动作继续查询待清场 worker，全部终结后返回 block，不恢复派发或业务执行。计划终态、worker 身份、Batch 业务状态、回执和历史阻塞原因保持不变；complete 仍完全不可改写。
+
+旧调度器已停止且 scheduler lease 过期后，blocked/stopped 可用 `--takeover` 转移 run_id/writer_id，先保留 working worker 再继续查询和记录清场。worker_owner_run_id 保留原派发来源，不能改成接管者；接管不改变计划终态或业务权限，未过期租约与缺少显式接管标志仍拒绝写入。
+
+最终 `final_acceptance` 的 criterion 列表从初始化起固定，不能添加、删除、替换、重排或重复。只有 evidence/result/freshness/source_fingerprint 可以在未通过时补充；各项可以在不同 revision 依次通过，已经通过的单项仍不可改写。
+
+计划 complete 时，每项 `final_acceptance[].evidence` 必须是 `evidence_contract.py run` 真实执行生成的 observed Evidence Receipt 对象，退出码为 0，回执来源和 fingerprint 有效，且 source 精确等于当前工作区相对最后 Batch baseline 的 Source Receipt；外层 source_fingerprint 也必须一致。文本、缺失、失败、篡改或旧源码回执均不能放行。最终源码仍必须对应最后 Batch 的已验证提交；各 Batch receipt 内的 evidence 摘要继续由正式 delegate state 和提交链复核，不能替代最终检查。

@@ -11,7 +11,8 @@ from pathlib import Path
 from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
-from delivery_next import upgrade_state
+from delivery_next import upgrade_state, next_runtime_action
+from evidence_contract import workspace_source
 from delivery_state import discover, validate_transition
 from autonomy_arm import arm
 from role_result import result_from_output
@@ -172,6 +173,19 @@ class DeliveryStateTest(unittest.TestCase):
         self.assertEqual([], armed["execution_control"]["autonomy"]["action_attempts"])
         del armed["execution_control"]["autonomy"]["action_attempts"]
         self.assertEqual([], upgrade_state(armed)["execution_control"]["autonomy"]["action_attempts"])
+
+    def test_tdd_trace_may_be_added_once_but_cannot_be_replaced(self):
+        current = state()
+        candidate = copy.deepcopy(current)
+        candidate["revision"] += 1
+        candidate["ledger"]["tdd_trace"] = {"trace": "first"}
+        validate_transition(current, candidate)
+
+        replaced = copy.deepcopy(candidate)
+        replaced["revision"] += 1
+        replaced["ledger"]["tdd_trace"] = {"trace": "replacement"}
+        with self.assertRaisesRegex(ValueError, "tdd_trace"):
+            validate_transition(candidate, replaced)
 
     def test_autonomous_attempt_must_progress_intent_running_observed_committed(self):
         current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
@@ -382,6 +396,76 @@ class DeliveryStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "acknowledgement-only"):
             validate_transition(previous, combined)
 
+    def test_native_fallback_persists_and_resumes_business_without_sync_retry(self):
+        for acknowledged in (None, "b" * 64):
+            with self.subTest(acknowledged=acknowledged), tempfile.TemporaryDirectory() as directory:
+                root, home = Path(directory) / "leases", Path(directory) / "home"
+                self.acquire(root)
+                previous = upgrade_state(state())
+                previous["current_stage"] = "scope"
+                previous["host_sync"] = {
+                    "mode": "native", "acknowledged_fingerprint": acknowledged,
+                    "evidence_level": "host_observed" if acknowledged else "controller_attested",
+                }
+                written = self.write(root, home, previous, -1)
+                self.assertEqual(0, written.returncode, written.stderr)
+                self.assertEqual("sync-plan", next_runtime_action(previous, "scope")["action"])
+                candidate = copy.deepcopy(previous)
+                candidate["revision"] += 1
+                candidate["host_sync"] = {
+                    "mode": "text", "acknowledged_fingerprint": None,
+                    "evidence_level": "controller_attested",
+                    "fallback": {"reason": "failed", "evidence_ref": "sync-call-1",
+                                 "disclosure_ref": "message-1"},
+                }
+                written = self.write(root, home, candidate, 0)
+                self.assertEqual(0, written.returncode, written.stderr)
+                resumed = upgrade_state(json.loads(self.state_path(home).read_text()))
+                self.assertEqual(candidate, resumed)
+                self.assertNotEqual("sync-plan", next_runtime_action(resumed, "scope")["action"])
+                advanced = copy.deepcopy(resumed)
+                advanced["revision"] += 1
+                advanced["current_stage"] = "round-1-build"
+                written = self.write(root, home, advanced, 1)
+                self.assertEqual(0, written.returncode, written.stderr)
+                self.assertEqual(candidate["host_sync"], json.loads(self.state_path(home).read_text())["host_sync"])
+
+    def test_native_fallback_requires_evidence_and_an_isolated_one_way_transition(self):
+        previous = upgrade_state(state())
+        previous["host_sync"]["mode"] = "native"
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] += 1
+        candidate["host_sync"] = {
+            "mode": "text", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+            "fallback": {"reason": "failed", "evidence_ref": "sync-call-1",
+                         "disclosure_ref": "message-1"},
+        }
+        for reason in ("failed", "unknown", "unavailable"):
+            candidate["host_sync"]["fallback"]["reason"] = reason
+            validate_transition(previous, candidate)
+        mutations = [
+            lambda c: c["host_sync"].pop("fallback"),
+            lambda c: c["host_sync"]["fallback"].update(evidence_ref=""),
+            lambda c: c["host_sync"]["fallback"].update(disclosure_ref=" "),
+            lambda c: c["host_sync"]["fallback"].update(reason="success"),
+            lambda c: c["host_sync"].update(acknowledged_fingerprint="b" * 64),
+            lambda c: c["host_sync"].update(evidence_level="host_observed"),
+            lambda c: c.update(current_stage="verify-final"),
+        ]
+        for mutate in mutations:
+            bad = copy.deepcopy(candidate)
+            mutate(bad)
+            with self.subTest(bad=bad["host_sync"]), self.assertRaises(ValueError):
+                validate_transition(previous, bad)
+        for sync in (previous["host_sync"], {**candidate["host_sync"], "fallback": {
+                **candidate["host_sync"]["fallback"], "evidence_ref": "rewritten"}}):
+            bad = copy.deepcopy(candidate)
+            bad["revision"] += 1
+            bad["host_sync"] = sync
+            with self.assertRaises(ValueError):
+                validate_transition(candidate, bad)
+
     def test_terminal_report_history_can_only_advance_by_itself(self):
         previous = upgrade_state(state())
         previous.update(status="complete", current_stage="verify-final")
@@ -399,6 +483,20 @@ class DeliveryStateTest(unittest.TestCase):
         mixed["ledger"]["report_history"]["summary_fingerprint"] = "d" * 64
         with self.assertRaisesRegex(ValueError, "report-only"):
             validate_transition(candidate, mixed)
+
+    def test_blocked_report_history_can_advance_without_reopening_execution(self):
+        from test_delivery_report import state as report_state
+        from delivery_report import build_report
+        previous = report_state("blocked")
+        candidate = copy.deepcopy(previous)
+        candidate["revision"] += 1
+        candidate["ledger"]["report_history"] = build_report(previous)["next_report_history"]
+        validate_transition(previous, candidate)
+        for field, value in (("status", "active"), ("blocked_reason", "other")):
+            mixed = copy.deepcopy(candidate)
+            mixed[field] = value
+            with self.assertRaises(ValueError):
+                validate_transition(previous, mixed)
 
     def test_state_path_hashes_run_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -451,7 +549,7 @@ class DeliveryStateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_home = Path(directory) / "home"
             state_root = state_home / ".convergent-delivery" / "state"
-            workspace = Path(directory) / "workspace"
+            workspace = (Path(directory) / "workspace").resolve()
             workspace.mkdir()
             initialized = subprocess.run(
                 ["git", "init", str(workspace)], text=True, capture_output=True, check=False,
@@ -514,7 +612,7 @@ class DeliveryStateTest(unittest.TestCase):
     def environment(self, state_home):
         return {**os.environ, "HOME": str(state_home)}
 
-    def acquire(self, root, workspace="/repo/worktree-a"):
+    def acquire(self, root, workspace="/repo/worktree-a", expected_exit=0):
         result = subprocess.run(
             [
                 sys.executable,
@@ -537,7 +635,7 @@ class DeliveryStateTest(unittest.TestCase):
             capture_output=True,
             check=False,
         )
-        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(expected_exit, result.returncode, result.stdout + result.stderr)
 
     def state_path(self, state_home):
         result = subprocess.run(
@@ -643,6 +741,83 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(1, json.loads(state_path.read_text(encoding="utf-8"))["revision"])
 
+    def test_write_advances_from_historical_source_but_rejects_stale_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            workspace = (Path(directory) / "workspace").resolve()
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty",
+            ], check=True)
+            baseline = subprocess.check_output(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True,
+            ).strip()
+            initial = state()
+            initial["workspace"] = str(workspace)
+            initial["baseline"]["commit"] = baseline
+            initial["source_receipt"] = workspace_source(workspace, baseline)
+            initial["source_fingerprint"] = initial["source_receipt"]["source_fingerprint"]
+            initial["execution_control"]["review"]["rounds"] = [
+                {"source_fingerprint": initial["source_fingerprint"], "requests": []}
+            ]
+            self.acquire(root, str(workspace))
+            written = self.write(root, state_home, initial, -1)
+            self.assertEqual(0, written.returncode, written.stderr)
+
+            (workspace / "app.py").write_text("value = 1\n")
+            candidate = copy.deepcopy(initial)
+            candidate["revision"] += 1
+            stale = self.write(root, state_home, candidate, 0)
+            self.assertNotEqual(0, stale.returncode)
+            self.assertIn("current workspace", stale.stderr)
+            candidate["source_receipt"] = workspace_source(workspace, baseline)
+            candidate["source_fingerprint"] = candidate["source_receipt"]["source_fingerprint"]
+            candidate["execution_control"]["review"]["rounds"].append(
+                {"source_fingerprint": candidate["source_fingerprint"], "requests": []}
+            )
+            written = self.write(root, state_home, candidate, 0)
+            self.assertEqual(0, written.returncode, written.stderr)
+            self.assertEqual(candidate["source_receipt"], json.loads(
+                self.state_path(state_home).read_text()
+            )["source_receipt"])
+
+    def test_runner_result_can_be_recorded_after_workspace_changes_without_refreshing_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            workspace = (Path(directory) / "workspace").resolve()
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                "user.email=test@example.invalid", "commit", "-qm", "baseline", "--allow-empty",
+            ], check=True)
+            baseline = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+            initial = state()
+            initial["workspace"] = str(workspace)
+            initial["baseline"]["commit"] = baseline
+            initial["source_receipt"] = workspace_source(workspace, baseline)
+            initial["source_fingerprint"] = initial["source_receipt"]["source_fingerprint"]
+            initial["execution_control"]["review"]["rounds"] = [
+                {"source_fingerprint": initial["source_fingerprint"], "requests": []}
+            ]
+            self.acquire(root, str(workspace))
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(str(workspace))
+            self.assertEqual(0, self.append_runner(root, state_home, "append-runner-launch", launch, 0).returncode)
+            (workspace / "app.py").write_text("value = 1\n")
+            result = self.append_runner(root, state_home, "append-runner-result", self.local_result(launch), 1)
+            self.assertEqual(0, result.returncode, result.stderr)
+            stored = json.loads(self.state_path(state_home).read_text())
+            self.assertEqual(initial["source_receipt"], stored["source_receipt"])
+            self.assertEqual(1, len(stored["ledger"]["runner_results"]))
+            rejected = self.append_runner(root, state_home, "append-runner-launch", self.local_launch(str(workspace), "Next"), 2)
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("current workspace", rejected.stderr)
+
     def test_runner_records_append_atomically_and_bind_to_the_run_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
@@ -669,6 +844,33 @@ class DeliveryStateTest(unittest.TestCase):
             rejected = self.append_runner(root, state_home, "append-runner-launch", wrong_workspace, 2)
             self.assertNotEqual(0, rejected.returncode)
             self.assertIn("workspace", rejected.stderr)
+
+    def test_single_implementer_launch_is_allowed_but_write_fanout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            state_home = Path(directory) / "home"
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial["workspace"])
+            profile = launch["profile"]
+            profile["role"] = "implementer"
+            profile["permissions"].update(workspace="write", shell=True)
+            profile.pop("profile_fingerprint")
+            profile["profile_fingerprint"] = profile_fingerprint(profile)
+            launch = freeze_launch(profile, "Implement the fix", {
+                **launch["configuration"], "sandbox": "workspace-write",
+            })
+            rejected = self.append_runner(
+                root, state_home, "append-runner-launches", [launch], 0,
+            )
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("read-only", rejected.stderr)
+            written = self.append_runner(root, state_home, "append-runner-launch", launch, 0)
+            self.assertEqual(0, written.returncode, written.stderr)
+            retry = self.append_runner(root, state_home, "append-runner-launch", launch, 1)
+            self.assertNotEqual(0, retry.returncode)
+            self.assertIn("unknown", retry.stderr)
 
     def test_persisted_runner_launch_without_a_result_cannot_be_retried(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -797,7 +999,7 @@ class DeliveryStateTest(unittest.TestCase):
             result = self.write(root, state_home, candidate, 0)
 
             self.assertNotEqual(0, result.returncode)
-            self.assertRegex(result.stderr, "source_receipt|canonical routing")
+        self.assertRegex(result.stderr, "source_receipt|canonical routing|TDD trace")
 
     def test_state_write_renews_the_owned_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1300,6 +1502,76 @@ class DeliveryStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integration_budget"):
             validate_transition(integration_previous, integration_without_budget)
 
+    def test_full_closure_initial_preserves_budget_for_one_final_review(self):
+        previous = state()
+        routing = previous["execution_control"]["routing"]
+        previous["execution_control"]["routing"] = freeze_routing(
+            routing["profile"], ["."], full_closure_required=True,
+        )
+        previous["current_stage"] = "closure-review"
+        previous["execution_control"]["closure"] = {"status": "pending"}
+        initial = copy.deepcopy(previous)
+        initial["revision"] += 1
+        initial["execution_control"]["closure"]["status"] = "findings"
+        record = {
+            "axis": "quality", "phase": "closure", "source_fingerprint": "a" * 64,
+            "status": "findings", "reviewer_ref": "reviewer-1", "mode": "blind",
+            "independent": True, "finding_fingerprints": ["b" * 64],
+        }
+        initial["execution_control"]["review"]["rounds"][0]["requests"].append(record)
+        validate_transition(previous, initial)
+        self.assertEqual(1, initial["execution_control"]["review"]["re_review_budget_remaining"])
+
+        repaired = copy.deepcopy(initial)
+        repaired["revision"] += 1
+        repaired["current_stage"] = "closure-repair"
+        validate_transition(initial, repaired)
+        verified = copy.deepcopy(repaired)
+        verified["revision"] += 1
+        verified["current_stage"] = "closure-final-review"
+        verified["source_fingerprint"] = "c" * 64
+        verified["execution_control"]["review"]["rounds"].append({
+            "source_fingerprint": "c" * 64, "requests": [],
+        })
+        verified["ledger"]["repair_fingerprints"].append("repair-1")
+        verified["execution_control"]["review"]["repair_budget_remaining"] = 0
+        validate_transition(repaired, verified)
+        final = copy.deepcopy(verified)
+        final["revision"] += 1
+        final["execution_control"]["closure"]["status"] = "pass"
+        final["execution_control"]["review"]["rounds"][-1]["requests"].append({
+            **record, "status": "pass", "source_fingerprint": "c" * 64,
+            "finding_fingerprints": [],
+        })
+        with self.assertRaisesRegex(ValueError, "re_review_budget"):
+            validate_transition(verified, final)
+        final["execution_control"]["review"]["re_review_budget_remaining"] = 0
+        validate_transition(verified, final)
+        extra = copy.deepcopy(final)
+        extra["revision"] += 1
+        extra["execution_control"]["review"]["rounds"][-1]["requests"].append(dict(record))
+        with self.assertRaisesRegex(ValueError, "re_review_budget"):
+            validate_transition(final, extra)
+
+    def test_final_closure_findings_can_be_saved_as_blocked(self):
+        from types import SimpleNamespace
+        from delivery_next import validate_state
+        from test_delivery_next import reviewed_complete_state
+
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"] = copy.deepcopy(payload["execution_control"])
+        payload.update(status="blocked", current_stage="closure-final-review",
+                       blocked_code="budget_exhausted", blocked_reason="closure findings remain")
+        payload["execution_control"]["closure"]["status"] = "findings"
+        requests = payload["execution_control"]["review"]["rounds"][-1]["requests"]
+        closure = next(item for item in requests if item["phase"] == "closure")
+        closure.update(status="findings", finding_fingerprints=["b" * 64], finding_records=[{
+            "fingerprint": "b" * 64, "evidence": "test remains red", "impact": "cannot complete",
+            "root_cause": "known behavior", "scope": "current", "classification": "defect",
+        }])
+        requests.append(copy.deepcopy(closure))
+        self.assertEqual("blocked", validate_state(payload, SimpleNamespace()))
+
     def test_应该_当终态候选删除字段时_对称比较并拒绝(self):
         terminal = upgrade_state(state())
         terminal.update(status="complete", current_stage="verify-final")
@@ -1316,7 +1588,9 @@ class DeliveryStateTest(unittest.TestCase):
             state_home = Path(directory) / "home"
             self.acquire(root)
             self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
-            self.acquire(root, "/repo/worktree-b")
+            before = {path: path.read_bytes() for path in root.rglob("*.json")}
+            self.acquire(root, "/repo/worktree-b", expected_exit=2)
+            self.assertEqual(before, {path: path.read_bytes() for path in root.rglob("*.json")})
             candidate = state(revision=1)
             candidate["workspace"] = "/repo/worktree-b"
 

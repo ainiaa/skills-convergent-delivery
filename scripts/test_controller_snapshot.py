@@ -70,6 +70,9 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertNotIn("scripts/multi_model.py", core["files"])
             self.assertNotIn("scripts/autonomy_contract.py", core["files"])
             self.assertIn("scripts/multi_model.py", multi["files"])
+            self.assertIn("scripts/multi_model_smoke.py", multi["files"])
+            self.assertIn("scripts/multi_model_repo_eval.py", multi["files"])
+            self.assertIn("references/multi-model-repository-evaluation.json", multi["files"])
             self.assertNotIn("scripts/autonomy_begin.py", multi["files"])
 
     def test_legacy_profile_maps_to_the_same_canonical_extension_set(self):
@@ -270,6 +273,8 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             identity = controller_snapshot.validate_snapshot(descriptor)
             self.assertTrue((Path(descriptor["root"]) / "scripts/delivery_next.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/tdd_impact_guard.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/native_tdd_policy.py").is_file())
             self.assertFalse((Path(descriptor["root"]) / "scripts/fast_path.py").exists())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_registry.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/role_flow.py").is_file())
@@ -281,6 +286,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_launch.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_lifecycle.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/multi_model_eval.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/multi_model_repo_eval.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "providers/native-v1.json").is_file())
             self.assertTrue((Path(descriptor["root"]) / "SKILL.md").is_file())
             self.assertTrue((Path(descriptor["root"]) / "references/state-schema.md").is_file())
@@ -289,6 +295,8 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "references/worker-runners.md").is_file())
             self.assertNotIn("scripts/fast_path.py", descriptor["files"])
             self.assertIn("scripts/openai_compatible_runner.py", descriptor["files"])
+            self.assertIn("scripts/tdd_impact_guard.py", descriptor["files"])
+            self.assertIn("scripts/native_tdd_policy.py", descriptor["files"])
             self.assertIn("scripts/role_flow.py", descriptor["files"])
             self.assertIn("scripts/role_dispatch.py", descriptor["files"])
             self.assertIn("scripts/role_fanout.py", descriptor["files"])
@@ -296,6 +304,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("scripts/runner_launch.py", descriptor["files"])
             self.assertIn("scripts/runner_lifecycle.py", descriptor["files"])
             self.assertIn("scripts/multi_model_eval.py", descriptor["files"])
+            self.assertIn("scripts/multi_model_repo_eval.py", descriptor["files"])
             for relative in REQUIRED_CONTROL_REFERENCES:
                 self.assertIn(relative, descriptor["files"])
                 self.assertEqual(f"{relative}\n", (Path(descriptor["root"]) / relative).read_text())
@@ -318,6 +327,17 @@ class ControllerSnapshotTest(unittest.TestCase):
                 controller_snapshot.trusted_command(
                     descriptor_path, "scripts/test_delivery_next.py", []
                 )
+
+    def test_core_snapshot_can_load_the_local_review_lifecycle_without_multimodel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            snapshot = Path(descriptor["root"])
+            result = subprocess.run([
+                sys.executable, "-c", "import runner_lifecycle; import runner_launch",
+            ], cwd=snapshot / "scripts", text=True, capture_output=True, check=False)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse((snapshot / "scripts/multi_model.py").exists())
+            self.assertFalse((snapshot / "scripts/openai_compatible_runner.py").exists())
 
     def test_version_only_change_creates_a_distinct_content_addressed_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:

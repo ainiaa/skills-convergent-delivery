@@ -6,14 +6,235 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import delivery_lease
+from runner_contract import fingerprint, freeze_launch
+from test_runner_contract import profile
 
 
 SCRIPT = Path(__file__).with_name("delivery_lease.py")
 
 
 class DeliveryLeaseTest(unittest.TestCase):
+    def test_workspace_writer_cannot_be_split_across_repo_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, repo in enumerate(("/repo/workspace", "/repo/common.git")):
+                result = subprocess.run([
+                    sys.executable, str(SCRIPT), "acquire", "--root", str(root),
+                    "--repo", repo, "--workspace", "/repo/workspace", "--task-key", f"task-{index}",
+                    "--run-id", f"run-{index}", "--writer-id", f"writer-{index}",
+                ], text=True, capture_output=True)
+                self.assertEqual(0 if index == 0 else 2, result.returncode, result.stdout)
+
+    def test_duplicate_legacy_writers_can_release_without_allowing_new_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, repo in enumerate(("/repo/a", "/repo/common.git")):
+                for kind, key in (("workspace", "/repo/a"), ("task", f"task-{index}")):
+                    path = root / delivery_lease.digest(repo) / ("workspaces" if kind == "workspace" else "tasks") / (delivery_lease.digest(key) + ".json")
+                    delivery_lease.write_exclusive(path, delivery_lease.make_record(
+                        kind, repo, "/repo/a", f"task-{index}", f"run-{index}", f"writer-{index}", 600,
+                    ))
+            blocked = self.run_lease(root, "acquire", workspace="/repo/a", task_key="new")
+            self.assertNotEqual(0, blocked.returncode)
+            released = self.run_lease(root, "release", workspace="/repo/a", task_key="task-1",
+                                      run_id="run-1", writer_id="writer-1", state_root=root / "state")
+            self.assertEqual(0, released.returncode, released.stdout)
+            self.assertEqual(1, len(list(root.glob("*/workspaces/*.json"))))
+            blocked = self.run_lease(root, "acquire", workspace="/repo/a", task_key="new")
+            self.assertNotEqual(0, blocked.returncode)
+
+    def test_release_race_cannot_recreate_a_legacy_workspace_namespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repo, workspace = "/repo/common.git", "/repo/a"
+            legacy = root / delivery_lease.digest(repo) / "workspaces" / (delivery_lease.digest(workspace) + ".json")
+            delivery_lease.write_exclusive(legacy, delivery_lease.make_record(
+                "workspace", repo, workspace, "old", "old-run", "old-writer", 600,
+            ))
+            stale_paths = delivery_lease.lease_paths(root, repo, workspace, "stale")
+            # A release and another acquire happen after a caller resolved its paths.
+            delivery_lease.remove_if_owned(legacy, "old-run", "old-writer")
+            self.assertEqual(0, self.run_lease(root, "acquire", workspace=workspace, task_key="new").returncode)
+            args = SimpleNamespace(root=str(root), run_id="stale-run", writer_id="stale-writer",
+                                   task_key="stale", ttl_seconds=600, takeover=False)
+            self.assertEqual(2, delivery_lease.acquire(args, stale_paths, repo, workspace))
+            self.assertFalse(legacy.exists())
+
+    def test_acquire_rejects_same_owner_with_different_task_or_workspace(self):
+        for field in ("task_key", "workspace"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="task-a", run_id="run", writer_id="writer")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                before = {str(p): p.read_bytes() for p in root.rglob("*.json")}
+                changed = {**owner, field: owner[field] + "-other"}
+                result = self.run_lease(root, "acquire", **changed)
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob("*.json")})
+
+    def test_move_rejects_wrong_source_task_without_releasing_a_live_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner = dict(run_id="run", writer_id="writer")
+            for workspace, task in (("/repo/a", "task-a"), ("/repo/b", "task-b")):
+                self.assertEqual(0, self.run_lease(root, "acquire", workspace=workspace,
+                                                 task_key=task, **owner).returncode)
+            before = {str(p): p.read_bytes() for p in root.rglob("*.json")}
+            result = self.run_lease(root, "move", workspace="/repo/c", task_key="task-b",
+                                    from_workspace="/repo/a", **owner)
+            self.assertEqual(2, result.returncode, result.stdout)
+            self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob("*.json")})
+            self.assertEqual(2, self.run_lease(root, "acquire", workspace="/repo/a",
+                                              task_key="task-c").returncode)
+
+    def test_renew_validates_both_complete_identities_before_writing(self):
+        for field in ("task_key", "workspace", "repo_id", "kind"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="task-a", run_id="run", writer_id="writer")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                paths = delivery_lease.lease_paths(root, "/repo/common.git", "/repo/a", "task-a")
+                record = json.loads(paths["task"].read_text())
+                record[field] += "-wrong"
+                paths["task"].write_text(json.dumps(record))
+                before = {kind: path.read_bytes() for kind, path in paths.items()}
+                result = self.run_lease(root, "renew", **owner)
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual(before, {kind: path.read_bytes() for kind, path in paths.items()})
+
+    def test_release_rejects_wrong_binding_without_removing_either_lease(self):
+        for mismatch in ("task_key", "workspace", "repo_id", "kind"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "leases"
+                state_root = Path(directory) / "state"
+                owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                paths = delivery_lease.lease_paths(root, "/repo/common.git", owner["workspace"], owner["task_key"])
+                state = {**owner, "repo_id": "/repo/common.git", "status": "active", "ledger": {}}
+                state_path = state_root / delivery_lease.digest(state["repo_id"]) / delivery_lease.digest(owner["task_key"]) / f"{delivery_lease.digest(owner['run_id'])}.json"
+                state_path.parent.mkdir(parents=True)
+                state_path.write_text(json.dumps(state))
+                correct = self.run_lease(root, "release", **owner, state_root=state_root)
+                self.assertEqual("blocked_cleanup", json.loads(correct.stdout)["status"])
+                requested = dict(owner)
+                if mismatch in requested:
+                    requested[mismatch] += "-typo"
+                else:
+                    record = json.loads(paths["task"].read_text())
+                    record[mismatch] += "-wrong"
+                    paths["task"].write_text(json.dumps(record))
+                before = {kind: path.read_bytes() for kind, path in paths.items()}
+                result = self.run_lease(root, "release", **requested, state_root=state_root)
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual("blocked_owner", json.loads(result.stdout)["status"])
+                self.assertEqual(before, {kind: path.read_bytes() for kind, path in paths.items()})
+                self.assertEqual(state, json.loads(state_path.read_text()))
+                retry = self.run_lease(root, "acquire", workspace=owner["workspace"], task_key="other")
+                self.assertEqual("blocked_workspace", json.loads(retry.stdout)["status"])
+
+    def test_release_matching_terminal_or_absent_state_is_idempotent(self):
+        for status in (None, "blocked", "complete"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "leases"
+                state_root = Path(directory) / "state"
+                owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                if status is not None:
+                    path = state_root / delivery_lease.digest("/repo/common.git") / delivery_lease.digest(owner["task_key"]) / f"{delivery_lease.digest(owner['run_id'])}.json"
+                    path.parent.mkdir(parents=True)
+                    path.write_text(json.dumps({**owner, "repo_id": "/repo/common.git", "status": status, "ledger": {}}))
+                for _ in range(2):
+                    result = self.run_lease(root, "release", **owner, state_root=state_root)
+                    self.assertEqual(0, result.returncode, result.stdout)
+                    self.assertEqual({"status": "released"}, json.loads(result.stdout))
+                self.assertFalse(any(root.rglob("*.json")))
+
+    def test_same_owner_retry_reports_the_persisted_pair_expiry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+            self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+            paths = delivery_lease.lease_paths(root, "/repo/common.git", owner["workspace"], owner["task_key"])
+            for name, path in paths.items():
+                record = json.loads(path.read_text())
+                record["lease_expires_at"] = "2099-01-01T00:00:00Z" if name == "workspace" else "2099-01-02T00:00:00Z"
+                path.write_text(json.dumps(record))
+            before = {name: path.read_bytes() for name, path in paths.items()}
+            retry = self.run_lease(root, "acquire", **owner)
+            self.assertEqual(0, retry.returncode, retry.stderr)
+            self.assertEqual("2099-01-01T00:00:00Z", json.loads(retry.stdout)["lease_expires_at"])
+            self.assertEqual(before, {name: path.read_bytes() for name, path in paths.items()})
+
+    def test_expired_same_owner_retry_blocks_until_renewed(self):
+        for expired in (("workspace",), ("task",), ("workspace", "task")):
+            with self.subTest(expired=expired), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = dict(workspace="/repo/a", task_key="payment", run_id="run-1", writer_id="writer-1")
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                paths = delivery_lease.lease_paths(root, "/repo/common.git", owner["workspace"], owner["task_key"])
+                for name in expired:
+                    record = json.loads(paths[name].read_text())
+                    record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                    paths[name].write_text(json.dumps(record))
+                before = {name: path.read_bytes() for name, path in paths.items()}
+                retry = self.run_lease(root, "acquire", **owner)
+                self.assertEqual(2, retry.returncode, retry.stdout)
+                self.assertTrue(json.loads(retry.stdout)["status"].endswith("_expired"))
+                self.assertEqual(before, {name: path.read_bytes() for name, path in paths.items()})
+                self.assertEqual(0, self.run_lease(root, "renew", **owner).returncode)
+                self.assertEqual(0, self.run_lease(root, "acquire", **owner).returncode)
+                proof = delivery_lease.active_lease_attestation(
+                    paths, "/repo/common.git", owner["workspace"], owner["task_key"], owner["run_id"], owner["writer_id"])
+                self.assertEqual(owner["run_id"], proof["run_id"])
+
+    def test_expired_acquire_requires_explicit_takeover(self):
+        for replacement in ("run-1", "run-2"):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "lease.json"
+                original = delivery_lease.make_record("workspace", "/repo", "/repo/a", "task", "run-1", "writer-1", 7200)
+                original["lease_expires_at"] = "2000-01-01T00:00:00Z"
+                path.write_text(json.dumps(original))
+                wanted = delivery_lease.make_record("workspace", "/repo", "/repo/a", "task", replacement, "writer-1", 7200)
+                status, _ = delivery_lease.acquire_one(path, wanted, takeover=False)
+                self.assertEqual("expired", status)
+                self.assertEqual(original, json.loads(path.read_text()))
+                status, saved = delivery_lease.acquire_one(path, wanted, takeover=True)
+                self.assertEqual("taken_over", status)
+                self.assertEqual(saved, json.loads(path.read_text()))
+                self.assertFalse(delivery_lease.is_expired(saved))
+
+    def test_release_requires_a_valid_determinate_result_for_every_runner(self):
+        launch = freeze_launch(profile(
+            runner_id="codex-exec-v1",
+            requested={"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+            effective={"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        ), "action", {"codex_bin": "codex"})
+        owner = dict(repo_id="/repo", workspace="/workspace", task_key="task", run_id="run", writer_id="writer")
+        arguments = SimpleNamespace(repo=owner["repo_id"], **{k: v for k, v in owner.items() if k != "repo_id"})
+        for status in ("missing", "unknown", "tampered", "completed", "failed", "timed_out", "output_exceeded"):
+            with self.subTest(status=status):
+                receipt = {"schema_version": 1, "runner_id": launch["runner_id"],
+                           "launch_fingerprint": launch["launch_fingerprint"],
+                           "status": "completed" if status == "tampered" else status,
+                           "exit_code": 0 if status in {"completed", "tampered"} else 1,
+                           "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                           "requested_model": launch["profile"]["effective"]["model"],
+                           "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
+                if status == "unknown": receipt["error_type"] = "interrupted"
+                receipt["receipt_fingerprint"] = fingerprint(receipt)
+                if status == "tampered": receipt["stdout_fingerprint"] = "c" * 64
+                state = {**owner, "status": "blocked", "ledger": {
+                    "runner_launches": [launch], "runner_results": [] if status == "missing" else [receipt],
+                }}
+                if status in {"missing", "unknown", "tampered"}:
+                    with self.assertRaises(ValueError):
+                        delivery_lease.validate_cleanup_for_release(state, arguments)
+                else:
+                    delivery_lease.validate_cleanup_for_release(state, arguments)
+
     def run_lease(
         self, root, command, *, workspace, task_key, run_id=None, writer_id=None,
         from_workspace=None, state_root=None

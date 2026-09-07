@@ -25,6 +25,8 @@ Capsule Dispatch 解决的是“把冻结任务交给一个新 task”的问题�
 
 `scripts/capsule_dispatch.py` 是唯一执行入口。调用方先把**已冻结**的 capsule 写到受控文件；它不会把 capsule 正文写入 receipt。默认 attempt id 由 `host + workspace + capsule` 决定，所以重跑同一输入会复用回执，不会创建第二个 task；确需重新授权一次派发时才显式给新的 `--attempt-id`。
 
+持久化 dispatch receipt 使用 schema v2，保存规范化后的绝对 `workspace`。无论 attempt id 是默认生成还是显式指定，回执都同时绑定 adapter、attempt id、capsule fingerprint 与 workspace；路径别名解析到同一工作区时可复用，工作区不同则在返回缓存或重试前拒绝。旧 schema v1 无法证明目的工作区，直接拒绝，不能通过自动迁移或重派推断成功。
+
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/capsule_dispatch.py" \
   --host <codex|claude> --workspace "$PWD" --capsule-file <frozen-capsule-file> \

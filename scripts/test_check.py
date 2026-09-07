@@ -1,5 +1,7 @@
 import os
 import subprocess
+import tempfile
+import yaml
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -9,6 +11,65 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):
+    def test_repository_has_an_executable_full_suite_coverage_gate(self):
+        import native_tdd_policy
+        policy = native_tdd_policy.resolve(ROOT)
+        self.assertEqual("ready", policy["status"])
+        self.assertEqual(85, policy["threshold"])
+        self.assertIn("scripts/test_coverage_gate.py", policy["argv"])
+        self.assertIn("--cov", policy["argv"])
+
+    def test_ci_prepares_a_pinned_validator_and_passes_it_to_the_gate(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        steps = workflow["jobs"]["verify"]["steps"]
+        gate_index = next(i for i, step in enumerate(steps) if step.get("run") == "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85")
+        gate = steps[gate_index]
+        self.assertEqual("${{ runner.temp }}/quick_validate.py", gate.get("env", {}).get("CONVERGE_QUICK_VALIDATE"))
+        setup = next(step["run"] for step in steps[:gate_index] if "quick_validate.py" in step.get("run", ""))
+        self.assertRegex(setup, r"openai/skills/[0-9a-f]{40}/")
+        self.assertIn("sha256sum --check", setup)
+
+    def test_missing_validator_fails_before_the_suite_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(["bash", "scripts/check.sh", "--full"], cwd=ROOT,
+                                    env={**os.environ, "CONVERGE_QUICK_VALIDATE": str(Path(directory) / "missing.py")},
+                                    capture_output=True, text=True, check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Official Skill validator missing", result.stderr)
+        self.assertNotIn("All checks passed", result.stdout)
+
+    def test_coverage_gate_timeout_cleans_its_descendants(self):
+        import test_coverage_gate
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            scripts = workspace / "scripts"
+            scripts.mkdir()
+            (scripts / "check.sh").write_text(
+                "python3 -c \"import time; from pathlib import Path; time.sleep(.4); Path('late.txt').write_text('late')\" &\n"
+                "wait\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(test_coverage_gate, "ROOT", workspace), \
+                    mock.patch.object(test_coverage_gate, "GATE_TIMEOUT_SECONDS", 0.1):
+                with self.assertRaises(AssertionError):
+                    test_coverage_gate.CoverageGateTest("test_full_gate").test_full_gate()
+            import time
+            time.sleep(.5)
+            self.assertFalse((workspace / "late.txt").exists())
+
+    def test_ci_runs_the_full_release_gate_without_a_fixed_python_minor(self):
+        check = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+        workflow = ROOT / ".github/workflows/ci.yml"
+
+        self.assertNotIn("--python 3.13", check)
+        self.assertTrue(workflow.is_file())
+        content = workflow.read_text(encoding="utf-8")
+        self.assertIn("pull_request:", content)
+        self.assertIn('\"v*\"', content)
+        self.assertIn("python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85", content)
+        self.assertIn("scripts/test_multi_model_repo_eval.py", check)
+
     def test_runtime_lock_files_are_not_tracked(self):
         result = subprocess.run(
             ["git", "ls-files"], cwd=ROOT, text=True, capture_output=True, check=True
@@ -34,6 +95,7 @@ class CheckScriptTest(unittest.TestCase):
             self.assertIn(
                 "Extension suite skipped; run bash scripts/check.sh --full before release.", check,
             )
+            self.assertIn('echo "Check duration: ${SECONDS}s"', check)
             return
 
         result = subprocess.run(
@@ -54,6 +116,23 @@ class CheckScriptTest(unittest.TestCase):
         self.assertIn("Extension suite skipped; run bash scripts/check.sh --full", result.stdout)
         self.assertIn("Check script self-test passed.", result.stdout)
         self.assertIn("All checks passed.", result.stdout)
+
+    def test_check_runs_independent_test_files_with_bounded_parallelism(self):
+        check = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+
+        self.assertIn('MAX_TEST_JOBS="${CONVERGE_CHECK_JOBS:-4}"', check)
+        self.assertIn("run_test_files()", check)
+        self.assertIn('kill -0 "${pids[$index]}"', check)
+        self.assertNotIn('wait "${pids[0]}"', check)
+        self.assertIn('run_test_files "${TEST_FILES[@]}"', check)
+        self.assertLess(
+            check.index("scripts/test_tdd_impact_guard.py"),
+            check.index("scripts/test_install.py"),
+        )
+        self.assertLess(
+            check.index("scripts/test_autonomy_service.py"),
+            check.index("scripts/test_autonomy_gate.py"),
+        )
 
     def test_in_check_mode_does_not_reexecute_the_suite(self):
         with mock.patch.object(subprocess, "run") as run:

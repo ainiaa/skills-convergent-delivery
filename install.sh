@@ -34,6 +34,7 @@ REQUIRED_SOURCE_FILES=(
   references/worker-runners.md
   references/multi-model.md
   references/multi-model-evaluation.json
+  references/multi-model-repository-evaluation.json
   references/autonomous-delivery-evaluation.json
   references/runtime-adapters.md
   providers/generic-tdd-v1.json
@@ -42,6 +43,8 @@ REQUIRED_SOURCE_FILES=(
   providers/pdlc-v1.json
   providers/superpowers-tdd-v1.json
   scripts/delivery_engine.py
+  scripts/tdd_impact_guard.py
+  scripts/native_tdd_policy.py
   scripts/delivery_lease.py
   scripts/delivery_next.py
   scripts/delivery_progress.py
@@ -58,12 +61,16 @@ REQUIRED_SOURCE_FILES=(
   scripts/openai_compatible_runner.py
   scripts/multi_model.py
   scripts/multi_model_eval.py
+  scripts/multi_model_smoke.py
+  scripts/multi_model_repo_eval.py
   scripts/provider_contract.py
   scripts/run_contract.py
   scripts/task_profile.py
   scripts/test_trigger_evals.py
   scripts/test_runner_lifecycle.py
   scripts/test_multi_model_eval.py
+  scripts/test_multi_model_smoke.py
+  scripts/test_multi_model_repo_eval.py
   scripts/runtime_adapter.py
   scripts/controller_snapshot.py
   scripts/autonomy_gate.py
@@ -75,6 +82,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/autonomy_arm.py
   scripts/autonomy_begin.py
   scripts/autonomous_delivery_eval.py
+  scripts/capsule_dispatch.py
   scripts/test_autonomy_arm.py
   scripts/test_autonomy_begin.py
   scripts/test_autonomy_gate.py
@@ -143,7 +151,8 @@ compatible no-op because its Skill is already registered; model runners still
 require an explicit user request.
 
 Remote install:
-  curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh | bash -s -- --latest --target all
+  curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh -o converge-install.sh
+  bash converge-install.sh --latest --target all
 EOF
 }
 
@@ -205,7 +214,6 @@ if [[ -n "$REMOTE_SELECTOR" && "$ACTION" != "install" && "$ACTION" != "upgrade" 
   echo "Error: ${REMOTE_SELECTOR} is only supported for install or upgrade." >&2
   exit 1
 fi
-
 if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
   SKILL_NAMES=()
 fi
@@ -447,11 +455,38 @@ prepare_source() {
       exit 1
     fi
     if [[ -d "$MANAGED_SOURCE/.git" ]]; then
+      local candidate relative entry
+      if [[ -n "$(git -C "$MANAGED_SOURCE" status --porcelain)" ]]; then
+        echo "Error: managed source has local changes; preserve or move them before upgrading." >&2
+        exit 1
+      fi
       if [[ -z "$REMOTE_SELECTOR" || "$REMOTE_SELECTOR" == "--latest" ]]; then
-        git -C "$MANAGED_SOURCE" pull --ff-only
+        git -C "$MANAGED_SOURCE" fetch origin "$GITHUB_BRANCH"
+        candidate=FETCH_HEAD
       else
         git -C "$MANAGED_SOURCE" fetch --depth 1 origin "refs/tags/${REMOTE_REF}:refs/tags/${REMOTE_REF}"
-        git -C "$MANAGED_SOURCE" checkout --detach "$REMOTE_REF"
+        candidate="$REMOTE_REF"
+      fi
+      # Validate the fetched tree before changing files reached by installed symlinks.
+      for relative in "${REQUIRED_SOURCE_FILES[@]}"; do
+        entry="$(git -C "$MANAGED_SOURCE" ls-tree "$candidate" -- "$relative")"
+        case "$entry" in
+          100644\ blob\ *|100755\ blob\ *) ;;
+          *)
+            echo "Error: mandatory Suite file is missing or not a regular file in candidate: $relative" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [[ -z "$REMOTE_SELECTOR" || "$REMOTE_SELECTOR" == "--latest" ]]; then
+        if git -C "$MANAGED_SOURCE" show-ref --verify --quiet "refs/heads/$GITHUB_BRANCH"; then
+          git -C "$MANAGED_SOURCE" merge-base --is-ancestor "$GITHUB_BRANCH" "$candidate"
+          git -C "$MANAGED_SOURCE" checkout -B "$GITHUB_BRANCH" "$candidate"
+        else
+          git -C "$MANAGED_SOURCE" checkout -b "$GITHUB_BRANCH" "$candidate"
+        fi
+      else
+        git -C "$MANAGED_SOURCE" checkout --detach "$candidate"
       fi
     elif [[ -e "$MANAGED_SOURCE" ]]; then
       echo "Error: managed source exists but is not a Git checkout: $MANAGED_SOURCE" >&2

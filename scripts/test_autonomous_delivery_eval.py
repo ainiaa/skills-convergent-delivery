@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7,7 +8,9 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from autonomous_delivery_eval import evaluate, evaluate_trusted, validate
+from autonomous_delivery_eval import (
+    candidate_judge_root, evaluate, evaluate_trusted, execute_scenario, validate,
+)
 from controller_snapshot import create_snapshot
 from delivery_state import state_path
 
@@ -16,6 +19,17 @@ CATALOG = Path(__file__).resolve().parent.parent / "references/autonomous-delive
 
 
 class AutonomousDeliveryEvalTest(unittest.TestCase):
+    def minimal_catalog(self):
+        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog["scenarios"] = catalog["scenarios"][:15]
+        return catalog
+
+    def test_minimal_catalog_keeps_the_required_execution_shape(self):
+        catalog = self.minimal_catalog()
+
+        self.assertEqual(15, len(validate(catalog)))
+        self.assertEqual("full-fix", catalog["scenarios"][0]["id"])
+
     def managed_snapshot_state(self, directory, descriptor):
         path = state_path(Path(directory) / "state", "/repo/eval.git", "autonomy-eval", "run-1")
         path.parent.mkdir(parents=True)
@@ -50,12 +64,12 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
 
-    def test_execute_runs_the_frozen_behavior_checks_without_returning_transcripts(self):
-        report = evaluate(json.loads(CATALOG.read_text(encoding="utf-8")), execute=True)
+    def test_diagnostic_execution_runs_the_minimum_frozen_behavior_checks_without_transcripts(self):
+        report = evaluate(self.minimal_catalog(), execute=True)
 
         self.assertEqual("completed", report["status"])
         self.assertFalse(report["transcript_storage"])
-        self.assertEqual(51, len(report["results"]))
+        self.assertEqual(15, len(report["results"]))
         for result in report["results"].values():
             self.assertEqual({"status", "duration_ms", "usage", "receipt_fingerprint"}, set(result))
             self.assertEqual("passed", result["status"])
@@ -77,21 +91,98 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             def map(self, function, scenarios):
                 return [function(scenario) for scenario in scenarios]
 
-        def run(command, **_kwargs):
+        def run(_workspace, command, _timeout, env=None):
             commands.append(command)
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return 0, b"", b""
 
-        with patch("autonomous_delivery_eval.ThreadPoolExecutor", Pool), \
-                patch("autonomous_delivery_eval.subprocess.run", side_effect=run):
+        with patch("autonomous_delivery_eval.candidate_judge_root", wraps=candidate_judge_root) \
+                as stage_candidate, \
+                patch("autonomous_delivery_eval.ThreadPoolExecutor", Pool), \
+                patch("autonomous_delivery_eval._run_command", side_effect=run):
             report = evaluate(catalog, execute=True)
 
+        self.assertEqual(1, stage_candidate.call_count)
         self.assertEqual([4], created_workers)
         self.assertEqual(len(catalog["scenarios"]), len(commands))
         self.assertTrue(all(command[1:3] == ["-I", "-c"] for command in commands))
         self.assertTrue(all(item["status"] == "passed" for item in report["results"].values()))
 
+    def test_timeout_is_uncovered_instead_of_crashing_the_evaluation(self):
+        scenario = {
+            "id": "timed-out",
+            "check": [
+                "scripts/test_autonomy_gate.py",
+                "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+            ],
+        }
+        with patch("autonomous_delivery_eval._run_command", return_value=(124, b"", b"timed out")):
+            _scenario_id, result = execute_scenario(scenario, CATALOG.parent.parent, CATALOG.parent.parent)
+
+        self.assertEqual("uncovered", result["status"])
+
+    def test_frozen_judge_detects_a_broken_candidate_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                CATALOG.parent.parent, root / "control", extensions=("autonomy-eval",)
+            )
+            candidate = root / "candidate"
+            shutil.copytree(
+                CATALOG.parent.parent, candidate,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            scenario = {
+                "id": "candidate-regression",
+                "check": [
+                    "scripts/test_autonomy_gate.py",
+                    "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+                ],
+            }
+            _scenario_id, baseline = execute_scenario(
+                scenario, Path(snapshot["root"]), candidate
+            )
+            self.assertEqual("passed", baseline["status"])
+            (candidate / "scripts/autonomy_gate.py").write_text(
+                "raise RuntimeError('candidate regression')\n", encoding="utf-8"
+            )
+
+            _scenario_id, result = execute_scenario(
+                scenario,
+                Path(snapshot["root"]), candidate,
+            )
+
+        self.assertEqual("failed", result["status"])
+
+    def test_frozen_judge_ignores_candidate_test_fixtures(self):
+        scenario = {
+            "id": "candidate-test-fixture",
+            "check": [
+                "scripts/test_autonomy_gate.py",
+                "AutonomyGateTest.test_complete_and_blocked_are_the_only_autonomous_terminal_allows",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(
+                CATALOG.parent.parent, root / "control", extensions=("autonomy-eval",)
+            )
+            candidate = root / "candidate"
+            shutil.copytree(
+                CATALOG.parent.parent, candidate,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            (candidate / "scripts/test_delivery_next.py").write_text(
+                "raise RuntimeError('candidate test fixture must not run')\n", encoding="utf-8"
+            )
+
+            _scenario_id, result = execute_scenario(
+                scenario, Path(snapshot["root"]), candidate
+            )
+
+        self.assertEqual("passed", result["status"])
+
     def test_execute_marks_the_evaluation_failed_when_a_bound_check_fails(self):
-        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog = self.minimal_catalog()
         catalog["scenarios"][0]["check"] = [
             "scripts/test_autonomy_gate.py", "AutonomyMissingTest.test_missing",
         ]
@@ -102,7 +193,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual("failed", report["results"]["full-fix"]["status"])
 
     def test_command_exits_nonzero_when_a_bound_check_fails(self):
-        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        catalog = self.minimal_catalog()
         catalog["scenarios"][0]["check"] = [
             "scripts/test_autonomy_gate.py", "AutonomyMissingTest.test_missing",
         ]
@@ -157,6 +248,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual("completed", report["status"])
+        self.assertRegex(report["candidate_source_fingerprint"], r"^[0-9a-f]{64}$")
         self.assertTrue(all(item["status"] == "passed" for item in report["results"].values()))
 
     def test_trusted_evaluation_rejects_the_mutable_workspace_evaluator(self):
@@ -185,7 +277,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             poison.mkdir()
             (poison / "sitecustomize.py").write_text("raise RuntimeError('poisoned')\n", encoding="utf-8")
             with patch.dict("os.environ", {"PYTHONPATH": str(poison)}):
-                report = evaluate(json.loads(CATALOG.read_text(encoding="utf-8")), execute=True)
+                report = evaluate(self.minimal_catalog(), execute=True)
 
         self.assertEqual("completed", report["status"])
 

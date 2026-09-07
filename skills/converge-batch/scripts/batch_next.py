@@ -16,12 +16,14 @@ from run_contract import action, legacy_action
 
 def next_action(state):
     status = state["status"]
-    if status in {"blocked", "complete"}:
-        task_id = state["plan"]["plan_id"]
-        return (
-            action("block", task_id=task_id, reason=state["blocked_reason"])
-            if status == "blocked" else action("complete", task_id=task_id)
-        )
+    if status in {"blocked", "stopped"}:
+        for batch in state["batches"]:
+            if batch.get("worker_status") == "working":
+                return action("query", task_id=batch.get("task_id", batch["batch_id"]), worker_ref=batch["worker_ref"])
+        return action("block", task_id=state["plan"]["plan_id"],
+                      reason=state["blocked_reason"] if status == "blocked" else "plan is stopped")
+    if status == "complete":
+        return action("complete", task_id=state["plan"]["plan_id"])
 
     current = state["current_batch"]
     if current is None:

@@ -143,7 +143,8 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         },
     }
     return {
-        "schema_version": 10, "run_id": run_id, "repo_id": str(workspace),
+        "schema_version": 10, "run_id": run_id,
+        "repo_id": _git(workspace, "rev-parse", "--path-format=absolute", "--git-common-dir"),
         "task_key": task_key, "writer_id": writer_id, "revision": 0,
         "workspace": str(workspace),
         "baseline": {"commit": baseline, "diff_fingerprint": source["diff_fingerprint"]},

@@ -25,7 +25,7 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state
+from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state, validate_host_sync
 from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
@@ -136,8 +136,8 @@ def renew_locked_leases(paths):
         replace_record(path, record)
 
 
-def validate_candidate(candidate, arguments):
-    validate_state(candidate, arguments)
+def validate_candidate(candidate, arguments, *, check_workspace=True):
+    validate_state(candidate, arguments, check_workspace=check_workspace)
     if candidate["run_id"] != arguments.run_id or candidate["writer_id"] != arguments.writer_id:
         raise ValueError("candidate owner does not match")
     if candidate["repo_id"] != arguments.repo_id or candidate["task_key"] != arguments.task_key:
@@ -245,22 +245,32 @@ def validate_transition(previous, candidate):
         raise ValueError("runtime_binding is immutable once workers are enabled")
     old_sync = previous["host_sync"]
     new_sync = candidate["host_sync"]
+    validate_host_sync(new_sync)
     old_report = previous["ledger"].get("report_history")
     new_report = candidate["ledger"].get("report_history")
     report_changed = new_report != old_report
-    if new_sync["mode"] != old_sync["mode"]:
-        raise ValueError("host_sync.mode is immutable")
+    downgrading = new_sync["mode"] != old_sync["mode"]
+    if downgrading:
+        if old_sync["mode"] != "native" or new_sync["mode"] != "text" \
+                or "fallback" not in new_sync:
+            raise ValueError("host_sync mode may only downgrade native to text with fallback evidence")
+        for field in set(previous) | set(candidate):
+            if field not in {"revision", "host_sync"} \
+                    and candidate.get(field) != previous.get(field):
+                raise ValueError("host_sync fallback must be a fallback-only transition")
+    elif new_sync.get("fallback") != old_sync.get("fallback"):
+        raise ValueError("host_sync fallback evidence is immutable")
     acknowledgement_changed = (
         new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]
     )
-    if acknowledgement_changed and new_sync["evidence_level"] != "host_observed":
+    if not downgrading and acknowledgement_changed and new_sync["evidence_level"] != "host_observed":
         raise ValueError("native plan acknowledgement must be host-observed")
-    if not acknowledgement_changed and new_sync["evidence_level"] != old_sync["evidence_level"]:
+    if not downgrading and not acknowledgement_changed and new_sync["evidence_level"] != old_sync["evidence_level"]:
         raise ValueError("host_sync evidence may only change with acknowledgement")
-    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"] \
+    if not downgrading and acknowledgement_changed \
             and new_sync["acknowledged_fingerprint"] != plan_projection_fingerprint(candidate):
         raise ValueError("host_sync acknowledgement must match the current projection")
-    if new_sync["acknowledged_fingerprint"] != old_sync["acknowledged_fingerprint"]:
+    if not downgrading and acknowledgement_changed:
         for field in set(previous) | set(candidate):
             if field not in {"revision", "host_sync"} \
                     and candidate.get(field) != previous.get(field):
@@ -288,6 +298,8 @@ def validate_transition(previous, candidate):
     if blocked_cleanup:
         if candidate["status"] != "blocked":
             raise ValueError("blocked status is immutable")
+        if report_changed:
+            return  # The report-only checks above preserve the blocked execution state.
         for field in set(previous) | set(candidate):
             if field not in {"revision", "workers", "worker_tree_receipt"} \
                     and candidate.get(field) != previous.get(field):
@@ -359,6 +371,14 @@ def validate_transition(previous, candidate):
     rechecks = [
         request for request in added_requests if request["phase"] in {"re_review", "closure"}
     ]
+    if previous["execution_control"]["routing"]["full_closure_required"] and not any(
+        request["phase"] == "closure"
+        for round_value in old_rounds for request in round_value["requests"]
+    ):
+        # The first full-scope audit is initial work, not the repair recheck.
+        initial_closure = next((item for item in rechecks if item["phase"] == "closure"), None)
+        if initial_closure is not None:
+            rechecks.remove(initial_closure)
     integrations = [request for request in added_requests if request["axis"] == "integration"]
     if len(rechecks) > 1 or len(integrations) > 1:
         raise ValueError("review transition may consume each finite budget only once")
@@ -472,6 +492,10 @@ def validate_transition(previous, candidate):
         new_ledger.get("key_changes", []),
         "ledger.key_changes",
     )
+    old_tdd_trace = old_ledger.get("tdd_trace")
+    new_tdd_trace = new_ledger.get("tdd_trace")
+    if old_tdd_trace is not None and new_tdd_trace != old_tdd_trace:
+        raise ValueError("ledger.tdd_trace is immutable once recorded")
     validate_acceptance_transition(
         old_ledger["acceptance"],
         new_ledger["acceptance"],
@@ -509,7 +533,8 @@ def write(arguments):
             if managed_path.exists():
                 stored = json.loads(managed_path.read_text(encoding="utf-8"))
                 current = upgrade_state(stored)
-                validate_candidate(current, arguments)
+                # The stored revision describes the workspace before this transition.
+                validate_candidate(current, arguments, check_workspace=False)
                 current_revision = current["revision"]
             if current_revision != arguments.expected_revision:
                 raise ValueError("expected revision does not match current state")
@@ -620,29 +645,29 @@ def append_runner_records(arguments, field, records):
 
 
 def append_runner_record(arguments, field, record):
-    if field == "runner_launches":
-        return append_runner_records(arguments, field, [record])
     arguments.strict_evidence = True
+    # Results record an already-started effect; only a new dispatch needs fresh source.
+    check_workspace = field != "runner_results"
     managed_path = state_path(
         managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     if not managed_path.is_file():
         raise ValueError("runner append requires an existing managed state")
     current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
-    validate_candidate(current, arguments)
+    validate_candidate(current, arguments, check_workspace=check_workspace)
     with active_lease(
         current, arguments.lease_root, arguments.run_id, arguments.writer_id
     ) as (paths, lease_records):
         with lock_record(managed_path):
             current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
-            validate_candidate(current, arguments)
+            validate_candidate(current, arguments, check_workspace=check_workspace)
             if current["revision"] != arguments.expected_revision:
                 raise ValueError("expected revision does not match current state")
             _validate_runner_record(current, field, record)
             candidate = copy.deepcopy(current)
             candidate["revision"] += 1
             candidate["ledger"].setdefault(field, []).append(record)
-            validate_candidate(candidate, arguments)
+            validate_candidate(candidate, arguments, check_workspace=check_workspace)
             validate_transition(current, candidate)
             write_private(managed_path, candidate)
             try:

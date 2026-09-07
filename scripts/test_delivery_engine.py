@@ -134,12 +134,27 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual("custom-tdd-v1", result["engine"])
         self.assertEqual("custom-tdd-v1", result["binding"]["stage_providers"]["tdd"]["id"])
 
-    def test_bundled_adapter_identifies_the_supported_pdlc_release(self):
+    def test_bundled_adapter_identifies_the_supported_pdlc_release_and_closures(self):
         manifest = json.loads(engine_module.PROVIDER_MANIFEST.read_text(encoding="utf-8"))
 
         self.assertEqual(2, manifest["schema_version"])
-        self.assertEqual("1.6.0", manifest["provider"]["version"])
+        self.assertEqual("compatible-pdlc-v1", manifest["provider"]["version"])
         self.assertEqual("workflow", manifest["provider"]["role"])
+        self.assertEqual(
+            {
+                "feature": ["name: pdlc-feature", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "TDD", "测试", "评审"],
+                "fix": ["name: pdlc-fix", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "复现", "修复", "测试", "评审"],
+                "refactor": ["name: pdlc-refactor", "name: pdlc-tdd", "name: pdlc-implement", "name: pdlc-review", "重构", "行为不变", "测试", "评审"],
+            },
+            {
+                kind: contract["required_terms"]
+                for kind, contract in manifest["task_contracts"].items()
+            },
+        )
+        self.assertTrue(all(
+            "source_fingerprint" not in contract
+            for contract in manifest["task_contracts"].values()
+        ))
 
     def test_bundled_registry_uses_one_provider_schema_for_every_adapter(self):
         manifests = engine_module.load_provider_registry()
@@ -197,7 +212,10 @@ class DeliveryEngineTest(unittest.TestCase):
         for skill in REQUIRED:
             file = root / (skill if installed else f"skills/{skill}") / "SKILL.md"
             file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text("ok\n", encoding="utf-8")
+            file.write_text(
+                f"---\nname: {skill}\n---\nTDD 测试 评审 复现 修复 重构 行为不变\n",
+                encoding="utf-8",
+            )
         common = ["pdlc-tdd/SKILL.md", "pdlc-implement/SKILL.md", "pdlc-review/SKILL.md"]
         task_contracts = {}
         for kind in ("feature", "fix", "refactor"):
@@ -255,6 +273,17 @@ class DeliveryEngineTest(unittest.TestCase):
         )
         return root
 
+    def bundled_compatible_pdlc_root(self, directory):
+        root = Path(directory) / "compatible-pdlc"
+        for skill in REQUIRED:
+            path = root / "skills" / skill / "SKILL.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"---\nname: {skill}\n---\nTDD 测试 评审 复现 修复 重构 行为不变\n",
+                encoding="utf-8",
+            )
+        return root
+
     def tdd_root(self, directory, name, content):
         root = Path(directory) / "tdd"
         path = root / name / "SKILL.md"
@@ -262,14 +291,10 @@ class DeliveryEngineTest(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return root, path
 
-    def select_with_trusted_adapter(self, root, provider):
-        fingerprint = next(
-            item[2] for item in engine_module.adapted_provider_contracts() if item[0] == provider
+    def select_with_compatible_adapter(self, root):
+        return engine_module.selection(
+            "auto", str(Path(root) / "missing-pdlc"), [root], "feature"
         )
-        with patch.object(engine_module, "file_fingerprint", return_value=fingerprint):
-            return engine_module.selection(
-                "auto", str(Path(root) / "missing-pdlc"), [root], "feature"
-            )
 
     def test_auto_uses_pdlc_when_capability_is_complete(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -357,9 +382,9 @@ class DeliveryEngineTest(unittest.TestCase):
             root, path = self.tdd_root(
                 directory,
                 "test-driven-development",
-                "Write the test first. Follow red-green-refactor.",
+                "---\nname: test-driven-development\n---\nWrite the test first. Follow red-green-refactor.",
             )
-            payload = self.select_with_trusted_adapter(root, "superpowers-tdd-v1")
+            payload = self.select_with_compatible_adapter(root)
 
         self.assertEqual("superpowers-tdd-v1", payload["engine"])
         self.assertEqual(str(path.resolve()), payload["tdd_skill_path"])
@@ -373,14 +398,14 @@ class DeliveryEngineTest(unittest.TestCase):
             root, _ = self.tdd_root(
                 directory,
                 "test-driven-development",
-                "Write the test first. Follow red-green-refactor.",
+                "---\nname: test-driven-development\n---\nWrite the test first. Follow red-green-refactor.",
             )
             self.tdd_root(
                 directory,
                 "tdd",
-                "Use vertical slices through public APIs.",
+                "---\nname: tdd\n---\nUse vertical slices. Write a test first through red-green.",
             )
-            payload = self.select_with_trusted_adapter(root, "superpowers-tdd-v1")
+            payload = self.select_with_compatible_adapter(root)
 
         self.assertEqual("superpowers-tdd-v1", payload["engine"])
 
@@ -389,12 +414,50 @@ class DeliveryEngineTest(unittest.TestCase):
             root, path = self.tdd_root(
                 directory,
                 "tdd",
-                "Use vertical slices through public APIs.",
+                "---\nname: tdd\n---\nUse vertical slices. Write a test first through red-green.",
             )
-            payload = self.select_with_trusted_adapter(root, "mattpocock-tdd-v1")
+            payload = self.select_with_compatible_adapter(root)
 
         self.assertEqual("mattpocock-tdd-v1", payload["engine"])
         self.assertEqual(str(path.resolve()), payload["tdd_skill_path"])
+
+    def test_adapted_tdd_provider_accepts_a_compatible_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.tdd_root(
+                directory,
+                "test-driven-development",
+                "---\nname: test-driven-development\n---\nWrite the test first. Follow red-green-refactor.",
+            )
+            initial = self.select_with_compatible_adapter(root)
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\nUpdated guidance for test isolation.\n",
+                encoding="utf-8",
+            )
+            upgraded = self.select_with_compatible_adapter(root)
+
+        self.assertEqual("superpowers-tdd-v1", initial["engine"])
+        self.assertEqual("superpowers-tdd-v1", upgraded["engine"])
+
+    def test_frozen_adapted_tdd_provider_blocks_after_an_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.tdd_root(
+                directory,
+                "test-driven-development",
+                "---\nname: test-driven-development\n---\nWrite the test first. Follow red-green-refactor.",
+            )
+            initial = self.select_with_compatible_adapter(root)
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\nUpdated guidance for test isolation.\n",
+                encoding="utf-8",
+            )
+            result = self.run_engine(
+                "--previous-engine", "superpowers-tdd-v1",
+                "--previous-tdd-skill", str(path),
+                "--previous-tdd-fingerprint", initial["tdd_skill_fingerprint"],
+            )
+
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("blocked", json.loads(result.stdout)["status"])
 
     def test_auto_rejects_a_false_superpowers_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -506,6 +569,22 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("pdlc-v1", json.loads(result.stdout)["engine"])
 
+    def test_bundled_adapter_accepts_a_compatible_pdlc_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.bundled_compatible_pdlc_root(directory)
+            initial = self.run_engine("--pdlc-root", str(root))
+            pdlc_tdd = root / "skills/pdlc-tdd/SKILL.md"
+            pdlc_tdd.write_text(
+                pdlc_tdd.read_text(encoding="utf-8") + "升级后的新增测试指导\n",
+                encoding="utf-8",
+            )
+            upgraded = self.run_engine("--pdlc-root", str(root))
+
+        self.assertEqual(0, initial.returncode, initial.stderr)
+        self.assertEqual("pdlc-v1", json.loads(initial.stdout)["engine"])
+        self.assertEqual(0, upgraded.returncode, upgraded.stderr)
+        self.assertEqual("pdlc-v1", json.loads(upgraded.stdout)["engine"])
+
     def test_explicit_pdlc_blocks_when_capability_is_absent(self):
         result = self.run_engine("--mode", "pdlc")
 
@@ -610,10 +689,14 @@ class DeliveryEngineTest(unittest.TestCase):
 
     def test_transitive_dependency_change_blocks_a_frozen_pdlc_provider(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = self.pdlc_root(directory)
+            root = self.bundled_compatible_pdlc_root(directory)
             initial = self.run_engine("--pdlc-root", str(root), "--kind", "feature")
             payload = json.loads(initial.stdout)
-            (root / "skills/pdlc-tdd/SKILL.md").write_text("changed\n", encoding="utf-8")
+            pdlc_tdd = root / "skills/pdlc-tdd/SKILL.md"
+            pdlc_tdd.write_text(
+                pdlc_tdd.read_text(encoding="utf-8") + "升级后的新增测试指导\n",
+                encoding="utf-8",
+            )
             result = self.run_engine(
                 "--kind", "feature",
                 "--previous-engine", "pdlc-v1",
@@ -652,7 +735,7 @@ class DeliveryEngineTest(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         payload = json.loads(result.stdout)
         self.assertEqual("incompatible", payload["code"])
-        self.assertIn("adapter manifest", payload["reason"])
+        self.assertIn("required interface terms", payload["reason"])
 
     def test_invalid_manifest_returns_structured_block_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:

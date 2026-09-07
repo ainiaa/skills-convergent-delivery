@@ -10,7 +10,38 @@
 - `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run。控制器解析冻结 entrypoint，并显式调用对应 `$pdlc-feature|fix|refactor` 完整执行；Provider Binding 或 `pdlc-run` 不算调用，禁止 native 混入。入口不可解析或激活即 `blocked_environment`；PDLC 证据返回 Converge 后再收口，不得拆解其内部阶段。复杂计划可含多个业务切片级 Provider Run。
 - Plan Contract v6 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。Git 汇总和范围审计始终使用计划冻结的 Source Receipt v2 baseline，而不是变化中的 `HEAD`。
 
-Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。简单 `inline` 不创建宿主计划项，只以简短 commentary 显示当前动作；持久任务只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。宿主无原生计划能力时降级为文本，不阻塞业务动作。
+Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。未要求分步展示的简单 `inline` 不创建宿主计划项；普通同会话计划从已冻结任务及完成证据派生宿主步骤状态，不为显示额外创建持久 run。持久任务 active/complete 路径只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。
+
+`block` 始终停止业务，不转回 `sync-plan`。运行时没有终态原生同步动作：控制器在终态报告前读取阻塞投影，并以文字报告阻塞原因，不等待、写入确认、重试或恢复执行。若宿主在同一控制器中实际提供原生计划工具，只有取得该次调用回执后才能额外声明已展示；没有工具或回执时，该原生展示保持未覆盖。阻塞投影将当前项设为 pending，保留冻结步骤名称和已完成项；只支持 pending/in_progress/completed 的宿主也不会继续显示当前项正在执行。
+
+### 分步可见交付
+
+用户明确要求逐步或分步执行时，控制器先核对当前可调用工具（如 `update_plan`，以实际工具名为准），不能按宿主名称猜测、把“没有调用”当成“没有工具”，或沿用旧会话的能力结论。原生计划面板、计划文件和 commentary 文字汇报是三种不同产物。
+
+- 有原生工具：第一次修改前创建步骤清单，开始和完成时同步实际状态，并核对对应调用是否成功。每个开始和完成边界都必须有一次成功的原生计划调用：完成 commentary 后先将当前项更新为 completed，下一步开始 commentary 之后立即调用并将其更新为 in_progress；不得只在初始建表或最终收口时批量更新，且下一步工具必须等待该开始同步成功。阻塞终态遵守上文 `block` 约束。普通同会话计划也必须同步，不能因为没有持久 run 而跳过。输出投影 JSON 不算调用；调用返回失败、未知或缺失回执时，不得声称面板已同步。持久路径遵守上文 `sync-plan` 约束。
+- 工具缺失、能力未知或调用失败：第一次修改前说明具体情况，以及“以下为文字清单，不是原生计划面板”；逐项列出已完成、进行中、待执行或阻塞。调用失败后可明确降级继续已授权业务，不为显示重试形成循环。已有 native 持久状态时，先按 [host_sync 降级契约](state-schema.md) 写入单向 text 转换，再请求下一动作，不能只改文字而留下待同步状态。此后保留文字降级标签，不能在最终回执中改称原生显示已修复。用户把原生面板本身作为验收时，该项保持未覆盖，Skill 不能凭空补出宿主工具。
+
+一次只推进当前可执行步骤，不把多步结果留到最终回复才一起公布：
+
+- 先展示既有计划的步骤清单和当前步骤；以计划中的可验收任务为单位，不把每次读文件、工具调用或 Provider 内部阶段拆成新任务。
+- 开始一步前，在用户可见的独立的 commentary 消息中说明步骤编号、目标和修改范围；折叠工具输出不算开始消息。
+- 结束一步后，在另一条独立的 commentary 消息中展示实际改动、已执行验证及结果、遗留问题，再更新“已完成 / 进行中 / 待执行 / 阻塞”的进度视图。结束消息不得与下一步的开始合并；尚在运行、验证失败或未覆盖的检查不得写成已通过。
+- 展示必须在折叠工具输出和内部推理之外，不新增可写台账，也不把冻结 Plan 的 `pending` 定义当作执行状态修改。
+- 已授权且无阻塞时自动进入下一步；只有用户要求每步确认或遇到既有决策门禁才暂停。恢复时从实际状态和证据继续，不为补展示重做已完成的修改或验证。
+
+例如，先单独报告：`第 1 步完成：已修复退出后的残留写入；回归检查通过；无遗留。进度：1 已完成，2 待执行，3 待执行。` 再单独报告：`开始第 2 步：校验评测报告完整性，范围为比较器及其测试。` 验证失败时改报实际失败和阻塞原因，不进入依赖该结果的步骤。没有原生计划面板不豁免这两条文字消息。
+
+依据：[HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) 的可检查步骤和规则单一来源；采用阶段结果展示，不引入额外控制循环或状态。行为验收：两步修复中，第 1 步结果必须先于第 2 步修改可见；无宿主计划工具时仍有文本进度；失败、需确认和恢复路径不得误推进或重做。简单未要求分步的任务保持原路径。
+
+离线回归使用 [分步轨迹场景](../evals/step-visibility.json) 和 `python3 scripts/step_trace_eval.py --input <trace.json>`（从 Skill 根目录执行）。输入按观测顺序列出 `start/edit/verify/report`，以 `steps` 冻结步骤顺序、`completed_before` 表示恢复前已有证据的完成前缀；v2 的开始和结果事件除 `visible=true` 外，还必须由评估者在核对用户可见消息后填入非空且互不重复的 `message_ref`，用于证明它们没有合并为同一条消息。`verify.result` 必须来自实际验证。输入格式见场景中的 `trace`，不得直接把计划或模型自述转换成观测。检查器拒绝结果未展示便开始下一步、复用同一可见消息引用、最后一次修改之后缺少通过验证、以及恢复重做。缺少完整轨迹返回 `uncovered`；正确停止也可使轨迹判定 `pass`，这不表示任务完成。
+
+每个 `start/report` 的 `plan` 观测记录 `capability=available|unavailable|unknown`、`result=success|failed|unknown|not_called`、实际调用的 `receipt_ref`（无回执为 null）及在该展示点前是否已说明降级的 `fallback_disclosed`。首次有工具未调用、文字降级未告知均失败；轨迹中已观测到 failed/unknown 调用且告知降级后，后续允许 available + not_called，保留告知标注，无需重复调用。没有持久 text 约束时，实际恢复成功同步后再次按原生规则检查。任何调用缺少回执引用或旧轨迹没有 plan 观测均为 `uncovered`。字段必须从当前工具清单、对应调用结果和用户可见消息核对，不能由模型补填成功。
+
+成功调用还需观测 `plan.projection=[{step, status}, ...]`：将该调用实际提交的完整计划条目对应到 `trace.steps` 的标识和顺序，status 使用 pending/in_progress/completed，不得从预期事件反推补填。开始对应当前项 in_progress，完成对应 completed，阻塞对应 pending；阻塞原因在独立的终态文字消息中说明，投影步骤名称保持冻结值。前项保持 completed，后项保持 pending；完成调用不得预先启动下一项。`receipt_ref` 必须唯一定位一次调用（必要时包含会话标识）；同一 `receipt_ref` 不得覆盖两个步骤边界。缺少投影的旧轨迹为 uncovered，投影矛盾、回执复用或与事件状态不符为 fail。
+
+已有持久 text 降级时，可在首个 `start/report.plan` 观测附上 managed state 中原样读取的 `fallback`（沿用 host_sync 的 reason/evidence_ref/disclosure_ref，不另建状态）。检查器复用同一字段校验；工具重连或轨迹恢复后仍允许 available + not_called，后续不可改写降级证据或切回 native，且持续要求已告知降级。没有该证据的普通轨迹仍须调用当前可用工具，不能仅凭 completed_before 推断已降级。
+
+该工具检查事件顺序、独立文字消息引用和同步/降级标注，不证明消息引用真实、阶段说明充分或原生 UI 实际渲染；`fixture` 是合成场景，真实观测标注也仅为 `evaluator_attested`。v1 仅为旧轨迹兼容，不能通过独立文字消息验收，结果一律为 `uncovered`；新验收必须使用 v2。`display_mode` 区分 native/text/mixed/unknown，`native_ui_status` 和 `release_status` 始终为 `uncovered`。输出绑定输入指纹，不保存原始对话、不执行事件、不推进状态；真实宿主多样本验收仍须满足 `converge-eval` 的独立证据契约。
 
 一个执行段必须有一个清晰结果，并在结束时产生至少一项可观察活动：工具调用、状态更新、diff、测试输出或 worker receipt。不要在一个模型生成步骤中同时准备完整需求、设计、失败测试和实现补丁。
 
@@ -20,11 +51,21 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 这不是针对恶意篡改本地文件、宿主或调用链的安全承诺。不为恶意篡改额外引入签名服务、后台守护、平行日志或第二状态；当前范围内优先让正常控制路径不能因模型自述而放行。若未来需要对抗恶意来源，先由宿主提供可验证 provenance，再单独设计和授权。
 
+writer lease 的同身份 acquire 重试不续租，只返回两份已持有租约中最早的真实到期时间。任一租约已过期时返回 blocked_*_expired；原 owner 可显式 renew，或在确认旧执行停止后显式 takeover。task lease 获取失败不能删除此前已持有的 workspace lease；本次新获取的 workspace lease 仍按原有回滚规则释放。
+
+acquire 的幂等判断和 move 的来源/目标检查均核对 kind、repo、workspace、task、run、writer 完整归属；复用 run/writer 但错填工作区或任务不算同一租约。renew 在固定顺序持有两份文件锁并核对完整归属后才续租，身份错误不能先更新其中一份。move 身份错误不删除来源租约，也不创建目标租约。
+
+release 按固定顺序持有两份租约的文件锁，核对各自 kind 与完整 repo/workspace/task/run/writer 归属，再查正式状态、验证清场并删除。身份不匹配返回 blocked_owner，两份既有租约保持原样；不得用错填的 task key 跳过原任务的清场屏障。原身份释放仍支持租约已过期及重复清理，但正式状态存在时仍必须满足终态与清场要求。
+
 ## 1.2 显式自治交付
 
-用户明确要求闭环执行时，`autonomy_begin.py` 先创建对应运行模式的不可变 Controller Snapshot，再在内存中冻结并 arm Schema v11，取得 writer lease 后一次写入唯一 active run；创建失败必须释放刚取得的 lease，并确认唯一成功回执 `{"status":"released"}`，否则输出 lease cleanup 诊断，不能留下 v10/v11 之间的活跃状态窗口。没有该 active run，Hook 必须视为普通任务，不能假定安装 Skill 就会续跑。`autonomy_gate.py` 只读该状态并返回一个 Runtime Action；它不会执行模型文本、推进业务状态或以 DONE 字样放行。Codex Stop Hook 只在 active run 且取得 `session_id` 时用 `codex queue` 将这个唯一 action 投递回同一 task，并以 state path/stage/action 的私有回执保证元数据 revision 不会重新投递同一动作。投递失败、缺少 session 或重复 Stop 无进展时不重投，而是确定性写为 `blocked/no_progress` 并释放 lease。Claude Code 2.1.246+ Stop Hook 直接返回带同一 action 的 `decision:block`，由宿主继续当前会话，不能从 Hook 另起 `--resume` 进程。控制器执行后再以新状态重新裁决，不能把完整流程塞回下一段 prompt；native 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主上限。active run 未到 `complete|blocked` 时，控制器不得输出 final。安装必须显式使用 `bash install.sh --target <codex|claude> --autonomy`，可用 `--autonomy-uninstall` 精确撤销；未通过本机预检的宿主仍走普通模式。无进展、无效状态、多个 active run 或权限边界必须成为有证据的 `blocked`，不能无限重试。详见 [自治 Stop Hook 适配](runtime-adapters.md)。
+用户明确要求闭环执行时，`autonomy_begin.py` 先创建对应运行模式的不可变 Controller Snapshot，再在内存中冻结并 arm Schema v11，取得 writer lease 后一次写入唯一 active run；创建失败必须释放刚取得的 lease，并确认唯一成功回执 `{"status":"released"}`，否则输出 lease cleanup 诊断，不能留下 v10/v11 之间的活跃状态窗口。没有该 active run，Hook 必须视为普通任务，不能假定安装 Skill 就会续跑。`autonomy_gate.py` 只读该状态并返回一个 Runtime Action；它不会执行模型文本、推进业务状态或以 DONE 字样放行。Codex Stop Hook 只在 active run 且取得 `session_id` 时用 `codex queue` 将这个唯一 action 投递回同一 task，并以 state path/source/stage/action 的私有回执保证元数据 revision 不会重新投递同一动作。投递失败、缺少 session 或重复 Stop 无进展时不重投，而是确定性写为 `blocked/no_progress` 并释放 lease。Claude Code 2.1.246+ Stop Hook 直接返回带同一 action 的 `decision:block`，由宿主继续当前会话，不能从 Hook 另起 `--resume` 进程；它与 Codex 共享无进展回执，重复动作先持久化 blocked/no_progress 并清场，再允许停止。控制器执行后再以新状态重新裁决，不能把完整流程塞回下一段 prompt；native 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主上限。active run 未到 `complete|blocked` 时，控制器不得输出 final。安装必须显式使用 `bash install.sh --target <codex|claude> --autonomy`，可用 `--autonomy-uninstall` 精确撤销；未通过本机预检的宿主仍走普通模式。无进展、无效状态、多个 active run 或权限边界必须成为有证据的 `blocked`，不能无限重试。详见 [自治 Stop Hook 适配](runtime-adapters.md)。
 
 需要独立服务时，`autonomy_begin.py --runtime service` 必须同时带冻结的 `--task-profile-json`、implementer runner、JSON `verification_argv` 与不同的 JSON `audit_argv`；service 仅接受 low-risk route、高风险必须保留独立 review，且当前只接受 LaunchAgent 已知的默认 state/lease roots，避免后台服务失联。语义风险由冻结画像和 `--risk-flag` 显式声明并与路径风险合并。service 先写动作 intent/running，再在外部 runner 启动前写入冻结 `runner_launches`，收到回执后写入匹配的 `runner_results`；模型回执只可形成 observed。独立 verifier 通过后，controller 以 verifier 的 source receipt 原子推进阶段并 committed；最终阶段还必须由独立 audit 在同一源码上通过，才归档旧验收、记录当前 pass audit 并 complete；失败 verifier 与 audit 都必须以 fail check 保存 receipt。模型只改冻结工作区，绝不写 managed state。任何可写状态的 service 异常必须尽力持久化为 `blocked`，且终态仅在 lease 返回 `released` 后才算清场；已识别但无效、非对象或不可解析的 managed state 必须输出诊断，但不得阻止同一 state root 中健康 run 继续执行；仅有这类诊断而无 active state 时成功退出，避免 LaunchAgent 无限重启。直接指定无效 state 必须返回手工恢复诊断，直接指定有效的 Hook state 必须拒绝且不得改写其 state 或释放 lease，且指定 state path 必须与 state root 的规范路径相同。恢复遇到 running 结果一律视为未知并 block，不会为“再试一次”重放外部模型调用。
+
+service 在记录 runner result、observation 或 blocked 状态时采集当前 Source Receipt；源码变化只追加空的 review round，历史审查保留，不把采集动作当作验证通过。扫描和恢复仅对 active 且末次动作为 running/observed 的状态允许旧工作区快照，其他结构、范围、风险和租约校验不放宽；running 记录未知后阻塞，observed 重新执行冻结 verifier，均不重放模型动作。
+
+正式任务的 lease release 统一核对每条 runner launch 的结果契约与指纹。缺少结果或结果为 unknown 时无法确认外部进程已清场，必须保留租约并报告手工恢复；不得猜测 PID、重放动作或将 blocked 等同于清场完成。确定退出的 completed/failed/timed_out/output_exceeded 结果才通过 runner 清场检查。租约过期不会自动允许第二个 writer，仍须显式 takeover；接管前必须人工确认旧执行已停止。native service 通过模型 JSON 返回的 `tdd_trace` 收集候选证据，见 [TDD 提供者](tdd-providers.md)；最终验证必须重跑候选后才写 complete。
 
 service 只执行 `execute-inline` 或带 `phase` 的 `verify`。其他宿主 controller action 必须由同会话控制器处理；service 遇到它们立即停止，绝不降级为普通模型阶段，并写为 `blocked/no_progress`。
 
@@ -86,7 +127,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 ### 风险复核循环
 
-低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；repair fingerprint 必须与 repair budget 的 1→0 同步，`re_review|closure` 请求必须与 re-review budget 的 1→0 同步。重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、绑定请求和剩余预算写入 Single State v10，不能只留在提示词中。
+低风险由主执行者自检；普通任务由一个 fresh reviewer 接收两个有序单轴请求，先 spec、后 quality；高风险使用一个 blind reviewer并保持相同顺序。finding 按根因合并，最多一次修复和一次定向复核；repair fingerprint 必须与 repair budget 的 1→0 同步，普通 `re_review|closure` 请求必须与 re-review budget 的 1→0 同步。全量收口的首次 closure 是初审，不扣复核额度；其修复后的最终 closure 扣一次，不能重置耗尽预算。重复 finding 或无客观进展即停止并阻塞，不重新开放式扫描。路由、评估次数、Review v3 源码轮次、绑定请求和剩余预算写入 Single State v10，不能只留在提示词中。
 
 ### 全局集成审查循环
 
@@ -95,6 +136,8 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 ## 6. 执行结束与清场屏障
 
 对 Plan Contract 运行 completion audit，再对最后生产 diff 运行新鲜验证。审计为 `PARTIAL`、`NOT_DONE`、`CHANGED` 或存在 `scope_drift` 时，不得用“已完成”掩盖差异。
+
+所有运行时变更还须通过 [TDD/Impact Trace](tdd-providers.md#tddimpact-trace-v5)：它以一条改动入口和已知关联链绑定 observed 红绿 Evidence Receipt 与最终回归测试，不建立第二状态机。只有明确要求全量收口时，才升级为下述 Plan v6 矩阵。
 
 ### 6.1 全量收口矩阵
 

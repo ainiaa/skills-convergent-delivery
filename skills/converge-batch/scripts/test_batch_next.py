@@ -27,6 +27,14 @@ def state(batch_status, worker_ref=None, worker_status=None):
 
 
 class BatchNextTest(unittest.TestCase):
+    def test_blocked_and_stopped_plans_only_query_unfinished_cleanup(self):
+        for status in ("blocked", "stopped"):
+            value = state("running", "thread-1", "working")
+            value.update(status=status, blocked_reason="manual cleanup" if status == "blocked" else None)
+            self.assertEqual("query", batch_next.next_action(value)["action"])
+            value["batches"][0]["worker_status"] = "interrupted"
+            self.assertEqual("block", batch_next.next_action(value)["action"])
+
     def test_dispatches_only_a_pending_batch(self):
         self.assertEqual({"action": "dispatch", "task_id": "B1"}, batch_next.next_action(state("pending")))
 
@@ -52,7 +60,7 @@ class BatchNextTest(unittest.TestCase):
             batch_next.next_action(state("validating-receipt", "thread-1", "completed")),
         )
         for status in ("paused", "stopped"):
-            value = state("running", "thread-1")
+            value = state("running", "thread-1", "working")
             value["status"] = status
             self.assertEqual({"action": "query", "task_id": "B1", "worker_ref": "thread-1"}, batch_next.next_action(value))
         for status in ("blocked", "complete"):

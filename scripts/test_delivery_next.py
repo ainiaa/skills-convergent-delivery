@@ -1,8 +1,11 @@
 import copy
+import atexit
 import hashlib
 import json
 import os
 import shlex
+import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import tempfile
@@ -18,12 +21,13 @@ from delivery_next import (
     validate_closure_gate, validate_closure_plan, validate_state,
 )
 from delivery_state import validate_transition
-from evidence_contract import run_evidence, workspace_source
+from evidence_contract import run_evidence, workspace_source, closure_graph_request
 from role_result import review_result, result_from_output
 from runner_contract import bind_role_result, fingerprint as runner_fingerprint, freeze_launch
 from run_contract import action
 from runtime_adapter import _bind, cleanup_receipt as runtime_cleanup_receipt, negotiate
 from task_profile import freeze_routing
+from tdd_impact_guard import graph_query
 from provider_contract import canonical_fingerprint
 from worker_profile import fingerprint as worker_profile_fingerprint
 
@@ -31,12 +35,131 @@ from worker_profile import fingerprint as worker_profile_fingerprint
 LEASE_SCRIPT = Path(__file__).with_name("delivery_lease.py")
 SCRIPT = Path(__file__).with_name("delivery_next.py")
 ROOT = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).resolve().parent.parent)).resolve()
+COVERAGE_ARGV = ['pytest', '--cov=src', '--cov-fail-under=85']
+
+
+def configure_coverage_fixture(workspace):
+    """State-contract fixtures declare a project policy; runner tests execute coverage separately."""
+    path = Path(workspace) / 'docs/00_standards/test-commands.yml'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('coverage: ' + shlex.join(COVERAGE_ARGV) + '\n')
+
+
+def graph_index(workspace, paths):
+    """CodeGraph 1.0.1 SQLite protocol fixture, deliberately independent of production helpers."""
+    directory = workspace / '.codegraph'
+    directory.mkdir(exist_ok=True)
+    with closing(sqlite3.connect(directory / 'codegraph.db')) as db, db:
+        db.execute('CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, content_hash TEXT, errors TEXT)')
+        db.execute('DELETE FROM files')
+        db.executemany('INSERT INTO files VALUES (?, ?, NULL)',
+                       [(path, hashlib.sha256((workspace / path).read_bytes()).hexdigest()) for path in paths])
+    with (workspace / '.git/info/exclude').open('a') as ignored:
+        ignored.write('\n.codegraph/\n')
+
+
+_workspace_fixture = tempfile.TemporaryDirectory()
+atexit.register(_workspace_fixture.cleanup)
+WORKSPACE = Path(_workspace_fixture.name).resolve()
+configure_coverage_fixture(WORKSPACE)
+subprocess.run(['git', 'init', '-q', str(WORKSPACE)], check=True)
+subprocess.run(['git', '-C', str(WORKSPACE), 'add', '.'], check=True)
+subprocess.run(['git', '-C', str(WORKSPACE), '-c', 'user.name=Test', '-c',
+                'user.email=test@example.invalid', 'commit', '-qm', 'fixture'], check=True)
 HEAD = subprocess.run(
-    ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True,
+    ["git", "-C", str(WORKSPACE), "rev-parse", "HEAD"], check=True,
     capture_output=True, text=True,
 ).stdout.strip()
-SOURCE = workspace_source(ROOT, HEAD)
-EVIDENCE = run_evidence(ROOT, HEAD, [sys.executable, "-c", "pass"])
+SOURCE = workspace_source(WORKSPACE, HEAD)
+EVIDENCE = run_evidence(WORKSPACE, HEAD, [sys.executable, "-c", "pass"])
+
+
+def trace_receipt(source, argv, exit_code=0):
+    receipt = copy.deepcopy(EVIDENCE)
+    receipt.update(argv=argv, command=shlex.join(argv), exit_code=exit_code, source=source)
+    if len(argv) >= 3 and argv[:2] == ["codegraph", "explore"] and argv[2].startswith(("CodeGraph impact chains: ", "CodeGraph closure chains: ")):
+        # Schema fixture only; actual index/symbol/edge observations are exercised in evidence tests.
+        receipt["graph_check"] = {"query": argv[2], "index_fingerprint": "a" * 64,
+                                  "bindings_fingerprint": "b" * 64}
+    if argv[0] == 'pytest':
+        receipt['test_check'] = {'executed': 1, 'passed': int(exit_code == 0),
+                                 'failed': int(exit_code == 1), 'errors': 0,
+                                 'skipped': 0, 'xfailed': 0, 'xpassed': 0}
+    if argv[0] == 'mvn':
+        receipt['mutation_check'] = {'selector': argv[-1].split('=', 1)[1], 'generated': 2, 'killed': 2, 'tests': 2}
+    receipt["receipt_fingerprint"] = runner_fingerprint({
+        key: value for key, value in receipt.items() if key != "receipt_fingerprint"
+    })
+    return receipt
+
+
+def tdd_trace(source, risks=(), criterion="Requested behavior"):
+    previous_source = copy.deepcopy(source)
+    previous_source["diff_fingerprint"] = "0" * 64
+    previous_source["source_fingerprint"] = runner_fingerprint({
+        key: value for key, value in previous_source.items() if key != "source_fingerprint"
+    })
+    tests = []
+    for identifier, scenario in (
+        ("requested-normal", "normal"),
+        ("requested-boundary", "boundary"),
+        ("requested-error", "error"),
+    ):
+        tests.append({
+            "id": identifier, "selector": identifier, "kind": "unit", "scenarios": [scenario],
+            "red": {
+                "receipt": trace_receipt(
+                    previous_source, ["pytest", "-k", identifier], 1,
+                ),
+                "failure_class": "assertion",
+            },
+            "green": {"receipts": [
+                trace_receipt(source, ["pytest", "-k", identifier]),
+                trace_receipt(source, ["pytest", "-k", identifier]),
+            ]},
+            "mutation": None,
+        })
+    impacts = [{
+        "id": "requested-entrypoint", "relation": "entrypoint",
+        "test_ids": [test["id"] for test in tests],
+    }]
+    if risks:
+        for test in tests:
+            test["green"]["receipts"].append(
+                trace_receipt(source, ["pytest", "-k", test["selector"]])
+            )
+        primary = tests[0]
+        primary["mutation"] = {
+            "tool": "mvn",
+            "receipt": trace_receipt(source, ["mvn", "org.pitest:pitest-maven:mutationCoverage", "-DtargetTests=" + primary["selector"]]),
+        }
+    if {"public-api", "cross-service", "release-contract"} & set(risks):
+        primary = tests[0]
+        primary.update(kind="contract", scenarios=["normal", "contract"])
+        impacts.append({
+            "id": "requested-contract", "relation": "external-contract",
+            "test_ids": [primary["id"]],
+        })
+    if {"money", "payment"} & set(risks):
+        primary = tests[0]
+        primary.update(kind="integration", scenarios=["normal", "property"])
+    return {
+        "schema_version": 5, "source": source, "risk_flags": list(risks),
+        "acceptance": [{"criterion": criterion, "tests": tests}],
+        "impacts": impacts,
+        "graph": {
+            "status": "covered",
+            "receipt": trace_receipt(source, ["codegraph", "explore", graph_query(impacts)]),
+            "impacts_fingerprint": hashlib.sha256(json.dumps(
+                impacts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest(),
+            "query": graph_query(impacts),
+        },
+        "coverage": {
+            "status": "covered", "threshold": 85,
+            "receipt": trace_receipt(source, COVERAGE_ARGV),
+        },
+    }
 
 
 def task_profile(**overrides):
@@ -55,9 +178,8 @@ def routing(profile=None, allowed_paths=None):
 
 
 def graph_receipt(source_fingerprint, routing_value, plan, tool="codegraph", query=None):
-    evidence = run_evidence(ROOT, HEAD, [
-        tool, "explore", query or closure_graph_query(routing_value, plan),
-    ])
+    # State schema fixture; real structured reads are exercised by test_evidence_contract.
+    evidence = trace_receipt(SOURCE, [tool, 'explore', query or closure_graph_query(routing_value, plan)])
     evidence["receipt_fingerprint"] = runner_fingerprint({
         key: item for key, item in evidence.items() if key != "receipt_fingerprint"
     })
@@ -91,6 +213,7 @@ def closure_plan(requirement_fingerprint=None):
     projection = [{key: chain[key] for key in ("id", "entrypoints", "callers")}]
     receipt = {
         "schema_version": 1, "tool": "codegraph", "source_fingerprint": SOURCE["source_fingerprint"],
+        "evidence": trace_receipt(SOURCE, ['codegraph', 'explore', closure_graph_request([chain])]),
         "chains_fingerprint": hashlib.sha256(json.dumps(
             projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest(),
@@ -104,7 +227,7 @@ def closure_plan(requirement_fingerprint=None):
             "task_id": "closure", "task_kind": "vertical_slice", "outcomes": ["close scope"],
             "goal": "close scope", "owned_paths": ["."], "depends_on": [],
             "steps": ["verify closure"], "acceptance": ["Requested behavior"],
-            "verification": ["python3 scripts/test_delivery_next.py"], "execution": "current",
+            "verification": [EVIDENCE["command"]], "execution": "current",
             "status": "pending", "provider_binding": provider_binding,
             "provider_run": {"scope": "task", "recursive_planning": False},
         }],
@@ -139,7 +262,7 @@ def state(**overrides):
     value = {
         "schema_version": 10,
         "run_id": "run-20260818-120000",
-        "workspace": str(ROOT),
+        "workspace": str(WORKSPACE),
         "baseline": {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
         "scope_fingerprint": "scope-123",
         "source_fingerprint": SOURCE["source_fingerprint"],
@@ -168,6 +291,7 @@ def state(**overrides):
         "ledger": {
             "completed_rounds": 0,
             "repair_fingerprints": [],
+            "tdd_trace": tdd_trace(SOURCE),
             "checks": [],
             "acceptance": [
                 {
@@ -297,6 +421,9 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
         scope="cross-service" if integration_required else "cross-module",
         risk_flags=["cross-service"] if integration_required else [],
     ), ["."], request_text=closure_request_text, full_closure_required=full_closure)
+    payload["ledger"]["tdd_trace"] = tdd_trace(
+        SOURCE, payload["execution_control"]["routing"]["profile"]["risk_flags"],
+    )
     review = payload["execution_control"]["review"]
     review["integration_budget_remaining"] = integration_budget
     base = {
@@ -394,6 +521,17 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_full_closure_cannot_complete_without_structured_graph_observation(self):
+        payload = reviewed_complete_state(full_closure=True)
+        graph = payload['execution_control']['closure']['graph_receipt']
+        graph['evidence'].pop('graph_check', None)
+        graph['evidence']['receipt_fingerprint'] = runner_fingerprint({
+            key: value for key, value in graph['evidence'].items() if key != 'receipt_fingerprint'})
+        graph['receipt_fingerprint'] = runner_fingerprint({
+            key: value for key, value in graph.items() if key != 'receipt_fingerprint'})
+        with self.assertRaisesRegex(ValueError, 'graph|Graph'):
+            validate_state(payload, SimpleNamespace())
+
     def test_default_validator_import_does_not_load_autonomy_contract(self):
         result = subprocess.run(
             [
@@ -573,6 +711,14 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
+    def test_full_closure_rejects_unexecuted_required_verification(self):
+        payload = reviewed_complete_state(full_closure=True)
+        closure = payload["execution_control"]["closure"]
+        for plan in (closure["plan"], closure["audit"]["plan"]):
+            plan["tasks"][0]["verification"] = [shlex.join([sys.executable, "-c", "raise SystemExit(1)"])]
+        with self.assertRaisesRegex(ValueError, "passing closure plan audit"):
+            validate_state(payload, SimpleNamespace())
+
     def test_full_closure_requires_a_plan_v6(self):
         payload = reviewed_complete_state(full_closure=True)
         del payload["execution_control"]["closure"]["plan"]
@@ -605,6 +751,8 @@ class DeliveryNextTest(unittest.TestCase):
         ).encode()).hexdigest()
         receipt = plan["closure_matrix"]["graph_receipt"]
         receipt["source_fingerprint"] = source["source_fingerprint"]
+        receipt['evidence'] = trace_receipt(source, ['codegraph', 'explore',
+            closure_graph_request(plan['closure_matrix']['chains'])])
         receipt["receipt_fingerprint"] = runner_fingerprint({
             key: value for key, value in receipt.items() if key != "receipt_fingerprint"
         })
@@ -617,6 +765,8 @@ class DeliveryNextTest(unittest.TestCase):
         plan = payload["execution_control"]["closure"]["plan"]
         plan["closure_matrix"]["chains"][0]["entrypoints"] = ["scripts/test_delivery_next.py"]
         receipt = plan["closure_matrix"]["graph_receipt"]
+        receipt['evidence'] = trace_receipt(SOURCE, ['codegraph', 'explore',
+            closure_graph_request(plan['closure_matrix']['chains'])])
         receipt["chains_fingerprint"] = hashlib.sha256(json.dumps([{
             "id": "main", "entrypoints": ["scripts/test_delivery_next.py"], "callers": ["external"],
         }], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -678,6 +828,7 @@ class DeliveryNextTest(unittest.TestCase):
         graph = closure["graph_receipt"]
         evidence = graph["evidence"]
         evidence["argv"] = ["codegraph", "--version"]
+        evidence.pop('graph_check')
         evidence["command"] = shlex.join(evidence["argv"])
         evidence["receipt_fingerprint"] = runner_fingerprint({
             key: value for key, value in evidence.items() if key != "receipt_fingerprint"
@@ -793,7 +944,8 @@ class DeliveryNextTest(unittest.TestCase):
             subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
             subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
             (workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
-            subprocess.run(["git", "-C", str(workspace), "add", "seed.txt"], check=True)
+            configure_coverage_fixture(workspace)
+            subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
             subprocess.run(["git", "-C", str(workspace), "commit", "-q", "-m", "seed"], check=True)
             baseline = subprocess.run(
                 ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True,
@@ -822,6 +974,7 @@ class DeliveryNextTest(unittest.TestCase):
             payload["ledger"]["acceptance"][0]["evidence_receipts"] = [
                 run_evidence(workspace, baseline, [sys.executable, "-c", "pass"])
             ]
+            payload["ledger"]["tdd_trace"] = tdd_trace(receipt)
             self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
 
             profile = {
@@ -1116,6 +1269,52 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("complete\n", result.stdout)
         self.assertEqual(0, result.returncode)
+
+    def test_native_complete_state_requires_a_passing_tdd_trace(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"].pop("tdd_trace")
+
+        with self.assertRaisesRegex(ValueError, "passing TDD trace"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_complete_cli_rejects_a_real_receipt_from_the_wrong_coverage_command(self):
+        payload = state(status='complete', current_stage='verify-final')
+        payload['ledger']['tdd_trace']['coverage']['receipt'] = run_evidence(
+            WORKSPACE, HEAD, [sys.executable, '-c', 'pass'],
+        )
+        result = self.current(payload)
+        self.assertEqual(2, result.returncode)
+        self.assertIn('coverage receipt does not match', result.stderr)
+
+    def test_native_complete_state_requires_trace_acceptance_to_match_the_state(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["acceptance"][0]["criterion"] = "Different behavior"
+
+        with self.assertRaisesRegex(ValueError, "acceptance"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_rejects_duplicate_acceptance_criteria(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["acceptance"].append(copy.deepcopy(payload["ledger"]["acceptance"][0]))
+
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_requires_coverage_evidence(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["coverage"] = {
+            "status": "uncovered", "reason": "coverage command is unavailable",
+        }
+
+        with self.assertRaisesRegex(ValueError, "passing TDD trace"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_native_complete_state_rejects_an_oversized_tdd_trace(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["ledger"]["tdd_trace"]["acceptance"][0]["tests"][0]["selector"] = "x" * (256 * 1024)
+
+        with self.assertRaisesRegex(ValueError, "size limit"):
+            validate_state(payload, SimpleNamespace())
 
     def test_应该_当终态缺少阶段必需字段时_拒绝恢复(self):
         for status in ("complete", "blocked"):

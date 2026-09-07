@@ -29,6 +29,13 @@ def profile(**overrides):
 
 
 class TaskProfileTest(unittest.TestCase):
+    def test_absolute_roots_cannot_expand_routing_to_the_workspace(self):
+        for path in ("/", "///", "\\", "\\\\", "/tmp", "../outside"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                freeze_routing(profile(), [path])
+        for path, expected in ((".", "."), ("./", "."), ("src/", "src"), ("src\\unit", "src/unit")):
+            self.assertEqual([expected], freeze_routing(profile(), [path])["allowed_paths"])
+
     def test_local_known_task_stays_inline(self):
         self.assertEqual(classify(profile())["route"], "inline")
 

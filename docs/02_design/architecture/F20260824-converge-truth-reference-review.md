@@ -2,6 +2,32 @@
 
 本轮按受影响能力先从 Skills.sh/GitHub 发现近期实现，再核对原始 Skill、脚本与测试。安装量只用于发现；最终只采用能关闭已复现失败、且有本地行为测试的最小机制。
 
+## 2026-09-06 验收绑定与 Trace 生命周期修复
+
+沿用本会话在 Skills.sh 分类/排行榜发现并核对的原始材料，只读取相关机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) | 采用单一真源与可独立运行的验收组件；不增加新控制器或状态文件 | `test_batch_state.py` 以正式 delegate 为真源，拒绝不一致的 criterion/evidence，以及缺失、失败、过期证据 |
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) | 采用实际控制器加外部边界替身；不安装整套 Node harness 或复制自动提交步骤 | `test_tdd_impact_guard.py` 实际重跑产生不同输出后完成普通 native；`test_autonomy_service.py` 将畸形模型 Trace 经真实写入路径转为 blocked，并验证租约清理 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用输入类型变异和状态不变量；用现有 unittest，不新增 Hypothesis | Trace 的数组/枚举/嵌套 Source Receipt 遍历非法 JSON 类型，全部产生 ValueError；正式 Trace 不可覆盖，保留候选不能 complete |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) 及 scripts/run_eval.py | 保持冻结 control 与真实行为评测边界；不增加 evaluator 代理或替代宿主事件 | 本地先红后绿；冻结 evaluator preflight 的宿主 bridge 缺口继续为 uncovered，本仓 coverage 配置缺口也不计为通过 |
+
+复用既有 candidate 字段、delegate ledger 和共享校验入口，无 schema 升级、代理或循环。普通 native 将原本的过程 Trace 保存为候选，最终一次固化，不增加执行步骤；控制器继续拥有写权与清场责任。旧正式 Trace 保持不可变，不增加自动迁移或覆盖路径。
+
+## 2026-09-05 Batch 与覆盖率验收修复
+
+本次沿用同一会话审查中已核对的 Skills.sh 发现结果及原始材料，不重复加载完整第三方流程。
+
+| 参考 | 采用 / 不采用 | 原因与行为验证 |
+|---|---|---|
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用参数组合与状态不变量；不新增测试依赖 | `test_native_tdd_policy.py` 覆盖重复、顺序、禁用与有效边界；`test_batch_state.py` 验证合法后续修改不损坏历史 checkpoint |
+| [LangChain calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用验收器误拒绝/误放行反例；不增加模型数量 | 两批真实 Git 提交应完成；未提交的验证内容不能冒充旧提交，提交也不能增加未验证文件 |
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) | 采用测量可被关闭的检查；不增加定时控制器和记忆文件 | collect-only、cov-reset、Vitest 未启用和 Gradle 排除检查任务都不能返回 ready |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) / [WalkingLabs harness-creator](https://github.com/walkinglabs/learn-harness-engineering/blob/main/skills/harness-creator/SKILL.md) | 保留旧 Controller Snapshot，区分结构测试与真实行为；不复制额外状态文件或结构评分门禁 | 原状态、Source Receipt 与 Git checkpoint 足够承载修复；本地回归不冒充缺失 bridge 的正式 Eval |
+
+实现取舍：直接读取不可变 Git tree/blob 与对应配置，复用现有 delegate、TDD 和 Evidence 校验；不切换工作区、不新增 checkout/状态 schema/代理。暂停或后续批次修改不会使历史回执失效；当前回执与最终验收仍检查源码一致性。
+
 | 参考 | 采用 | 原因与本地行为测试 |
 |---|---|---|
 | [OpenAI evaluate-skill](https://github.com/openai/plugins/blob/main/plugins/plugin-eval/skills/evaluate-skill/SKILL.md) | control/candidate 同场景差分、冻结判定面 | `test_eval_kernel.py` 验证 Git 双侧来源、同一 judge 和差分统计 |
@@ -31,3 +57,124 @@
 | [gstack domain skills](https://github.com/garrytan/gstack/blob/main/docs/domain-skills.md) | 不采用运行时沉淀/自动晋升；仅保留“隔离 → 重复有效使用 → 显式全局晋升”的未来研究约束 | Converge 的当前任务不需要跨项目记忆；新增 JSONL 和记忆状态会违反 Single State，未来若授权记忆须先通过隔离和 prompt-injection 审计 |
 
 最终收敛路径：先按拓扑而非风险决定 `inline/planned/delegated/batch`；风险独立提高验证与 review；无真实宿主桥接时只手工交接；触发评测必须运行真实 selector；自进化只在用户显式授权的离线实验中进行。新增机制必须先证明减少真实失败或总 token，不能只增加协议。
+
+
+## 2026-09-05 自治落盘、最终验收与派发身份修复
+
+复用本会话 Skills.sh 发现结果并核对以下原始材料，只采纳本轮边界需要的机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [planning-with-files plan-doctor](https://github.com/othmanadi/planning-with-files/blob/master/skills/planning-with-files/scripts/plan-doctor.sh) | 采用真实恢复探测与规范路径；不复制 Markdown 状态或其诊断总是成功退出的策略，现有机器状态负责恢复 | `test_autonomy_service.py` 在真实源码变化和状态写入后恢复 running/observed，未知执行不重放 |
+| [Superpowers systematic-debugging](https://github.com/obra/superpowers/blob/master/skills/systematic-debugging/SKILL.md) | 采用跨组件边界追踪；不新增调试控制器 | 自治测试只模拟外部 runner，结果、异常、verifier 失败均走真实落盘与租约释放 |
+| [LangChain calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用误放行/误拒绝反例；不增加模型数量或独立状态 | `test_batch_state.py` 拒绝文本、缺失、失败与篡改回执，接受当前源码真实验证 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用不变量思路，以现有 unittest 参数化有限状态；不引入新测试依赖 | 最终 criterion 从初始化冻结；`test_capsule_dispatch.py` 覆盖所有缓存状态的 workspace 绑定与同路径复用 |
+| [Context compression evaluation](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/context-compression/references/evaluation-framework.md) | 采用恢复后核对范围与下一动作；不增加压缩日志或第二份真源 | 恢复依然检查状态身份、冻结约束与租约，只有未完成动作允许旧源码快照 |
+
+复用 Source Receipt、Evidence Receipt、review rounds 和现有 receipt 文件。控制器保有写权、验证与终态清场责任；失败和未知结果有限停止。本轮没有新增代理、依赖、循环或状态文件。真实宿主 Eval bridge 和本仓原生覆盖率配置仍缺失，本地回归不冒充正式 Eval 或覆盖率通过。
+
+## 2026-09-06 Runner 清场、服务 Trace 和报告终态修复
+
+复用本会话 Skills.sh 分类与排行榜发现结果，核对原始 Skill 和脚本后按以下机制取舍；安装量不作为正确性证据。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) 及 references/writing-tests.md | 采用真实控制器配脚本模型、外部边界替身；不安装完整 Node harness，不复制自动提交行为 | service 从无正式 Trace 起步，真实 unittest RED/GREEN、实际状态写入及最终 rerun；observed 恢复不重放模型。图谱与 coverage transport 明确为替身，不算真实宿主评测 |
+| [Agent harness](https://github.com/borghei/claude-skills/blob/main/engineering/agent-harness/SKILL.md) 及 scenario_runner.py / eval_diff.py | 采用逐场景结构断言与关键失败门禁；不新增 transcript、ledger 或成本采样层，也不把缺失指标默认成零 | 缺失、畸形、超限、验收项不符、过期和 coverage 失败均不能固化正式 Trace；真实成本保持 unavailable |
+| [Anthropic skill-creator run_eval](https://github.com/anthropics/skills/blob/main/skills/skill-creator/scripts/run_eval.py) | 采用真实工具事件区分触发与文字宣称；不将 Claude 事件代理当作 Codex bridge | 本地 service 组装回归与正式 Eval 分开，冻结 evaluator 预检无 bridge 仍返回 uncovered |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用有限状态不变量，复用 unittest，不新增 Hypothesis | 实际存活进程加 running 恢复不能释放租约；缺失/unknown/篡改结果拒绝清场，确定退出失败可释放；active 状态两种最终输出格式均拒绝 |
+
+唯一新增状态字段是同一 ledger 内的可恢复候选 Trace，正式 Trace 仍是完成证据真源。复用现有 Trace 校验及 rerun、runner 契约和租约屏障；不新增 PID 注册表、自动接管、代理或循环。简单非服务任务不增加执行步骤。控制器持有候选写权、完成判定及清场责任；未知执行停止并保留租约，手工确认旧执行停止后才可显式接管。
+
+## 2026-09-06 覆盖率误放行与 Batch 终态修复
+
+沿用本会话 Skills.sh 分类和排行榜发现结果，核对原始 Skill、测试说明和脚本；只采用本轮三个已复现问题需要的机制。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Eval Architect audit](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/audit.md) / [calibration](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/calibration.md) | 采用植入错误检查误放行、合法路径检查误拒绝；不复制 audit_checks.py 的文件名/文本启发式作为行为门禁 | `test_native_tdd_policy.py` 拒绝 help/version、注释、非生效位置和禁用配置，保留有效 JaCoCo 比率规则与不足阈值边界 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用状态不变量与有限组合；沿用 unittest，不新增依赖 | `test_batch_state.py` 实际写入 blocked/stopped 的清场结果，拒绝复活、换 worker 和改写验收；真实命令回执支持最终验收逐项通过 |
+| [Vigiles writing-tests](https://github.com/zernie/vigiles/blob/main/skills/test-harness/references/writing-tests.md) | 采用真实控制器执行与外部边界替身；不引入另一套 harness | `test_batch_next.py` 验证终态只查询待清场 worker，全部结束后仍 block；持久写入测试核对最终磁盘状态 |
+| [Anthropic run_eval](https://github.com/anthropics/skills/blob/main/skills/skill-creator/scripts/run_eval.py) | 保留真实工具事件与文字宣称的区分；不模拟正式宿主 bridge | 冻结 evaluator 预检仍返回 uncovered；本地回归与 Maven help 实验不计为真实宿主 Eval 或覆盖率达标 |
+
+复用现有命令解析、worker_status、revision 和逐项 final_acceptance，不增加字段、代理、循环或执行步骤。控制器保有写权和清场责任；终态只允许结束既有 worker，不能借清场重启业务。静态构建配置识别有明确边界，不实现 Maven/Gradle 解释器，也不把 ready 当作实际采集证明。
+
+## 2026-09-06 目标解析与租约恢复修复
+
+复用本会话审查中核对的 Skills.sh 分类、排行榜和原始材料。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用不变量和有限状态组合；沿用 unittest，不增加生成器依赖 | 目标加注释或配对引号不降阈值；缺值/非法/重复目标不回退。过期 × owner × 终态 × 清场组合验证持久状态和历史 worker 来源 |
+| [Eval Architect audit](https://github.com/gohypergiant/agent-skills/blob/main/skills/accelint-eval-architect/references/audit.md) | 采用错误输入误放行与合法恢复误拒绝反例；不复制文本扫描作为行为证明 | 全部新增主回归先红后绿；过期重获不能假报 acquired，返回的有效期限必须来自真实磁盘记录 |
+| [Vigiles test-harness](https://github.com/zernie/vigiles/blob/main/skills/test-harness/SKILL.md) | 采用最低成本的真实脚本/落盘测试；不安装 Node harness 或调用模型 | lease CLI、Batch managed write 与 active attestation 走真实 helper；冻结正式 Eval 预检缺少 bridge 仍为 uncovered |
+| [Rstest performance-measurement](https://github.com/rstackjs/agent-skills/blob/main/skills/rstest-debugging/references/performance-measurement.md) | 暂不采用性能测量层，本轮验收是三项正确性修复 | 不新增计时字段或成本报告；本地回归耗时不解释为模型执行成本改善 |
+
+复用 target、run_id/writer_id、worker_owner_run_id 和既有 lease 文件。默认路径不增加动作；错误目标停止，过期租约要求显式恢复，Batch 终态接管只能延续清场。无新 schema、依赖、代理或第二套状态；不扩展完整 YAML 解释器。
+
+## 2026-09-06 租约释放、计划验收与 selector 清理修复
+
+沿用本会话全量审查的 Skills.sh 分类/排行榜发现及原始 Skill、脚本和测试核对结果，不以安装量判断机制正确性。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用取巧误放行和合理替代反例；不新增 verifier 服务或模型角色 | Plan CLI 使用真实执行回执：规定检查实际失败时无关成功回执不能放行；缺项和参数变化拒绝，等价引号和回执重排通过 |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/main/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用完整身份与状态不变量，复用 unittest 有限组合；不引入生成器依赖 | lease CLI 错填 task/workspace 或租约 repo/kind 不匹配时保留两份租约，第二个 writer 仍受阻；匹配的 complete/blocked/无正式状态支持重复释放 |
+| [Warp skill-doctor improvements](https://github.com/warpdotdev/common-skills/blob/main/.agents/skills/skill-doctor/references/skill-improvements.md) 与 scripts/test_collect_sessions.py | 采用先核实真实失败和归属、优先替换已有指导；本轮根因在代码，不扩写入口规则。不采用评分曲线、缺失证据默认分或扫描用户全部历史 | selector 真实派生子进程，成功/失败/超时返回后均不得继续写临时文件；保持正式 Eval uncovered，不用离线测试代替 |
+
+复用 ExitStack 文件锁、Evidence Receipt argv 和进程组清理函数；不增加 schema、持久状态、代理、依赖或默认步骤。release 校验与删除在同一组锁内完成，控制器仍拥有写权和清场责任；身份或验证缺口阻止放行，selector 超时/清理异常有限退出。进程组清理不覆盖主动脱组或外部服务。审计只解析/比较命令，不执行它们。本地回归和同上下文复核不替代独立盲审、真实宿主 Eval 或尚未配置的覆盖率门禁。
+
+
+## 2026-09-06：执行基线、租约身份与恢复指引修复
+
+再次核对 [Skills.sh 排行榜](https://skills.sh/trending) 后，按本轮受影响能力复用并核对原始来源。只修复已复现边界，不增加 worker、状态副本或循环。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [planning-with-files 的计划目录解析](https://github.com/OthmanAdi/planning-with-files/blob/master/skills/planning-with-files/scripts/resolve-plan-dir.sh) | 采用恢复前绑定精确身份、错误选择不回退；复用现有 checkpoint 和 Single baseline，不增加并行记录 | Batch 两批独立目录经真实 writer、报告及父层验收；错误前驱、脏工作区不得派发 |
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用同一公共入口验证正确、错误及旁路结果；不以 helper 文案或 mock 成功替代状态副作用 | 租约失败前后文件逐字一致；模拟宿主 JSON 噪声后保留有效 task id；报告下一步变化可见 |
+| [Gradle JacocoLimit](https://docs.gradle.org/current/javadoc/org/gradle/testing/jacoco/tasks/rules/JacocoLimit.html) | 采用 counter/value/minimum 同 limit 绑定及默认指标；不实现完整 Gradle DSL 或动态求值 | 比率、计数、相邻 limit、重复字段、setter 与 Kotlin 字面量；离线真实 Gradle 复核 66.7% 覆盖率不能被计数门槛放行 |
+| 本机 OpenAI skill-creator | 采用行为回归和渐进披露；不追加普遍审批或安装第三方依赖 | 根路径拒绝与相对路径兼容；沿用现有 7 个 Skill validator |
+
+决定权和写权仍属于当前 controller；执行基线从既有状态派生，恢复沿用 managed state。身份/基线不一致即失败，投递异常仍不重派。正式 Eval bridge 与仓库 coverage 配置缺失继续标为 uncovered，不用本轮候选给自己签发发布通过。
+
+## 2026-09-06：Batch 冻结契约与 JaCoCo 空执行修复
+
+复用本轮 Skills.sh 发现结果及原始实现核对，仅处理已复现的范围越界、漏跑验证和 JaCoCo SKIPPED 假通过。
+
+| 参考 | 采用 / 不采用及原因 | 对应行为测试 |
+|---|---|---|
+| [Google agents-cli-eval](https://github.com/google/agents-cli/blob/main/skills/google-agents-cli-eval/SKILL.md) / [run](https://github.com/google/agents-cli/blob/main/src/google/agents/cli/eval/cmd_run.py) | 采用“执行成功不等于评价通过”；不引入迭代优化、云依赖或默认 LLM judge。JaCoCo 需要本次非空检查结果，类数不是覆盖率百分比 | `test_jacoco_coverage_requires_an_executed_nonempty_check`；离线 Gradle 8.14 实际编译 1 个类，无 exec 时 exit 0 仍被 native/Trace 双门禁拒绝；真实 agent 采集后检查通过；66% < 85% 且 `failOnViolation=false` 时 stdout/stderr 中的违规仍阻止通过 |
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用真实最终状态、附带越界改动、漏证据与合法对照；不增加 verifier 角色 | Batch scheduler 从冻结 capsule 写入 revision 0→2，越界 checkpoint 在 revision 3 拒绝并保留 revision 2；分离批次范围允许使用累计 Source Receipt |
+| [Trail of Bits property-based-testing](https://github.com/trailofbits/skills/blob/master/plugins/property-based-testing/skills/property-based-testing/SKILL.md) | 采用有限边界组合，继续用 unittest；不引入新测试依赖 | 路径前缀边界、绝对路径与逃逸、命令错参、等价引号、JaCoCo 空类/缺数据/兄弟 report/多任务跳过 |
+| [JaCoCo CheckMojo](https://github.com/jacoco/jacoco/blob/master/jacoco-maven-plugin/src/org/jacoco/maven/CheckMojo.java) / [ReportTask](https://github.com/jacoco/jacoco/blob/master/org.jacoco.ant/src/org/jacoco/ant/ReportTask.java) | 采用真实加载、分析和检查结果输出；不读取旧 XML 报告冒充本次检查，不新增通用 report adapter 或第二份证据文件 | Evidence runner 的真实子进程输出协议测试；Gradle 正常/跳过的离线实验。Maven 为原始实现核对与输出协议回归，本机未执行完整 Maven JaCoCo 集成 |
+
+决定权、状态写权和清场责任仍在现有控制器。复用 Source Receipt、checkpoint、acceptance receipts 和进程超时；仅 JaCoCo Evidence 增加有界的检查摘要，普通任务不增加命令、文件或代理。未知输出保守拒绝，要求可识别 INFO/plain 输出后重跑，不自动采样重试。当前仓库原生 coverage 配置与正式 Eval 宿主桥接仍缺失；本地回归和临时 Java 实验不计为 Suite 覆盖率达标或正式 Eval。
+
+
+## 2026-09-06 五项执行证据缺陷修复
+
+沿用本会话 Skills.sh 发现记录，本轮重核原始 verifier/mutation Skill 及 PIT 官方实现。
+
+| 参考 | 采用 / 不采用 / 原因 | 对应行为测试 |
+|---|---|---|
+| [LangChain verifier-design](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/verifier-design.md) | 采用正确结果、投机绕过、缺损证据的成对验证；不引入 Harbor，已有 unittest 和 runner 足够 | 零测试、全跳过、输出参数冒充 selector、echo 冒充 mutation 被拒绝；真实 unittest 与正常协议结果仍通过 |
+| [Trail of Bits variant-analysis](https://github.com/trailofbits/skills/blob/master/plugins/variant-analysis/skills/variant-analysis/SKILL.md) | 采用同根因跨调用点检查；不增加代理或独立状态 | Plan 与 closure 同时拒绝仅哈希和没有 graph_check 的证据 |
+| [Trail of Bits mutation-testing](https://github.com/trailofbits/skills/blob/master/plugins/mutation-testing/skills/mutation-testing/SKILL.md) | 采用区分生成、执行、捕获、存活和超时；不照搬 mewt/muton，优先本项目 JVM 使用者的 PIT 接口 | 正数 KILLED 结果通过；零变异、存活、超时、运行错误、未覆盖、未执行、重复作用域全部拒绝 |
+| [PIT Maven](https://pitest.org/quickstart/maven/) 与 [MutationStatistics.java](https://github.com/hcoles/pitest/blob/master/pitest-entry/src/main/java/org/pitest/mutationtest/statistics/MutationStatistics.java) | 采用官方目标测试参数和实际输出语义；不把汇总 detected 当作全部 KILLED，额外核对状态计数；不安装依赖 | `test_pit_requires_a_scoped_nonempty_executed_campaign` 用真实子进程承载协议夹具；不声称已在真实 JVM 上跑 PIT |
+| Trail of Bits property-based-testing（上文已核实） | 采用有限非法类型/结果变体；不增加 Hypothesis | 异常 JSON 无原始 AttributeError；图查询超时后后代进程不能继续写文件 |
+
+复用现有 Evidence v2 的可选观察字段和唯一 runner，不增加代理、循环或运行时状态文件。图查询主命令和子查询共享显式超时；无法确认清场时抛出独立清场错误，不能降级为普通图不可用后签发成功回执。简单任务仅解析已有命令输出，图查询追加确定性验证；不重复 Provider 的实现流程。PIT 当前仅支持单个明确 scope 的完整成功 campaign；其他工具无适配即 uncovered，不伪造通用变异分数。正式宿主 Eval bridge 缺失保持 uncovered。
+
+
+## 2026-09-06：coverage、Python mutation 与确定性 Eval bridge
+
+| 来源与机制 | 采用 / 不采用及原因 | 对应行为验证 |
+|---|---|---|
+| [pytest-cov subprocess support](https://pytest-cov.readthedocs.io/en/latest/subprocess-support.html)、[coverage 子进程](https://coverage.readthedocs.io/en/latest/subprocess.html) | 采用 coverage subprocess patch，沿用完整 shell gate，避免重写 unittest 收集和忽略 CLI 子进程 | test_coverage_gate.py 执行完整 gate，实际生产覆盖率 >=85% |
+| [mutmut 原始实现](https://github.com/boxed/mutmut)、[官方用法](https://mutmut.readthedocs.io/en/latest/) | 采用固定 3.7.0 的实际运行与元数据；不复用增量缓存，不把 pytest 内部错误当作 kill。3.3.1 在 macOS fork 后设置进程名会崩溃，采用上游已修复版本，不添加本地绕过 | real_mutmut_campaigns 覆盖杀死、存活、失败与原目录不变 |
+| [LangChain eval calibration](https://github.com/langchain-ai/langchain-skills/blob/main/config/skills/eval-engineering/references/calibration.md) | 采用可知好坏样本校准与实际 harness；不使用模型自评分替代进程结果 | DeterministicBridgeTest 实际 control 失败/candidate 成功，反向回归及超时 |
+| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 采用新鲜命令及客观结果；不把新 bridge 的集成测试宣称为旧判定器已正式验收自身 | 冻结 snapshot、相同 control judge、非空 unittest 结果 |
+| [Stryker JS](https://stryker-mutator.io/docs/stryker-js/introduction/) | 不加入：本仓为 Python，保留现有 Java PIT 支持；有实际 JS 项目需求时再做对应适配与真实 smoke | 未知工具继续拒绝；PIT 现有回归保留 |
+
+决定：复用 Evidence runner 清理进程组；不增加 worker 角色、守护服务或自动修订循环。suite、judge 和源码身份由 Git/control Snapshot 冻结；每侧 fresh 临时目录，32 场景/600 秒总预算。简单任务不经过此可选模式。模型行为和宿主 lifecycle 仍须真实模型 bridge 与单独授权，不合并到确定性结果。

@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "suite": "converge-interaction",
+  "scope": "same_conversation",
+  "fixture": {
+    "path": "evals/interaction-fixtures/status-normalizer",
+    "baseline_files": ["status_normalizer.py", "test_status_normalizer.py"]
+  },
+  "scenarios": [
+    {
+      "id": "local-fix",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "修复 status_normalizer.py 对 None 输入的局部 bug。先复现并补测试，验证后结束。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+    },
+    {
+      "id": "review-checkpoint-closes-in-scope-finding",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression", "decisions": ["None normalizes to an empty string"]},
+      "turns": [{"prompt": "继续已授权的状态标准化修复。审查当前 diff，发现同范围的 None 契约问题后直接修复并验证。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+    },
+    {
+      "id": "explicit-review-only",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression", "decisions": []},
+      "turns": [{"prompt": "仅审查当前 status-normalizer diff，报告有证据的 finding，不要修改。", "authorized_write": false}],
+      "expected": {"skill": "converge-review", "action": "review", "writes": "forbidden", "question": "none", "completion": "findings_only", "scope": "not_applicable"}
+    },
+    {
+      "id": "out-of-scope-finding",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "继续修复 status-normalizer 的 None bug；如果发现支付模块问题，只记录影响和需要决定的事项。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "out_of_scope"}
+    },
+    {
+      "id": "known-decision-is-not-reasked",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["None normalizes to an empty string", "Do not add dependencies"]},
+      "turns": [
+        {"prompt": "已决定：None normalizes to an empty string，且不增加依赖。请记录这个约束。", "authorized_write": false},
+        {"prompt": "按已决定的兼容方案完成 status-normalizer 的 None 修复，不要重复询问该选择。", "authorized_write": true}
+      ],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+    },
+    {
+      "id": "irreversible-decision",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "实现当前功能；若需要删除生产数据或改变公开兼容性，停止并给出推荐。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "not_applicable"}
+    },
+    {
+      "id": "simple-inline",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "修正 status_normalizer.py 单文件的 None bug，补回归测试并验证。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+    },
+    {
+      "id": "complex-plan",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "为状态标准化接入跨服务改动先写一个有限、可验证的计划，不要实现。", "authorized_write": false}],
+      "expected": {"skill": "converge-plan", "action": "plan", "writes": "none", "question": "none", "completion": "not_complete", "scope": "not_applicable"}
+    }
+  ],
+  "smoke": {
+    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked"],
+    "minimum_fresh_runs": 3,
+    "receipt_schema_version": 1,
+    "unavailable_result": "uncovered"
+  }
+}

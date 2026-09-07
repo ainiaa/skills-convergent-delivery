@@ -6,6 +6,8 @@
 
 ## 先选用户状态
 
+最终报告只接受 `complete|blocked`；`active` 输入返回退出码 2，不生成 JSON 或文字完成回执。运行中的任务使用进度展示。Git 不可读时，complete 降级为 attention，blocked 仍保持 blocked。
+
 按以下优先级只选择一个状态：
 
 | 状态 | 使用条件 | 标题 |
@@ -46,7 +48,16 @@
 - “已验证范围”只能由结构化 `ledger.acceptance` 的 fresh/pass observed Evidence Receipt v2，以及未来同等级的结构化 check receipt 派生；当前无 receipt 的 pass check 明示为控制器记录且不计入。不得把 `handoff.last_verification` 自由文本渲染为“已验证”。
 - 独立只读检查由 `converge-review` 按自己的结果格式输出，不复用交付完成文案。
 - 同一任务再次检查时只报告相对上一份回执的变化：新增发现、已解决项、状态变化；没有变化时使用短回执明确“无新增变化”。`delivery_report.py` 返回 `next_report_history`，控制器必须用独立 revision 写入 ledger；不得与阶段推进、验收变更或计划确认混写。
+- 阻塞原因或下一步变化也属于新变化，必须参与报告去重并显示更新后的恢复指引。
 - JSON 回执的 `execution_metrics` 只汇总指纹校验的 runner 回执中明确给出的 `usage.total_tokens`；它证明回执内容与冻结 runner 契约一致，不冒充远端密码学签名。当前宿主未提供可校验用量时，token、工具调用和用户阻塞均标为“不可用”。不得由提示词长度、日志行数、等待次数或模型估算补造指标。
+
+## 证据范围
+
+- **确定性回归**：`bash scripts/check.sh` 或 `--full` 证明仓内固定脚本、契约和隔离进程场景通过；它不证明模型已按 Skill 执行，也不证明桌面宿主已触发或续跑任务。
+- **真实宿主 smoke**：只有在 fresh Codex 会话按冻结交互场景观察到实际选中、写入边界、提问次数和验证结果时，才能报告对应场景通过。未运行、无法观察或样本不足时为 `uncovered`。
+- **模型成本**：只报告宿主或 provider 可核验的 usage；没有该回执时为不可用。不得从本地命令耗时、提示词长度或模型自述推断节省成本。
+
+默认回执应分别写出这三类范围，不能把确定性回归通过称为真实宿主行为或模型收益通过。
 
 ## 需要用户决定时
 
@@ -84,3 +95,5 @@
 7. 是否用一行说明了交付轮数、已修问题数和待处理项？
 
 任一项不满足，重写回执；不得重新跑检查来凑报告内容。
+
+`blocked` 与 `complete` 均允许独立 revision 持久化 `next_report_history`。该写入只能改变 revision 和 ledger.report_history，不能混入原因、状态、验收或 worker 更新；blocked 清场仍沿用单独的 worker lifecycle 写入。

@@ -165,6 +165,10 @@ class MultiModelEvalTest(unittest.TestCase):
                 "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
                 "requested_model": launch["profile"]["effective"]["model"],
                 "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+                "attestation": {
+                    "model": {"status": "requested", "observed": None},
+                    "usage": {"status": "unavailable", "value": None},
+                },
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
@@ -187,6 +191,7 @@ class MultiModelEvalTest(unittest.TestCase):
         self.assertNotIn('"output"', json.dumps(report))
         self.assertIn("duration_ms", report["results"][0])
         self.assertEqual("available", report["results"][0]["role_result"]["status"])
+        self.assertEqual("requested", report["results"][0]["attestation"]["model"]["status"])
 
     def test_execute_mode_fails_when_the_model_cites_the_wrong_frozen_evidence(self):
         def plan(dispatch, prompt, **_kwargs):

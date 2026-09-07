@@ -12,6 +12,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from runtime_adapter import validate_cleanup_barrier
+from runner_contract import runner_results_complete
 
 
 DEFAULT_TTL_SECONDS = 7200
@@ -41,10 +42,22 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def lease_paths(root, repo, workspace, task_key):
-    base = Path(root).expanduser().resolve() / digest(repo)
+def lease_paths(root, repo, workspace, task_key, *, release_owner=None):
+    root = Path(root).expanduser().resolve()
+    base = root / digest(repo)
+    name = f"{digest(workspace)}.json"
+    workspace_path = root / "workspaces" / name
+    # Preserve existing leases while sharing one workspace lock across repository aliases.
+    existing = [path for path in [workspace_path, *root.glob(f"*/workspaces/{name}")] if path.exists()]
+    if len(existing) > 1 and release_owner is not None:
+        existing = [path for path in existing if same_owner(read_record(path), *release_owner)
+                    and read_record(path).get("repo_id") == repo]
+        if len(existing) != 1:
+            raise ValueError("cannot identify the legacy lease owned by this run")
+    if len(existing) > 1:
+        raise ValueError("multiple writer leases exist for this workspace; release the legacy owners first")
     return {
-        "workspace": base / "workspaces" / f"{digest(workspace)}.json",
+        "workspace": existing[0] if existing else workspace_path,
         "task": base / "tasks" / f"{digest(task_key)}.json",
     }
 
@@ -114,6 +127,12 @@ def same_owner(record, run_id, writer_id):
     return record.get("run_id") == run_id and record.get("writer_id") == writer_id
 
 
+def same_binding(record, expected):
+    return all(record.get(field) == expected.get(field) for field in (
+        "kind", "repo_id", "workspace", "task_key", "run_id", "writer_id",
+    ))
+
+
 def active_lease_attestation(paths, repo, workspace, task_key, run_id, writer_id):
     """Return a stable proof that both leases are currently owned and active."""
     expected = {
@@ -172,7 +191,7 @@ def acquire_one(path, record, *, takeover):
             return "acquired", record
 
         existing = read_record(path)
-        if same_owner(existing, record["run_id"], record["writer_id"]):
+        if same_binding(existing, record) and not is_expired(existing):
             return "already_acquired", existing
         if not is_expired(existing):
             return "active", existing
@@ -196,18 +215,21 @@ def payload(status, **values):
 
 
 def acquire(arguments, paths, repo, workspace):
+    if paths["workspace"].parent.parent != Path(arguments.root).expanduser().resolve():
+        payload("blocked_workspace", reason="resume the legacy owner with renew or release it before acquiring")
+        return 2
     run_id = arguments.run_id or f"run-{uuid.uuid4()}"
     writer_id = arguments.writer_id or f"writer-{uuid.uuid4()}"
     workspace_record = make_record(
         "workspace", repo, workspace, arguments.task_key, run_id, writer_id, arguments.ttl_seconds
     )
-    workspace_result, holder = acquire_one(
+    workspace_result, workspace_holder = acquire_one(
         paths["workspace"], workspace_record, takeover=arguments.takeover
     )
     if workspace_result in {"active", "expired"}:
         payload(
             f"blocked_workspace{('_expired' if workspace_result == 'expired' else '')}",
-            holder=holder,
+            holder=workspace_holder,
             recommended_action="use an independent git worktree or explicitly take over an expired lease",
         )
         return 2
@@ -217,7 +239,8 @@ def acquire(arguments, paths, repo, workspace):
     )
     task_result, holder = acquire_one(paths["task"], task_record, takeover=arguments.takeover)
     if task_result in {"active", "expired"}:
-        remove_if_owned(paths["workspace"], run_id, writer_id)
+        if workspace_result != "already_acquired":
+            remove_if_owned(paths["workspace"], run_id, writer_id)
         payload(
             f"blocked_task{('_expired' if task_result == 'expired' else '')}",
             holder=holder,
@@ -229,47 +252,65 @@ def acquire(arguments, paths, repo, workspace):
         "acquired",
         run_id=run_id,
         writer_id=writer_id,
-        lease_expires_at=task_record["lease_expires_at"],
+        lease_expires_at=min(
+            (workspace_holder, holder), key=lambda item: parse_timestamp(item["lease_expires_at"])
+        )["lease_expires_at"],
         state_root=str(Path(arguments.root).expanduser().resolve()),
     )
     return 0
 
 
 def renew(arguments, paths):
-    for path in paths.values():
-        with lock_record(path):
-            record = read_record(path)
-            if not same_owner(record, arguments.run_id, arguments.writer_id):
+    expected = {
+        "repo_id": arguments.repo, "workspace": arguments.workspace,
+        "task_key": arguments.task_key, "run_id": arguments.run_id, "writer_id": arguments.writer_id,
+    }
+    with ExitStack() as stack:
+        for path in sorted(paths.values(), key=str):
+            stack.enter_context(lock_record(path))
+        records = {kind: read_record(path) for kind, path in paths.items()}
+        for kind, record in records.items():
+            if not same_binding(record, {**expected, "kind": kind}):
                 payload("blocked_owner", holder=record)
                 return 2
+        for kind, record in records.items():
             timestamp = now()
             record["renewed_at"] = as_timestamp(timestamp)
             record["lease_expires_at"] = as_timestamp(
                 timestamp + timedelta(seconds=arguments.ttl_seconds)
             )
-            replace_record(path, record)
+            replace_record(paths[kind], record)
     payload("renewed", lease_expires_at=record["lease_expires_at"])
     return 0
 
 
 def release(arguments, paths):
-    for path in paths.values():
-        with lock_record(path):
+    expected = {
+        "repo_id": arguments.repo,
+        "workspace": arguments.workspace,
+        "task_key": arguments.task_key,
+        "run_id": arguments.run_id,
+        "writer_id": arguments.writer_id,
+    }
+    with ExitStack() as stack:
+        for path in sorted(paths.values(), key=str):
+            stack.enter_context(lock_record(path))
+        for kind, path in paths.items():
             if not path.exists():
                 continue
             record = read_record(path)
-            if not same_owner(record, arguments.run_id, arguments.writer_id):
+            if not same_binding(record, {**expected, "kind": kind}):
                 payload("blocked_owner", holder=record)
                 return 2
-    state = formal_state(arguments)
-    if state is not None:
-        try:
-            validate_cleanup_for_release(state, arguments)
-        except ValueError as error:
-            payload("blocked_cleanup", reason=str(error))
-            return 2
-    for path in paths.values():
-        remove_if_owned(path, arguments.run_id, arguments.writer_id)
+        state = formal_state(arguments)
+        if state is not None:
+            try:
+                validate_cleanup_for_release(state, arguments)
+            except ValueError as error:
+                payload("blocked_cleanup", reason=str(error))
+                return 2
+        for path in paths.values():
+            path.unlink(missing_ok=True)
     payload("released")
     return 0
 
@@ -296,6 +337,14 @@ def validate_cleanup_for_release(state, arguments):
         raise ValueError("formal state owner does not match the lease")
     if state.get("status") not in {"complete", "blocked"}:
         raise ValueError("formal state is not terminal")
+    ledger = state.get("ledger", {})
+    if not isinstance(ledger, dict):
+        raise ValueError("formal state ledger must be an object")
+    launches, results = ledger.get("runner_launches", []), ledger.get("runner_results", [])
+    runner_results_complete(launches, results)
+    terminated = {item["launch_fingerprint"] for item in results if item["status"] != "unknown"}
+    if any(item["launch_fingerprint"] not in terminated for item in launches):
+        raise ValueError("runner cleanup is unconfirmed; retain the lease for manual recovery")
     workers = state.get("workers", [])
     if workers:
         raise ValueError("worker lifecycle release requires a concrete host bridge")
@@ -311,6 +360,9 @@ def validate_cleanup_for_release(state, arguments):
 def move(arguments, paths, repo, workspace):
     """Move one active writer to a new worktree without leaving the old lease behind."""
     from_workspace = canonical_path(arguments.from_workspace)
+    if from_workspace != workspace and paths["workspace"].parent.parent != Path(arguments.root).expanduser().resolve():
+        payload("blocked_workspace", reason="release the legacy target owner before moving")
+        return 2
     old_paths = lease_paths(arguments.root, repo, from_workspace, arguments.task_key)
     records = {old_paths["workspace"], paths["workspace"], paths["task"]}
 
@@ -320,18 +372,19 @@ def move(arguments, paths, repo, workspace):
 
         old_workspace_record = read_record(old_paths["workspace"])
         task_record = read_record(paths["task"])
-        for record in (old_workspace_record, task_record):
-            if not same_owner(record, arguments.run_id, arguments.writer_id) or is_expired(record):
+        expected = {
+            "repo_id": repo, "workspace": from_workspace, "task_key": arguments.task_key,
+            "run_id": arguments.run_id, "writer_id": arguments.writer_id,
+        }
+        for kind, record in (("workspace", old_workspace_record), ("task", task_record)):
+            if not same_binding(record, {**expected, "kind": kind}) or is_expired(record):
                 payload("blocked_owner", holder=record)
                 return 2
 
         target_path = paths["workspace"]
         if target_path != old_paths["workspace"] and target_path.exists():
             target_record = read_record(target_path)
-            if (
-                not same_owner(target_record, arguments.run_id, arguments.writer_id)
-                or target_record.get("task_key") != arguments.task_key
-            ):
+            if not same_binding(target_record, {**expected, "kind": "workspace", "workspace": workspace}):
                 payload("blocked_workspace", holder=target_record)
                 return 2
             if is_expired(target_record):
@@ -393,7 +446,10 @@ def main():
         workspace = canonical_path(arguments.workspace)
         arguments.repo = repo
         arguments.workspace = workspace
-        paths = lease_paths(arguments.root, repo, workspace, arguments.task_key)
+        paths = lease_paths(
+            arguments.root, repo, workspace, arguments.task_key,
+            release_owner=(arguments.run_id, arguments.writer_id) if arguments.command == "release" else None,
+        )
         if arguments.command in {"renew", "release", "move"} and (
             not arguments.run_id or not arguments.writer_id
         ):

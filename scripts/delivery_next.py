@@ -51,6 +51,7 @@ NO_OPEN_ISSUES = {
     "", "0", "none", "no", "n/a", "无", "没有", "无需处理",
     "no remaining scoped findings",
 }
+MAX_TDD_TRACE_BYTES = 256 * 1024
 
 BLOCKED_CODES = {
     "decision",
@@ -96,6 +97,35 @@ def require_mapping(value, name):
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be an object")
     return value
+
+
+def validate_native_tdd_trace(value, source_receipt, risk_flags, acceptance_criteria, *, required, workspace, coverage_revision=None):
+    if value is None:
+        if required:
+            raise ValueError("native complete state requires a passing TDD trace")
+        return
+    if source_receipt is None:
+        raise ValueError("TDD trace requires a current source receipt")
+    try:
+        trace_size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("TDD trace must be JSON-serializable") from error
+    if trace_size > MAX_TDD_TRACE_BYTES:
+        raise ValueError("TDD trace exceeds the persisted size limit")
+    from tdd_impact_guard import validate as validate_tdd_trace
+
+    result = validate_tdd_trace(value)
+    if value["source"] != source_receipt:
+        raise ValueError("TDD trace source does not match the current state")
+    if set(value["risk_flags"]) != set(risk_flags):
+        raise ValueError("TDD trace risk flags do not match frozen routing")
+    if {item["criterion"] for item in value["acceptance"]} != set(acceptance_criteria):
+        raise ValueError("TDD trace acceptance does not match the current state")
+    if required and result["status"] != "pass":
+        raise ValueError("native complete state requires a passing TDD trace")
+    if required:
+        from native_tdd_policy import require_matching_coverage
+        require_matching_coverage(value['coverage'], workspace, revision=coverage_revision)
 
 
 def normalize_open_issues(value):
@@ -249,18 +279,9 @@ def validate_closure_plan(plan, routing, baseline, provider_binding):
 
 def closure_graph_query(routing, plan):
     """Build the only CodeGraph query accepted for a frozen closure gate."""
-    chains = [
-        {key: chain[key] for key in ("id", "entrypoints", "callers")}
-        for chain in plan["closure_matrix"]["chains"]
-    ]
-    frozen = {
-        "allowed_paths": routing["allowed_paths"],
-        "chains": chains,
-        "scope_fingerprint": routing["profile_fingerprint"],
-    }
-    return "Map callers, callees, and affected paths for this frozen closure: " + json.dumps(
-        frozen, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    from evidence_contract import closure_graph_request
+    return closure_graph_request(plan['closure_matrix']['chains'], allowed_paths=routing['allowed_paths'],
+                                 scope_fingerprint=routing['profile_fingerprint'])
 
 
 def validate_closure_gate(value, source_fingerprint, source_receipt, routing, baseline, provider_binding):
@@ -301,6 +322,8 @@ def validate_closure_gate(value, source_fingerprint, source_receipt, routing, ba
     if Path(argv[0]).name != graph["tool"] or argv[:2] != ["codegraph", "explore"] \
             or argv != ["codegraph", "explore", closure_graph_query(routing, value["plan"])]:
         raise ValueError("closure gate graph-tool query does not bind frozen scope and matrix")
+    from evidence_contract import require_graph_execution
+    require_graph_execution(graph['evidence'], closure_graph_query(routing, value['plan']))
     if graph["output_fingerprint"] != graph["evidence"]["stdout_fingerprint"]:
         raise ValueError("closure gate graph receipt does not bind its graph-tool output")
     if graph["receipt_fingerprint"] != runner_fingerprint({
@@ -445,10 +468,8 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     if routing["full_closure_required"]:
         if len(closure_history) > 2:
             raise ValueError("full closure review budget is exhausted")
-        if len(closure_history) == 2 and (
-                closure_history[0]["status"] != "findings" or closure_history[1]["status"] != "pass"
-        ):
-            raise ValueError("full closure review may only repair once before the final pass")
+        if len(closure_history) == 2 and closure_history[0]["status"] != "findings":
+            raise ValueError("full closure review may only repair once after initial findings")
     return routing, review
 
 
@@ -556,7 +577,31 @@ def validate_review_gate(routing, review, task_key, baseline_commit, source_fing
                 raise ValueError("review pass requires a completed reviewer result bound to its request")
 
 
-def validate_state(state, arguments):
+def validate_host_sync(host_sync):
+    host_sync = require_mapping(host_sync, "host_sync")
+    if set(host_sync) - {"fallback"} != {"mode", "acknowledged_fingerprint", "evidence_level"} \
+            or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
+        raise ValueError("host_sync fields are invalid")
+    if host_sync["evidence_level"] not in {"host_observed", "controller_attested"}:
+        raise ValueError("host_sync evidence_level is invalid")
+    acknowledged = host_sync["acknowledged_fingerprint"]
+    if acknowledged is not None:
+        require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
+    if host_sync["mode"] != "native" and acknowledged is not None:
+        raise ValueError("non-native host_sync cannot acknowledge a native projection")
+    if acknowledged is not None and host_sync["evidence_level"] != "host_observed":
+        raise ValueError("native plan acknowledgement must be host-observed")
+    if "fallback" in host_sync:
+        fallback = require_mapping(host_sync["fallback"], "host_sync.fallback")
+        if host_sync["mode"] != "text" or host_sync["evidence_level"] != "controller_attested" \
+                or set(fallback) != {"reason", "evidence_ref", "disclosure_ref"} \
+                or fallback["reason"] not in ("failed", "unknown", "unavailable"):
+            raise ValueError("host_sync fallback is invalid")
+        for field in ("evidence_ref", "disclosure_ref"):
+            require_string(fallback[field], f"host_sync.fallback.{field}")
+
+
+def validate_state(state, arguments, *, check_workspace=True, coverage_revision=None):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
     strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
     state = upgrade_state(state)
@@ -619,7 +664,7 @@ def validate_state(state, arguments):
         if source_receipt["source_fingerprint"] != source_fingerprint \
                 or source_receipt["baseline_commit"] != baseline["commit"]:
             raise ValueError("source_receipt does not match state source and baseline")
-        if workspace_source(workspace, baseline["commit"]) != source_receipt:
+        if check_workspace and workspace_source(workspace, baseline["commit"]) != source_receipt:
             raise ValueError("source_receipt does not match the current workspace")
     provider_binding = state.get("provider_binding")
     workflow_provider = validate_provider_binding(provider_binding)
@@ -636,13 +681,15 @@ def validate_state(state, arguments):
         autonomy = None
     if source_receipt is not None and routing["schema_version"] == 3:
         allowed_paths = routing["allowed_paths"]
+        # Each run, including a Batch delegate, freezes its own execution baseline.
+        changed_paths = source_receipt["changed_paths"]
         drift = [
-            path for path in source_receipt["changed_paths"]
+            path for path in changed_paths
             if not any(_path_contains(owner, path) for owner in allowed_paths)
         ]
         if drift:
             raise ValueError(f"source scope drift: {drift[0]}")
-        undeclared_risks = infer_path_risks(source_receipt["changed_paths"]) - set(
+        undeclared_risks = infer_path_risks(changed_paths) - set(
             routing["profile"]["risk_flags"]
         )
         if undeclared_risks:
@@ -654,19 +701,7 @@ def validate_state(state, arguments):
         validate_runtime_binding(runtime_binding)
     profile = routing.get("profile")
     cross_session = profile.get("cross_session", False) if isinstance(profile, dict) else False
-    host_sync = require_mapping(state.get("host_sync"), "host_sync")
-    if set(host_sync) != {"mode", "acknowledged_fingerprint", "evidence_level"} \
-            or host_sync["mode"] not in {"native", "text", "legacy_unavailable"}:
-        raise ValueError("host_sync fields are invalid")
-    if host_sync["evidence_level"] not in {"host_observed", "controller_attested"}:
-        raise ValueError("host_sync evidence_level is invalid")
-    acknowledged = host_sync["acknowledged_fingerprint"]
-    if acknowledged is not None:
-        require_sha256(acknowledged, "host_sync.acknowledged_fingerprint")
-    if host_sync["mode"] != "native" and acknowledged is not None:
-        raise ValueError("non-native host_sync cannot acknowledge a native projection")
-    if acknowledged is not None and host_sync["evidence_level"] != "host_observed":
-        raise ValueError("native plan acknowledgement must be host-observed")
+    validate_host_sync(state.get("host_sync"))
     workers = state.get("workers")
     if not isinstance(workers, list):
         raise ValueError("workers must be a list")
@@ -791,7 +826,7 @@ def validate_state(state, arguments):
     ledger = require_mapping(state.get("ledger"), "ledger")
     allowed_ledger_fields = {
         "completed_rounds", "repair_fingerprints", "autonomy_repair_fingerprints", "key_changes", "checks", "acceptance",
-        "acceptance_history", "runner_launches", "runner_results", "report_history",
+        "acceptance_history", "runner_launches", "runner_results", "report_history", "tdd_trace", "tdd_trace_candidate",
     }
     if not set(ledger) <= allowed_ledger_fields:
         raise ValueError("ledger fields are invalid")
@@ -835,10 +870,11 @@ def validate_state(state, arguments):
     acceptance = ledger.get("acceptance")
     if not isinstance(acceptance, list) or not all(isinstance(item, dict) for item in acceptance):
         raise ValueError("ledger.acceptance must be a list of objects")
+    acceptance_criteria = []
     for item in acceptance:
         if not set(item) <= ACCEPTANCE_FIELDS:
             raise ValueError("ledger.acceptance[] fields are invalid")
-        require_string(item.get("criterion"), "ledger.acceptance[].criterion")
+        acceptance_criteria.append(require_string(item.get("criterion"), "ledger.acceptance[].criterion"))
         require_string(item.get("evidence"), "ledger.acceptance[].evidence")
         if item.get("result") not in CHECK_RESULTS:
             raise ValueError("ledger.acceptance[].result must be pass, fail, or unknown")
@@ -848,6 +884,17 @@ def validate_state(state, arguments):
             item.get("source_fingerprint"),
             "ledger.acceptance[].source_fingerprint",
             optional=True,
+        )
+    if len(acceptance_criteria) != len(set(acceptance_criteria)):
+        raise ValueError("ledger.acceptance criteria must not be duplicated")
+    if "tdd_trace_candidate" in ledger:
+        candidate_trace = ledger["tdd_trace_candidate"]
+        if workflow_provider != "native-v1" \
+                or state.get("status") == "complete" or not isinstance(candidate_trace, dict):
+            raise ValueError("TDD trace candidate is only valid in an unfinished native run")
+        validate_native_tdd_trace(
+            candidate_trace, candidate_trace.get("source"), routing["profile"]["risk_flags"],
+            acceptance_criteria, required=False, workspace=workspace,
         )
     acceptance_history = ledger.get("acceptance_history", [])
     if not isinstance(acceptance_history, list):
@@ -990,6 +1037,13 @@ def validate_state(state, arguments):
             for item in acceptance
         ):
             raise ValueError("complete state requires a passing Evidence Receipt for every acceptance")
+        validate_native_tdd_trace(
+            ledger.get("tdd_trace"), source_receipt, routing["profile"]["risk_flags"],
+            [item["criterion"] for item in acceptance],
+            required=workflow_provider == "native-v1",
+            workspace=workspace,
+            coverage_revision=coverage_revision,
+        )
         if runner_launches and not runner_complete:
             raise ValueError("complete state requires every frozen runner launch to complete")
         if runner_launches and not runner_role_results_complete:

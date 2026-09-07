@@ -258,6 +258,7 @@ def _evaluate(profiles, scenarios, *, workspace, execute=False, allow_network=Fa
             "receipt_status": receipt.get("status") if isinstance(receipt, dict) else "invalid",
             "duration_ms": duration_ms,
             "usage": receipt.get("usage") if isinstance(receipt, dict) and isinstance(receipt.get("usage"), dict) else None,
+            "attestation": receipt.get("attestation") if isinstance(receipt, dict) else None,
             "role_result": role_result,
         })
         if not completed or not isinstance(output, dict) or output.get("status") != "available":

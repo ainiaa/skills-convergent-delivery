@@ -40,6 +40,8 @@ metadata:
 
 只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、Provider Binding、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
+在当前 Batch 仍为 pending 时，把正式 Batch state 经 stdin 传给 `batch_state.py capsule --input -` 生成执行 capsule：首批 baseline 为计划基线，后续为上一批已验证的 commit。子任务的 Single State、Source Receipt 和验证命令统一使用该执行基线；恢复读取既有 managed state，不重新取 HEAD 或使用计划原始基线。helper 会拒绝检查点不匹配或有未验证改动的工作区；计划内原 capsule 保持不可变。
+
 按 Runtime Adapters 选择宿主能力，并遵循 [执行控制](../../references/execution-control.md) 的公共 worker/watchdog 规则。Batch worker 是一个新的 `controller-delegate` run：capsule 显式要求使用 `$converge`、携带 `planned_task=true`；`pdlc-v1` 还须解析冻结 entrypoint 并显式调用对应 `$pdlc-feature|fix|refactor`，不能只写 `pdlc-run`。它只能管理自己 run 内的叶子，完成自身清场后再向 scheduler 返回 receipt。宿主可按 [Capsule Dispatch v1](../../references/capsule-dispatch.md) 自动创建并投递独立 task；delivery ack 不是 Batch worker/receipt，当前 Batch 在没有完整 delegate-state 链时仍不得把它推进为 running。
 
 上游 `converge-plan` 的 wave 用于确认依赖和路径冲突。**Batch Protocol v1 默认顺序**执行；当前 Schema 只有一个 `current_batch`，在多 worktree 集成和多 receipt 恢复协议落地前不得宣称并行写入。
