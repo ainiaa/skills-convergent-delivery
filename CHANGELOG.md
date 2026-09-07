@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
+
 ## [0.2.0] - 2026-09-07
 
 - 移除 full gate 的重复自治评测：诊断入口改跑最小合法 15 场真实隔离场景；trusted snapshot 仍完整运行 51 场，且全量派发契约继续逐项覆盖。

@@ -120,6 +120,11 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("五个核心 Skill", usage)
         self.assertIn("converge-eval", usage)
 
+    def test_ci_checkout_includes_the_parent_required_by_eval_kernel(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("uses: actions/checkout@v4\n        with:\n          fetch-depth: 2", workflow)
+
     def test_registered_extensions_require_explicit_invocation(self):
         for extension in ("converge-autonomy", "converge-multimodel"):
             policy = (ROOT / "extensions" / extension / "agents/openai.yaml").read_text(
