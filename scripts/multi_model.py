@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
             "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
             "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
             "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-            "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "high"},
+            "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"},
         },
         "claude-code": {
             "router": {"model": "haiku", "reasoning_effort": "medium"},

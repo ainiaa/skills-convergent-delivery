@@ -18,7 +18,7 @@ def delivery_profile(*, router="gpt-5.6-terra", reviewer="gpt-5.6-terra"):
         "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
         "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
         "reviewer": {"model": reviewer, "reasoning_effort": "high" if reviewer == "glm-5.2" else "high"},
-        "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "high"},
+        "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"},
     }
 
 
@@ -48,6 +48,7 @@ class MultiModelTest(unittest.TestCase):
         self.assertEqual("gpt-5.6-luna", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("high", value["roles"]["implementer"]["effective"]["reasoning_effort"])
         self.assertEqual("gpt-6-astra", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertEqual("low", value["roles"]["adjudicator"]["effective"]["reasoning_effort"])
         self.assertNotIn("verifier", value["roles"])
 
     def test_selects_named_profile_and_allows_per_run_role_override(self):

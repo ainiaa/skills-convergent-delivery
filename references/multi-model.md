@@ -10,7 +10,7 @@
 | `implementer` | Luna high | 在批准范围内测试先行并修改代码 |
 | `verifier` | 工具 | 运行测试、检查 diff；不由模型自证通过 |
 | `reviewer` | Terra high | 只读检查规格与实现；高风险时使用新上下文 |
-| `adjudicator` | GPT-6 Astra high | 处理语义冲突、范围升级和高风险取舍 |
+| `adjudicator` | GPT-6 Astra low | 处理语义冲突、范围升级和高风险取舍；仅复杂裁决时显式升级为 high |
 
 只有 `implementer` 可以请求工作区写入。同一工作区一次只有一个 implementer。`verifier` 是工具角色，不配置模型画像；模型可以解释失败，但不能替代其测试和源码证据。
 
@@ -90,7 +90,7 @@ GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `
       "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
       "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
       "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-      "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "high"}
+      "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"}
     }
   }
 }
@@ -118,6 +118,6 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve \
   --role adjudicator=gpt-6-astra@high
 ```
 
-`max` 是实施遇到已证实难点时的升级档，不是默认流程。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。
+`max` 是实施遇到已证实难点时的升级档，不是默认流程。默认 adjudicator 使用 `gpt-6-astra@low`；仅在已证实的复杂裁决中显式覆盖为 `gpt-6-astra@high`。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。
 
 每个模型角色的 profile 冻结 requested/effective model、推理等级、权限和预算。模型结论不能替代真实测试、源码指纹或发布授权；宿主无法真实指定或查询 worker 时应交接，不能伪造派发。
