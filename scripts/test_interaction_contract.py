@@ -44,6 +44,7 @@ class InteractionContractTest(unittest.TestCase):
         self.assertEqual(3, smoke["minimum_fresh_runs"])
         self.assertEqual("uncovered", smoke["unavailable_result"])
         self.assertTrue(set(smoke["critical_ids"]).issubset(EXPECTED_IDS))
+        self.assertEqual(len(smoke["critical_ids"]), len(set(smoke["critical_ids"])))
         self.assertEqual(
             [
                 "scenario_id", "fresh_context", "selected_skill", "writes_observed",
@@ -91,4 +92,3 @@ class InteractionContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
