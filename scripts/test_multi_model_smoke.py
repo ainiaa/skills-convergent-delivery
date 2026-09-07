@@ -3,11 +3,15 @@
 
 import json
 import copy
+import io
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import multi_model_smoke
 from multi_model import resolve
 from multi_model_smoke import smoke
 from runner_contract import fingerprint, freeze_launch
@@ -89,6 +93,22 @@ class MultiModelSmokeTest(unittest.TestCase):
         self.assertNotIn("content", json.dumps(result))
         self.assertNotIn("prompt", json.dumps(result))
         self.assertFalse(seen["workspace"].exists())
+
+    def test_cli_plans_a_read_only_smoke_without_starting_a_runner(self):
+        with patch.object(sys, "argv", ["multi_model_smoke.py", "--workspace", str(self.workspace)]), \
+                patch.object(multi_model_smoke, "resolve", return_value=self.profiles), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(0, multi_model_smoke.main())
+
+        self.assertEqual("planned", json.loads(output.getvalue())["status"])
+
+    def test_cli_reports_profile_errors_as_structured_failures(self):
+        with patch.object(sys, "argv", ["multi_model_smoke.py"]), \
+                patch.object(multi_model_smoke, "resolve", side_effect=ValueError("bad profile")), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(1, multi_model_smoke.main())
+
+        self.assertEqual({"status": "error", "message": "bad profile"}, json.loads(output.getvalue()))
 
 
 if __name__ == "__main__":

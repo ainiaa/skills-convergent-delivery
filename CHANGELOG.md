@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
+- 补充多模型 smoke CLI 的只读计划与结构化错误回归，确保发布入口也纳入全量覆盖核验。
 
 ## [0.2.0] - 2026-09-07
 
