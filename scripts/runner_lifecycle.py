@@ -133,10 +133,41 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
         raise ValueError("review request acceptance does not match the current run")
     if request["allowed_scope"] != expected_scope:
         raise ValueError("review request allowed_scope does not match the current run")
+    _require_prior_findings(state, request)
     fingerprint = request_fingerprint(request)
     if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
         raise ValueError("review request fingerprint does not match the frozen request")
     return request, fingerprint
+
+
+def _require_prior_findings(state, request):
+    """Keep a bounded re-review focused on actual findings from its own axis."""
+    phase = request["phase"]
+    review = state.get("execution_control", {}).get("review", {})
+    rounds = review.get("rounds", []) if isinstance(review, dict) else []
+    closure_seen = any(
+        item.get("phase") == "closure"
+        for round_value in rounds if isinstance(round_value, dict)
+        for item in round_value.get("requests", []) if isinstance(item, dict)
+    )
+    full_closure = state.get("execution_control", {}).get("routing", {}).get(
+        "full_closure_required", False
+    )
+    requires_prior = phase == "re_review" or (
+        phase == "closure" and (not full_closure or closure_seen)
+    )
+    if not requires_prior:
+        return
+    prior = set(request["prior_findings"])
+    known = {
+        fingerprint
+        for round_value in rounds if isinstance(round_value, dict)
+        for item in round_value.get("requests", []) if isinstance(item, dict)
+        if item.get("axis") == request["axis"]
+        for fingerprint in item.get("finding_fingerprints", [])
+    }
+    if not prior or not prior <= known:
+        raise ValueError("review request prior findings do not match an earlier finding on the same axis")
 
 
 def _review_request_mapping(value, tasks, name):

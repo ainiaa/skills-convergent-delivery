@@ -83,6 +83,13 @@ def normalize_request(value):
         character not in "0123456789abcdef" for character in request["baseline_commit"]
     ):
         raise ValueError("request.baseline_commit must be a full Git object id")
+    if request["phase"] == "re_review" and not request["prior_findings"]:
+        raise ValueError("re_review requires prior_findings")
+    if any(
+        len(item) != 64 or any(character not in "0123456789abcdef" for character in item)
+        for item in request["prior_findings"]
+    ) or len(request["prior_findings"]) != len(set(request["prior_findings"])):
+        raise ValueError("request.prior_findings must be unique finding fingerprints")
     return request
 
 
@@ -126,9 +133,14 @@ def normalize_result(value, reviewer_ref, request):
     findings = value.get("findings", [])
     if not isinstance(findings, list):
         raise ValueError("findings must be a list")
-    if status != "findings" and findings:
-        raise ValueError(f"{status} result cannot contain findings")
+    if status == "blocked" and findings:
+        raise ValueError("blocked result cannot contain findings")
     records = [_finding_record(finding) for finding in findings]
+    if status != "findings" and records and not (
+            status == "pass" and axis == "integration"
+            and all(record["scope"] == "task-local" for record in records)
+    ):
+        raise ValueError(f"{status} result cannot contain findings")
     fingerprints = [record["fingerprint"] for record in records]
     if len(fingerprints) != len(set(fingerprints)):
         raise ValueError("finding fingerprints must be unique")

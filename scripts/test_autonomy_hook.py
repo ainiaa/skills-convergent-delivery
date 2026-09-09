@@ -4,7 +4,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import copy
 import hashlib
 from contextlib import redirect_stdout
 from io import StringIO
@@ -189,9 +188,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("approve", json.loads(result.stdout)["decision"])
 
-    def test_codex_active_run_queues_exactly_one_gate_action_to_the_same_session(self):
-        from test_delivery_next import autonomous_state
-
+    def test_codex_active_run_never_queues_a_successor_task(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path, state_root, lease_root = self.managed_hook_state(directory)
@@ -213,12 +210,12 @@ class AutonomyHookTest(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual("approve", json.loads(result.stdout)["decision"])
-            queued = commands.read_text(encoding="utf-8")
-            self.assertIn("queue\n--thread\nthread-123", queued)
-            self.assertIn(path.name, queued)
-            self.assertIn('"action": "execute-inline"', queued)
+            self.assertFalse(commands.exists())
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("blocked", current["status"])
+            self.assertEqual("no_progress", current["blocked_code"])
 
-    def test_codex_does_not_queue_the_same_state_revision_twice(self):
+    def test_codex_stop_after_terminalization_does_not_create_a_command(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path, state_root, lease_root = self.managed_hook_state(directory)
@@ -238,56 +235,14 @@ class AutonomyHookTest(unittest.TestCase):
 
             first = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
             second = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            queued = capture.read_text(encoding="utf-8")
             state = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(2, second.returncode)
-        self.assertIn("no state progress", json.loads(second.stdout)["reason"])
-        self.assertEqual(1, queued.splitlines().count("queue"))
+        self.assertEqual(0, second.returncode, second.stderr)
+        self.assertFalse(capture.exists())
         self.assertEqual("blocked", state["status"])
 
-    def test_codex_does_not_queue_the_same_action_after_a_report_only_revision(self):
-        from delivery_next import upgrade_state
-        from delivery_state import validate_transition
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path, state_root, lease_root = self.managed_hook_state(directory)
-            current = upgrade_state(json.loads(path.read_text(encoding="utf-8")))
-            workspace = Path(current["workspace"])
-            executable = root / "codex"
-            capture = root / "commands"
-            executable.write_text(
-                '#!/bin/sh\nprintf "%s\\n" "$@" >> "$AUTONOMY_CAPTURE"\n', encoding="utf-8"
-            )
-            executable.chmod(0o755)
-            environment = os.environ | {
-                "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
-                "CONVERGE_STATE_ROOT": str(state_root),
-                "CONVERGE_LEASE_ROOT": str(lease_root),
-                "AUTONOMY_CAPTURE": str(capture),
-            }
-
-            first = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            report_only = copy.deepcopy(current)
-            report_only["revision"] += 1
-            report_only["ledger"]["report_history"] = {
-                "last_outcome": "attention", "reported_fingerprints": [], "summary_fingerprint": "a" * 64,
-            }
-            validate_transition(current, report_only)
-            path.write_text(json.dumps(report_only), encoding="utf-8")
-            second = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            queue_count = capture.read_text(encoding="utf-8").splitlines().count("queue")
-            state = json.loads(path.read_text(encoding="utf-8"))
-
-        self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(2, second.returncode)
-        self.assertIn("no state progress", json.loads(second.stdout)["reason"])
-        self.assertEqual(1, queue_count)
-        self.assertEqual("blocked", state["status"])
-
-    def test_codex_queues_a_repair_after_a_real_audit_finding_transition(self):
+    def test_codex_audit_repair_stop_terminalizes_instead_of_queueing(self):
         from delivery_next import upgrade_state
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -314,10 +269,11 @@ class AutonomyHookTest(unittest.TestCase):
                                         "AUTONOMY_CAPTURE": str(capture)}
 
             result = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            queued = capture.read_text(encoding="utf-8")
+            current = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn('"phase": "autonomy-repair"', queued)
+        self.assertFalse(capture.exists())
+        self.assertEqual("blocked", current["status"])
 
     def test_service_wakeup_does_not_terminate_a_running_launchagent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -343,39 +299,7 @@ class AutonomyHookTest(unittest.TestCase):
             run.call_args.args[0],
         )
 
-    def test_codex_queue_failure_is_not_retried_automatically(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path, state_root, lease_root = self.managed_hook_state(directory)
-            workspace = json.loads(path.read_text(encoding="utf-8"))["workspace"]
-            executable, capture = root / "codex", root / "commands"
-            executable.write_text(
-                '#!/bin/sh\nprintf "%s\\n" "$@" >> "$AUTONOMY_CAPTURE"\nexit 7\n', encoding="utf-8"
-            )
-            executable.chmod(0o755)
-            environment = os.environ | {"PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
-                                        "CONVERGE_STATE_ROOT": str(state_root),
-                                        "CONVERGE_LEASE_ROOT": str(lease_root),
-                                        "AUTONOMY_CAPTURE": str(capture)}
-            first = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            second = self.invoke("codex", {"cwd": str(workspace), "session_id": "thread-123"}, environment)
-            queued = capture.read_text(encoding="utf-8")
-            state = json.loads(path.read_text(encoding="utf-8"))
-            inspected = subprocess.run([
-                sys.executable, str(SCRIPT.with_name("delivery_lease.py")), "inspect",
-                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
-                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
-            ], text=True, capture_output=True, check=False)
-
-        self.assertEqual(2, first.returncode)
-        self.assertEqual(0, second.returncode)
-        self.assertEqual("approve", json.loads(second.stdout)["decision"])
-        self.assertEqual(1, queued.splitlines().count("queue"))
-        self.assertEqual("blocked", state["status"])
-        self.assertIn("Codex could not queue", state["blocked_reason"])
-        self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
-
-    def test_codex_missing_session_terminalizes_the_active_run(self):
+    def test_codex_without_session_terminalizes_the_active_run_without_queueing(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_hook_state(directory)
             state = json.loads(path.read_text(encoding="utf-8"))
@@ -390,24 +314,25 @@ class AutonomyHookTest(unittest.TestCase):
                 "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
             ], text=True, capture_output=True, check=False)
 
-        self.assertEqual(2, result.returncode)
-        self.assertIn("no session_id", json.loads(result.stdout)["reason"])
+        self.assertEqual(0, result.returncode)
+        self.assertEqual("approve", json.loads(result.stdout)["decision"])
         self.assertEqual("blocked", current["status"])
         self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
 
-    def test_claude_active_run_blocks_stop_with_the_frozen_action_without_a_second_process(self):
+    def test_claude_active_run_never_blocks_stop_for_a_successor_task(self):
         with tempfile.TemporaryDirectory() as directory:
-            _path, state_root, lease_root = self.managed_hook_state(directory)
-            workspace = Path(json.loads(_path.read_text(encoding="utf-8"))["workspace"])
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            workspace = Path(json.loads(path.read_text(encoding="utf-8"))["workspace"])
             result = self.invoke("claude", {"cwd": str(workspace), "session_id": "thread-123"}, os.environ | {
                 "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
             })
+            current = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(0, result.returncode, result.stderr + result.stdout)
         decision = json.loads(result.stdout)
-        self.assertEqual("block", decision["decision"])
-        self.assertIn('"action": "execute-inline"', decision["reason"])
+        self.assertEqual("approve", decision["decision"])
+        self.assertEqual("blocked", current["status"])
 
-    def test_claude_repeated_stop_terminalizes_and_releases_the_writer(self):
+    def test_claude_stop_terminalizes_and_releases_the_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_hook_state(directory)
             state = json.loads(path.read_text())
@@ -416,7 +341,7 @@ class AutonomyHookTest(unittest.TestCase):
             }
             payload = {"cwd": state["workspace"], "stop_hook_active": True}
             first = self.invoke("claude", payload, environment)
-            self.assertEqual("block", json.loads(first.stdout)["decision"])
+            self.assertEqual("approve", json.loads(first.stdout)["decision"])
             second = self.invoke("claude", payload, environment)
             self.assertEqual("approve", json.loads(second.stdout)["decision"])
             self.assertEqual("blocked", json.loads(path.read_text())["status"])
@@ -425,24 +350,6 @@ class AutonomyHookTest(unittest.TestCase):
             ).values()))
             third = self.invoke("claude", payload, environment)
             self.assertEqual("approve", json.loads(third.stdout)["decision"])
-
-    def test_continuation_uses_source_and_action_progress_not_report_revisions(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
-            "CONVERGE_AUTONOMY_RECEIPT_ROOT": directory,
-        }):
-            state = {"current_stage": "implement", "source_fingerprint": "a" * 64, "revision": 1}
-            action = {"action": "execute-inline"}
-            path = Path(directory) / "state.json"
-            autonomy_hook.record_continuation(path, state, action)
-            state["revision"] += 1
-            with self.assertRaisesRegex(ValueError, "no state progress"):
-                autonomy_hook.record_continuation(path, state, action)
-            state["source_fingerprint"] = "b" * 64
-            autonomy_hook.record_continuation(path, state, action)
-            autonomy_hook.record_continuation(path, state, {"action": "verify"})
-            autonomy_hook.continuation_receipt_path(path).write_text('[]')
-            with self.assertRaisesRegex(ValueError, "invalid|unreadable"):
-                autonomy_hook.record_continuation(path, state, action)
 
     def test_expired_lease_blocks_the_hook_before_queueing_a_continuation(self):
         with tempfile.TemporaryDirectory() as directory:

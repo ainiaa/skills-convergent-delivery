@@ -531,6 +531,21 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("审查检查点", protocol)
         self.assertIn("in-scope finding", protocol)
 
+    def test_required_implementation_references_are_read_before_the_first_write(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "`codex://`",
+            "明确指定为实现依据",
+            "需求真源",
+            "另一套行为替代",
+            "首次业务写入前",
+            "普通背景链接不构成门禁",
+            "持久化任务",
+        ):
+            self.assertIn(marker, skill + protocol)
+
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
         contract = (ROOT / "skills/converge-review/references/review-contract.md").read_text(

@@ -86,6 +86,87 @@ class ReviewContractTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     normalize_request(request)
 
+    def test_re_review_requires_the_original_finding_fingerprint(self):
+        request = review_request(axis="quality", phase="re_review", mode="blind")
+
+        with self.assertRaisesRegex(ValueError, "prior_findings"):
+            normalize_request(request)
+
+        request["prior_findings"] = ["b" * 64]
+        self.assertEqual(["b" * 64], normalize_request(request)["prior_findings"])
+
+    def test_re_review_can_report_a_new_scoped_finding_after_binding_the_prior_one(self):
+        request = review_request(axis="quality", phase="re_review", mode="blind", source="c" * 64)
+        request["prior_findings"] = ["b" * 64]
+        result = normalize_result({
+            "protocol_version": 3,
+            "mode": "blind",
+            "axis": "quality",
+            "phase": "re_review",
+            "source_fingerprint": "c" * 64,
+            "independent": True,
+            "status": "findings",
+            "findings": [{
+                "fingerprint": "d" * 64,
+                "evidence": "scripts/example.py:10 violates frozen acceptance",
+                "impact": "the repaired diff still has a scoped defect",
+                "root_cause": "the repair missed a shared path",
+                "scope": "current",
+                "classification": "defect",
+            }],
+            "blocked_reason": None,
+        }, reviewer_ref="reviewer-1", request=request)
+
+        self.assertEqual(["d" * 64], result["finding_fingerprints"])
+
+    def test_integration_pass_can_preserve_task_local_findings(self):
+        result = normalize_result({
+            "protocol_version": 3,
+            "mode": "blind",
+            "axis": "integration",
+            "phase": "initial",
+            "source_fingerprint": "a" * 64,
+            "independent": True,
+            "status": "pass",
+            "findings": [{
+                "fingerprint": "b" * 64,
+                "evidence": "scripts/example.py:10 has a local concern",
+                "impact": "does not affect the integration path",
+                "root_cause": "single-task validation is incomplete",
+                "scope": "task-local",
+                "classification": "suggestion",
+            }],
+            "blocked_reason": None,
+        }, reviewer_ref="reviewer-1", request=review_request(
+            axis="integration", mode="blind"
+        ))
+
+        self.assertEqual("pass", result["status"])
+        self.assertEqual(["b" * 64], result["finding_fingerprints"])
+
+    def test_integration_pass_cannot_hide_a_cross_task_finding(self):
+        with self.assertRaisesRegex(ValueError, "pass result cannot contain findings"):
+            normalize_result({
+                "protocol_version": 3,
+                "mode": "blind",
+                "axis": "integration",
+                "phase": "initial",
+                "source_fingerprint": "a" * 64,
+                "independent": True,
+                "status": "pass",
+                "findings": [{
+                    "fingerprint": "b" * 64,
+                    "evidence": "scripts/example.py:10 breaks a shared contract",
+                    "impact": "the integration path is incorrect",
+                    "root_cause": "contract mapping is incomplete",
+                    "scope": "current",
+                    "classification": "defect",
+                }],
+                "blocked_reason": None,
+            }, reviewer_ref="reviewer-1", request=review_request(
+                axis="integration", mode="blind"
+            ))
+
     def test_normalize_result_keeps_bounded_structured_findings_for_recovery(self):
         result = normalize_result({
             "protocol_version": 3,

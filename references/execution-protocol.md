@@ -6,6 +6,12 @@
 
 每个 finding 只能是 `in_scope_fix`、`blocked_decision` 或 `out_of_scope_record`。前者修复并回归；第二类一次提出推荐和决定；第三类记录影响但不扩大范围。已有决定不重复询问。没有本轮真实验证的验收不得称完成。
 
+## 引用输入门禁
+
+用户明确指定为实现依据的引用（包括 `codex://`、宿主附件、PR 和指定文件）是需求真源。控制器在首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。引用未规定的内部细节沿用项目既有模式作最小选择；仅当该引用对完成需求必需但不可访问或内容不完整时阻塞。普通背景链接不构成门禁，也不要求 receipt 或内容指纹。持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取；不得用 URL、标题、模型记忆或用户转述代替读取。
+
+同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 不得排队 successor task 或产生无用户消息的额外 task turn。执行者必须在当前 task 内消耗完有限预算并给出一个最终结果；提前停止的 active run 以 `no_progress` 终止并释放 writer lease。
+
 仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。
 
 ## 状态机
@@ -42,7 +48,7 @@
 
 ## Finding closure
 
-对每个已修 finding 只确认：原问题不再复现、对应检查通过、修复未越界、影响面是否扩大。除非影响面扩大，否则不再启动开放式发现。
+复核以历史 finding 绑定修复对象，但覆盖始终是冻结验收、当前 diff 与修复影响面；可以发现新的同范围 finding。所有 finding 按根因聚合进当前修复批，最多再消耗一次冻结的修复/复核预算；预算耗尽、重复 finding 或无客观进展立即 blocked。不得通过重新排队 successor task 或以无用户消息开启新 task turn 来扩大循环。
 
 ## Final verification
 

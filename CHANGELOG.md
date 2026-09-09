@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 收紧引用与单任务闭环：明确作为实现依据的 `codex://` 等引用是需求真源，必须在首次业务写入前经宿主实际读取并冻结范围与验收，不能另起一套行为；普通背景链接不构成门禁，持久化任务才记录读取结果。Stop Hook 不再排队无用户消息的 successor task，未在当前 task 内完成有限复审/修复闭环的 active run 会安全终止并释放 lease。Review v3 的 re-review 继续绑定历史 finding，但覆盖冻结验收、当前 diff 和修复影响面，允许在剩余预算内发现并处理新的同范围 finding。
+- 修复 Review v3 定向复核的 finding 绑定：`re_review` 必须携带同轴历史 finding 指纹，修复后的 closure 也会拒绝未知或空的引用；integration `pass` 现在可保留 `task-local` 观察，但任何跨任务 finding 仍阻塞该轴。
 - 修复多模型 smoke 与仓库评测对只读结论的误放行：仅 `findings` 为空且 `next_action=verify` 才能通过；reviewer 明确要求修复时，评测保留实施验证状态但整体失败。
 - 补齐多模型评测诊断：仓库评测输出受限 reviewer finding 数量，横向场景比较保留已执行数量和 runner 提前停止原因；同步 reviewer 放行语义说明。
 - 新增真实交互 smoke receipt 的只读 CLI 校验入口，并在使用指南定义按变更或逃逸触发的 fresh-host smoke 与 defect-driven catalog 维护流程；不新增后台采集、持久化记忆或宿主 lifecycle bridge。

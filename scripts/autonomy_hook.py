@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Translate an active autonomous run into a host Stop-hook decision."""
+"""Safely close an unfinished autonomous run from a host Stop Hook."""
 
 import argparse
 import copy
-import hashlib
 import json
 import os
 import subprocess
@@ -11,7 +10,6 @@ import sys
 from pathlib import Path
 
 from autonomy_gate import decide
-from delivery_lease import lock_record, replace_record
 from delivery_state import repository_state_root, workspace_state_roots
 
 
@@ -52,73 +50,6 @@ def lease_root():
     return Path(os.environ.get(
         "CONVERGE_LEASE_ROOT", Path.home() / ".convergent-delivery" / "leases"
     )).expanduser().resolve()
-
-
-def session_id(payload):
-    if not isinstance(payload, dict):
-        return None
-    for field in ("session_id", "sessionId", "thread_id"):
-        value = payload.get(field)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def continuation_message(state_path, next_action):
-    return (
-        "Continue the explicitly authorized autonomous Converge run. "
-        f"State: {state_path}. Execute exactly this frozen next action: "
-        f"{json.dumps(next_action, sort_keys=True)}. Persist the resulting evidence and state, "
-        "then re-evaluate the gate. Do not finish while the state remains active."
-    )
-
-
-def continuation_identity(state, next_action):
-    identity = {
-        "stage": state["current_stage"],
-        "source_fingerprint": state.get("source_fingerprint"),
-        "action_fingerprint": hashlib.sha256(
-            json.dumps(next_action, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-    }
-    return identity
-
-
-def continuation_receipt_path(state_path):
-    root = Path(os.environ.get(
-        "CONVERGE_AUTONOMY_RECEIPT_ROOT",
-        Path(os.environ.get("CONVERGE_STATE_ROOT", Path.home() / ".convergent-delivery" / "state"))
-        / ".autonomy-continuations",
-    ))
-    digest = hashlib.sha256(str(Path(state_path).resolve()).encode()).hexdigest()
-    return root.expanduser().resolve() / digest
-
-
-def record_continuation(state_path, state, next_action):
-    receipt_path = continuation_receipt_path(state_path)
-    identity = continuation_identity(state, next_action)
-    with lock_record(receipt_path):
-        if receipt_path.exists():
-            try:
-                previous = json.loads(receipt_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as error:
-                raise ValueError("autonomous continuation receipt is unreadable") from error
-            if not isinstance(previous, dict) or set(previous) != set(identity):
-                raise ValueError("autonomous continuation receipt is invalid")
-            if previous == identity:
-                raise ValueError("no state progress after the previous autonomous continuation")
-        replace_record(receipt_path, identity)
-
-
-def queue_codex(session, state_path, state, next_action):
-    record_continuation(state_path, state, next_action)
-    message = continuation_message(state_path, next_action)
-    result = subprocess.run(
-        ["codex", "queue", "--thread", session, "--message", message],
-        text=True, capture_output=True, check=False, timeout=10,
-    )
-    if result.returncode:
-        raise ValueError("Codex could not queue the autonomous continuation")
 
 
 def terminalize_hook_failure(state_path, state, reason):
@@ -177,23 +108,11 @@ def run_hook(host, payload, active):
             capture_output=True, text=True, check=True, timeout=10,
         )
         return approve(), 0
-    if host == "claude":
-        try:
-            record_continuation(state_path, state, result["next_action"])
-        except (OSError, ValueError) as error:
-            terminalize_hook_failure(state_path, state, str(error))
-            return approve(), 0
-        return {
-            "decision": "block",
-            "reason": continuation_message(state_path, result["next_action"]),
-        }, 0
-    current_session = session_id(payload)
-    if current_session is None:
-        error = ValueError("Codex hook payload has no session_id for autonomous continuation")
-        terminalize_hook_failure(state_path, state, str(error))
-        raise error
     try:
-        queue_codex(current_session, state_path, state, result["next_action"])
+        terminalize_hook_failure(
+            state_path, state,
+            "automatic successor tasks are disabled; finish the finite review/repair loop in the current task",
+        )
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         terminalize_hook_failure(state_path, state, str(error))
         raise

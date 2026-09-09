@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from multi_model import resolve
 from role_dispatch import plan_dispatch, plan_read_only_fanout
 from runner_contract import fingerprint
-from runner_lifecycle import _completed_execution, run_dispatch, run_fanout
+from runner_lifecycle import _completed_execution, review_request_binding, run_dispatch, run_fanout
 from runner_launch import plan_dispatch_launch, prompt_for_dispatch
 
 
@@ -115,6 +115,51 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertNotIn("'content':", str(records[1][2]))
         self.assertNotIn("output", result)
         self.assertNotIn("output", records[1][2])
+
+    def test_re_review_request_must_bind_a_prior_finding_from_the_same_axis(self):
+        request = review_request()
+        request.update(phase="re_review", prior_findings=["c" * 64])
+        state = managed_state(self.workspace)
+        state["execution_control"]["review"] = {
+            "rounds": [{
+                "source_fingerprint": "d" * 64,
+                "requests": [{
+                    "axis": "quality", "status": "findings",
+                    "finding_fingerprints": ["b" * 64],
+                }],
+            }],
+        }
+        dispatch = {"profile": {"role": "reviewer"}}
+
+        with self.assertRaisesRegex(ValueError, "prior finding"):
+            review_request_binding(state, dispatch, request)
+
+        request["prior_findings"] = ["b" * 64]
+        _request, fingerprint = review_request_binding(state, dispatch, request)
+        self.assertEqual(review_fingerprint(request), fingerprint)
+
+    def test_repaired_full_closure_must_bind_its_initial_finding(self):
+        request = review_request()
+        request.update(phase="closure", prior_findings=[])
+        state = managed_state(self.workspace)
+        state["execution_control"].update({
+            "routing": {"allowed_paths": ["scripts"], "full_closure_required": True},
+            "review": {"rounds": [{
+                "source_fingerprint": "d" * 64,
+                "requests": [{
+                    "axis": "quality", "phase": "closure", "status": "findings",
+                    "finding_fingerprints": ["b" * 64],
+                }],
+            }]},
+        })
+        dispatch = {"profile": {"role": "reviewer"}}
+
+        with self.assertRaisesRegex(ValueError, "prior finding"):
+            review_request_binding(state, dispatch, request)
+
+        request["prior_findings"] = ["b" * 64]
+        _request, fingerprint = review_request_binding(state, dispatch, request)
+        self.assertEqual(review_fingerprint(request), fingerprint)
 
     def test_core_state_cannot_start_a_multimodel_runner(self):
         dispatch = plan_dispatch(self.profiles, flow_state())
