@@ -10,6 +10,8 @@
 
 用户明确指定为实现依据的引用（包括 `codex://`、宿主附件、PR 和指定文件）是需求真源。控制器在首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。引用未规定的内部细节沿用项目既有模式作最小选择；仅当该引用对完成需求必需但不可访问或内容不完整时阻塞。普通背景链接不构成门禁，也不要求 receipt 或内容指纹。持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取；不得用 URL、标题、模型记忆或用户转述代替读取。
 
+外部 CLI implementer 在启动前还必须接收一个 `reference_receipt.py` 校验通过的回执：它显式列出实现依据（可为空）、每项实际读取结果和读取内容指纹；任一声明引用为 `unavailable` 或回执被篡改都会阻止 launch。launch 只保存该回执指纹，避免把引用正文或宿主敏感内容写入 runner ledger。
+
 同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 不得排队 successor task 或产生无用户消息的额外 task turn。执行者必须在当前 task 内消耗完有限预算并给出一个最终结果；提前停止的 active run 以 `no_progress` 终止并释放 writer lease。
 
 仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。

@@ -89,12 +89,14 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_receipt_requires_addressable_task_current_baseline_and_observations(self):
         receipt = {
-            "schema_version": 1,
+            "schema_version": 2,
             "scenario_id": "known-decision-is-not-reasked",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
             "baseline_commit": "a" * 40,
             "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
             "observations": [
                 {"turn": 1, "writes_observed": False, "questions_asked": 0,
                  "verification_observed": [], "completion_claim": "not_complete"},
@@ -116,14 +118,26 @@ class InteractionSmokeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "observations"):
             validate_receipt(invalid, self.catalog)
 
+        invalid = copy.deepcopy(receipt)
+        invalid["unprompted_task_turns"] = 1
+        with self.assertRaisesRegex(ValueError, "unprompted task turns"):
+            validate_receipt(invalid, self.catalog)
+
+        invalid = copy.deepcopy(receipt)
+        invalid["successor_task_dispatches"] = 1
+        with self.assertRaisesRegex(ValueError, "successor task dispatches"):
+            validate_receipt(invalid, self.catalog)
+
     def test_uncovered_receipt_must_explain_the_missing_host_evidence(self):
         receipt = {
-            "schema_version": 1,
+            "schema_version": 2,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
             "baseline_commit": "b" * 40,
             "workspace_strategy": "desktop-worktree",
+            "unprompted_task_turns": None,
+            "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
                               "verification_observed": [], "completion_claim": "findings_only"}],
             "result": "uncovered",
@@ -136,12 +150,14 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_cli_validates_a_fresh_host_receipt(self):
         receipt = {
-            "schema_version": 1,
+            "schema_version": 2,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
             "baseline_commit": "c" * 40,
             "workspace_strategy": "desktop-worktree",
+            "unprompted_task_turns": None,
+            "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
                               "verification_observed": [], "completion_claim": "findings_only"}],
             "result": "uncovered",

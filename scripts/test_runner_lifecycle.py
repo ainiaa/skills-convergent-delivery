@@ -226,6 +226,47 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         self.assertEqual([], appended)
 
+    def test_managed_dispatch_cannot_cross_the_active_user_task_boundary(self):
+        dispatch = plan_dispatch(self.profiles, flow_state())
+        arguments = SimpleNamespace(**{**vars(self.arguments), "task_key": "another-task"})
+        appended = []
+
+        with self.assertRaisesRegex(ValueError, "active user task"):
+            run_dispatch(
+                arguments, dispatch, "Collect evidence",
+                load=lambda _arguments: managed_state(self.workspace),
+                append=lambda *_arguments: appended.append(_arguments),
+            )
+
+        self.assertEqual([], appended)
+
+    def test_runner_prompt_forbids_successor_task_creation(self):
+        records = []
+        dispatch = plan_dispatch(self.profiles, flow_state())
+
+        def execute(launch, prompt, **_kwargs):
+            self.assertIn("Do not create, queue, or reopen a successor task", prompt)
+            value = {
+                "schema_version": 1, "runner_id": "codex-exec-v1",
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "medium",
+            }
+            return {
+                "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+                "output": {"status": "available", "content": '{"findings":[],"next_action":"verify"}'},
+            }
+
+        run_dispatch(
+            self.arguments, dispatch, "Collect evidence",
+            load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace), "task_key": "task-1"},
+            append=lambda arguments, field, record: (
+                records.append((field, record)) or arguments.expected_revision + 1
+            ), execute=execute,
+        )
+
+        self.assertEqual(["runner_launches", "runner_results"], [item[0] for item in records])
+
     def test_managed_implementer_requires_an_isolated_git_worktree(self):
         subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
         subprocess.run(["git", "-C", str(self.workspace), "config", "user.name", "Test"], check=True)

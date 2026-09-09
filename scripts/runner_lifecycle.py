@@ -77,6 +77,11 @@ _STAGE_ROLES = {
     "autonomy-repair": {"implementer"},
 }
 
+_TASK_BOUNDARY_INSTRUCTION = (
+    "Work only inside this current user task. Do not create, queue, or reopen a successor task or task turn; "
+    "return the bounded result to this controller."
+)
+
 
 def _is_isolated_git_worktree(workspace):
     result = subprocess.run(
@@ -104,6 +109,13 @@ def authorize_dispatch(state, dispatch):
         raise ValueError("runner dispatch role does not match the current stage")
     if role == "implementer" and not _is_isolated_git_worktree(state["workspace"]):
         raise ValueError("implementer requires an isolated Git worktree")
+
+
+def authorize_task_boundary(state, task_key):
+    """A lifecycle invocation may only act for its already-active user task."""
+    active = state.get("task_key")
+    if active is not None and active != task_key:
+        raise ValueError("runner lifecycle cannot cross the active user task boundary")
 
 
 def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
@@ -196,18 +208,20 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    authorize_task_boundary(state, arguments.task_key)
     require_multimodel_extension(state, dispatch)
     authorize_dispatch(state, dispatch)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
     )
-    prompt = prompt_for_dispatch(dispatch, prompt, review_request)
+    prompt = prompt_for_dispatch(dispatch, f"{prompt}\n\n{_TASK_BOUNDARY_INSTRUCTION}", review_request)
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
         review_request_fingerprint=review_request_fingerprint,
         review_request=review_request,
+        implementation_reference_receipt=getattr(arguments, "implementation_reference_receipt", None),
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -261,6 +275,9 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    authorize_task_boundary(state, arguments.task_key)
+    if getattr(arguments, "implementation_reference_receipt", None) is not None:
+        raise ValueError("fan-out cannot use an implementation reference receipt")
     require_multimodel_extension(state)
     from role_fanout import fan_in, tasks_for_fanout
     tasks = tasks_for_fanout(dispatch)
@@ -275,7 +292,10 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
             state, task["dispatch"], (review_requests or {}).get(task["task_id"]),
             (review_request_fingerprints or {}).get(task["task_id"]),
         )
-        prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]], review_request)
+        prompt = prompt_for_dispatch(
+            task["dispatch"],
+            f"{prompts[task['task_id']]}\n\n{_TASK_BOUNDARY_INSTRUCTION}", review_request,
+        )
         launch = plan_dispatch_launch(
             task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
             claude_bin=arguments.claude_bin,
@@ -336,6 +356,7 @@ def main():
     parser.add_argument("--review-request-fingerprints")
     parser.add_argument("--review-request-file", type=argparse.FileType("r"))
     parser.add_argument("--review-requests-file", type=argparse.FileType("r"))
+    parser.add_argument("--implementation-reference-receipt-file", type=argparse.FileType("r"))
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)
@@ -354,6 +375,8 @@ def main():
         )
         arguments.review_request = json.load(arguments.review_request_file) \
             if arguments.review_request_file is not None else None
+        arguments.implementation_reference_receipt = json.load(arguments.implementation_reference_receipt_file) \
+            if arguments.implementation_reference_receipt_file is not None else None
         review_requests = (
             json.load(arguments.review_requests_file) if arguments.review_requests_file is not None else None
         )

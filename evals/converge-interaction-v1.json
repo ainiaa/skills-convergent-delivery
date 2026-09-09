@@ -16,7 +16,7 @@
     {
       "id": "review-checkpoint-closes-in-scope-finding",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": ["None normalizes to an empty string"]},
-      "turns": [{"prompt": "继续已授权的状态标准化修复。审查当前 diff，发现同范围的 None 契约问题后直接修复并验证。", "authorized_write": true}],
+      "turns": [{"prompt": "继续已授权的状态标准化修复。全范围审查当前 diff：先修复 F1，再次复核若发现同范围 F2 也直接修复并验证；不得创建 successor task 或无用户消息的新 task turn。", "authorized_write": true}],
       "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope"}
     },
     {
@@ -62,7 +62,7 @@
   "smoke": {
     "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked"],
     "minimum_fresh_runs": 3,
-    "receipt_schema_version": 1,
+    "receipt_schema_version": 2,
     "unavailable_result": "uncovered"
   }
 }

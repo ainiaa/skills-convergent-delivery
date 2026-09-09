@@ -27,7 +27,8 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "evals" / "converge-interaction-v1.json"
 RECEIPT_FIELDS = {
     "schema_version", "scenario_id", "catalog_fingerprint", "task_id", "baseline_commit",
-    "workspace_strategy", "observations", "result", "uncovered_reason",
+    "workspace_strategy", "unprompted_task_turns", "successor_task_dispatches", "observations",
+    "result", "uncovered_reason",
 }
 OBSERVATION_FIELDS = {
     "turn", "writes_observed", "questions_asked", "verification_observed", "completion_claim",
@@ -71,7 +72,7 @@ def validate_catalog(catalog, root):
         "local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked",
     } or len(smoke["critical_ids"]) != 3:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 3 or smoke["receipt_schema_version"] != 1 \
+    if smoke["minimum_fresh_runs"] != 3 or smoke["receipt_schema_version"] != 2 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
@@ -127,7 +128,7 @@ def _validate_scenario(scenario, ids, fixture_path):
 def validate_receipt(receipt, catalog):
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_FIELDS:
         raise ValueError("receipt fields are invalid")
-    if receipt["schema_version"] != 1:
+    if receipt["schema_version"] != 2:
         raise ValueError("receipt schema_version is invalid")
     scenarios = {item["id"]: item for item in catalog["scenarios"]}
     scenario = scenarios.get(receipt["scenario_id"])
@@ -156,11 +157,20 @@ def validate_receipt(receipt, catalog):
     result = receipt["result"]
     if result not in {"pass", "fail", "uncovered"}:
         raise ValueError("receipt result is invalid")
+    boundary_counts = (receipt["unprompted_task_turns"], receipt["successor_task_dispatches"])
     if result == "uncovered":
+        if boundary_counts != (None, None):
+            raise ValueError("uncovered receipt cannot claim task-turn boundary evidence")
         _string(receipt["uncovered_reason"], "receipt uncovered_reason")
         return
     if receipt["uncovered_reason"] is not None:
         raise ValueError("receipt uncovered_reason must be null")
+    if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in boundary_counts):
+        raise ValueError("receipt task-turn boundary counts are invalid")
+    if result == "pass" and receipt["unprompted_task_turns"]:
+        raise ValueError("passing receipt cannot contain unprompted task turns")
+    if result == "pass" and receipt["successor_task_dispatches"]:
+        raise ValueError("passing receipt cannot contain successor task dispatches")
     expected = scenario["expected"]
     if expected["writes"] in {"required", "after_review"} and not any(item["writes_observed"] for item in observations):
         raise ValueError("receipt requires observed writes")

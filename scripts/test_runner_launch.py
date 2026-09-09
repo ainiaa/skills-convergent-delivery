@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from multi_model import resolve
+from reference_receipt import freeze_receipt
 from role_dispatch import plan_dispatch
 from runner_contract import fingerprint
 from runner_launch import command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
@@ -118,6 +119,30 @@ class RunnerLaunchTest(unittest.TestCase):
                 dispatch, "Collect evidence", workspace="/tmp",
                 review_request_fingerprint="a" * 64,
             )
+
+    def test_implementer_requires_a_validated_reference_receipt_before_launch(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        profile = profiles["roles"]["implementer"]
+        dispatch = {
+            "status": "next", "role": "implementer", "mode": "agent", "reason": "implement",
+            "profile": profile, "profile_fingerprint": profile["profile_fingerprint"],
+            "runner_id": profile["runner_id"], "executor": "external_runner",
+        }
+
+        with self.assertRaisesRegex(ValueError, "implementation reference receipt"):
+            plan_dispatch_launch(dispatch, "Implement", workspace=self.workspace)
+
+        receipt = freeze_receipt([])
+        with patch("runner_launch.plan_codex_launch", return_value={}) as launch:
+            plan_dispatch_launch(
+                dispatch, "Implement", workspace=self.workspace,
+                implementation_reference_receipt=receipt,
+            )
+
+        self.assertEqual(
+            receipt["receipt_fingerprint"],
+            launch.call_args.kwargs["implementation_reference_receipt_fingerprint"],
+        )
 
     def test_normalizes_glm_content_as_ephemeral_output(self):
         profiles = resolve(

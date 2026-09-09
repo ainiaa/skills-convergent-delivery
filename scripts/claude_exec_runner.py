@@ -8,7 +8,9 @@ from pathlib import Path
 from codex_exec_runner import (
     _binary_identity, _execute_process, _is_isolated_worktree,
 )
-from runner_contract import fingerprint, freeze_launch, review_request_binding, validate_launch
+from runner_contract import (
+    fingerprint, freeze_launch, implementation_reference_binding, review_request_binding, validate_launch,
+)
 
 
 def _tools(profile):
@@ -20,7 +22,7 @@ def _permission_mode(profile):
 
 
 def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_request_fingerprint=None,
-                review_request=None):
+                review_request=None, implementation_reference_receipt_fingerprint=None):
     workspace = Path(workspace).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("Claude workspace must be an existing directory")
@@ -38,6 +40,11 @@ def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_reque
     if fingerprint is not None:
         configuration["review_request_fingerprint"] = fingerprint
         configuration["review_request"] = review_request
+    reference_fingerprint = implementation_reference_binding(
+        profile, implementation_reference_receipt_fingerprint,
+    )
+    if reference_fingerprint is not None:
+        configuration["implementation_reference_receipt_fingerprint"] = reference_fingerprint
     return freeze_launch(profile, prompt, configuration)
 
 
@@ -50,6 +57,7 @@ def command_for_launch(launch, prompt):
             or set(configuration) - {
                 "claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace",
                 "review_request_fingerprint", "review_request",
+                "implementation_reference_receipt_fingerprint",
             } \
             or not isinstance(configuration["claude_bin"], str) or not configuration["claude_bin"] \
             or not isinstance(configuration["binary_fingerprint"], str) \
@@ -59,6 +67,9 @@ def command_for_launch(launch, prompt):
     review_request_binding(
         launch["profile"], configuration.get("review_request_fingerprint"),
         configuration.get("review_request"),
+    )
+    implementation_reference_binding(
+        launch["profile"], configuration.get("implementation_reference_receipt_fingerprint"),
     )
     _binary, binary_fingerprint = _binary_identity(configuration["claude_bin"])
     if binary_fingerprint != configuration["binary_fingerprint"]:

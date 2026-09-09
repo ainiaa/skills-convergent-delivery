@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 将引用门禁落到外部 implementer launch：`reference_receipt.py` 冻结已读引用及内容指纹，缺失、未读或篡改回执会在启动前失败；launch 只绑定回执指纹。runner lifecycle 现在拒绝跨 active user task，并向外部执行器明确禁止创建 successor task/turn。交互 smoke receipt 升级为 v2，必须观察零个无用户触发 task turn 和零个 successor dispatch 才能通过；无法由宿主证明时保持 `uncovered`。review checkpoint fixture 也覆盖 F1 修复后的全范围复核发现 F2；自治评测 catalog 同步当前无 successor task 的 Hook 回归方法名。
 - 收紧引用与单任务闭环：明确作为实现依据的 `codex://` 等引用是需求真源，必须在首次业务写入前经宿主实际读取并冻结范围与验收，不能另起一套行为；普通背景链接不构成门禁，持久化任务才记录读取结果。Stop Hook 不再排队无用户消息的 successor task，未在当前 task 内完成有限复审/修复闭环的 active run 会安全终止并释放 lease。Review v3 的 re-review 继续绑定历史 finding，但覆盖冻结验收、当前 diff 和修复影响面，允许在剩余预算内发现并处理新的同范围 finding。
 - 修复 Review v3 定向复核的 finding 绑定：`re_review` 必须携带同轴历史 finding 指纹，修复后的 closure 也会拒绝未知或空的引用；integration `pass` 现在可保留 `task-local` 观察，但任何跨任务 finding 仍阻塞该轴。
 - 修复多模型 smoke 与仓库评测对只读结论的误放行：仅 `findings` 为空且 `next_action=verify` 才能通过；reviewer 明确要求修复时，评测保留实施验证状态但整体失败。

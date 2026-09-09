@@ -148,6 +148,7 @@ TEST_FILES+=(
   scripts/test_role_fanout.py
   scripts/test_codex_exec_runner.py
   scripts/test_claude_exec_runner.py
+  scripts/test_reference_receipt.py
   scripts/test_runner_launch.py
   scripts/test_runner_lifecycle.py
 )
