@@ -69,11 +69,13 @@ GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `
 | [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |
 | peer swarm、成员互聊、自动扩容 | 不采用 | 编码任务依赖高；当前目标是可恢复的单写入者控制 | `test_role_flow.py`、`test_runner_lifecycle.py` |
 
-本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob`。Codex 以 sandbox 强制边界，Claude 使用 `--bare --strict-mcp-config --input-format text`、冻结工具与 `acceptEdits`，不把它表述为 OS sandbox。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
+本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob` 与 `plan` permission mode。Codex 以 sandbox 强制边界；Claude 没有可验证的等价 OS sandbox，因此不开放其可写角色。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
 
 本地 CLI receipt 的 `requested_model` 与 `requested_reasoning_effort` 只证明冻结命令的请求参数与退出/输出摘要；它不证明远端最终实际采用的模型或 effort。需要审计该事实时，必须有 provider 响应或宿主原生观察，不能由本地进程回执推断。
 
 `inline`、`serial` 与 `tool` 路径不创建 lifecycle、launch 或 runner ledger 记录；现有非多模型流程不经过该入口。未来只有宿主确实可证明精确模型选择、稳定 worker ref、查询和 workspace binding 时，才可作为同一契约的 native transport；当前不伪造该能力。
+
+Desktop controller 若实际暴露 `create_thread`、`wait_threads` 与 `set_thread_archived`，可用 `multi_model.py desktop-task --project-id <id> --title <title> --input <prompt>` 生成一次 `desktop-task-v1` 创建动作。controller 提交该动作后，只从实际 `create_thread` 结果生成 receipt、只接受正式 `threadId`、以该精确引用调用 `wait_threads`；归档必须消费由该查询及同一 task ref 绑定的终态 observation，不能接受调用方提供的裸状态字符串。该动作同时绑定已验证的 implementer profile fingerprint、请求的 `model` / `thinking`；它们仍不代表远端实际模型观察。Python 命令本身不会调用宿主、不会进入 `workers[]` lifecycle；完整宿主顺序见 `extensions/converge-multimodel/SKILL.md`。
 
 ## 配置
 
@@ -108,7 +110,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" config
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve --profile claude-code
 ```
 
-`claude-code` 是可选兼容 profile，不携带账号、token 或 Provider 配置。只有在用户环境完成真实 smoke 后，才可将其视为已验收能力；未验收时不阻塞 Codex-only 的发布，也不得在发布说明中声称 Claude 已验证可用。
+`claude-code` 是可选兼容 profile，不携带账号、token 或 Provider 配置。它只用于只读角色；`implementer` 始终使用受 sandbox 约束的 Codex runner。只有在用户环境完成真实 smoke 后，才可将其视为已验收能力；未验收时不阻塞 Codex-only 的发布，也不得在发布说明中声称 Claude 已验证可用。
 
 仅支持 `schema_version: 4`。Codex profile 支持 GPT-5.6 系列与 `gpt-6-astra`；Claude Code profile 支持 `haiku`、`fable`、`sonnet`、`opus` 及 `claude-*` 标识。旧的 v3 固定流水线配置会明确失败；使用 `multi_model.py config` 输出新模板后直接替换即可。
 
@@ -120,6 +122,6 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve \
   --role adjudicator=gpt-6-astra@high
 ```
 
-`max` 是实施遇到已证实难点时的升级档，不是默认流程。默认 adjudicator 使用 `gpt-6-astra@low`；仅在已证实的复杂裁决中显式覆盖为 `gpt-6-astra@high`。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。
+`max` 是实施遇到已证实难点时的升级档，不是默认流程。默认 adjudicator 使用 `gpt-6-astra@low`；仅在已证实的复杂裁决中显式覆盖为 `gpt-6-astra@high`。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。它的输出固定标记为 `diagnostic`，不等同 Review v3 或可用于控制面放行。
 
 每个模型角色的 profile 冻结 requested/effective model、推理等级、权限和预算。模型结论不能替代真实测试、源码指纹或发布授权；宿主无法真实指定或查询 worker 时应交接，不能伪造派发。

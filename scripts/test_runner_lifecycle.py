@@ -116,6 +116,49 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertNotIn("output", result)
         self.assertNotIn("output", records[1][2])
 
+    def test_persists_an_unknown_receipt_when_execution_raises(self):
+        records = []
+        dispatch = plan_dispatch(self.profiles, flow_state())
+
+        result = run_dispatch(
+            self.arguments, dispatch, "Collect evidence",
+            load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+            append=lambda arguments, field, record: (
+                records.append((field, record)) or arguments.expected_revision + 1
+            ),
+            preflight=lambda *_arguments: None,
+            execute=lambda *_arguments, **_kwargs: (_ for _ in ()).throw(RuntimeError("transport failed")),
+        )
+
+        self.assertEqual(["runner_launches", "runner_results"], [field for field, _ in records])
+        self.assertEqual("unknown", result["status"])
+        self.assertEqual("unknown", records[1][1]["status"])
+        self.assertEqual("RuntimeError", records[1][1]["error_type"])
+
+    def test_fanout_persists_unknown_receipts_for_failed_branches(self):
+        records = []
+        dispatch = plan_read_only_fanout(self.profiles, [
+            {"task_id": "a", "role": "scout"}, {"task_id": "b", "role": "scout"},
+        ])
+
+        with self.assertRaisesRegex(ValueError, "available structured role result"):
+            run_fanout(
+                self.arguments, dispatch, {"a": "Inspect a", "b": "Inspect b"},
+                load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+                append_launches=lambda arguments, field, values: (
+                    records.append((field, values)) or arguments.expected_revision + 1
+                ),
+                append=lambda arguments, field, record: (
+                    records.append((field, record)) or arguments.expected_revision + 1
+                ),
+                preflight=lambda *_arguments: None,
+                execute=lambda *_arguments, **_kwargs: (_ for _ in ()).throw(RuntimeError("transport failed")),
+            )
+
+        self.assertEqual(["runner_launches", "runner_results", "runner_results"],
+                         [field for field, _ in records])
+        self.assertTrue(all(record["status"] == "unknown" for _field, record in records[1:]))
+
     def test_re_review_request_must_bind_a_prior_finding_from_the_same_axis(self):
         request = review_request()
         request.update(phase="re_review", prior_findings=["c" * 64])

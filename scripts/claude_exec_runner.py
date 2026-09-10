@@ -11,6 +11,7 @@ from codex_exec_runner import (
 from runner_contract import (
     fingerprint, freeze_launch, implementation_reference_binding, review_request_binding, validate_launch,
 )
+from runner_registry import validate_runner_profile
 
 
 def _tools(profile):
@@ -23,6 +24,7 @@ def _permission_mode(profile):
 
 def plan_launch(profile, prompt, *, workspace, claude_bin="claude", review_request_fingerprint=None,
                 review_request=None, implementation_reference_receipt_fingerprint=None):
+    profile = validate_runner_profile(profile)
     workspace = Path(workspace).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("Claude workspace must be an existing directory")
@@ -52,6 +54,7 @@ def command_for_launch(launch, prompt):
     launch = validate_launch(launch, prompt)
     if launch["runner_id"] != "claude-code-v1":
         raise ValueError("launch does not select the Claude runner")
+    validate_runner_profile(launch["profile"])
     configuration = launch["configuration"]
     if not {"claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace"} <= set(configuration) \
             or set(configuration) - {

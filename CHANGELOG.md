@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 新增受限 `desktop-task-v1` transport：多模型 implementer 可冻结并输出 Desktop `create_thread` 动作，只有正式 `threadId` 才确认创建；查询和归档都锁定该引用，归档仅消费绑定查询与同一 task ref 的终态 observation，不能再使用调用方提供的裸状态字符串。动作同时绑定已验证 implementer profile 的完整指纹；宿主控制器顺序明确调用 create/query/archive，Python 仍不伪装为 runner、`workers[]` lifecycle 或远端实际模型观察，并纳入 Controller Snapshot。
+- 收紧 Claude Code runner 为只读角色，异常 runner 执行会补写 `unknown` 回执，并将直连 GLM 审计明确标记为仅诊断用途。
 - 将引用门禁落到外部 implementer launch：`reference_receipt.py` 冻结已读引用及内容指纹，缺失、未读或篡改回执会在启动前失败；launch 只绑定回执指纹。runner lifecycle 现在拒绝跨 active user task，并向外部执行器明确禁止创建 successor task/turn。交互 smoke receipt 升级为 v2，必须观察零个无用户触发 task turn 和零个 successor dispatch 才能通过；无法由宿主证明时保持 `uncovered`。review checkpoint fixture 也覆盖 F1 修复后的全范围复核发现 F2；自治评测 catalog 同步当前无 successor task 的 Hook 回归方法名。
 - 收紧引用与单任务闭环：明确作为实现依据的 `codex://` 等引用是需求真源，必须在首次业务写入前经宿主实际读取并冻结范围与验收，不能另起一套行为；普通背景链接不构成门禁，持久化任务才记录读取结果。Stop Hook 不再排队无用户消息的 successor task，未在当前 task 内完成有限复审/修复闭环的 active run 会安全终止并释放 lease。Review v3 的 re-review 继续绑定历史 finding，但覆盖冻结验收、当前 diff 和修复影响面，允许在剩余预算内发现并处理新的同范围 finding。
 - 修复 Review v3 定向复核的 finding 绑定：`re_review` 必须携带同轴历史 finding 指纹，修复后的 closure 也会拒绝未知或空的引用；integration `pass` 现在可保留 `task-local` 观察，但任何跨任务 finding 仍阻塞该轴。

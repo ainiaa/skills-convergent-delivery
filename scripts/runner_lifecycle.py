@@ -16,7 +16,7 @@ from role_result import result_from_output, review_result
 from runner_launch import (
     command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch,
 )
-from runner_contract import bind_role_result
+from runner_contract import bind_role_result, fingerprint
 
 
 def _arguments(arguments, revision):
@@ -228,13 +228,9 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if launch["runner_id"] != "openai-compatible-v1":
         preflight(launch, prompt)
     revision = append(_arguments(arguments, state["revision"]), "runner_launches", launch)
-    execution = execute(
-        launch, prompt, allow_execute=True, allow_network=arguments.allow_network,
+    receipt, role_result = _execute_and_complete(
+        launch, prompt, review_request, execute, arguments.allow_network,
     )
-    if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
-            or not isinstance(execution["output"], dict):
-        raise ValueError("runner execution result is invalid")
-    receipt, role_result = _completed_execution(launch, execution, review_request)
     revision = append(_arguments(arguments, revision), "runner_results", receipt)
     return {
         "status": receipt["status"], "launch": launch, "result": receipt,
@@ -265,6 +261,53 @@ def _completed_execution(launch, execution, review_request=None):
     if receipt.get("status") == "completed" and role_result["role"] in {"scout", "reviewer"}:
         receipt = bind_role_result(launch, receipt, role_result)
     return receipt, role_result
+
+
+def _unknown_execution(launch, error):
+    """Record a started runner whose transport did not return a usable receipt."""
+    error_type = type(error).__name__
+    if launch["runner_id"] in {"codex-exec-v1", "claude-code-v1"}:
+        effective = launch["profile"]["effective"]
+        value = {
+            "schema_version": 2,
+            "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"],
+            "status": "unknown",
+            "exit_code": 127,
+            "stdout_fingerprint": "0" * 64,
+            "stderr_fingerprint": "0" * 64,
+            "requested_model": effective["model"],
+            "requested_reasoning_effort": effective["reasoning_effort"],
+            "error_type": error_type,
+            "attestation": {
+                "model": {"status": "requested", "observed": None},
+                "usage": {"status": "unavailable", "value": None},
+            },
+        }
+    else:
+        value = {
+            "schema_version": 2,
+            "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"],
+            "status": "unknown",
+            "error_type": error_type,
+            "attestation": {
+                "model": {"status": "unavailable", "observed": None},
+                "usage": {"status": "unavailable", "value": None},
+            },
+        }
+    return {
+        "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+        "output": {"status": "unavailable"},
+    }
+
+
+def _execute_and_complete(launch, prompt, review_request, execute, allow_network):
+    try:
+        execution = execute(launch, prompt, allow_execute=True, allow_network=allow_network)
+        return _completed_execution(launch, execution, review_request)
+    except Exception as error:
+        return _completed_execution(launch, _unknown_execution(launch, error), review_request)
 
 
 def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, review_requests=None, *, load=load_current,
@@ -319,15 +362,14 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     with ThreadPoolExecutor(max_workers=len(prepared)) as executor:
         futures = [
             executor.submit(
-                execute, item["launch"], item["prompt"], allow_execute=True,
-                allow_network=arguments.allow_network,
+                _execute_and_complete, item["launch"], item["prompt"], item["review_request"],
+                execute, arguments.allow_network,
             )
             for item in prepared
         ]
         executions = [future.result() for future in futures]
     completed = []
-    for item, execution in zip(prepared, executions):
-        receipt, role_result = _completed_execution(item["launch"], execution, item["review_request"])
+    for item, (receipt, role_result) in zip(prepared, executions):
         revision = append(_arguments(arguments, revision), "runner_results", receipt)
         completed.append({"task_id": item["task_id"], "role_result": role_result})
     return {
