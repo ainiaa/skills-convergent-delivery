@@ -12,7 +12,7 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 ## 前置条件
 
 - 使用远程安装时需要 Bash、`curl`、`git` 和可访问 GitHub 的网络。
-- 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.9 或更高版本。
+- 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.11 或更高版本。
 - 只有执行全量收口审计时才需要 `codegraph`；`--doctor` 会显示 CodeGraph 是否可用。
 - 安装器不需要 `codex` 或 `claude` 命令行工具，但对应运行时必须已安装才能使用 Skill。
 - 已打开的 Codex 或 Claude Code 需要重启，或按各自的 Skill 刷新机制重新加载。

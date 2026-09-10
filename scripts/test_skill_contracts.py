@@ -43,7 +43,7 @@ class SkillContractTest(unittest.TestCase):
             description = next(line for line in header.splitlines() if line.startswith("description:"))
             descriptions[name] = description
             self.assertGreater(len(text), len(header))
-            self.assertIn("compatibility: Requires Git and Python 3.9+", header)
+            self.assertIn("compatibility: Requires Git and Python 3.11+", header)
             self.assertIn("complete Converge Suite", header)
             self.assertIn("Codex and Claude Code", header)
 
@@ -124,6 +124,8 @@ class SkillContractTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
         self.assertIn("uses: actions/checkout@v4\n        with:\n          fetch-depth: 2", workflow)
+        self.assertIn('python-version: ["3.11", "3.14"]', workflow)
+        self.assertIn("python-version: ${{ matrix.python-version }}", workflow)
 
     def test_registered_extensions_require_explicit_invocation(self):
         for extension in ("converge-autonomy", "converge-multimodel"):
@@ -229,7 +231,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("non-multi-model Converge delivery", extension)
         self.assertIn("serial", extension)
         self.assertIn("MCP", extension)
-        self.assertIn("does not provide a no-MCP configuration", extension)
+        self.assertRegex(extension, r"does not provide\s+a no-MCP configuration")
 
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")

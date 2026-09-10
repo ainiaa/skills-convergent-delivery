@@ -26,7 +26,7 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
     && "$ROOT/.venv/bin/python" -c 'import yaml' >/dev/null 2>&1; then
     VALIDATOR_PYTHON=("$ROOT/.venv/bin/python")
   else
-    echo "Official Skill validator requires PyYAML==6.0.3; create .venv from requirements-dev.txt with Python 3.9+." >&2
+    echo "Official Skill validator requires PyYAML==6.0.3; create .venv from requirements-dev.txt with Python 3.11+." >&2
     exit 1
   fi
 fi

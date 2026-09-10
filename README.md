@@ -84,7 +84,7 @@ Codex 使用 `$skill-name`，Claude Code 使用 `/skill-name`；两者都可使�
 
 ## 多模型协作
 
-默认不启用。用户明确说“使用多模型配合开发”时，才按需为隔离的 scout、implementer 或 reviewer 启动固定 profile；`serial` 的路由、规格和裁决仍由当前 controller 执行，不会自动切换模型。它不能替代真实测试或发布授权。Claude profile 为可选兼容配置，需用户自行配置有效的 Claude CLI/Provider；没有通过真实 smoke 时，不作为本次发布的已验收能力。完整边界和配置见 [多模型协作](references/multi-model.md)。
+默认不启用。用户明确说“使用多模型配合开发”时，才按需为隔离的 scout、implementer 或 reviewer 启动固定 profile；`serial` 的路由、规格和裁决仍由当前 controller 执行，不会自动切换模型。固定角色的默认模型包括：router/scout 使用 Terra medium，implementer 使用 Luna high，adjudicator 使用 GPT-6 Astra low。它不能替代真实测试或发布授权。Claude profile 为可选兼容配置，需用户自行配置有效的 Claude CLI/Provider；没有通过真实 smoke 时，不作为本次发布的已验收能力。完整边界和配置见 [多模型协作](references/multi-model.md)。
 
 ```text
 使用 $converge-multimodel 配合开发修复支付重试问题；运行相关测试，不要发布。
