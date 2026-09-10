@@ -9,7 +9,19 @@ metadata:
 
 This is an opt-in execution extension. Use it only where independent model
 work has a concrete isolation or comparison benefit; a single controller stays
-the default.
+the default. It is not a complete role-level model orchestration: `serial`
+roles stay on the current controller and do not switch models from the profile.
+
+For an ordinary delivery, follow the root `converge` controller contract and
+select this extension only for a phase with demonstrated isolation or
+independent-review benefit. Freeze and run only that `agent` dispatch through
+the runner lifecycle. Do not create a runner merely to make every role use a
+different model.
+
+Read-only is a workspace boundary, not a universal side-effect boundary. The
+Codex runner inherits the user's MCP configuration, so do not use it for
+untrusted instructions or sensitive external actions without a dedicated
+no-MCP configuration or an explicit tool allowlist.
 
 Create the controller snapshot with `--extension multimodel` before executing
 its runner or evaluation helpers. The frozen descriptor is the authority for

@@ -2,6 +2,8 @@
 
 用户明确说“使用多模型配合开发”时启用；普通任务保持原路径。角色是固定契约，Agent 是按需创建的可选运行实例。控制器每次只选择一个下一角色，不执行固定的多模型流水线。
 
+这是选择性外部 runner 扩展，不是完整的角色级模型编排。配置中的模型仅在角色被选为 `agent` 时才会实际冻结并启动；`serial` 明确复用当前 controller，不会按 profile 切换模型，也不会产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色。不要将它们的配置或 `--role` 覆盖理解为已实际派发的模型选择。
+
 | 角色 | 默认模型 / 推理 | 边界 |
 |---|---|---|
 | `router` | Terra medium | 选择下一动作，不写代码 |
@@ -33,7 +35,7 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 ## 受限 CLI 派发边界
 
-对 `mode=agent`，`scripts/role_dispatch.py` 一律返回 `executor=external_runner`，并携带完整冻结 profile。controller 使用 `scripts/runner_lifecycle.py` 执行单次闭环：它先验证 dispatch role 与当前 managed-state stage 相符，并要求 implementer 的 run 位于独立 Git worktree；之后才把 launch 原子追加到当前 run 的 ledger，再在 lease 外启动 CLI，最后把 receipt 与已校验的 `role_result` 作为**同一条** `runner_results` 记录原子追加；launch 已记录而 result 缺失时恢复必须交接或阻塞，不能重派。runner 的低层 `output` 仅在当前调用内短暂存在；lifecycle 对只读的 scout/reviewer 把它按固定 JSON 契约转换为带 launch 指纹的 `role_result`，不返回原文。空输出、非 JSON 或字段不合规都会显式标为 `unavailable`/`invalid`，不能由成功 exit code 猜测内容；implementer 也不会被误当作只读结论生产者。账本绝不写 `output`、prompt、密钥或审查原文；已完成的只读 receipt 若缺少绑定的 `role_result`，恢复会阻止下一次 dispatch 并要求交接，不能补猜或自动重派。后续 controller 必须核验 `role_result` 后才可将其转换为既有 structured evidence/review 输入，且其本身不能推进验收或状态。Codex 的 `codex_exec_runner.py` 与 Claude 的 `claude_exec_runner.py` 都由冻结的 profile 驱动受限 CLI：显式传入 model、reasoning effort 和工作区边界，且不依赖父会话模型、不创建宿主原生子代理，也不伪造宿主任务树或完成回执。
+只有 `agent` 模式的 `scripts/role_dispatch.py` 会返回 `executor=external_runner`，并携带完整冻结 profile。controller 使用 `scripts/runner_lifecycle.py` 执行单次闭环：它先验证 dispatch role 与当前 managed-state stage 相符，并要求 implementer 的 run 位于独立 Git worktree；之后才把 launch 原子追加到当前 run 的 ledger，再在 lease 外启动 CLI，最后把 receipt 与已校验的 `role_result` 作为**同一条** `runner_results` 记录原子追加；launch 已记录而 result 缺失时恢复必须交接或阻塞，不能重派。runner 的低层 `output` 仅在当前调用内短暂存在；lifecycle 对只读的 scout/reviewer 把它按固定 JSON 契约转换为带 launch 指纹的 `role_result`，不返回原文。空输出、非 JSON 或字段不合规都会显式标为 `unavailable`/`invalid`，不能由成功 exit code 猜测内容；implementer 也不会被误当作只读结论生产者。账本绝不写 `output`、prompt、密钥或审查原文；已完成的只读 receipt 若缺少绑定的 `role_result`，恢复会阻止下一次 dispatch 并要求交接，不能补猜或自动重派。后续 controller 必须核验 `role_result` 后才可将其转换为既有 structured evidence/review 输入，且其本身不能推进验收或状态。Codex 的 `codex_exec_runner.py` 与 Claude 的 `claude_exec_runner.py` 都由冻结的 profile 驱动受限 CLI：显式传入 model、reasoning effort 和工作区边界，且不依赖父会话模型、不创建宿主原生子代理，也不伪造宿主任务树或完成回执。
 
 当前 Codex CLI 没有可验证的轮次上限参数：不把 `max_turns` 伪称为 Codex CLI 已强制的限制；Codex 仅强制 timeout 与输出字节上限。Claude CLI 接收冻结的 `--max-turns`。`max_turns` 仍保留在统一 profile 中供 controller 规划和跨 runner 比较，但 Codex 上的超时才是实际的有限执行边界。
 

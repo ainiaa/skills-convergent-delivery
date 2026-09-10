@@ -215,6 +215,18 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("findings or a next action other than `verify`", extension)
         self.assertIn("工具", model)
 
+    def test_multi_model_contract_distinguishes_role_labels_from_model_bound_workers(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
+        extension = (ROOT / "extensions/converge-multimodel/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Multi-model external runners require the explicit", root)
+        self.assertIn("只有 `agent` 模式", model)
+        self.assertIn("不会按 profile 切换模型", model)
+        self.assertIn("not a complete role-level model orchestration", extension)
+        self.assertIn("serial", extension)
+        self.assertIn("MCP", extension)
+
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
         for loop in ("实现循环", "风险复核循环", "全局集成审查循环"):

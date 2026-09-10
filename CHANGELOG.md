@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 收紧多模型模式的公开契约：它现在明确是选择性外部 runner，而非全角色模型编排；`serial` 角色不会按 profile 切换模型。根 `converge` 入口要求多模型 external runner 显式搭配该扩展，扩展 Skill 同时说明 Codex read-only runner 继承 MCP 配置，不能当作通用外部副作用隔离。
 - 新增受限 `desktop-task-v1` transport：多模型 implementer 可冻结并输出 Desktop `create_thread` 动作，只有正式 `threadId` 才确认创建；查询和归档都锁定该引用，归档仅消费绑定查询与同一 task ref 的终态 observation，不能再使用调用方提供的裸状态字符串。动作同时绑定已验证 implementer profile 的完整指纹；宿主控制器顺序明确调用 create/query/archive，Python 仍不伪装为 runner、`workers[]` lifecycle 或远端实际模型观察，并纳入 Controller Snapshot。
 - 收紧 Claude Code runner 为只读角色，异常 runner 执行会补写 `unknown` 回执，并将直连 GLM 审计明确标记为仅诊断用途。
 - 将引用门禁落到外部 implementer launch：`reference_receipt.py` 冻结已读引用及内容指纹，缺失、未读或篡改回执会在启动前失败；launch 只绑定回执指纹。runner lifecycle 现在拒绝跨 active user task，并向外部执行器明确禁止创建 successor task/turn。交互 smoke receipt 升级为 v2，必须观察零个无用户触发 task turn 和零个 successor dispatch 才能通过；无法由宿主证明时保持 `uncovered`。review checkpoint fixture 也覆盖 F1 修复后的全范围复核发现 F2；自治评测 catalog 同步当前无 successor task 的 Hook 回归方法名。

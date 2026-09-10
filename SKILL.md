@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Excludes standalone read-only review, autonomous continuation, multi-model execution, and multi-Batch."
+description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Multi-model external runners require the explicit converge-multimodel extension; excludes standalone read-only review, autonomous continuation, and multi-Batch."
 metadata:
   compatibility: Requires Git and Python 3.9+; native runtime tasks require an indexed CodeGraph CLI and configured coverage; full-closure audits also require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
