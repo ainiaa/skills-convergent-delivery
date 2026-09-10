@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - 将运行时最低 Python 版本提升至 3.11，并在 CI 同时验证 3.11 与 3.14。
+- 新增可复用的本地 Python 3.11/3.14 矩阵验证脚本，使用 Git 忽略的版本化虚拟环境执行与 CI 相同的 coverage gate。
 - 修复多模型 MCP 边界契约测试对 Markdown 换行敏感而导致的误失败。
 - 补齐 README 的多模型固定角色与默认模型简介，使其与公开契约一致。
 - 收紧多模型模式的公开契约：它现在明确是选择性外部 runner，而非全角色模型编排；`serial` 角色不会按 profile 切换模型。常规 role-flow 与 `desktop-task`/GLM `audit --execute` 的直接入口现分开说明；根 `converge` 入口要求多模型 external runner 显式搭配该扩展。扩展 Skill 同时说明 Codex read-only runner 继承 MCP 配置，Suite 没有可验证的 no-MCP/allowlist 机制时保持 `uncovered`，不能当作通用外部副作用隔离。
