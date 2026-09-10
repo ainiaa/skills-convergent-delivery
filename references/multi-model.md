@@ -2,7 +2,9 @@
 
 用户明确说“使用多模型配合开发”时启用；普通任务保持原路径。角色是固定契约，Agent 是按需创建的可选运行实例。控制器每次只选择一个下一角色，不执行固定的多模型流水线。
 
-这是选择性外部 runner 扩展，不是完整的角色级模型编排。配置中的模型仅在角色被选为 `agent` 时才会实际冻结并启动；`serial` 明确复用当前 controller，不会按 profile 切换模型，也不会产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色。不要将它们的配置或 `--role` 覆盖理解为已实际派发的模型选择。
+这是选择性外部 runner 扩展，不是完整的角色级模型编排。在常规 `role_flow` 路径，配置中的模型仅在角色被选为 `agent` 时才会冻结并启动；`serial` 明确复用当前 controller，不会按 profile 切换模型，也不会产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色。不要将它们的配置或 `--role` 覆盖理解为已实际派发的模型选择。
+
+`desktop-task` 和 `audit --execute` 是显式的直接入口，不经过 `role_flow`：前者只用 implementer profile 生成 host 的模型请求，后者只用 GLM reviewer profile 发起一次诊断请求。两者各自的 receipt 语义仍适用，不能伪装为 `runner_lifecycle` 的常规角色执行或远端模型已观察事实。
 
 | 角色 | 默认模型 / 推理 | 边界 |
 |---|---|---|

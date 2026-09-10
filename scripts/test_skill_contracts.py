@@ -221,11 +221,15 @@ class SkillContractTest(unittest.TestCase):
         extension = (ROOT / "extensions/converge-multimodel/SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn("Multi-model external runners require the explicit", root)
+        self.assertIn("常规 `role_flow` 路径", model)
+        self.assertIn("`desktop-task` 和 `audit --execute`", model)
         self.assertIn("只有 `agent` 模式", model)
         self.assertIn("不会按 profile 切换模型", model)
         self.assertIn("not a complete role-level model orchestration", extension)
+        self.assertIn("non-multi-model Converge delivery", extension)
         self.assertIn("serial", extension)
         self.assertIn("MCP", extension)
+        self.assertIn("does not provide a no-MCP configuration", extension)
 
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")

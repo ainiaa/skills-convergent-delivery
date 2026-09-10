@@ -1,6 +1,6 @@
 ---
 name: converge-multimodel
-description: Use Converge's multi-model runner, role dispatch, or model evaluation only when the user explicitly requests multiple model providers, independent model comparison, or bounded runner fan-out. Do not use for ordinary Converge delivery.
+description: Use Converge's multi-model runner, role dispatch, or model evaluation only when the user explicitly requests multiple model providers, independent model comparison, or bounded runner fan-out. Do not use for non-multi-model Converge delivery.
 metadata:
   compatibility: Requires the registered Converge Suite and an explicit multi-model request.
 ---
@@ -19,14 +19,20 @@ the runner lifecycle. Do not create a runner merely to make every role use a
 different model.
 
 Read-only is a workspace boundary, not a universal side-effect boundary. The
-Codex runner inherits the user's MCP configuration, so do not use it for
-untrusted instructions or sensitive external actions without a dedicated
-no-MCP configuration or an explicit tool allowlist.
+Codex runner inherits the user's MCP configuration. The Suite does not provide
+a no-MCP configuration or an explicit tool allowlist, so this boundary is
+`uncovered` unless the controller independently verifies such a configuration.
+Do not use the runner for untrusted instructions or sensitive external actions
+without that verification.
 
 Create the controller snapshot with `--extension multimodel` before executing
 its runner or evaluation helpers. The frozen descriptor is the authority for
 the selected extension set. Read [multi-model guidance](../../references/multi-model.md)
 only when this extension is selected.
+
+`desktop-task` and `audit --execute` are explicit direct operations outside
+the normal role-flow runner lifecycle. Follow their own frozen action or
+diagnostic receipt rules; do not treat either as a completed model worker.
 
 Use `multi_model_repo_eval.py` for an explicit frozen Git-task comparison.
 It defaults to a plan; `--allow-execute` creates only disposable fixtures and
