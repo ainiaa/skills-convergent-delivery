@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 import unittest
+import eval_contract
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -109,6 +110,25 @@ class EvaluationContractTest(unittest.TestCase):
             ["read_only", "isolated_temporary_workspace"], effects["allowed"]
         )
         self.assertIn("不得直接执行外部副作用", self.skill)
+
+    def test_evaluator_preflight_and_path_contracts_fail_closed_without_a_host_bridge(self):
+        result = eval_contract.preflight()
+        self.assertEqual("uncovered", result["status"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result, eval_contract.evaluate({}, ROOT))
+        self.assertEqual(["one"], eval_contract._string_list(["one"], "items"))
+        self.assertEqual("a" * 64, eval_contract._sha256("a" * 64, "digest"))
+        self.assertEqual(["src", "."], eval_contract._clean_scope(["src/", "."]))
+        self.assertEqual(["src/a.py"], eval_contract._clean_touched_paths(["src/a.py"]))
+        self.assertTrue(eval_contract._in_scope(["src"], "src/a.py"))
+        for call in (
+            lambda: eval_contract._string_list([], "items"),
+            lambda: eval_contract._sha256("bad", "digest"),
+            lambda: eval_contract._clean_scope(["../escape"]),
+            lambda: eval_contract._clean_touched_paths(["src\\a.py"]),
+        ):
+            with self.subTest(call=call), self.assertRaises(ValueError):
+                call()
 
 
 if __name__ == "__main__":

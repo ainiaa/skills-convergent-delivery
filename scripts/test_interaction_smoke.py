@@ -25,6 +25,62 @@ class InteractionSmokeTest(unittest.TestCase):
     def setUp(self):
         self.catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
+    def test_catalog_and_receipt_reject_invalid_contract_boundaries(self):
+        catalog_cases = (
+            lambda value: value.pop("suite"),
+            lambda value: value.update(scope="other"),
+            lambda value: value["fixture"].update(baseline_files=[]),
+            lambda value: value["fixture"].update(baseline_files=["missing.py"]),
+            lambda value: value.update(scenarios=value["scenarios"][:-1]),
+            lambda value: value["smoke"].update(minimum_fresh_runs=1),
+            lambda value: value["scenarios"][0]["turns"][0].update(authorized_write="yes"),
+            lambda value: value["scenarios"][0]["expected"].update(skill="unknown"),
+        )
+        for mutate in catalog_cases:
+            invalid = copy.deepcopy(self.catalog)
+            mutate(invalid)
+            with self.subTest(catalog=mutate), self.assertRaises(ValueError):
+                validate_catalog(invalid, ROOT)
+
+        receipt = {
+            "schema_version": 2,
+            "scenario_id": "known-decision-is-not-reasked",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "resolved-task",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": [], "completion_claim": "not_complete"},
+                {"turn": 2, "writes_observed": True, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "completion_claim": "verified_only"},
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt_cases = (
+            lambda value: value.update(schema_version=1),
+            lambda value: value.update(scenario_id="missing"),
+            lambda value: value.update(catalog_fingerprint="b" * 64),
+            lambda value: value.update(baseline_commit="bad"),
+            lambda value: value.update(workspace_strategy="other"),
+            lambda value: value["observations"][0].update(questions_asked=-1),
+            lambda value: value.update(result="unknown"),
+            lambda value: value.update(result="uncovered", unprompted_task_turns=0,
+                                        successor_task_dispatches=None, uncovered_reason="missing host"),
+            lambda value: value.update(uncovered_reason="not allowed"),
+            lambda value: value["observations"][1].update(writes_observed=False),
+            lambda value: value["observations"][1].update(completion_claim="findings_only"),
+            lambda value: value["observations"][1].update(verification_observed=[]),
+        )
+        for mutate in receipt_cases:
+            invalid = copy.deepcopy(receipt)
+            mutate(invalid)
+            with self.subTest(receipt=mutate), self.assertRaises(ValueError):
+                validate_receipt(invalid, self.catalog)
+
     def test_catalog_requires_replayable_setup_and_a_concrete_prior_decision(self):
         validate_catalog(self.catalog, ROOT)
         scenario = next(item for item in self.catalog["scenarios"]

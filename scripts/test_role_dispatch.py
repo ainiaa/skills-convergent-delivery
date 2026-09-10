@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from multi_model import resolve
-from role_dispatch import plan_dispatch
+from role_dispatch import plan_dispatch, plan_read_only_fanout
 
 
 ROLE_DISPATCH = Path(__file__).with_name("role_dispatch.py")
@@ -33,6 +33,24 @@ def state(**overrides):
 
 
 class RoleDispatchTest(unittest.TestCase):
+    def test_dispatch_and_fanout_reject_invalid_or_unsafe_inputs(self):
+        self.assertEqual(
+            {"status": "done", "reason": "verification_complete"},
+            plan_dispatch(self.profiles, state(
+                routing="frozen", route="inline", implementation="complete", verification="passed"
+            )),
+        )
+        with self.assertRaisesRegex(ValueError, "heterogeneity"):
+            plan_read_only_fanout(
+                self.profiles, [{"task_id": "scout", "role": "scout"}], require_heterogeneous="yes"
+            )
+        with self.assertRaisesRegex(ValueError, "unique"):
+            plan_read_only_fanout(self.profiles, [{"task_id": "same", "role": "scout"}] * 2)
+        writable = {"roles": dict(self.profiles["roles"])}
+        writable["roles"]["scout"] = {**writable["roles"]["implementer"], "role": "scout"}
+        with self.assertRaises(ValueError):
+            plan_read_only_fanout(writable, [{"task_id": "scout", "role": "scout"}])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)

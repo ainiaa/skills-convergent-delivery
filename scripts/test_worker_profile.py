@@ -23,6 +23,19 @@ def profile(**overrides):
 
 
 class WorkerProfileTest(unittest.TestCase):
+    def test_rejects_malformed_nested_profile_values(self):
+        cases = (
+            ("worker_id", ""),
+            ("requested", {"model": "model", "reasoning_effort": "nope"}),
+            ("permissions", {"workspace": "read", "shell": "false", "network": "egress"}),
+            ("budget", {"max_turns": 1}),
+        )
+        for field, replacement in cases:
+            with self.subTest(field=field):
+                value = profile(**{field: replacement})
+                with self.assertRaises(ValueError):
+                    validate_worker_profile(value)
+
     def test_accepts_frozen_requested_and_effective_model_contract(self):
         value = profile()
         self.assertEqual(value, validate_worker_profile(value))

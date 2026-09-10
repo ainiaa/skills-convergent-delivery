@@ -127,6 +127,7 @@ TEST_FILES+=(
   scripts/test_provider_contract.py
   scripts/test_runtime_adapter.py
   scripts/test_capsule_dispatch.py
+  scripts/test_desktop_task_bridge.py
   scripts/test_task_profile.py
   scripts/test_run_contract.py
   scripts/test_runtime_scenarios.py

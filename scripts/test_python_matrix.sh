@@ -16,7 +16,7 @@ for version in 3.11 3.14; do
   uv venv --allow-existing --python "$version" "$environment"
   uv pip install --python "$environment/bin/python" -r requirements-dev.txt
   if ! PATH="$ROOT/$environment/bin:$PATH" "$ROOT/$environment/bin/python" \
-    -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85; then
+    -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90; then
     status=1
   fi
 done

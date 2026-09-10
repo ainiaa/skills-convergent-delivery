@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 
 from multi_model import resolve
-from role_result import prompt_for_role, result_from_output, validate_role_result
+from role_result import (
+    prompt_for_review, prompt_for_role, result_from_output, validate_evidence_reference,
+    review_result, validate_available_result, validate_role_result,
+)
 from runner_contract import fingerprint, freeze_launch
 
 
@@ -126,6 +129,54 @@ class RoleResultTest(unittest.TestCase):
         self.assertIn('"next_action"', prompt)
         self.assertIn('"content_fingerprint"', prompt)
         self.assertIn("Return only JSON", prompt)
+
+    def test_evidence_contract_accepts_safe_kinds_and_rejects_unsafe_locations(self):
+        fingerprint_value = "a" * 64
+        for kind, reference in (
+            ("command", "bash scripts/check.sh"),
+            ("url", "https://example.com/evidence"),
+            ("artifact", "artifacts/report.json"),
+        ):
+            with self.subTest(kind=kind):
+                self.assertEqual(kind, validate_evidence_reference({
+                    "kind": kind, "reference": reference, "content_fingerprint": fingerprint_value,
+                })["kind"])
+        for kind, reference in (("url", "http://example.com"), ("artifact", "../secret")):
+            with self.subTest(reference=reference), self.assertRaisesRegex(ValueError, "evidence|URL|artifact"):
+                validate_evidence_reference({
+                    "kind": kind, "reference": reference, "content_fingerprint": fingerprint_value,
+                })
+
+    def test_review_prompt_hides_the_original_prompt_for_a_blind_request(self):
+        blind = prompt_for_review("private prompt", {"mode": "blind", "axis": "quality"})
+        shared = prompt_for_review("shared prompt", {"mode": "shared", "axis": "quality"})
+        self.assertNotIn("private prompt", blind)
+        self.assertIn("shared prompt", shared)
+        with self.assertRaisesRegex(ValueError, "prompt"):
+            prompt_for_review("", {})
+
+    def test_result_contract_rejects_bad_findings_and_only_reviewers_bind_review_records(self):
+        launch = self.launch()
+        for content in (
+            json.dumps({"findings": [], "next_action": "unknown"}),
+            json.dumps({"findings": [{"summary": "x", "evidence": []}], "next_action": "verify"}),
+        ):
+            with self.subTest(content=content):
+                result = result_from_output(launch, {"status": "available", "content": content})
+                self.assertEqual("invalid", result["status"])
+        available = result_from_output(launch, {"status": "available", "content": json.dumps({
+            "findings": [{"summary": "x", "evidence": [{
+                "kind": "file", "reference": "scripts/test_role_result.py:1", "content_fingerprint": "a" * 64,
+            }]}], "next_action": "verify",
+        })})
+        available["result_fingerprint"] = "bad"
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            validate_available_result(available)
+        with self.assertRaisesRegex(ValueError, "reviewer"):
+            review_result(launch, {"status": "pass"})
+        reviewer = self.launch("reviewer")
+        result = review_result(reviewer, {"status": "pass"})
+        self.assertEqual(result, validate_role_result(result, reviewer))
 
 
 if __name__ == "__main__":

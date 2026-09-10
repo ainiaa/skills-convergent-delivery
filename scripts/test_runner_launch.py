@@ -14,7 +14,7 @@ from multi_model import resolve
 from reference_receipt import freeze_receipt
 from role_dispatch import plan_dispatch
 from runner_contract import fingerprint
-from runner_launch import command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
+from runner_launch import _output, _profile, command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
 
 
 RUNNER_LAUNCH = Path(__file__).with_name("runner_launch.py")
@@ -64,6 +64,24 @@ class RunnerLaunchTest(unittest.TestCase):
 
         self.assertEqual("codex-exec-v1", launch["runner_id"])
         self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
+
+    def test_dispatch_helpers_reject_malformed_identity_and_omit_blank_output(self):
+        with self.assertRaisesRegex(ValueError, "dispatch"):
+            _profile({})
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        dispatch = plan_dispatch(profiles, state())
+        forged = {**dispatch, "runner_id": "other"}
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            _profile(forged)
+        reviewer = plan_dispatch(profiles, state(
+            evidence="sufficient", implementation="complete", verification="passed", review="pending",
+        ))
+        with self.assertRaisesRegex(ValueError, "only implementer"):
+            plan_dispatch_launch(
+                reviewer, "Review", workspace=self.workspace,
+                implementation_reference_receipt=freeze_receipt([]),
+            )
+        self.assertEqual({"status": "unavailable"}, _output("  "))
 
     def test_dispatch_launches_claude_with_the_frozen_profile(self):
         profiles = resolve(

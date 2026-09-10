@@ -8,6 +8,18 @@ from reference_receipt import freeze_receipt, require_implementer_receipt
 
 
 class ReferenceReceiptTest(unittest.TestCase):
+    def test_reference_receipt_rejects_malformed_and_duplicate_references(self):
+        cases = (
+            "not-a-list",
+            [{"reference": "", "status": "read", "content_fingerprint": "a" * 64}],
+            [{"reference": "same", "status": "read", "content_fingerprint": "a" * 64}] * 2,
+            [{"reference": "read", "status": "read", "content_fingerprint": "bad"}],
+            [{"reference": "missing", "status": "unavailable", "content_fingerprint": "a" * 64}],
+        )
+        for references in cases:
+            with self.subTest(references=references), self.assertRaises(ValueError):
+                freeze_receipt(references)
+
     def test_implementer_receipt_accepts_an_explicitly_empty_reference_set(self):
         receipt = freeze_receipt([])
 

@@ -1,3 +1,4 @@
+import copy
 import json
 import hashlib
 import os
@@ -23,6 +24,59 @@ REQUIRED = (
 
 
 class DeliveryEngineTest(unittest.TestCase):
+    def test_provider_manifest_and_registry_reject_malformed_boundaries(self):
+        baseline = engine_module.load_provider_registry()["native-v1"]
+        cases = (
+            lambda value: value.update(provider=None),
+            lambda value: value["provider"].update(id=""),
+            lambda value: value["capabilities"].update(extra=True),
+            lambda value: value["capabilities"].update(task_kinds=["unknown"]),
+            lambda value: value["task_contracts"]["feature"].update(entrypoint_candidates="bad"),
+            lambda value: value["task_contracts"]["feature"].update(closure=["../escape"]),
+            lambda value: value["task_contracts"]["feature"].update(source_fingerprint="bad"),
+            lambda value: value["task_contracts"]["feature"].update(required_terms=[1]),
+            lambda value: value.update(authorization=None),
+            lambda value: value["authorization"].update(extra=True),
+            lambda value: value["outputs"].update(extra=True),
+            lambda value: value["outputs"].update(required_evidence=[]),
+        )
+        for mutate in cases:
+            manifest = copy.deepcopy(baseline)
+            mutate(manifest)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                engine_module.validate_provider_manifest(manifest)
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider_dir = Path(directory) / "providers"
+            provider_dir.mkdir()
+            (provider_dir / "native-v1.json").write_text("not-json", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                engine_module.load_provider_registry(provider_dir)
+            empty = Path(directory) / "empty"
+            empty.mkdir()
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                engine_module.load_provider_registry(empty)
+
+    def test_provider_manifest_rejects_invalid_core_contract_boundaries(self):
+        baseline = engine_module.load_provider_registry()["native-v1"]
+        cases = (
+            (lambda value: value.update(schema_version=1), "schema_version"),
+            (lambda value: value["provider"].update(role="unknown"), "role"),
+            (lambda value: value.update(capabilities=[]), "capabilities"),
+            (lambda value: value["capabilities"].update(task_kinds=[]), "capabilities"),
+            (lambda value: value["task_contracts"].pop("feature"), "contracts"),
+            (lambda value: value["task_contracts"]["feature"].update(closure="bad"), "closure"),
+            (lambda value: value["authorization"].update(stop_for=[]), "stop boundaries"),
+            (lambda value: value["authorization"].update(forbidden_actions=[]), "forbidden actions"),
+            (lambda value: value["outputs"].update(progress_protocol=2), "output contract"),
+            (lambda value: value["outputs"].update(required_evidence=[]), "evidence contract"),
+        )
+        for mutate, message in cases:
+            manifest = copy.deepcopy(baseline)
+            mutate(manifest)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                engine_module.validate_provider_manifest(manifest)
+
     def test_provider_selection_import_does_not_load_snapshot_controller(self):
         result = subprocess.run(
             [
@@ -186,6 +240,47 @@ class DeliveryEngineTest(unittest.TestCase):
             engine_module.validate_provider_manifest(nested_executable)
         with self.assertRaisesRegex(ValueError, "entrypoint"):
             engine_module.validate_provider_manifest(escaping)
+
+    def test_provider_file_helpers_handle_native_layout_and_missing_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "skills/demo/SKILL.md"
+            nested.parent.mkdir(parents=True)
+            nested.write_text("demo\n", encoding="utf-8")
+            self.assertEqual(nested.resolve(), engine_module.skill_path(root, "demo"))
+            self.assertIsNone(engine_module.aggregate_fingerprint(root, ["missing"]))
+            digest = engine_module.aggregate_fingerprint(root, ["skills/demo/SKILL.md"])
+            self.assertEqual(64, len(digest))
+            flat = root / "flat/SKILL.md"
+            flat.parent.mkdir()
+            flat.write_text("flat\n", encoding="utf-8")
+            self.assertEqual(flat.resolve(), engine_module.skill_path(root, "flat"))
+
+    def test_provider_source_helpers_reject_escaping_paths_and_find_skill_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "skills" / "demo" / "SKILL.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("test first\n", encoding="utf-8")
+
+            self.assertEqual((root.resolve(),), engine_module.tdd_roots([root]))
+            self.assertEqual(source, engine_module.provider_path(root, ["missing", "skills/demo/SKILL.md"]))
+            self.assertEqual(source.resolve(), engine_module.provider_file(root, "demo/SKILL.md"))
+            self.assertIsNone(engine_module.provider_file(root, "../SKILL.md"))
+            self.assertIsNone(engine_module.provider_file(root, str(source)))
+            self.assertIsNone(engine_module.provider_source_fingerprint(root, ["missing"]))
+            self.assertEqual(64, len(engine_module.provider_source_fingerprint(root, ["demo/SKILL.md"])))
+
+            self.assertEqual(
+                (None, None, None),
+                engine_module.exact_tdd_provider("generic-tdd-v1", [root], "feature"),
+            )
+            self.assertEqual(
+                (None, None, None),
+                engine_module.exact_tdd_provider(
+                    "generic-tdd-v1", [root], "feature", root.parent / "outside" / "SKILL.md"
+                ),
+            )
 
     def run_engine(self, *arguments, command="select", environment=None):
         arguments = list(arguments)

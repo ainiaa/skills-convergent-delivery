@@ -49,11 +49,11 @@ class PythonMatrixScriptTest(unittest.TestCase):
                     "uv <python> <install> <3.11>",
                     "uv <venv> <--allow-existing> <--python> <3.11> <.venv/py311>",
                     "uv <pip> <install> <--python> <.venv/py311/bin/python> <-r> <requirements-dev.txt>",
-                    f"python:{workspace}/.venv/py311/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=85>",
+                    f"python:{workspace}/.venv/py311/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>",
                     "uv <python> <install> <3.14>",
                     "uv <venv> <--allow-existing> <--python> <3.14> <.venv/py314>",
                     "uv <pip> <install> <--python> <.venv/py314/bin/python> <-r> <requirements-dev.txt>",
-                    f"python:{workspace}/.venv/py314/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=85>",
+                    f"python:{workspace}/.venv/py314/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>",
                 ],
                 log.read_text(encoding="utf-8").splitlines(),
             )

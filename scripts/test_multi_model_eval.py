@@ -11,7 +11,10 @@ import unittest
 from pathlib import Path
 
 from multi_model import resolve
-from multi_model_eval import compare_reports, evaluate, load_scenarios
+from multi_model_eval import (
+    _bounded_profile, _evaluate, _read_only_profile, _scenario_evidence, compare_reports,
+    evaluate, load_scenarios,
+)
 from controller_snapshot import create_snapshot
 from delivery_state import state_path
 from runner_contract import fingerprint, freeze_launch
@@ -58,6 +61,26 @@ class MultiModelEvalTest(unittest.TestCase):
         self.assertEqual({"scout", "reviewer"}, {item["role"] for item in catalog})
         self.assertTrue(all("next_action" not in item["prompt"] for item in catalog))
         self.assertTrue(all(item["expected_next_action"] not in item["prompt"].split() for item in catalog))
+
+    def test_evaluator_helpers_reject_invalid_sources_profiles_and_timeouts(self):
+        with self.assertRaises(ValueError):
+            _scenario_evidence({"kind": "command", "reference": "pytest", "content": ""})
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "scenarios.json"
+            source.write_text("[]", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_scenarios(source)
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            _read_only_profile({"roles": {}}, "scout")
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            _read_only_profile({"roles": {"scout": self.profiles["roles"]["implementer"]}}, "scout")
+        for timeout in (True, 4, 301):
+            with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, "timeout"):
+                _bounded_profile(self.profiles["roles"]["scout"], timeout)
+        with self.assertRaisesRegex(ValueError, "flags"):
+            _evaluate(self.profiles, scenarios(), workspace=self.workspace, execute="yes")
+        with self.assertRaisesRegex(ValueError, "controller fingerprint"):
+            _evaluate(self.profiles, scenarios(), workspace=self.workspace, controller_fingerprint="bad")
 
     def test_public_evaluate_validates_the_frozen_corpus(self):
         with self.assertRaisesRegex(ValueError, "15 to 20"):
@@ -285,6 +308,25 @@ class MultiModelEvalTest(unittest.TestCase):
         second["scenario_fingerprint"] = "c" * 64
         with self.assertRaisesRegex(ValueError, "same frozen"):
             compare_reports([first, second])
+
+    def test_comparison_rejects_missing_or_invalid_executed_snapshot_evidence(self):
+        with self.assertRaises(ValueError):
+            compare_reports([])
+        report = evaluate(self.profiles, scenarios(), workspace=self.workspace)
+        report.update(trust_level="snapshot", controller_fingerprint="a" * 64, status="completed")
+        report["results"] = [{
+            **report["results"][0], "status": "passed", "duration_ms": 1,
+        }]
+        report["summary"] = {"planned": 0, "passed": 1, "failed": 0,
+                             "total_duration_ms": 1, "scenario_count": 1, "status": "completed"}
+        invalid_cases = (
+            {**report, "trust_level": "diagnostic"},
+            {**report, "controller_fingerprint": "bad"},
+            {**report, "results": []},
+        )
+        for invalid in invalid_cases:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                compare_reports([report, invalid])
 
 
 if __name__ == "__main__":

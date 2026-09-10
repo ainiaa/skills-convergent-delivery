@@ -24,6 +24,19 @@ def profile(runner_id="codex-exec-v1", **overrides):
 
 
 class RunnerRegistryTest(unittest.TestCase):
+    def test_rejects_unknown_and_unsupported_runner_capabilities(self):
+        unknown = profile(runner_id="unknown-v1")
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            validate_runner_profile(unknown)
+        unsupported = profile(
+            "openai-compatible-v1", role="scout",
+            requested={"model": "glm-5.2", "reasoning_effort": "high"},
+            effective={"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+            permissions={"workspace": "read", "shell": True, "network": "egress"},
+        )
+        with self.assertRaisesRegex(ValueError, "shell"):
+            validate_runner_profile(unsupported)
+
     def test_exposes_explicit_capability_sets(self):
         self.assertEqual("local_process", capabilities("codex-exec-v1")["kind"])
         self.assertEqual("network_request", capabilities("openai-compatible-v1")["kind"])

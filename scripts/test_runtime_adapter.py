@@ -1,6 +1,10 @@
 import importlib.util
+import io
+import json
+import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("runtime_adapter.py")
@@ -254,6 +258,121 @@ class RuntimeAdapterTest(unittest.TestCase):
                 activity_observed=None, process_running=None, soft_probe_complete=False,
             ),
         )
+
+    def test_host_observed_binding_can_interrupt_only_after_confirmed_inactivity(self):
+        observation = {
+            "query_id": "host-query-1", "observed_at": "2026-09-10T00:00:00Z",
+            "profile": "claude-code",
+            "capabilities": [
+                "dispatch", "query", "activity_query", "process_query", "wait",
+                "interrupt", "resume", "tree_query", "restrict_dispatch",
+            ],
+        }
+        binding = runtime_adapter._bind(
+            "claude-code", "automatic", observation["capabilities"], "host bridge",
+            "host_observed", observation,
+        )
+
+        self.assertEqual("observed", runtime_adapter.watchdog_mode(binding))
+        self.assertTrue(runtime_adapter.can_auto_watchdog(binding))
+        self.assertEqual(
+            {"action": "query", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=False, process_running=False, soft_probe_complete=False,
+            ),
+        )
+        self.assertEqual(
+            {"action": "interrupt", "task_id": "task-1", "worker_ref": "worker-1"},
+            runtime_adapter.watchdog_action(
+                binding, task_id="task-1", worker_ref="worker-1", wait_timed_out=True,
+                activity_observed=False, process_running=False, soft_probe_complete=True,
+            ),
+        )
+
+    def test_binding_and_cleanup_barrier_reject_tampered_host_observations(self):
+        observation = {
+            "query_id": "host-query-1", "observed_at": "2026-09-10T00:00:00Z",
+            "profile": "claude-code", "capabilities": ["dispatch", "query", "tree_query"],
+        }
+        binding = runtime_adapter._bind(
+            "claude-code", "automatic", observation["capabilities"], "host bridge",
+            "host_observed", observation,
+        )
+        runtime_adapter.validate_binding(binding)
+
+        tampered = dict(binding)
+        tampered["capability_observation"] = {**observation, "query_id": "forged"}
+        with self.assertRaisesRegex(ValueError, "capability observation"):
+            runtime_adapter.validate_binding(tampered)
+        with self.assertRaisesRegex(ValueError, "cross_session"):
+            runtime_adapter.allows_worker_lifecycle(binding, cross_session="yes")
+
+        receipt = {
+            "schema_version": 2, "mode": "tree_query", "evidence_level": "host_observed",
+            "observation_fingerprint": "a" * 64, "observed_revision": 3,
+            "registered_refs": ["worker-1"], "active_refs": [], "unexpected_refs": [],
+        }
+        self.assertEqual(receipt, runtime_adapter.validate_cleanup_barrier(receipt, 3, ["worker-1"]))
+        for field, value, message in (
+            ("registered_refs", ["worker-2"], "registry"),
+            ("active_refs", ["worker-1"], "active"),
+            ("unexpected_refs", ["worker-2"], "unexpected"),
+        ):
+            invalid = {**receipt, field: value}
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
+                runtime_adapter.validate_cleanup_barrier(invalid, 3, ["worker-1"])
+
+    def test_cli_returns_structured_results_and_blocks_invalid_input(self):
+        with patch.object(sys, "argv", ["runtime_adapter.py", "normalize", "--status", "DONE"]), \
+                patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(0, runtime_adapter.main())
+        self.assertEqual("completed\n", stdout.getvalue())
+
+        with patch.object(sys, "argv", ["runtime_adapter.py", "negotiate", "--profile", "codex"]), \
+                patch("sys.stdin", io.StringIO(json.dumps({"dispatch": True, "query": True, "tree_query": True}))), \
+                patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(0, runtime_adapter.main())
+        self.assertEqual("automatic", json.loads(stdout.getvalue())["mode"])
+
+        with patch.object(sys, "argv", ["runtime_adapter.py", "normalize"]), \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, runtime_adapter.main())
+        self.assertIn("normalize requires --status", stderr.getvalue())
+
+    def test_binding_validation_rejects_each_untrusted_claim_boundary(self):
+        baseline = runtime_adapter.negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True},
+        )
+        cases = (
+            (lambda value: value.pop("reason"), "fields"),
+            (lambda value: value.update(schema_version=3), "schema_version"),
+            (lambda value: value.update(profile="unknown"), "identity"),
+            (lambda value: value.update(evidence_level="forged"), "evidence level"),
+            (lambda value: value.update(capability_observation={}), "cannot claim"),
+            (lambda value: value.update(binding_fingerprint="0" * 64), "fingerprint"),
+            (lambda value: value.update(reason=" "), "reason"),
+            (lambda value: value.update(capabilities=["unknown"]), "capabilities"),
+            (lambda value: value.update(mode="manual", capabilities=["query"]), "manual"),
+            (lambda value: value.update(capabilities=["query", "dispatch", "tree_query"]), "canonical"),
+        )
+        for mutate, message in cases:
+            invalid = dict(baseline)
+            mutate(invalid)
+            if message != "fingerprint":
+                invalid["binding_fingerprint"] = runtime_adapter.fingerprint({
+                    key: value for key, value in invalid.items() if key != "binding_fingerprint"
+                })
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                runtime_adapter.validate_binding(invalid)
+
+        for profile, observed, message in (
+            ("unknown", {}, "unknown runtime"),
+            ("codex", [], "observed capabilities"),
+            ("codex", {"query": "yes"}, "booleans"),
+        ):
+            with self.subTest(profile=profile), self.assertRaisesRegex(ValueError, message):
+                runtime_adapter.negotiate(profile, observed)
 
 
 if __name__ == "__main__":

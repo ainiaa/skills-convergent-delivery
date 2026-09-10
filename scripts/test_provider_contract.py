@@ -14,6 +14,27 @@ SPEC.loader.exec_module(provider_contract)
 
 
 class ProviderContractTest(unittest.TestCase):
+    def test_provider_reference_helpers_reject_missing_or_forged_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path, manifest = self.fixture(directory)
+            self.assertIsNone(provider_contract.file_fingerprint(root / "missing"))
+            with self.assertRaisesRegex(ValueError, "unavailable"):
+                provider_contract.resolve_source(root, "missing/SKILL.md")
+            with self.assertRaisesRegex(ValueError, "source root"):
+                provider_contract.build_reference(manifest, path, "feature")
+            with self.assertRaisesRegex(ValueError, "source"):
+                provider_contract.build_reference(
+                    manifest, path, "feature", source_path=root / "missing/SKILL.md"
+                )
+            reference = provider_contract.build_reference(manifest, path, "feature", root)
+            for forged, expected in (
+                (None, "object"),
+                ({**reference, "task_kind": "fix"}, "task contract"),
+                ({**reference, "sources": {}}, "sources"),
+            ):
+                with self.subTest(forged=forged), self.assertRaisesRegex(ValueError, expected):
+                    provider_contract.validate_reference(forged, "feature")
+
     def fixture(self, directory):
         root = Path(directory) / "provider"
         (root / "skills/demo").mkdir(parents=True)
@@ -122,6 +143,23 @@ class ProviderContractTest(unittest.TestCase):
                         provider_contract.validate_reference(
                             reference, "feature", "stage"
                         )
+
+    def test_provider_source_helpers_reject_traversal_and_invalid_stage_terms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "skills/demo/SKILL.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("test first red green\n", encoding="utf-8")
+            self.assertEqual(source.resolve(), provider_contract.resolve_source(root, "demo/SKILL.md"))
+            for path in ("../secret", "/tmp/secret", ""):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "source path"):
+                    provider_contract.resolve_source(root, path)
+            contract = {"required_terms": ["red", "green"], "forbidden_terms": ["publish"]}
+            self.assertIsNone(provider_contract.validate_stage_source(contract, source))
+            with self.assertRaisesRegex(ValueError, "required"):
+                provider_contract.validate_stage_source({"required_terms": ["missing"]}, source)
+            with self.assertRaisesRegex(ValueError, "forbidden"):
+                provider_contract.validate_stage_source({"forbidden_terms": ["green"]}, source)
 
 
 if __name__ == "__main__":

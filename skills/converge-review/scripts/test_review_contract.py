@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_next import validate_execution_control
 from task_profile import freeze_routing
-from review_contract import normalize_request, normalize_result
+from review_contract import normalize_request, normalize_result, request_fingerprint
 
 
 def review_request(axis="spec", phase="initial", mode="shared", source="a" * 64):
@@ -274,6 +274,74 @@ class ReviewContractTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "request"):
             normalize_result(result, "reviewer-1", review_request(source="a" * 64))
+
+    def test_request_and_result_reject_malformed_identities_and_findings(self):
+        self.assertEqual(64, len(request_fingerprint(review_request())))
+        for field, value, message in (
+            ("baseline_commit", "a" * 39, "Git object"),
+            ("source_fingerprint", "A" * 64, "sha256"),
+            ("prior_findings", ["a" * 64, "a" * 64], "unique"),
+        ):
+            with self.subTest(field=field):
+                request = review_request()
+                request[field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    normalize_request(request)
+
+        result = {
+            "protocol_version": 3, "mode": "shared", "axis": "spec", "phase": "initial",
+            "source_fingerprint": "a" * 64, "independent": False,
+            "status": "findings", "findings": [{
+                "fingerprint": "b" * 64, "evidence": "proof", "impact": "impact",
+                "root_cause": "cause", "scope": "outside", "classification": "defect",
+            }], "blocked_reason": None,
+        }
+        with self.assertRaisesRegex(ValueError, "scope"):
+            normalize_result(result, "reviewer-1", review_request())
+        result["findings"] = []
+        with self.assertRaisesRegex(ValueError, "requires findings"):
+            normalize_result(result, "reviewer-1", review_request())
+
+    def test_result_boundary_rejections_and_cli_errors_are_explicit(self):
+        result = {
+            "protocol_version": 3, "mode": "shared", "axis": "spec", "phase": "initial",
+            "source_fingerprint": "a" * 64, "independent": False,
+            "status": "findings", "findings": [{
+                "fingerprint": "b" * 64, "evidence": "proof", "impact": "impact",
+                "root_cause": "cause", "scope": "current", "classification": "defect",
+            }], "blocked_reason": None,
+        }
+        cases = (
+            ([], "object"),
+            ({**result, "axis": "unknown"}, "axis"),
+            ({**result, "phase": "unknown"}, "phase"),
+            ({**result, "independent": "false"}, "boolean"),
+            ({**result, "mode": "unknown"}, "mode"),
+            ({**result, "status": "unknown"}, "status"),
+            ({**result, "findings": {}}, "list"),
+            ({**result, "findings": [
+                result["findings"][0], result["findings"][0],
+            ]}, "unique"),
+            ({**result, "findings": [None]}, "object"),
+            ({**result, "findings": [{"fingerprint": "b" * 64}]}, "fields"),
+            ({**result, "findings": [{**result["findings"][0], "evidence": "x" * 501}]}, "non-empty"),
+        )
+        for invalid, message in cases:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, message):
+                normalize_result(invalid, "reviewer-1", review_request())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            request_path = Path(temporary) / "request.json"
+            request_path.write_text(json.dumps(review_request()), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable, str(Path(__file__).with_name("review_contract.py")), "normalize",
+                    "--input", str(request_path), "--reviewer-ref", "reviewer-1",
+                    "--request-file", str(request_path),
+                ], text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(2, result.returncode)
+        self.assertIn("only accepts", result.stderr)
 
 
 if __name__ == "__main__":

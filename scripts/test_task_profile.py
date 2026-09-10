@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from task_profile import classify, freeze_routing, infer_path_risks
+from task_profile import classify, freeze_routing, infer_path_risks, validate_frozen_routing
 
 
 def profile(**overrides):
@@ -29,6 +29,28 @@ def profile(**overrides):
 
 
 class TaskProfileTest(unittest.TestCase):
+    def test_routing_contract_rejects_each_invalid_profile_and_frozen_identity_field(self):
+        cases = (
+            profile(schema_version=1), profile(assessment_phase="unknown"), profile(scope="unknown"),
+            profile(coupling="unknown"), profile(uncertainty="unknown"), profile(verification="unknown"),
+            profile(risk_flags="money"), profile(delegable_tasks=True),
+        )
+        for invalid in cases:
+            with self.subTest(profile=invalid), self.assertRaises(ValueError):
+                classify(invalid)
+        for paths in ([], [""], ["src", "src"]):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                freeze_routing(profile(), paths)
+        with self.assertRaises(ValueError):
+            freeze_routing(profile(), ["."], request_text=1)
+        with self.assertRaises(ValueError):
+            freeze_routing(profile(), ["."], full_closure_required="yes")
+        frozen = freeze_routing(profile(), ["."])
+        for invalid in (None, {**frozen, "request_fingerprint": "bad"},
+                        {**frozen, "full_closure_required": "yes"}):
+            with self.subTest(frozen=invalid), self.assertRaises(ValueError):
+                validate_frozen_routing(invalid)
+
     def test_absolute_roots_cannot_expand_routing_to_the_workspace(self):
         for path in ("/", "///", "\\", "\\\\", "/tmp", "../outside"):
             with self.subTest(path=path), self.assertRaises(ValueError):

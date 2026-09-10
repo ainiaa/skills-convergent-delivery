@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 将全量生产 Python coverage 门槛提升至 90%，并在 AGENTS、CI、本地矩阵与原生 TDD 策略中统一执行；补充原生状态机正常、收口与重试路径回归。
 - 将运行时最低 Python 版本提升至 3.11，并在 CI 同时验证 3.11 与 3.14。
 - 新增可复用的本地 Python 3.11/3.14 矩阵验证脚本，使用 Git 忽略的版本化虚拟环境执行与 CI 相同的 coverage gate。
 - 修复多模型 MCP 边界契约测试对 Markdown 换行敏感而导致的误失败。

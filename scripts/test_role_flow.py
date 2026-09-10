@@ -100,6 +100,23 @@ class RoleFlowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fields"):
             next_role(state(extra=True))
 
+    def test_rejects_invalid_state_values_before_selecting_a_role(self):
+        cases = (
+            ({"schema_version": 2}, "schema_version"),
+            ({"routing": "unknown"}, "routing"),
+            ({"routing": "pending", "route": "inline"}, "before routing"),
+            ({"evidence": "unknown"}, "evidence"),
+            ({"task_spec": "unknown"}, "task_spec"),
+            ({"implementation": "unknown"}, "implementation"),
+            ({"verification": "unknown"}, "verification"),
+            ({"review": "unknown"}, "review"),
+            ({"needs_adjudication": "yes"}, "needs_adjudication"),
+            ({"implementation": "pending", "verification": "passed"}, "requires completed"),
+        )
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError, message):
+                next_role(state(**overrides))
+
 
 if __name__ == "__main__":
     unittest.main()
