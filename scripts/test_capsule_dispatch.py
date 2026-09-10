@@ -55,10 +55,18 @@ class CapsuleDispatchTest(unittest.TestCase):
                     "schema_version": 2, "workspace": ".", "status": "attempted",
                 })
             snapshot = root / "failure.capsule.md"
-            with patch.object(capsule_dispatch.os, "fdopen", side_effect=OSError("disk")):
+            descriptor = {}
+
+            def fail_fdopen(value, *_arguments, **_keywords):
+                descriptor["value"] = value
+                raise OSError("disk")
+
+            with patch.object(capsule_dispatch.os, "fdopen", side_effect=fail_fdopen):
                 with self.assertRaises(OSError):
                     capsule_dispatch.write_capsule_snapshot(snapshot, "frozen")
             self.assertFalse(snapshot.exists())
+            with self.assertRaises(OSError):
+                capsule_dispatch.os.fstat(descriptor["value"])
             with patch.object(capsule_dispatch, "claude_agents", side_effect=ValueError("offline")):
                 unavailable = capsule_dispatch.dispatch_claude(
                     "claude", root, "capsule", root / "receipts", "offline", 1,
