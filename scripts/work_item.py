@@ -282,6 +282,10 @@ def _record_verifier_failure_locked(path, state, source_fingerprint, argv,
 
 def _record_verifier_success_locked(path, state, source_fingerprint, argv, receipt_fingerprint):
     state["revision"] += 1
+    state["verifier_successes"] = [
+        success for success in state["verifier_successes"]
+        if success["source_fingerprint"] != source_fingerprint or success["argv"] != argv
+    ]
     state["verifier_successes"].append({
         "source_fingerprint": source_fingerprint, "argv": argv,
         "receipt_fingerprint": receipt_fingerprint,

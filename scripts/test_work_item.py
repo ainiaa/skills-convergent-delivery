@@ -430,6 +430,29 @@ class WorkItemTest(unittest.TestCase):
 
         self.assertTrue(Path(created["path"]).exists())
 
+    def test_repeated_successful_verifier_replaces_its_previous_receipt(self):
+        workspace = Path(__file__).resolve().parents[1]
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        created = resume_or_create(
+            state_root=self.root, workspace=workspace, baseline=baseline,
+            target="deduplicated-success-receipt", requirements=["run verifier"],
+            acceptance=["successful verification stays bounded"], decisions=[],
+            reference_receipt=self.reference_receipt, continuation=True,
+        )
+        argv = [sys.executable, "-c", "pass"]
+        run_work_item_evidence(created["path"], workspace=workspace, baseline=baseline, argv=argv)
+        latest = run_work_item_evidence(
+            created["path"], workspace=workspace, baseline=baseline, argv=argv,
+        )
+        state = json.loads(Path(created["path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(1, len(state["verifier_successes"]))
+        self.assertEqual(latest["receipt"]["receipt_fingerprint"],
+                         state["verifier_successes"][0]["receipt_fingerprint"])
+
     def test_controlled_verifier_rejects_a_workspace_or_baseline_outside_the_work_item(self):
         created = self.request()
         other_workspace = Path(self.directory.name) / "other-workspace"

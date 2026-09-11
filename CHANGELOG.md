@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 限制 work item 成功验证状态增长：同一源码与 verifier argv 的新成功回执替换旧记录，保留不同验证命令的完成证据而不重复追加。
 - 收紧 work item 完成门禁：`complete` 仅接受同一事项受控 `verify` 已记录的当前源码成功回执，不能再以无关的成功命令清场；旧的非终态记录继续兼容读取，首次成功验证后写入该记录。
 - 修复 work item verifier 的并发门禁与终态清理：gate、执行和失败回执现由同一事项锁串行，避免相同失败并发启动两次；最终当前源码 passing receipt 经 `work_item.py complete` 复核后删除非终态事项，不再把已完成工作误恢复为 active。
 - 收紧功能级 work item 的运行时边界：schema v2 的 reference binding 必须命中当前 target；恢复要求 workspace、baseline、需求、验收、decision 与回执均未漂移；受控 verifier 拒绝其他事项的 workspace/baseline，并让已验证的 `--recovery-receipt` 实际解除一次重试门禁。
