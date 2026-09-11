@@ -16,8 +16,11 @@ from reference_receipt import require_feature_binding, require_implementer_recei
 STATE_FIELDS = {
     "schema_version", "task_key", "workspace", "baseline", "target", "requirements",
     "acceptance", "decisions", "reference_receipt", "status", "revision", "verifier_attempts",
+    "verifier_successes",
 }
+LEGACY_STATE_FIELDS = STATE_FIELDS - {"verifier_successes"}
 NONTERMINAL_STATUSES = {"active", "blocked"}
+SUCCESS_FIELDS = {"source_fingerprint", "argv", "receipt_fingerprint"}
 
 
 def _string(value, name):
@@ -100,8 +103,11 @@ def work_item_path(root, workspace, baseline, target, requirements, acceptance):
 
 
 def _validate_state(state):
-    if not isinstance(state, dict) or set(state) != STATE_FIELDS or state.get("schema_version") != 1:
+    if not isinstance(state, dict) or set(state) not in (STATE_FIELDS, LEGACY_STATE_FIELDS) \
+            or state.get("schema_version") != 1:
         raise ValueError("work item is invalid")
+    if "verifier_successes" not in state:
+        state = {**state, "verifier_successes": []}
     workspace = _workspace(state.get("workspace"))
     baseline = _baseline(state.get("baseline"))
     target = _string(state.get("target"), "target")
@@ -130,6 +136,15 @@ def _validate_state(state):
         recovery = attempt["recovery_receipt_fingerprint"]
         if recovery is not None:
             _fingerprint(recovery, "verifier recovery receipt")
+    successes = state["verifier_successes"]
+    if not isinstance(successes, list):
+        raise ValueError("work item verifier successes are invalid")
+    for success in successes:
+        if not isinstance(success, dict) or set(success) != SUCCESS_FIELDS:
+            raise ValueError("work item verifier success is invalid")
+        _fingerprint(success["source_fingerprint"], "verifier success source")
+        _argv(success["argv"])
+        _fingerprint(success["receipt_fingerprint"], "verifier success receipt")
     return state
 
 
@@ -183,7 +198,7 @@ def resume_or_create(*, state_root, workspace, baseline, target, requirements, a
             "workspace": str(workspace), "baseline": baseline, "target": target,
             "requirements": requirements, "acceptance": acceptance, "decisions": decisions,
             "reference_receipt": json.loads(json.dumps(reference_receipt)),
-            "status": "active", "revision": 0, "verifier_attempts": [],
+            "status": "active", "revision": 0, "verifier_attempts": [], "verifier_successes": [],
         }
         path = work_item_path(state_root, workspace, baseline, target, requirements, acceptance)
         write_private(path, state)
@@ -243,45 +258,98 @@ def record_verifier_failure(path, *, source_fingerprint, argv, failure_receipt,
     )
     with lock_record(path):
         state = _load(path)
-        decision = _attempt_decision(state, source_fingerprint, argv, recovery_receipt_fingerprint)
-        if decision["status"] == "blocked":
-            return decision
-        state["revision"] += 1
-        state["status"] = "blocked"
-        state["verifier_attempts"].append({
-            "source_fingerprint": source_fingerprint, "argv": argv,
-            "failure_receipt_fingerprint": failure_receipt_fingerprint,
-            "recovery_receipt_fingerprint": recovery_receipt_fingerprint,
-        })
-        write_private(path, state)
+        return _record_verifier_failure_locked(
+            path, state, source_fingerprint, argv, failure_receipt_fingerprint,
+            recovery_receipt_fingerprint,
+        )
+
+
+def _record_verifier_failure_locked(path, state, source_fingerprint, argv,
+                                    failure_receipt_fingerprint, recovery_receipt_fingerprint):
+    decision = _attempt_decision(state, source_fingerprint, argv, recovery_receipt_fingerprint)
+    if decision["status"] == "blocked":
+        return decision
+    state["revision"] += 1
+    state["status"] = "blocked"
+    state["verifier_attempts"].append({
+        "source_fingerprint": source_fingerprint, "argv": argv,
+        "failure_receipt_fingerprint": failure_receipt_fingerprint,
+        "recovery_receipt_fingerprint": recovery_receipt_fingerprint,
+    })
+    write_private(path, state)
     return {"status": "blocked", "reason": "verifier_failed"}
+
+
+def _record_verifier_success_locked(path, state, source_fingerprint, argv, receipt_fingerprint):
+    state["revision"] += 1
+    state["verifier_successes"].append({
+        "source_fingerprint": source_fingerprint, "argv": argv,
+        "receipt_fingerprint": receipt_fingerprint,
+    })
+    write_private(path, state)
 
 
 def run_work_item_evidence(path, *, workspace, baseline, argv, timeout_seconds=600,
                            recovery_receipt=None):
     """Run a verifier exactly once through the work-item gate and observed evidence runner."""
+    path = Path(path)
     workspace = _workspace(workspace)
     baseline = _baseline(baseline)
     argv = _argv(argv)
-    state = _load(path)
-    if state["workspace"] != str(workspace):
-        raise ValueError("work item workspace differs from controlled verifier workspace")
-    if state["baseline"] != baseline:
-        raise ValueError("work item baseline differs from controlled verifier baseline")
-    source_fingerprint = workspace_source(workspace, baseline)["source_fingerprint"]
-    decision = allow_verifier_attempt(
-        path, source_fingerprint=source_fingerprint, argv=argv, recovery_receipt=recovery_receipt,
-    )
-    if decision["status"] == "blocked":
-        return decision
-    receipt = run_evidence(workspace, baseline, argv, timeout_seconds=timeout_seconds)
-    if receipt["exit_code"] == 0:
-        return {"status": "passed", "receipt": receipt}
-    recorded = record_verifier_failure(
-        path, source_fingerprint=source_fingerprint, argv=argv, failure_receipt=receipt,
-        recovery_receipt=recovery_receipt,
-    )
-    return {**recorded, "receipt": receipt}
+    with lock_record(path):
+        state = _load(path)
+        if state["workspace"] != str(workspace):
+            raise ValueError("work item workspace differs from controlled verifier workspace")
+        if state["baseline"] != baseline:
+            raise ValueError("work item baseline differs from controlled verifier baseline")
+        source_fingerprint = workspace_source(workspace, baseline)["source_fingerprint"]
+        recovery_receipt_fingerprint = None if recovery_receipt is None else _receipt_fingerprint(
+            recovery_receipt, "recovery", source_fingerprint, passing=True,
+        )
+        decision = _attempt_decision(state, source_fingerprint, argv, recovery_receipt_fingerprint)
+        if decision["status"] == "blocked":
+            return decision
+        receipt = run_evidence(workspace, baseline, argv, timeout_seconds=timeout_seconds)
+        if receipt["exit_code"] == 0:
+            receipt_fingerprint = _receipt_fingerprint(
+                receipt, "success", source_fingerprint, argv=argv, passing=True,
+            )
+            _record_verifier_success_locked(
+                path, state, source_fingerprint, argv, receipt_fingerprint,
+            )
+            return {"status": "passed", "receipt": receipt}
+        failure_receipt_fingerprint = _receipt_fingerprint(
+            receipt, "failure", source_fingerprint, argv=argv, passing=False,
+        )
+        recorded = _record_verifier_failure_locked(
+            path, state, source_fingerprint, argv, failure_receipt_fingerprint,
+            recovery_receipt_fingerprint,
+        )
+        return {**recorded, "receipt": receipt}
+
+
+def complete_work_item(path, *, workspace, baseline, receipt):
+    """Remove a work item only after a current-source observed passing receipt."""
+    path = Path(path)
+    workspace = _workspace(workspace)
+    baseline = _baseline(baseline)
+    with lock_record(path):
+        state = _load(path)
+        if state["workspace"] != str(workspace):
+            raise ValueError("work item workspace differs from completion workspace")
+        if state["baseline"] != baseline:
+            raise ValueError("work item baseline differs from completion baseline")
+        source_fingerprint = workspace_source(workspace, baseline)["source_fingerprint"]
+        receipt_fingerprint = _receipt_fingerprint(
+            receipt, "completion", source_fingerprint, passing=True,
+        )
+        if not any(
+                success["source_fingerprint"] == source_fingerprint
+                and success["receipt_fingerprint"] == receipt_fingerprint
+                for success in state["verifier_successes"]):
+            raise ValueError("completion receipt was not produced by the controlled verifier")
+        path.unlink()
+    return {"status": "complete"}
 
 
 def main():
@@ -315,6 +383,11 @@ def main():
     verify.add_argument("--argv-json", required=True)
     verify.add_argument("--recovery-receipt")
     verify.add_argument("--timeout-seconds", type=float, default=600)
+    complete = commands.add_parser("complete")
+    complete.add_argument("--state", required=True)
+    complete.add_argument("--workspace", required=True)
+    complete.add_argument("--baseline", required=True)
+    complete.add_argument("--receipt", required=True)
     arguments = parser.parse_args()
     try:
         if arguments.command == "verifier-gate":
@@ -345,6 +418,13 @@ def main():
             )
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
             return 0 if result["status"] == "passed" else 2
+        if arguments.command == "complete":
+            result = complete_work_item(
+                arguments.state, workspace=arguments.workspace, baseline=arguments.baseline,
+                receipt=_json_file(arguments.receipt, "completion receipt"),
+            )
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0
         receipt = json.loads(Path(arguments.reference_receipt).read_text(encoding="utf-8"))
         result = resume_or_create(
             state_root=arguments.state_root, workspace=arguments.workspace,

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 收紧 work item 完成门禁：`complete` 仅接受同一事项受控 `verify` 已记录的当前源码成功回执，不能再以无关的成功命令清场；旧的非终态记录继续兼容读取，首次成功验证后写入该记录。
+- 修复 work item verifier 的并发门禁与终态清理：gate、执行和失败回执现由同一事项锁串行，避免相同失败并发启动两次；最终当前源码 passing receipt 经 `work_item.py complete` 复核后删除非终态事项，不再把已完成工作误恢复为 active。
 - 收紧功能级 work item 的运行时边界：schema v2 的 reference binding 必须命中当前 target；恢复要求 workspace、baseline、需求、验收、decision 与回执均未漂移；受控 verifier 拒绝其他事项的 workspace/baseline，并让已验证的 `--recovery-receipt` 实际解除一次重试门禁。
 - 功能级引用和跨轮修复现在使用最小 work item 契约：一次性 inline 不落盘；只有 `active/blocked` 功能按 target、需求、验收和基线唯一续接，同项目其他功能不再可被当作语义副本。验证失败必须绑定 observed 回执；相同源码和 argv 会由 gate 阻止重复运行，只有源码、命令或通过的恢复证据变化才能重试，最终完成仍需新鲜 pass。
 - 已落盘 work item 的验证现在经由一个受控入口：先判断重复失败，再运行 Evidence Receipt 命令，并将实际失败原子落盘；不再要求控制器手工拼接 gate、命令和失败记录。

@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from evidence_contract import run_evidence
 from reference_receipt import freeze_receipt
 from work_item import (
     allow_verifier_attempt,
+    complete_work_item,
     record_verifier_failure,
     resume_or_create,
     run_work_item_evidence,
@@ -86,6 +88,18 @@ class WorkItemTest(unittest.TestCase):
         self.assertEqual("resumed", resumed["status"])
         self.assertEqual(created["work_item"], resumed["work_item"])
         self.assertEqual(0o600, Path(created["path"]).stat().st_mode & 0o777)
+
+    def test_legacy_nonterminal_item_without_successes_still_resumes(self):
+        created = self.request()
+        path = Path(created["path"])
+        legacy = json.loads(path.read_text(encoding="utf-8"))
+        legacy.pop("verifier_successes")
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        resumed = self.request()
+
+        self.assertEqual("resumed", resumed["status"])
+        self.assertEqual([], resumed["work_item"]["verifier_successes"])
 
     def test_different_feature_or_acceptance_never_collides(self):
         first = self.request()
@@ -289,6 +303,132 @@ class WorkItemTest(unittest.TestCase):
             {"status": "blocked", "reason": "identical_verifier_failure"},
             duplicate,
         )
+
+    def test_controlled_verifier_does_not_start_a_concurrent_duplicate(self):
+        workspace = Path(__file__).resolve().parents[1]
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        created = resume_or_create(
+            state_root=self.root, workspace=workspace, baseline=baseline,
+            target="concurrent-controlled-verifier", requirements=["run verifier once"],
+            acceptance=["a concurrent duplicate never starts"], decisions=[],
+            reference_receipt=self.reference_receipt, continuation=True,
+        )
+        first_started = threading.Event()
+        duplicate_started = threading.Event()
+        release = threading.Event()
+        calls = []
+        argv = [sys.executable, "-c", "raise SystemExit(1)"]
+
+        def controlled_run(*args, **kwargs):
+            calls.append(1)
+            (first_started if len(calls) == 1 else duplicate_started).set()
+            self.assertTrue(release.wait(timeout=5))
+            return run_evidence(*args, **kwargs)
+
+        results = []
+        with patch("work_item.run_evidence", side_effect=controlled_run):
+            first = threading.Thread(target=lambda: results.append(run_work_item_evidence(
+                created["path"], workspace=workspace, baseline=baseline, argv=argv,
+            )))
+            duplicate = threading.Thread(target=lambda: results.append(run_work_item_evidence(
+                created["path"], workspace=workspace, baseline=baseline, argv=argv,
+            )))
+            first.start()
+            self.assertTrue(first_started.wait(timeout=5))
+            duplicate.start()
+            self.assertFalse(duplicate_started.wait(timeout=0.2))
+            release.set()
+            first.join(timeout=5)
+            duplicate.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(duplicate.is_alive())
+        self.assertEqual(1, len(calls))
+        self.assertEqual(
+            {"status": "blocked", "reason": "identical_verifier_failure"},
+            next(result for result in results if result["reason"] == "identical_verifier_failure"),
+        )
+
+    def test_final_passing_receipt_removes_the_nonterminal_work_item(self):
+        workspace = Path(__file__).resolve().parents[1]
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        request = {
+            "state_root": self.root, "workspace": workspace, "baseline": baseline,
+            "target": "completed-controlled-verifier", "requirements": ["verify final result"],
+            "acceptance": ["final verifier passes"], "decisions": [],
+            "reference_receipt": self.reference_receipt, "continuation": True,
+        }
+        created = resume_or_create(**request)
+        passed = run_work_item_evidence(
+            created["path"], workspace=workspace, baseline=baseline,
+            argv=[sys.executable, "-c", "pass"],
+        )
+
+        receipt_path = Path(self.directory.name) / "completion-receipt.json"
+        receipt_path.write_text(json.dumps(passed["receipt"]), encoding="utf-8")
+        completed = subprocess.run([
+            sys.executable, str(WORK_ITEM), "complete", "--state", created["path"],
+            "--workspace", str(workspace), "--baseline", baseline,
+            "--receipt", str(receipt_path),
+        ], text=True, capture_output=True, check=False)
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual({"status": "complete"}, json.loads(completed.stdout))
+        self.assertFalse(Path(created["path"]).exists())
+        self.assertEqual("created", resume_or_create(**request)["status"])
+
+    def test_completion_rejects_a_different_workspace_without_removing_the_item(self):
+        workspace = Path(__file__).resolve().parents[1]
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        created = resume_or_create(
+            state_root=self.root, workspace=workspace, baseline=baseline,
+            target="completion-workspace-boundary", requirements=["verify final result"],
+            acceptance=["completion uses the frozen workspace"], decisions=[],
+            reference_receipt=self.reference_receipt, continuation=True,
+        )
+        passed = run_work_item_evidence(
+            created["path"], workspace=workspace, baseline=baseline,
+            argv=[sys.executable, "-c", "pass"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "completion workspace"):
+            complete_work_item(
+                created["path"], workspace=self.workspace, baseline=baseline,
+                receipt=passed["receipt"],
+            )
+
+        self.assertTrue(Path(created["path"]).exists())
+
+    def test_completion_rejects_a_passing_receipt_not_produced_by_the_work_item(self):
+        workspace = Path(__file__).resolve().parents[1]
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        created = resume_or_create(
+            state_root=self.root, workspace=workspace, baseline=baseline,
+            target="completion-receipt-binding", requirements=["verify final result"],
+            acceptance=["only the controlled verifier can complete"], decisions=[],
+            reference_receipt=self.reference_receipt, continuation=True,
+        )
+        unrelated_receipt = run_evidence(workspace, baseline, [sys.executable, "-c", "pass"])
+
+        with self.assertRaisesRegex(ValueError, "not produced by the controlled verifier"):
+            complete_work_item(
+                created["path"], workspace=workspace, baseline=baseline,
+                receipt=unrelated_receipt,
+            )
+
+        self.assertTrue(Path(created["path"]).exists())
 
     def test_controlled_verifier_rejects_a_workspace_or_baseline_outside_the_work_item(self):
         created = self.request()

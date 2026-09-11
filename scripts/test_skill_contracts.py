@@ -727,7 +727,7 @@ class SkillContractTest(unittest.TestCase):
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
 
-        for marker in ("work_item.py verify", "相同源码", "恢复回执", "--recovery-receipt", "不得重复", "Evidence Receipt"):
+        for marker in ("work_item.py verify", "work_item.py complete", "相同源码", "恢复回执", "--recovery-receipt", "不得重复", "Evidence Receipt"):
             self.assertIn(marker, root + protocol)
 
     def test_nonterminal_verification_uses_the_controlled_evidence_runner(self):
