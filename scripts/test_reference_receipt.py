@@ -23,7 +23,47 @@ class ReferenceReceiptTest(unittest.TestCase):
     def test_implementer_receipt_accepts_an_explicitly_empty_reference_set(self):
         receipt = freeze_receipt([])
 
+        self.assertEqual(1, receipt["schema_version"])
         self.assertEqual(receipt["receipt_fingerprint"], require_implementer_receipt(receipt))
+
+    def test_feature_binding_freezes_one_read_reference_and_its_behavior_matrix(self):
+        reference = "codex://thread/source-feature"
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            feature_bindings=[{
+                "target": "delivery-status-normalization",
+                "reference": reference,
+                "relation": "analogy",
+                "behaviors": [{
+                    "input": "missing status", "state": "new", "output": "normalized status",
+                    "effect": "no remote write", "caller": "delivery controller",
+                    "verifier": "python3 -m unittest scripts.test_status_normalizer",
+                }],
+            }],
+        )
+
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual(receipt["receipt_fingerprint"], require_implementer_receipt(receipt))
+
+    def test_feature_binding_rejects_unread_reference_empty_matrix_and_duplicate_target(self):
+        reference = {"reference": "codex://thread/source-feature", "status": "read", "content_fingerprint": "a" * 64}
+        binding = {
+            "target": "delivery-status-normalization", "reference": reference["reference"],
+            "relation": "mirror", "behaviors": [{
+                "input": "input", "state": "state", "output": "output", "effect": "effect",
+                "caller": "caller", "verifier": "python3 -m unittest",
+            }],
+        }
+        cases = (
+            ([{**reference, "status": "unavailable", "content_fingerprint": None}], [binding]),
+            ([reference], [{**binding, "behaviors": []}]),
+            ([reference], [binding, {**binding, "reference": "codex://thread/other"}]),
+            ([reference], [{**binding, "relation": "copy"}]),
+        )
+
+        for references, bindings in cases:
+            with self.subTest(bindings=bindings), self.assertRaises(ValueError):
+                freeze_receipt(references, feature_bindings=bindings)
 
     def test_implementer_receipt_requires_every_declared_reference_to_be_read(self):
         receipt = freeze_receipt([

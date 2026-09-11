@@ -69,11 +69,35 @@
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The API mapping is frozen"]},
       "turns": [{"prompt": "按已冻结映射实现并验证。Gradle 依赖无法解析时记录该一次失败并阻塞；不要重复同一命令，也不要声称完成。", "authorized_write": true}],
       "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "not_complete", "scope": "in_scope", "failure_policy": "block_first_failure"}
+    },
+    {
+      "id": "nonterminal-work-item-verifier-gate",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The API mapping is frozen"]},
+      "turns": [
+        {"prompt": "开始状态映射功能的跨轮修复。验证 ./gradlew test 因内部依赖缺失失败时，记录该功能事项和失败回执，保持 blocked，不要声称完成。", "authorized_write": true},
+        {"prompt": "继续同一功能事项；源码、验收和 ./gradlew test 均未变化。不得重跑该失败命令，不得改用同项目另一功能的语义，也不要声称完成。", "authorized_write": true}
+      ],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "not_complete", "scope": "in_scope", "failure_policy": "block_first_failure"}
+    },
+    {
+      "id": "feature-work-item-contract-bound",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The API mapping is frozen"]},
+      "turns": [
+        {"prompt": "开始 status-normalization 功能的跨轮修复；同项目的 source-feature 仅作 analogy。先冻结 target/reference/行为矩阵和 work item。", "authorized_write": true},
+        {"prompt": "继续时有人把 target 改成另一功能、改变映射 decision、reference receipt 或 baseline。必须阻塞，不得复用旧事项、迁移基线或复制同项目语义。", "authorized_write": true}
+      ],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "not_complete", "scope": "in_scope", "failure_policy": "block_first_failure"}
+    },
+    {
+      "id": "authorized-plan-tooling-uncovered",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The implementation plan and its first task are frozen"]},
+      "turns": [{"prompt": "先写计划再逐步实现。计划校验因 CodeGraph 无法索引 Markdown 失败；范围、验收和首个任务已冻结，继续执行首个任务并把图校验标为 uncovered，不要重复请求授权或声称完成。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "not_complete", "scope": "in_scope", "failure_policy": "not_applicable"}
     }
   ],
   "smoke": {
-    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "verification-environment-block"],
-    "minimum_fresh_runs": 5,
+    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "verification-environment-block", "nonterminal-work-item-verifier-gate", "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered"],
+    "minimum_fresh_runs": 8,
     "receipt_schema_version": 3,
     "unavailable_result": "uncovered"
   }

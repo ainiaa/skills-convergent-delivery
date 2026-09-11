@@ -37,6 +37,12 @@ Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务�
 
 `planned_task=true` 只执行冻结 capsule。复杂、未知或长任务先用 `converge-plan`；同仓库并发写入先通过 [执行拓扑](references/execution-topology.md)，否则顺序执行；只有明确跨会话 checkpoint 才用 `converge-batch`。全量收口必须显式选择并使用 Plan matrix，不能由关键词推断。
 
+用户已同时授权计划和实现时，Plan 校验的已知 `tooling` 未覆盖不得撤销 `implementation_authorized`。控制器必须运行 `python3 scripts/plan_execution.py --task-id <冻结首任务> --implementation-authorized --validation-error <原始错误>`；只有其 `execute` 输出才进入首个冻结实现步骤，并将错误如实记录为 `uncovered`。不得将 CodeGraph/回执能力缺口当作业务、权限或计划契约阻塞；其他错误仍由 helper 返回 `blocked`，不得自行降级。
+
+一次性 `inline` 任务不落盘。只有需要跨轮修复或已进入 `active/blocked` 的功能事项才运行 `python3 scripts/work_item.py resume ...`：它以 workspace、baseline、功能 target、需求、验收、已决 decision 与 reference receipt 冻结唯一 work item，并只恢复全量相同的唯一事项；任何基线或语义 contract 漂移都阻塞，不能按项目名或相似引用猜测续接。功能级引用必须在回执中绑定该 target、关系和行为矩阵，不能把同项目其他功能当作语义副本。
+
+对已落盘事项，验证必须通过 `work_item.py verify` 执行；它只接受事项冻结的 workspace/baseline，先 gate、再由 `evidence_contract` 取得 observed Evidence Receipt，并在失败时原子记录。不得直接运行冻结 verifier argv。相同源码与 argv 的失败返回 `blocked`，不得重复执行；只有源码、argv 或通过 `--recovery-receipt` 提供的同一源码 observed pass 回执才可重试。完成仍须现有的最终新鲜 `pass` 证据，不得把恢复回执或模型自述当作完成。
+
 持久状态使用既有 writer lease，并按 [执行协议](references/execution-protocol.md) 和 [状态](references/state-schema.md) 清场。风险等级对应的复核边界见 [审查编排](references/review-orchestration.md)；Desktop、CLI 与 subagent 的可证明边界见 [宿主能力](references/host-capabilities.md)。没有真实宿主 bridge 时，不把本地 state、capsule、子任务或模型自述称为自动续跑、完成或清场证据。
 
 最终按 [交付回执](references/reporting.md) 只报告当前证据能证明的范围；确定性回归、真实宿主 smoke 和模型成本分别说明。外发另行授权；Suite 行为改动先运行 `converge-eval` 的 deterministic preflight，缺少冻结 control/candidate/judge 时将模型行为报告为 `uncovered`。

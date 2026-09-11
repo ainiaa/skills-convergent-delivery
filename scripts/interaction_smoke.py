@@ -15,7 +15,8 @@ SCENARIO_IDS = {
     "local-fix", "review-checkpoint-closes-in-scope-finding", "explicit-review-only",
     "out-of-scope-finding", "known-decision-is-not-reasked", "irreversible-decision",
     "simple-inline", "complex-plan", "cross-service-reference-decision",
-    "verification-environment-block",
+    "verification-environment-block", "nonterminal-work-item-verifier-gate",
+    "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered",
 }
 SKILLS = {"converge", "converge-plan", "converge-review"}
 ACTIONS = {"implement", "review", "record", "ask", "plan"}
@@ -74,9 +75,12 @@ def validate_catalog(catalog, root):
     if set(smoke["critical_ids"]) != {
         "local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked",
         "cross-service-reference-decision", "verification-environment-block",
-    } or len(smoke["critical_ids"]) != 5:
+        "nonterminal-work-item-verifier-gate",
+        "feature-work-item-contract-bound",
+        "authorized-plan-tooling-uncovered",
+    } or len(smoke["critical_ids"]) != 8:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 5 or smoke["receipt_schema_version"] != 3 \
+    if smoke["minimum_fresh_runs"] != 8 or smoke["receipt_schema_version"] != 3 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
@@ -112,8 +116,9 @@ def _validate_scenario(scenario, ids, fixture_path):
     turns = scenario["turns"]
     if not isinstance(turns, list) or not turns:
         raise ValueError("scenario turns are invalid")
-    if scenario_id == "known-decision-is-not-reasked" and len(turns) < 2:
-        raise ValueError("known-decision scenario requires at least two turns")
+    if scenario_id in {"known-decision-is-not-reasked", "nonterminal-work-item-verifier-gate"} \
+            and len(turns) < 2:
+        raise ValueError("multi-turn scenario requires at least two turns")
     for turn in turns:
         if not isinstance(turn, dict) or set(turn) != {"prompt", "authorized_write"}:
             raise ValueError("turn fields are invalid")

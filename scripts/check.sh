@@ -139,6 +139,8 @@ TEST_FILES+=(
   scripts/test_reporting_contract.py
   scripts/test_delivery_report.py
   scripts/test_skill_contracts.py
+  scripts/test_plan_execution.py
+  scripts/test_work_item.py
   scripts/test_python_matrix.py
   scripts/test_interaction_contract.py
   scripts/test_interaction_smoke.py

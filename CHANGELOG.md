@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 收紧功能级 work item 的运行时边界：schema v2 的 reference binding 必须命中当前 target；恢复要求 workspace、baseline、需求、验收、decision 与回执均未漂移；受控 verifier 拒绝其他事项的 workspace/baseline，并让已验证的 `--recovery-receipt` 实际解除一次重试门禁。
+- 功能级引用和跨轮修复现在使用最小 work item 契约：一次性 inline 不落盘；只有 `active/blocked` 功能按 target、需求、验收和基线唯一续接，同项目其他功能不再可被当作语义副本。验证失败必须绑定 observed 回执；相同源码和 argv 会由 gate 阻止重复运行，只有源码、命令或通过的恢复证据变化才能重试，最终完成仍需新鲜 pass。
+- 已落盘 work item 的验证现在经由一个受控入口：先判断重复失败，再运行 Evidence Receipt 命令，并将实际失败原子落盘；不再要求控制器手工拼接 gate、命令和失败记录。
+- 计划校验现在将已知 CodeGraph/回执能力缺口规范为 `uncovered`：用户已同时授权计划和实现时，控制器继续首个冻结任务；未知契约、业务、权限和安全错误仍阻塞，且未覆盖不能宣称完成。
 - 收紧跨服务路由与交付证据：`cross-service` 风险不能再伪装为本地、单一耦合或本地验证；指定参考的状态/重试/错误映射须在首次写入前冻结，未决时阻塞。交互 smoke 升级为 v3，新增跨服务参考决策与首次 verifier 环境失败场景，后者只能阻塞而不能借重复尝试宣称完成。
 - 新增面向使用者的 GitHub Release Notes 模板，并将其纳入版本发布维护流程；测试证据与未覆盖范围仍需如实披露。
 

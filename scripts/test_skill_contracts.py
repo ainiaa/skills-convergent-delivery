@@ -698,6 +698,46 @@ class SkillContractTest(unittest.TestCase):
         self.assertNotIn("--request-file <raw-request>", routing)
         self.assertIn("full_closure_required=<bool>", routing)
 
+    def test_authorized_plan_can_continue_across_a_known_tooling_gap(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        plan = (ROOT / "skills/converge-plan/SKILL.md").read_text(encoding="utf-8")
+        control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
+
+        self.assertTrue((ROOT / "scripts/plan_execution.py").is_file())
+        for marker in (
+            "plan_execution.py",
+            "implementation_authorized",
+            "tooling",
+            "uncovered",
+            "不得将",
+        ):
+            self.assertIn(marker, root + plan + control)
+
+    def test_nonterminal_work_items_are_feature_scoped_and_inline_stays_stateless(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        self.assertTrue((ROOT / "scripts/work_item.py").is_file())
+        for marker in ("work_item.py", "active/blocked", "功能", "一次性", "不落盘"):
+            self.assertIn(marker, root + protocol)
+        for marker in ("workspace、baseline", "语义 contract", "target", "回执"):
+            self.assertIn(marker, root + protocol)
+
+    def test_nonterminal_verifier_retry_uses_controlled_observed_evidence(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        for marker in ("work_item.py verify", "相同源码", "恢复回执", "--recovery-receipt", "不得重复", "Evidence Receipt"):
+            self.assertIn(marker, root + protocol)
+
+    def test_nonterminal_verification_uses_the_controlled_evidence_runner(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        self.assertTrue((ROOT / "scripts/work_item.py").is_file())
+        for marker in ("work_item.py verify", "Evidence Receipt", "不得直接运行"):
+            self.assertIn(marker, root + protocol)
+
 
 if __name__ == "__main__":
     unittest.main()

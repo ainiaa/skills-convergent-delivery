@@ -115,3 +115,39 @@
 - 验收：定向测试、新鲜全量检查、`git diff --check` 均通过；未运行的真实宿主 smoke 明确是 `uncovered`。
 
 按 `same_session` 顺序执行 T1 → T2 → T3 → T4。任何业务语义、公共 API 或功能关系无法由用户/参考确定时，只提出一个 `decision` 并停止，不以技术默认越过。
+
+---
+
+# v3：一次性收口剩余工作项控制缺口
+
+v2 的结构与格式校验已落地；本节冻结审查发现的运行时缺口，并取代 v2 的未完成项。
+
+## 已决边界
+
+| ID | 决定 | 可验证结果 |
+| --- | --- | --- |
+| D6 | schema v2 回执中，工作项 `target` 必须恰好对应一个 feature binding；无 feature binding 的 schema v1 回执继续用于没有功能级参考的任务。 | A 功能的回执不能创建或恢复 B 功能事项。 |
+| D7 | 恢复必须同时匹配 workspace、baseline、target、requirements、acceptance、decisions 与 reference receipt fingerprint。任一不符均明确阻塞，而不是复用旧事项或新建相似事项。 | 续跑不会静默丢失已决语义或切换起点。 |
+| D8 | 受控验证必须使用事项冻结的 workspace/baseline；不同调用者输入先失败，绝不启动 verifier。改变基线需要显式的新事项/后续 rebase 机制，本轮不暗中迁移。 | 事项 A 不能拿事项 B 的源码或基线运行。 |
+| D9 | `verify` 与 Python API 都接收并校验 observed passing recovery receipt；它只解除同一 source+argv 的失败去重，不能作为完成证据。 | 文档承诺的恢复路径真实可达，重复失败仍有限停止。 |
+
+## 本轮有限任务
+
+### T1 — 绑定与恢复语义守卫
+
+- 先写失败测试：错误 target 的 schema v2 receipt、不同 decision、不同 receipt 或不同 baseline 的恢复全部拒绝；完全相同 contract 才恢复。
+- 最小实现：在现有 receipt/work item 边界比较冻结值，不增加项目级 ledger、自动 rebase 或后台进程。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest scripts.test_work_item scripts.test_reference_receipt`。
+
+### T2 — 受控 verifier 的调用与恢复回执
+
+- 先写失败测试：workspace/baseline 不匹配时 `run_work_item_evidence` 不触发 runner；`verify --recovery-receipt` 能以有效 observed pass 解除 gate，伪造或失败 receipt 仍拒绝。
+- 最小实现：在同一个 work-item 模块传递 recovery receipt；不开放直接 argv 执行，也不把 recovery 视为成功交付。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts python3 -m unittest scripts.test_work_item`，并保留一个真实 CLI 受控命令回执。
+
+### T3 — 协议、交互契约与收口
+
+- 更新 root Skill、执行协议、交互目录与 changelog，使“精确 feature binding / 全 contract 恢复 / recovery CLI / 校验边界”可由自动测试发现倒退。
+- 最终验证：定向 suite、`bash scripts/check.sh --full`、覆盖率 gate、`git diff --check`。真实宿主隔离仍不是此 Python wrapper 可证明的能力，报告为边界而非完成证据。
+
+按 `same_session` 顺序执行 T1 → T2 → T3；任一未知业务语义仍停在一个明确的 decision，不以本计划替用户推断。

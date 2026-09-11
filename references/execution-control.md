@@ -10,6 +10,10 @@
 - `pdlc-v1`：每个独立可验收 task 创建一个 Provider Run。控制器解析冻结 entrypoint，并显式调用对应 `$pdlc-feature|fix|refactor` 完整执行；Provider Binding 或 `pdlc-run` 不算调用，禁止 native 混入。入口不可解析或激活即 `blocked_environment`；PDLC 证据返回 Converge 后再收口，不得拆解其内部阶段。复杂计划可含多个业务切片级 Provider Run。
 - Plan Contract v6 的 `checkpoint=same_session` 在同一会话、同一工作区顺序执行，不要求 commit；只有 `checkpoint=cross_session` 才交给 `converge-batch`，并在建立跨会话 checkpoint 前请求一次本地 commit 授权。Git 汇总和范围审计始终使用计划冻结的 Source Receipt v2 baseline，而不是变化中的 `HEAD`。
 
+### 计划校验未覆盖不撤销实现授权
+
+计划校验是质量门禁，不是对已授予 `implementation_authorized` 的撤销。校验修复一次后，控制器把原始错误和首个冻结 `task_id` 交给 `python3 scripts/plan_execution.py`。只有 helper 识别的 `tooling`（例如 CodeGraph 无法索引一个非代码路径）才返回 `execute`：控制器记录相同错误为 `uncovered`，随后进入首个冻结步骤；不得为同一错误再次请求授权或停在“已计划”。helper 返回 `blocked` 时才停止，包含未决决策、权限、安全、不可逆事项和所有未知/契约错误。无论哪条分支，都不得把 `uncovered` 写成已验证、已完成或全量收口。
+
 Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。未要求分步展示的简单 `inline` 不创建宿主计划项；普通同会话计划从已冻结任务及完成证据派生宿主步骤状态，不为显示额外创建持久 run。持久任务 active/complete 路径只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。
 
 `block` 始终停止业务，不转回 `sync-plan`。运行时没有终态原生同步动作：控制器在终态报告前读取阻塞投影，并以文字报告阻塞原因，不等待、写入确认、重试或恢复执行。若宿主在同一控制器中实际提供原生计划工具，只有取得该次调用回执后才能额外声明已展示；没有工具或回执时，该原生展示保持未覆盖。阻塞投影将当前项设为 pending，保留冻结步骤名称和已完成项；只支持 pending/in_progress/completed 的宿主也不会继续显示当前项正在执行。
