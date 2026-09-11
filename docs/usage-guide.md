@@ -183,8 +183,9 @@ Controller Snapshot 默认只冻结核心控制面；需要能力时重复传入
 
 1. 更新 `VERSION`。
 2. 在 `CHANGELOG.md` 的 `Unreleased` 中记录面向用户的变更。
-3. 运行 `bash scripts/check.sh`，执行安装器、核心状态 helper、lease、Shell 语法和五个核心 Skill 的官方 quick_validate；默认只保留扩展边界的共享契约，不运行自治、多模型扩展的 validator 或运行时回归。发布前运行 `bash scripts/check.sh --full`，它额外验证两个扩展并执行完整自治轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
-4. 提交后创建对应的 Git tag，才将变更日志标记为正式版本。
+3. 用 [Release Notes 模板](templates/release-notes.md) 起草 GitHub Release 说明：先讲面向使用者的结果，再按需保留重点内容、变更、修复、升级提醒与验证；`CHANGELOG.md` 保持简洁完整，不复制 commit 列表。存在证据缺口或豁免时，必须保留“已知发布证据限制”。
+4. 运行 `bash scripts/check.sh`，执行安装器、核心状态 helper、lease、Shell 语法和五个核心 Skill 的官方 quick_validate；默认只保留扩展边界的共享契约，不运行自治、多模型扩展的 validator 或运行时回归。发布前运行 `bash scripts/check.sh --full`，它额外验证两个扩展并执行完整自治轨迹。开发依赖锁定在 `requirements-dev.txt`；缺失时 check 必须失败，不全局安装。
+5. 提交后创建对应的 Git tag 和 GitHub Release，才将变更日志标记为正式版本。
 
 当前 package 不提供 native worker bridge，`workers[]` 自动 lifecycle 始终关闭；不得把 `spawn_agent`、查询、wait 或消息回执解释为可恢复或跨会话能力。需要换新上下文时优先按 `references/capsule-dispatch.md` 用宿主实际创建任务 API 自动投递冻结 capsule；没有该 API 才输出 capsule 供用户启动。投递确认不等于执行完成，也不允许写入 worker registry。
 

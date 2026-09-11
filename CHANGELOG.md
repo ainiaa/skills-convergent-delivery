@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 新增面向使用者的 GitHub Release Notes 模板，并将其纳入版本发布维护流程；测试证据与未覆盖范围仍需如实披露。
+
 ## [0.3.0] - 2026-09-11
 
 - 发布豁免：用户明确同意以 Python 3.11/3.14 全量 coverage gate 作为发布测试，且在历史 PDLC 状态未全部终态、缺少独立质量报告与 fresh-host smoke 回执的情况下继续发布；这些宿主行为证据保持 `uncovered`。
