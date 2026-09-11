@@ -277,6 +277,13 @@ if arguments and arguments[0] == "clone":
             ]
             managed = f"python3 {ROOT}/scripts/autonomy_hook.py --host codex"
             self.assertEqual(["peer", managed], commands)
+            prompt_commands = [
+                item["command"] for entry in json.loads(config.read_text())["hooks"]["UserPromptSubmit"]
+                for item in entry["hooks"]
+            ]
+            self.assertEqual(
+                [f"python3 {ROOT}/scripts/autonomy_prompt_hook.py --host codex"], prompt_commands,
+            )
 
             removed = self.run_installer_from(
                 home, ROOT, "--autonomy-uninstall", "--target", "codex", path=home,
@@ -289,6 +296,7 @@ if arguments and arguments[0] == "clone":
                 for item in entry["hooks"]
             ]
             self.assertEqual(["peer"], commands)
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("UserPromptSubmit", []))
 
     def test_legacy_multimodel_install_flag_keeps_all_registered_skills_visible(self):
         with tempfile.TemporaryDirectory() as directory:

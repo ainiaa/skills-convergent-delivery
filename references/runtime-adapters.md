@@ -16,7 +16,7 @@ bash install.sh --target <codex|claude> --autonomy
 bash install.sh --autonomy-uninstall --target <codex|claude>
 ```
 
-这不会删除状态、Skill 或其他 Hook。Codex CLI 的 `queue --thread` 将下一动作投递回同一 task；Claude Code 2.1.246+ 使用原生 Stop Hook `decision:block` 在同一会话继续，不能从 Hook 另起 `--resume` 进程（同一 transcript 同时写入会被宿主拒绝）。预检验证 Codex command/queue 或 Claude 版本/adapter 可执行，不等于真实宿主 Hook 已被触发。真实 smoke 需要用户在目标宿主中明确执行，不能由常规检查代替。
+这不会删除状态、Skill 或其他 Hook。Codex 同时注册 `UserPromptSubmit` 和 Stop：精确的“继续修复”/`continue repair` 会 arm 当前 workspace 的受限 repair gate，Stop 使用原生 `decision:block` 在同一 task 继续；Claude Code 2.1.246+ 也使用原生 Stop Hook `decision:block`。不得从 Hook 另起 `--resume` 进程（同一 transcript 同时写入会被宿主拒绝）。预检验证 Codex command 或 Claude 版本/adapter 可执行，不等于真实宿主 Hook 已被触发。真实 smoke 需要用户在目标宿主中明确执行，不能由常规检查代替。
 
 ## 持久服务（显式）
 
@@ -28,12 +28,12 @@ service 只能执行 `execute-inline` 和带 `phase` 的 `verify`；其他宿主
 
 Hook 从 stdin 读取宿主提供的 `cwd`。仅当 `~/.convergent-delivery/state/` 中存在唯一的、同 workspace 的 Schema v11 `active` run 才接管 Stop：
 
-- `autonomy_gate.py` 返回下一 action：Codex Hook 使用 `codex queue --thread <session>` 将该 action 投递回当前 task；同一 state path、源码、阶段和 action 只能成功投递一次，`report_history` 等非目标 revision 不能重新 queue。投递失败、缺少 session 或重复 Stop 无进展时，不重试不确定投递；Hook 仅通过确定性 `delivery_state.py write` 将该 run 终态化为 `blocked/no_progress` 并释放 lease。该私有回执只记录源码、阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。Claude Hook 返回 `decision:block` 与同一 action，由宿主继续当前会话，同样使用该私有回执检测无进展；第二次相同动作将状态持久化为 blocked/no_progress，清场释放后允许 Stop，宿主上限仅作额外保护。控制器只执行该动作后再进入下一轮。
+- `autonomy_gate.py` 返回下一 action：Codex 与 Claude Hook 均先写入一次性 intent，再返回 `decision:block` 与同一 action，由宿主继续当前会话。仅 Codex 的 `UserPromptSubmit` 会为精确的“继续修复”/`continue repair` arm 新 gate；它不读取或保存 transcript，范围保守地为当前 workspace。带 `stop_hook_active` 的重复 Stop 若仍未观察到 intent 提交，Hook 通过确定性 `delivery_state.py write` 将 run 终态化为 `blocked/no_progress` 并释放 lease，返回一次 block 以要求报告阻塞；下一次 Stop 才 approve。该私有回执只记录源码、阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。控制器只执行该动作后再进入下一轮。
 - 状态经过 gate 验证为 `complete` 或 `blocked`：Hook approve，控制器生成由 `delivery_report.py` 派生的最终报告。
 - 多个 run、状态损坏（含不可解析或非对象 JSON）、scope/risk 漂移或证据不新鲜：block 并写明可恢复原因。
 - 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。
 
-Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Codex 必须收到宿主 `session_id`，否则拒绝把 active run 伪装为完成；Claude 原生 Stop continuation 不需要新进程或额外 session ID。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次投递后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
+Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是 arm 受限 repair gate、写入 continuation intent，或将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Codex 原生 Stop continuation 不需要 `session_id`/`thread_id`，因此 Desktop 与 CLI 使用同一 adapter。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次 block 后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
 
 ## Arm
 

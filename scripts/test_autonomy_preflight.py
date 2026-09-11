@@ -28,7 +28,7 @@ class AutonomyPreflightTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         report = json.loads(result.stdout)
         self.assertTrue(report["supported"])
-        self.assertEqual({"adapter": True, "host_command": True, "queue": True}, report["checks"])
+        self.assertEqual({"adapter": True, "host_command": True}, report["checks"])
 
     def test_reports_claude_supported_when_the_native_stop_hook_adapter_is_observed(self):
         with tempfile.TemporaryDirectory() as directory:

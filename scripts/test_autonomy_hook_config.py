@@ -27,7 +27,16 @@ class AutonomyHookConfigTest(unittest.TestCase):
             self.assertEqual(["peer", command], commands)
             self.assertEqual("keep", configured["hooks"]["Other"][0]["hooks"][0]["command"])
 
+            prompt = "python3 /suite/scripts/autonomy_prompt_hook.py --host codex"
+            autonomy_hook_config.update(path, prompt, event="UserPromptSubmit")
+            configured = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual([prompt], [
+                item["command"] for entry in configured["hooks"]["UserPromptSubmit"]
+                for item in entry["hooks"]
+            ])
+
             autonomy_hook_config.update(path, command, remove=True)
+            autonomy_hook_config.update(path, prompt, event="UserPromptSubmit", remove=True)
             configured = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual("peer", configured["hooks"]["Stop"][0]["hooks"][0]["command"])
             self.assertEqual("keep", configured["hooks"]["Other"][0]["hooks"][0]["command"])

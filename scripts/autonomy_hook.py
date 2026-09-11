@@ -17,6 +17,10 @@ def approve():
     return {"decision": "approve"}
 
 
+def block(reason):
+    return {"decision": "block", "reason": reason}
+
+
 def active_state(workspace):
     workspace = str(Path(workspace).expanduser().resolve())
     base = state_root()
@@ -96,14 +100,6 @@ def run_frozen_hook(state_path, host, payload):
     ], input=json.dumps(payload), text=True, capture_output=True, check=False)
 
 
-def codex_thread_id(payload):
-    for field in ("session_id", "thread_id"):
-        value = payload.get(field)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    raise ValueError("Codex continuation requires session_id or thread_id")
-
-
 def continuation_intent(state, next_action):
     candidate = copy.deepcopy(state)
     candidate["revision"] += 1
@@ -125,21 +121,6 @@ def continuation_intent(state, next_action):
     return candidate
 
 
-def queue_codex_continuation(thread_id, state_path, next_action, workspace):
-    message = (
-        "Continue the active Converge run in this same task. "
-        f"Managed state: {state_path}. "
-        f"Execute the next frozen action: {json.dumps(next_action, sort_keys=True)}. "
-        "Record progress in the managed state before ending; do not create a successor task."
-    )
-    result = subprocess.run(
-        ["codex", "queue", "--thread", thread_id, "--message", message],
-        cwd=workspace, text=True, capture_output=True, check=False, timeout=10,
-    )
-    if result.returncode:
-        raise ValueError(result.stderr.strip() or f"Codex queue returned status {result.returncode}")
-
-
 def run_hook(host, payload, active):
     state_path, state = active
     result = decide(state, lease_root=lease_root())
@@ -157,19 +138,21 @@ def run_hook(host, payload, active):
         )
         return approve(), 0
     if host == "codex":
-        candidate = state
-        try:
-            attempts = state["execution_control"]["autonomy"]["action_attempts"]
-            if attempts and attempts[-1]["status"] != "committed":
-                raise ValueError("previous Codex continuation was not observed; refusing to queue it again")
-            candidate = continuation_intent(state, result["next_action"])
-            write_state(candidate)
-            queue_codex_continuation(
-                codex_thread_id(payload), state_path, result["next_action"], state["workspace"],
+        attempts = state["execution_control"]["autonomy"]["action_attempts"]
+        if payload.get("stop_hook_active") is True and attempts and attempts[-1]["status"] != "committed":
+            terminalize_hook_failure(
+                state_path, state,
+                "the previous native Stop continuation made no recorded progress",
             )
-        except (OSError, subprocess.SubprocessError, ValueError) as error:
-            terminalize_hook_failure(state_path, candidate, str(error))
-        return approve(), 0
+            return block("Converge stopped the unfinished repair as no_progress; report it as blocked."), 0
+        candidate = continuation_intent(state, result["next_action"])
+        write_state(candidate)
+        return block(
+            "Continue the active Converge run in this task. "
+            f"Managed state: {state_path}. Execute the frozen next action: "
+            f"{json.dumps(result['next_action'], sort_keys=True)}. "
+            "Record progress before attempting completion."
+        ), 0
     try:
         terminalize_hook_failure(
             state_path, state,

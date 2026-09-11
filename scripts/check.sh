@@ -110,6 +110,7 @@ if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
     scripts/test_autonomous_delivery_eval.py
     scripts/test_autonomy_gate.py
     scripts/test_autonomy_hook.py
+    scripts/test_autonomy_prompt_hook.py
     scripts/test_autonomy_hook_config.py
     scripts/test_autonomy_preflight.py
     scripts/test_autonomy_service_config.py

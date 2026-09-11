@@ -41,13 +41,7 @@ def inspect(host, source):
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
             pass
     if host == "codex":
-        try:
-            queue_available = host_command and subprocess.run(
-                [host, "queue", "--help"], text=True, capture_output=True, check=False, timeout=10,
-            ).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            queue_available = False
-        checks = {"adapter": adapter_works, "host_command": host_command, "queue": queue_available}
+        checks = {"adapter": adapter_works, "host_command": host_command}
     else:
         checks = {
             "adapter": adapter_works,

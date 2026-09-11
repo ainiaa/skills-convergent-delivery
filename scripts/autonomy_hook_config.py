@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install or remove Converge's exact Stop-hook entry without touching peers."""
+"""Install or remove one exact Converge Hook entry without touching peers."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 
-def update(path, command, remove=False):
+def update(path, command, event="Stop", remove=False):
     path = Path(path)
     value = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if not isinstance(value, dict):
@@ -16,9 +16,9 @@ def update(path, command, remove=False):
     hooks = value.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("hook configuration hooks must be an object")
-    entries = hooks.setdefault("Stop", [])
+    entries = hooks.setdefault(event, [])
     if not isinstance(entries, list):
-        raise ValueError("hook configuration Stop must be a list")
+        raise ValueError(f"hook configuration {event} must be a list")
     for entry in entries[:]:
         if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list) \
                 or any(not isinstance(item, dict) for item in entry["hooks"]):
@@ -45,9 +45,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--command", required=True)
+    parser.add_argument("--event", default="Stop")
     parser.add_argument("--remove", action="store_true")
     arguments = parser.parse_args()
-    update(arguments.config, arguments.command, arguments.remove)
+    update(arguments.config, arguments.command, arguments.event, arguments.remove)
 
 
 if __name__ == "__main__":

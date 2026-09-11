@@ -75,6 +75,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/controller_snapshot.py
   scripts/autonomy_gate.py
   scripts/autonomy_hook.py
+  scripts/autonomy_prompt_hook.py
   scripts/autonomy_hook_config.py
   scripts/autonomy_preflight.py
   scripts/autonomy_service.py
@@ -87,6 +88,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/test_autonomy_begin.py
   scripts/test_autonomy_gate.py
   scripts/test_autonomy_hook.py
+  scripts/test_autonomy_prompt_hook.py
   scripts/test_autonomy_preflight.py
   scripts/test_autonomy_service.py
   scripts/test_delivery_next.py
@@ -578,10 +580,16 @@ autonomy_hook_config() {
     codex) config="${HOME}/.codex/hooks.json" ;;
     claude) config="${HOME}/.claude/settings.json" ;;
   esac
-  local command="python3 ${SOURCE_DIR}/scripts/autonomy_hook.py --host ${runtime}"
-  local args=(--config "$config" --command "$command")
+  local stop_command="python3 ${SOURCE_DIR}/scripts/autonomy_hook.py --host ${runtime}"
+  local args=(--config "$config" --command "$stop_command")
   [[ "$remove" == "remove" ]] && args+=(--remove)
   python3 "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}"
+  if [[ "$runtime" == "codex" ]]; then
+    local prompt_command="python3 ${SOURCE_DIR}/scripts/autonomy_prompt_hook.py --host codex"
+    args=(--config "$config" --command "$prompt_command" --event UserPromptSubmit)
+    [[ "$remove" == "remove" ]] && args+=(--remove)
+    python3 "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}"
+  fi
   if [[ "$remove" == "remove" ]]; then
     echo "${runtime}: autonomy Stop hook removed"
   else
