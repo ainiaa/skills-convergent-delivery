@@ -52,21 +52,25 @@ def lease_root():
     )).expanduser().resolve()
 
 
-def terminalize_hook_failure(state_path, state, reason):
-    """Persist a terminal no-progress result; never retry an uncertain continuation."""
-    candidate = copy.deepcopy(state)
-    candidate["revision"] += 1
-    candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
+def write_state(state):
     command = [
         sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
         "--lease-root", str(lease_root()), "--state-root", str(state_root()),
         "--repo-id", state["repo_id"], "--task-key", state["task_key"],
         "--run-id", state["run_id"], "--writer-id", state["writer_id"],
-        "--expected-revision", str(state["revision"]),
+        "--expected-revision", str(state["revision"] - 1),
     ]
-    result = subprocess.run(command, input=json.dumps(candidate), text=True, capture_output=True, check=False)
+    result = subprocess.run(command, input=json.dumps(state), text=True, capture_output=True, check=False)
     if result.returncode:
-        raise ValueError(result.stderr.strip() or "could not persist autonomous hook failure")
+        raise ValueError(result.stderr.strip() or "could not persist autonomous hook state")
+
+
+def terminalize_hook_failure(state_path, state, reason):
+    """Persist a terminal no-progress result; never retry an uncertain continuation."""
+    candidate = copy.deepcopy(state)
+    candidate["revision"] += 1
+    candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
+    write_state(candidate)
     release = subprocess.run([
         sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "release",
         "--root", str(lease_root()), "--state-root", str(state_root()),
@@ -92,6 +96,50 @@ def run_frozen_hook(state_path, host, payload):
     ], input=json.dumps(payload), text=True, capture_output=True, check=False)
 
 
+def codex_thread_id(payload):
+    for field in ("session_id", "thread_id"):
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise ValueError("Codex continuation requires session_id or thread_id")
+
+
+def continuation_intent(state, next_action):
+    candidate = copy.deepcopy(state)
+    candidate["revision"] += 1
+    candidate["execution_control"]["autonomy"]["action_attempts"].append({
+        "attempt_id": f"hook-{state['revision']}",
+        "action": next_action,
+        "status": "intent",
+        "owner": state["writer_id"],
+        "time_policy": {
+            "startup_seconds": 1,
+            "idle_seconds": 30,
+            "absolute_seconds": 300,
+            "max_extensions": 0,
+        },
+        "events": [],
+        "observation": None,
+        "commit": None,
+    })
+    return candidate
+
+
+def queue_codex_continuation(thread_id, state_path, next_action, workspace):
+    message = (
+        "Continue the active Converge run in this same task. "
+        f"Managed state: {state_path}. "
+        f"Execute the next frozen action: {json.dumps(next_action, sort_keys=True)}. "
+        "Record progress in the managed state before ending; do not create a successor task."
+    )
+    result = subprocess.run(
+        ["codex", "queue", "--thread", thread_id, "--message", message],
+        cwd=workspace, text=True, capture_output=True, check=False, timeout=10,
+    )
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or f"Codex queue returned status {result.returncode}")
+
+
 def run_hook(host, payload, active):
     state_path, state = active
     result = decide(state, lease_root=lease_root())
@@ -107,6 +155,20 @@ def run_hook(host, payload, active):
             ["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"],
             capture_output=True, text=True, check=True, timeout=10,
         )
+        return approve(), 0
+    if host == "codex":
+        candidate = state
+        try:
+            attempts = state["execution_control"]["autonomy"]["action_attempts"]
+            if attempts and attempts[-1]["status"] != "committed":
+                raise ValueError("previous Codex continuation was not observed; refusing to queue it again")
+            candidate = continuation_intent(state, result["next_action"])
+            write_state(candidate)
+            queue_codex_continuation(
+                codex_thread_id(payload), state_path, result["next_action"], state["workspace"],
+            )
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            terminalize_hook_failure(state_path, candidate, str(error))
         return approve(), 0
     try:
         terminalize_hook_failure(

@@ -20,7 +20,7 @@
 
 已落盘事项只能以 `work_item.py verify` 在其冻结的 workspace/baseline 运行验证命令，禁止直接运行该 argv 或代入其他事项的起点。它在同一事项锁内完成 gate、`evidence_contract` 命令与失败回执落盘；相同源码和命令只能失败一次，后续调用必须以退出码 2 返回 `identical_verifier_failure`，不得重复消耗重试。只有源码/argv 改变，或以 `--recovery-receipt` 提供新的同一源码 observed `pass` 回执，才允许再次运行；同一恢复回执只能释放一次重试，且恢复回执不是完成证据。每个成功 `verify` 将当前源码、argv 与 receipt 指纹写入事项；同一源码和 argv 再次成功时替换旧 receipt，不追加状态。全部最终验收完成后，`work_item.py complete` 只接受精确命中该记录的 receipt，并复核事项的 workspace/baseline 后删除该非终态事项。任意无关成功命令或其他事项的回执均不得清场；终态事项不得继续落盘或恢复。
 
-同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 不得排队 successor task 或产生无用户消息的额外 task turn。执行者必须在当前 task 内消耗完有限预算并给出一个最终结果；提前停止的 active run 以 `no_progress` 终止并释放 writer lease。
+同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 绝不创建 successor task。只有显式 armed 的 Codex autonomy Hook 可将一个冻结的下一动作投递到同一 task；它先写入一次性 intent，未观察到该 intent、缺会话标识或投递失败即以 `no_progress` 终止并释放 writer lease。普通 task 不产生无用户消息的额外 task turn。
 
 仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。
 

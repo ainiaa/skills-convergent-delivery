@@ -41,11 +41,12 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-        self.assertEqual(51, len(validate(catalog)))
+        self.assertEqual(52, len(validate(catalog)))
         self.assertIn("full-fix", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("repeated-finding", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("claude-native-stop", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("codex-no-progress", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("codex-desktop-continuation", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("codex-cli-continuation", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-final-audit", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-audit-failure-blocks", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-runner-ledger", [item["id"] for item in catalog["scenarios"]])
