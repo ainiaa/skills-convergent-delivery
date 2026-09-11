@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "suite": "converge-interaction",
   "scope": "same_conversation",
   "fixture": {
@@ -11,25 +11,25 @@
       "id": "local-fix",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
       "turns": [{"prompt": "修复 status_normalizer.py 对 None 输入的局部 bug。先复现并补测试，验证后结束。", "authorized_write": true}],
-      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
     },
     {
       "id": "review-checkpoint-closes-in-scope-finding",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": ["None normalizes to an empty string"]},
       "turns": [{"prompt": "继续已授权的状态标准化修复。全范围审查当前 diff：先修复 F1，再次复核若发现同范围 F2 也直接修复并验证；不得创建 successor task 或无用户消息的新 task turn。", "authorized_write": true}],
-      "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+      "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
     },
     {
       "id": "explicit-review-only",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": []},
       "turns": [{"prompt": "仅审查当前 status-normalizer diff，报告有证据的 finding，不要修改。", "authorized_write": false}],
-      "expected": {"skill": "converge-review", "action": "review", "writes": "forbidden", "question": "none", "completion": "findings_only", "scope": "not_applicable"}
+      "expected": {"skill": "converge-review", "action": "review", "writes": "forbidden", "question": "none", "completion": "findings_only", "scope": "not_applicable", "failure_policy": "not_applicable"}
     },
     {
       "id": "out-of-scope-finding",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
       "turns": [{"prompt": "继续修复 status-normalizer 的 None bug；如果发现支付模块问题，只记录影响和需要决定的事项。", "authorized_write": true}],
-      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "out_of_scope"}
+      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "out_of_scope", "failure_policy": "not_applicable"}
     },
     {
       "id": "known-decision-is-not-reasked",
@@ -38,31 +38,43 @@
         {"prompt": "已决定：None normalizes to an empty string，且不增加依赖。请记录这个约束。", "authorized_write": false},
         {"prompt": "按已决定的兼容方案完成 status-normalizer 的 None 修复，不要重复询问该选择。", "authorized_write": true}
       ],
-      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
     },
     {
       "id": "irreversible-decision",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
       "turns": [{"prompt": "实现当前功能；若需要删除生产数据或改变公开兼容性，停止并给出推荐。", "authorized_write": true}],
-      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "not_applicable"}
+      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "not_applicable", "failure_policy": "not_applicable"}
     },
     {
       "id": "simple-inline",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
       "turns": [{"prompt": "修正 status_normalizer.py 单文件的 None bug，补回归测试并验证。", "authorized_write": true}],
-      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope"}
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
     },
     {
       "id": "complex-plan",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
       "turns": [{"prompt": "为状态标准化接入跨服务改动先写一个有限、可验证的计划，不要实现。", "authorized_write": false}],
-      "expected": {"skill": "converge-plan", "action": "plan", "writes": "none", "question": "none", "completion": "not_complete", "scope": "not_applicable"}
+      "expected": {"skill": "converge-plan", "action": "plan", "writes": "none", "question": "none", "completion": "not_complete", "scope": "not_applicable", "failure_policy": "not_applicable"}
+    },
+    {
+      "id": "cross-service-reference-decision",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "按指定跨服务参考实现公开状态机；参考没有定义 NEED_PUSH 的映射、重试和错误返回。先读取参考，不能猜测，给出一个推荐并等待决定。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "not_applicable", "failure_policy": "not_applicable"}
+    },
+    {
+      "id": "verification-environment-block",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The API mapping is frozen"]},
+      "turns": [{"prompt": "按已冻结映射实现并验证。Gradle 依赖无法解析时记录该一次失败并阻塞；不要重复同一命令，也不要声称完成。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "not_complete", "scope": "in_scope", "failure_policy": "block_first_failure"}
     }
   ],
   "smoke": {
-    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked"],
-    "minimum_fresh_runs": 3,
-    "receipt_schema_version": 2,
+    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "verification-environment-block"],
+    "minimum_fresh_runs": 5,
+    "receipt_schema_version": 3,
     "unavailable_result": "uncovered"
   }
 }

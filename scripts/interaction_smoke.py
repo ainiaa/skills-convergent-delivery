@@ -14,13 +14,15 @@ from pathlib import Path
 SCENARIO_IDS = {
     "local-fix", "review-checkpoint-closes-in-scope-finding", "explicit-review-only",
     "out-of-scope-finding", "known-decision-is-not-reasked", "irreversible-decision",
-    "simple-inline", "complex-plan",
+    "simple-inline", "complex-plan", "cross-service-reference-decision",
+    "verification-environment-block",
 }
 SKILLS = {"converge", "converge-plan", "converge-review"}
 ACTIONS = {"implement", "review", "record", "ask", "plan"}
 WRITES = {"required", "forbidden", "after_review", "none"}
 QUESTIONS = {"none", "decision_required"}
 COMPLETIONS = {"verified_only", "findings_only", "not_complete"}
+FAILURE_POLICIES = {"not_applicable", "block_first_failure"}
 SCOPES = {"in_scope", "out_of_scope", "not_applicable"}
 WORKSPACE_STRATEGIES = {"current-worktree", "desktop-worktree", "cli-isolated-worktree"}
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +33,8 @@ RECEIPT_FIELDS = {
     "result", "uncovered_reason",
 }
 OBSERVATION_FIELDS = {
-    "turn", "writes_observed", "questions_asked", "verification_observed", "completion_claim",
+    "turn", "writes_observed", "questions_asked", "verification_observed", "verifier_failures",
+    "completion_claim",
 }
 
 
@@ -49,7 +52,7 @@ def _string(value, name):
 def validate_catalog(catalog, root):
     if not isinstance(catalog, dict) or set(catalog) != {"schema_version", "suite", "scope", "fixture", "scenarios", "smoke"}:
         raise ValueError("catalog fields are invalid")
-    if catalog["schema_version"] != 2 or catalog["suite"] != "converge-interaction" \
+    if catalog["schema_version"] != 3 or catalog["suite"] != "converge-interaction" \
             or catalog["scope"] != "same_conversation":
         raise ValueError("catalog identity is invalid")
     fixture = catalog["fixture"]
@@ -70,9 +73,10 @@ def validate_catalog(catalog, root):
         raise ValueError("smoke fields are invalid")
     if set(smoke["critical_ids"]) != {
         "local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked",
-    } or len(smoke["critical_ids"]) != 3:
+        "cross-service-reference-decision", "verification-environment-block",
+    } or len(smoke["critical_ids"]) != 5:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 3 or smoke["receipt_schema_version"] != 2 \
+    if smoke["minimum_fresh_runs"] != 5 or smoke["receipt_schema_version"] != 3 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
@@ -117,18 +121,20 @@ def _validate_scenario(scenario, ids, fixture_path):
         if not isinstance(turn["authorized_write"], bool):
             raise ValueError("turn.authorized_write must be boolean")
     expected = scenario["expected"]
-    if not isinstance(expected, dict) or set(expected) != {"skill", "action", "writes", "question", "completion", "scope"}:
+    if not isinstance(expected, dict) or set(expected) != {
+            "skill", "action", "writes", "question", "completion", "scope", "failure_policy",
+    }:
         raise ValueError("scenario expected fields are invalid")
     if expected["skill"] not in SKILLS or expected["action"] not in ACTIONS or expected["writes"] not in WRITES \
             or expected["question"] not in QUESTIONS or expected["completion"] not in COMPLETIONS \
-            or expected["scope"] not in SCOPES:
+            or expected["scope"] not in SCOPES or expected["failure_policy"] not in FAILURE_POLICIES:
         raise ValueError("scenario expected values are invalid")
 
 
 def validate_receipt(receipt, catalog):
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_FIELDS:
         raise ValueError("receipt fields are invalid")
-    if receipt["schema_version"] != 2:
+    if receipt["schema_version"] != 3:
         raise ValueError("receipt schema_version is invalid")
     scenarios = {item["id"]: item for item in catalog["scenarios"]}
     scenario = scenarios.get(receipt["scenario_id"])
@@ -152,6 +158,8 @@ def validate_receipt(receipt, catalog):
                 or not isinstance(observation["questions_asked"], int) or observation["questions_asked"] < 0 \
                 or not isinstance(observation["verification_observed"], list) \
                 or any(not isinstance(item, str) or not item.strip() for item in observation["verification_observed"]) \
+                or not isinstance(observation["verifier_failures"], list) \
+                or any(not isinstance(item, str) or not item.strip() for item in observation["verifier_failures"]) \
                 or observation["completion_claim"] not in COMPLETIONS:
             raise ValueError("receipt observations are invalid")
     result = receipt["result"]
@@ -182,6 +190,10 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:
         raise ValueError("receipt requires observed verification")
+    failures = [item for observation in observations for item in observation["verifier_failures"]]
+    if expected["failure_policy"] == "block_first_failure" and (
+            len(failures) != 1 or len(failures) != len(set(failures))):
+        raise ValueError("receipt must block after the first identical verifier failure")
 
 
 def _timestamp(value, name):

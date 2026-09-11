@@ -8,6 +8,7 @@
 - 只有存在可委托任务、上下文隔离有明确收益且任务之间不互相依赖时才进入 `delegated`。同仓库并发写入还必须在计划中通过 [执行拓扑](execution-topology.md)：独立 worktree、非重叠范围、隔离依据、集成人和联合验证缺一不可；否则保持顺序执行。
 - 跨模块、跨服务、依赖步骤、未知根因、非局部验证或多个可委托切片至少进入 `planned`。
 - 高风险只提高 review/verification 强度，不单独触发代理。
+- `cross-service` 风险不得与 `local` scope、`single` coupling 或 `local` verification 同时冻结；这种画像矛盾直接拒绝，控制器必须先完成跨服务范围、依赖关系和联合验证的探查。
 - 路由冻结后只能因新证据升级；不得反复降级、重新规划或用路由扩大授权。
 
 风险枚举与根 Skill 的审查触发器一致：金额/支付、时间/时区、SQL/Mapper、数据库迁移、事务、并发、幂等、公共 API、安全/权限、敏感日志、跨服务、发布契约及不可逆操作。`risk_flags` 是控制器在冻结前按需求、调用链和行为语义作出的**语义风险声明**：即使文件名普通，也必须列出金额、权限、公共兼容等受影响语义；不能等路径扫描猜中。运行时变更将同一冻结风险带入 [TDD 追溯](tdd-providers.md#tddimpact-trace-v5)：权限、并发、幂等、事务、数据访问、契约、安全和敏感日志必须有相应场景与测试类型；时间、时区与不可逆操作还要求对应 integration 场景；契约风险还必须绑定外部契约影响链。路径标记只能作为风险下限：实际 changed paths 命中标记而未声明时完成门禁阻塞；未命中不构成低风险证明。语义无法确认时提高 `uncertainty` 或转为决策阻塞。
@@ -17,6 +18,8 @@
 ```
 
 将画像通过 stdin 传给 `python3 "$CONVERGE_SKILL_DIR/scripts/task_profile.py"` 只查看分类；它不接收原始请求。全量收口由控制器明确传入 `--full-closure`，绝不能由关键词、否定词或同义表达推断。正式持久状态调用 `freeze_routing(profile, allowed_paths, request_text=<raw-request>, full_closure_required=<bool>)` 生成 Routing Receipt v3；receipt 绑定画像、请求摘要、规范化路径、route、review tier、integration requirement 和 fingerprint，恢复/完成时重算。完成门禁还会检查真实 changed paths 的 scope drift，并从 SQL、迁移、权限、安全、公共 API 等路径标记发现风险升级。
+
+用户指定参考、跨服务对照实现或公开状态机时，范围探查还必须先列出行为矩阵：每个输入/状态、期望输出、可见副作用、调用方与验证命令各一行。状态映射、重试或错误语义若无法从实际读取的参考得出，必须升级 `uncertainty` 并走决策门禁；不得根据相似实现猜测。
 
 `autonomy_begin.py` 应接收控制器已冻结的同形 `--task-profile-json`；省略时按 `uncertainty=high` 保守路由，不能把未知任务假定为低风险。它拒绝直接 `--full-closure`：该诉求必须先由 `converge-plan` 冻结 Plan v6 matrix。路径和显式 `--risk-flag` 只会追加风险，绝不能降低画像声明的风险。
 

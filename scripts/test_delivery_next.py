@@ -423,6 +423,8 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
     closure_request_text = "修复全部已知问题" if full_closure else ""
     payload["execution_control"]["routing"] = freeze_routing(task_profile(
         scope="cross-service" if integration_required else "cross-module",
+        coupling="dependent" if integration_required else "single",
+        verification="external" if integration_required else "local",
         risk_flags=["cross-service"] if integration_required else [],
     ), ["."], request_text=closure_request_text, full_closure_required=full_closure)
     payload["ledger"]["tdd_trace"] = tdd_trace(

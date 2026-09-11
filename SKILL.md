@@ -24,7 +24,7 @@ Converge 始终是 controller，负责同一会话内已授权的软件交付；
 
 ## 开始与验证
 
-将本目录记为 `CONVERGE_SKILL_DIR`。先按 [任务路由](references/task-routing.md) 分类，冻结验收、范围和基线，只改任务 diff；外发和不可逆操作单独询问。简单 `inline` 不运行 `delivery_engine.py select`，直接按 [Inline TDD](references/inline-tdd.md) 完成局部红绿和报告。运行时功能、修复和重构先写可执行测试，再改生产代码；完整 red/green、影响、覆盖率和 Provider 规则见 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)。
+将本目录记为 `CONVERGE_SKILL_DIR`。任何写入任务先按 [任务路由](references/task-routing.md) 逐字段填写画像并实际执行 `task_profile.py`，再冻结验收、范围和基线；画像矛盾、未读指定参考或未决业务映射均不得首次业务写入。只改任务 diff；外发和不可逆操作单独询问。简单 `inline` 不运行 `delivery_engine.py select`，直接按 [Inline TDD](references/inline-tdd.md) 完成局部红绿和报告。运行时功能、修复和重构先写可执行测试，再改生产代码；完整 red/green、影响、覆盖率和 Provider 规则见 [TDD 追溯](references/tdd-providers.md#tddimpact-trace-v5)。
 
 仅 `planned`、`delegated`、`batch` 路由或用户明确要求 Provider binding 时选择并冻结 Provider：
 ```bash

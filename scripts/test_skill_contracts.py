@@ -579,6 +579,20 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, skill + protocol)
 
+    def test_route_reference_and_business_mapping_are_frozen_before_a_write(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "实际执行 `task_profile.py`",
+            "画像矛盾",
+            "行为矩阵",
+            "状态映射、重试或错误语义",
+            "不得根据相似实现猜测",
+        ):
+            self.assertIn(marker, skill + routing + protocol)
+
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
         contract = (ROOT / "skills/converge-review/references/review-contract.md").read_text(
