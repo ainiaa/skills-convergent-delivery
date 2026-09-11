@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from desktop_task_bridge import create_action
 from openai_compatible_runner import execute_request, plan_request
 from worker_profile import fingerprint, validate_worker_profile
 
@@ -28,7 +29,7 @@ DEFAULT_CONFIG = {
             "router": {"model": "haiku", "reasoning_effort": "medium"},
             "scout": {"model": "haiku", "reasoning_effort": "medium"},
             "specifier": {"model": "sonnet", "reasoning_effort": "high"},
-            "implementer": {"model": "sonnet", "reasoning_effort": "high"},
+            "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
             "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
             "adjudicator": {"model": "opus", "reasoning_effort": "xhigh"},
         },
@@ -126,6 +127,8 @@ def _role_profile(role, model, effort):
             {"max_turns": 1, "timeout_seconds": 600, "max_output_chars": 24000},
         )
     if model not in OPENAI_MODELS:
+        if role == "implementer":
+            raise ValueError("implementer requires the sandboxed Codex runner")
         if model not in CLAUDE_ALIASES and not model.startswith("claude-"):
             raise ValueError(f"{role} model must be a GPT-5.6, GPT-6, or Claude Code model")
         is_implementer = role == "implementer"
@@ -167,10 +170,19 @@ def audit_request(profiles, prompt, *, execute=False):
         api_key_env="GLM_API_KEY", effort_binding={"field": "thinking.type", "value": "enabled"},
     )
     if not execute:
-        return {"launch": launch}
+        return {"status": "diagnostic", "launch": launch}
     result = execute_request(launch, prompt, allow_network=True, capture_content=True)
     receipt, content = result if isinstance(result, tuple) else (result, None)
-    return {"receipt": receipt, "content": content}
+    return {"status": "diagnostic", "receipt": receipt, "content": content}
+
+
+def desktop_task_action(profiles, prompt, *, project_id, title):
+    """Resolve one frozen implementer profile into a host-only Desktop task action."""
+    if not isinstance(profiles, dict) or not isinstance(profiles.get("roles"), dict):
+        raise ValueError("desktop task profiles are invalid")
+    return create_action(
+        profiles["roles"].get("implementer"), prompt, project_id=project_id, title=title,
+    )
 
 
 def parse_role_overrides(values):
@@ -186,6 +198,14 @@ def parse_role_overrides(values):
             raise ValueError("multi-model role override is invalid")
         overrides[role] = {"model": model, "reasoning_effort": effort}
     return overrides
+
+
+def _read_input(stream):
+    try:
+        return stream.read()
+    finally:
+        if stream is not sys.stdin:
+            stream.close()
 
 
 def main():
@@ -204,6 +224,14 @@ def main():
     audit_parser.add_argument("--role", action="append", default=[])
     audit_parser.add_argument("--execute", action="store_true")
     audit_parser.add_argument("--input", type=argparse.FileType("r"), default=sys.stdin)
+    desktop_task_parser = subparsers.add_parser("desktop-task")
+    desktop_task_parser.add_argument("--config", type=Path)
+    desktop_task_parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    desktop_task_parser.add_argument("--profile")
+    desktop_task_parser.add_argument("--role", action="append", default=[])
+    desktop_task_parser.add_argument("--project-id", required=True)
+    desktop_task_parser.add_argument("--title", required=True)
+    desktop_task_parser.add_argument("--input", type=argparse.FileType("r"), default=sys.stdin)
     arguments = parser.parse_args()
     if arguments.command == "config":
         value = DEFAULT_CONFIG
@@ -212,9 +240,14 @@ def main():
             arguments.config, workspace=arguments.workspace, profile_name=arguments.profile,
             role_overrides=parse_role_overrides(arguments.role),
         )
-        value = profiles if arguments.command == "resolve" else audit_request(
-            profiles, arguments.input.read(), execute=arguments.execute,
-        )
+        if arguments.command == "resolve":
+            value = profiles
+        elif arguments.command == "audit":
+            value = audit_request(profiles, _read_input(arguments.input), execute=arguments.execute)
+        else:
+            value = desktop_task_action(
+                profiles, _read_input(arguments.input), project_id=arguments.project_id, title=arguments.title,
+            )
     json.dump(value, sys.stdout, ensure_ascii=False, sort_keys=True)
     sys.stdout.write("\n")
 

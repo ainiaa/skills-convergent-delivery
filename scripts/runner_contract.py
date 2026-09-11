@@ -89,6 +89,15 @@ def review_request_binding(profile, value, request=None):
     return value
 
 
+def implementation_reference_binding(profile, value):
+    """Writable implementers must keep their host-read input receipt bound to the launch."""
+    if value is None:
+        return None
+    if profile["role"] != "implementer" or not _sha256(value):
+        raise ValueError("only implementer launches may bind an implementation reference receipt")
+    return value
+
+
 def _requires_role_result(launch):
     profile = launch["profile"]
     return profile["role"] in {"scout", "reviewer"} \

@@ -94,7 +94,8 @@ def smoke(profiles, *, workspace, execute=False, allow_network=False,
             role_result = result_from_output(launch, output)
             clean = _clean(temporary_workspace)
             passed = isinstance(receipt, dict) and receipt.get("status") == "completed" \
-                and role_result["status"] == "available" and clean
+                and role_result["status"] == "available" and not role_result["findings"] \
+                and role_result["next_action"] == "verify" and clean
             return {
                 **planned,
                 "status": "passed" if passed else "failed",

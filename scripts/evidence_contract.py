@@ -281,6 +281,7 @@ class EvidenceCleanupError(ValueError):
 
 def _run_command(workspace, argv, timeout_seconds, env=None):
     process = None
+    process_group_terminated = False
     try:
         from codex_exec_runner import _terminate_process
         process = subprocess.Popen(
@@ -292,6 +293,7 @@ def _run_command(workspace, argv, timeout_seconds, env=None):
             exit_code = process.returncode
         except subprocess.TimeoutExpired:
             _terminate_process(process)
+            process_group_terminated = True
             stdout, stderr = process.communicate(timeout=1)
             exit_code = 124
             stderr = stderr or b'verification timed out'
@@ -300,7 +302,8 @@ def _run_command(workspace, argv, timeout_seconds, env=None):
     finally:
         if process is not None:
             try:
-                _terminate_process(process)
+                if not process_group_terminated:
+                    _terminate_process(process)
                 process.wait(timeout=1)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 raise EvidenceCleanupError('evidence process cleanup could not be confirmed') from error

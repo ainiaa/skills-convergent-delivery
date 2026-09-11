@@ -18,11 +18,11 @@ RUNNERS = {
     "claude-code-v1": {
         "kind": "local_process",
         "roles": {
-            "router", "scout", "specifier", "implementer", "reviewer", "adjudicator",
+            "router", "scout", "specifier", "reviewer", "adjudicator",
         },
         "providers": {"anthropic"},
-        "workspace": {"read", "write"},
-        "shell": {False, True},
+        "workspace": {"read"},
+        "shell": {False},
         "network": {"egress"},
     },
     "openai-compatible-v1": {

@@ -26,7 +26,7 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
     && "$ROOT/.venv/bin/python" -c 'import yaml' >/dev/null 2>&1; then
     VALIDATOR_PYTHON=("$ROOT/.venv/bin/python")
   else
-    echo "Official Skill validator requires PyYAML==6.0.3; create .venv from requirements-dev.txt with Python 3.9+." >&2
+    echo "Official Skill validator requires PyYAML==6.0.3; create .venv from requirements-dev.txt with Python 3.11+." >&2
     exit 1
   fi
 fi
@@ -127,6 +127,7 @@ TEST_FILES+=(
   scripts/test_provider_contract.py
   scripts/test_runtime_adapter.py
   scripts/test_capsule_dispatch.py
+  scripts/test_desktop_task_bridge.py
   scripts/test_task_profile.py
   scripts/test_run_contract.py
   scripts/test_runtime_scenarios.py
@@ -138,6 +139,7 @@ TEST_FILES+=(
   scripts/test_reporting_contract.py
   scripts/test_delivery_report.py
   scripts/test_skill_contracts.py
+  scripts/test_python_matrix.py
   scripts/test_interaction_contract.py
   scripts/test_interaction_smoke.py
   scripts/test_execution_topology.py
@@ -148,6 +150,7 @@ TEST_FILES+=(
   scripts/test_role_fanout.py
   scripts/test_codex_exec_runner.py
   scripts/test_claude_exec_runner.py
+  scripts/test_reference_receipt.py
   scripts/test_runner_launch.py
   scripts/test_runner_lifecycle.py
 )

@@ -26,7 +26,7 @@ def _agent_plan(decision, profile):
 
 
 def plan_dispatch(profiles, flow_state):
-    """Return one host-neutral action; never silently inherit the parent model."""
+    """Bind external agent roles to profiles; serial work stays on the controller."""
     decision = next_role(flow_state)
     if decision["status"] == "done":
         return decision

@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-11
+
+- 发布豁免：用户明确同意以 Python 3.11/3.14 全量 coverage gate 作为发布测试，且在历史 PDLC 状态未全部终态、缺少独立质量报告与 fresh-host smoke 回执的情况下继续发布；这些宿主行为证据保持 `uncovered`。
+- 修复证据命令超时后重复终止同一进程组的问题；保留正常退出时的后代清理，并补充 Python 3.14 完整门禁下的回归覆盖。
+- 将全量生产 Python coverage 门槛提升至 90%，并在 AGENTS、CI、本地矩阵与原生 TDD 策略中统一执行；补充原生状态机正常、收口与重试路径回归。
+- 将运行时最低 Python 版本提升至 3.11，并在 CI 同时验证 3.11 与 3.14。
+- 新增可复用的本地 Python 3.11/3.14 矩阵验证脚本，使用 Git 忽略的版本化虚拟环境执行与 CI 相同的 coverage gate。
+- 修复多模型 MCP 边界契约测试对 Markdown 换行敏感而导致的误失败。
+- 补齐 README 的多模型固定角色与默认模型简介，使其与公开契约一致。
+- 收紧多模型模式的公开契约：它现在明确是选择性外部 runner，而非全角色模型编排；`serial` 角色不会按 profile 切换模型。常规 role-flow 与 `desktop-task`/GLM `audit --execute` 的直接入口现分开说明；根 `converge` 入口要求多模型 external runner 显式搭配该扩展。扩展 Skill 同时说明 Codex read-only runner 继承 MCP 配置，Suite 没有可验证的 no-MCP/allowlist 机制时保持 `uncovered`，不能当作通用外部副作用隔离。
+- 新增受限 `desktop-task-v1` transport：多模型 implementer 可冻结并输出 Desktop `create_thread` 动作，只有正式 `threadId` 才确认创建；查询和归档都锁定该引用，归档仅消费绑定查询与同一 task ref 的终态 observation，不能再使用调用方提供的裸状态字符串。动作同时绑定已验证 implementer profile 的完整指纹；宿主控制器顺序明确调用 create/query/archive，Python 仍不伪装为 runner、`workers[]` lifecycle 或远端实际模型观察，并纳入 Controller Snapshot。
+- 收紧 Claude Code runner 为只读角色，异常 runner 执行会补写 `unknown` 回执，并将直连 GLM 审计明确标记为仅诊断用途。
+- 将引用门禁落到外部 implementer launch：`reference_receipt.py` 冻结已读引用及内容指纹，缺失、未读或篡改回执会在启动前失败；launch 只绑定回执指纹。runner lifecycle 现在拒绝跨 active user task，并向外部执行器明确禁止创建 successor task/turn。交互 smoke receipt 升级为 v2，必须观察零个无用户触发 task turn 和零个 successor dispatch 才能通过；无法由宿主证明时保持 `uncovered`。review checkpoint fixture 也覆盖 F1 修复后的全范围复核发现 F2；自治评测 catalog 同步当前无 successor task 的 Hook 回归方法名。
+- 收紧引用与单任务闭环：明确作为实现依据的 `codex://` 等引用是需求真源，必须在首次业务写入前经宿主实际读取并冻结范围与验收，不能另起一套行为；普通背景链接不构成门禁，持久化任务才记录读取结果。Stop Hook 不再排队无用户消息的 successor task，未在当前 task 内完成有限复审/修复闭环的 active run 会安全终止并释放 lease。Review v3 的 re-review 继续绑定历史 finding，但覆盖冻结验收、当前 diff 和修复影响面，允许在剩余预算内发现并处理新的同范围 finding。
+- 修复 Review v3 定向复核的 finding 绑定：`re_review` 必须携带同轴历史 finding 指纹，修复后的 closure 也会拒绝未知或空的引用；integration `pass` 现在可保留 `task-local` 观察，但任何跨任务 finding 仍阻塞该轴。
+- 修复多模型 smoke 与仓库评测对只读结论的误放行：仅 `findings` 为空且 `next_action=verify` 才能通过；reviewer 明确要求修复时，评测保留实施验证状态但整体失败。
+- 补齐多模型评测诊断：仓库评测输出受限 reviewer finding 数量，横向场景比较保留已执行数量和 runner 提前停止原因；同步 reviewer 放行语义说明。
+- 新增真实交互 smoke receipt 的只读 CLI 校验入口，并在使用指南定义按变更或逃逸触发的 fresh-host smoke 与 defect-driven catalog 维护流程；不新增后台采集、持久化记忆或宿主 lifecycle bridge。
+- 真实交互 smoke 现可从同一宿主 App Server 的 `thread/list` 观察，以唯一标题、必填时间窗和可选父 task 解析候选正式 task ID；重复、缺失或后续 `thread/read` 核验不足仍保持 `uncovered`，该 bridge 不启用自动 worker lifecycle。
+- 收紧 host-thread 候选解析：仅接受已读完分页的完整响应、按 `createdAt` 而非可变的 `updatedAt` 绑定本次创建窗口，并将异常时间戳规范化为 `invalid`；fixture patch 同时拒绝指向目录外的符号链接。
+- 补齐 review checkpoint 交互场景的具体、可应用初始回归补丁；catalog 现在拒绝缺失或越出 fixture 的命名 diff，避免把无法重放的场景误列为 critical smoke。
 - 修复 GitHub Actions 的浅克隆：CI 现在保留 `HEAD^`，供 Eval kernel 的冻结 control commit 使用，不再因导入测试失败连带触发 coverage 失败。
 - 补充多模型 smoke CLI 的只读计划与结构化错误回归，确保发布入口也纳入全量覆盖核验。
 

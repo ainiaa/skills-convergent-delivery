@@ -11,6 +11,6 @@ omit =
 
 [report]
 include_namespace_packages = True
-fail_under = 85
+fail_under = 90
 show_missing = True
 precision = 2

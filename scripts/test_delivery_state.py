@@ -1,3 +1,4 @@
+import io
 import json
 import hashlib
 import os
@@ -7,13 +8,18 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from delivery_engine import controller_identity, provider_reference
 from delivery_progress import apply_event
 from delivery_progress import plan_projection_fingerprint
 from delivery_next import upgrade_state, next_runtime_action
 from evidence_contract import workspace_source
-from delivery_state import discover, validate_transition
+from delivery_state import (
+    discover, next_native_stage, require_prefix, validate_acceptance_transition,
+    validate_action_attempt_transition, validate_transition, workspace_state_roots,
+)
+import delivery_state as delivery_state_module
 from autonomy_arm import arm
 from role_result import result_from_output
 from runner_contract import bind_role_result
@@ -153,6 +159,97 @@ def action_attempt(status="intent", *, events=None, observation=None, commit=Non
 
 
 class DeliveryStateTest(unittest.TestCase):
+
+    def test_state_helpers_archive_changed_acceptance_and_fall_back_without_git(self):
+        previous = [{"criterion": "works", "evidence": "old"}]
+        candidate = [{"criterion": "works", "evidence": "new"}]
+        expected_history = [{"revision": 4, "acceptance": previous[0]}]
+        validate_acceptance_transition(previous, candidate, [], expected_history, 4)
+        with self.assertRaisesRegex(ValueError, "append-only"):
+            require_prefix(["first"], ["second"], "history")
+        with self.assertRaisesRegex(ValueError, "archive"):
+            validate_acceptance_transition(previous, candidate, [], [], 4)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(delivery_state_module.subprocess, "run", side_effect=OSError("git unavailable")):
+            self.assertEqual(
+                (Path(directory).resolve(),),
+                workspace_state_roots(directory, Path(directory) / "workspace"),
+            )
+
+    def test_autonomous_action_attempts_append_and_advance_one_observed_step(self):
+        intent = action_attempt()
+        started = {"kind": "started", "at": "2026-08-27T00:00:00Z", "evidence_fingerprint": "a" * 64}
+        running = action_attempt("running", events=[started])
+        observed = action_attempt("observed", events=[started], observation={
+            "outcome": "completed", "receipt_fingerprint": "b" * 64,
+        })
+        committed = action_attempt("committed", events=[started], observation=observed["observation"], commit={
+            "source_fingerprint": "c" * 64, "verification_fingerprint": "d" * 64,
+        })
+        validate_action_attempt_transition([], [intent])
+        validate_action_attempt_transition([intent], [running])
+        validate_action_attempt_transition([running], [observed])
+        validate_action_attempt_transition([observed], [committed])
+
+        altered = copy.deepcopy(running)
+        altered["owner"] = "other-writer"
+        with self.assertRaisesRegex(ValueError, "identity"):
+            validate_action_attempt_transition([intent], [altered])
+        with self.assertRaisesRegex(ValueError, "append-only"):
+            validate_action_attempt_transition([intent], [])
+
+    def test_transition_rejects_immutable_runtime_routing_and_invalid_progression(self):
+        previous = upgrade_state(state())
+        cases = (
+            lambda candidate: candidate.update(run_id="other-run"),
+            lambda candidate: candidate.update(status="unknown"),
+            lambda candidate: candidate.update(requires_stability_round=False),
+            lambda candidate: candidate["execution_control"]["routing"].update(route="delegated"),
+        )
+        stable = copy.deepcopy(previous)
+        stable["requires_stability_round"] = True
+        for current, mutate in ((previous, cases[0]), (previous, cases[1]), (stable, cases[2]), (previous, cases[3])):
+            with self.subTest(mutate=mutate):
+                candidate = copy.deepcopy(current)
+                candidate["revision"] += 1
+                mutate(candidate)
+                with self.assertRaises(ValueError):
+                    validate_transition(current, candidate)
+
+        runtime_previous = copy.deepcopy(previous)
+        runtime_previous["runtime_binding"] = negotiate(
+            "codex", {"dispatch": True, "query": True, "tree_query": True, "wait": True, "interrupt": True}
+        )
+        runtime_candidate = copy.deepcopy(runtime_previous)
+        runtime_candidate["revision"] += 1
+        runtime_candidate["runtime_binding"] = negotiate("single-context", {})
+        with self.assertRaisesRegex(ValueError, "runtime_binding"):
+            validate_transition(runtime_previous, runtime_candidate)
+
+    def test_state_cli_blocks_missing_command_identity_without_writing(self):
+        with patch.object(sys, "argv", ["delivery_state.py", "list"]), \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, delivery_state_module.main())
+        self.assertIn("list requires --workspace", stderr.getvalue())
+
+
+    def test_core_native_stage_machine_covers_normal_closure_and_retry_paths(self):
+        active = {"requires_stability_round": False, "execution_control": {"closure": {"status": "pending"}}}
+        stable = {**active, "requires_stability_round": True}
+        findings = {"requires_stability_round": False, "execution_control": {"closure": {"status": "findings"}}}
+        passed = {"requires_stability_round": False, "execution_control": {"closure": {"status": "pass"}}}
+        blocked = {"requires_stability_round": False, "execution_control": {"closure": {"status": "blocked"}}}
+
+        self.assertEqual("verify-final", next_native_stage("round-1-semantic-review", active))
+        self.assertEqual("verify-round-1", next_native_stage("round-1-semantic-review", stable))
+        self.assertEqual("closure-review", next_native_stage("verify-final", active))
+        self.assertEqual("closure-repair", next_native_stage("closure-review", findings))
+        self.assertEqual("verify-final", next_native_stage("closure-review", passed))
+        self.assertEqual("closure-review", next_native_stage("closure-review", blocked))
+        self.assertEqual("closure-final-review", next_native_stage("closure-repair", active))
+        self.assertEqual("verify-final", next_native_stage("closure-final-review", passed))
+        self.assertEqual("closure-final-review", next_native_stage("closure-final-review", findings))
 
     def test_default_state_writer_import_does_not_load_autonomy_contract(self):
         result = subprocess.run(

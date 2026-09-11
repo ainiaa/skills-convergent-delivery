@@ -18,6 +18,161 @@ SPEC.loader.exec_module(capsule_dispatch)
 
 
 class CapsuleDispatchTest(unittest.TestCase):
+    def test_dispatch_helpers_reject_unreadable_invalid_and_conflicting_local_receipts(self):
+        self.assertTrue(capsule_dispatch.default_attempt_id("codex", "/tmp", "capsule").startswith("codex-"))
+        self.assertEqual("ValueError", capsule_dispatch.error_reason(ValueError()))
+        with self.assertRaisesRegex(ValueError, "attempt id"):
+            capsule_dispatch.receipt_path("/tmp", "BAD")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                capsule_dispatch.read_receipt(root / "missing.json")
+            receipt = root / "receipt.json"
+            receipt.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not an object"):
+                capsule_dispatch.read_receipt(receipt)
+            invalid = {
+                "schema_version": 2, "workspace": str(root.resolve()), "status": "unknown",
+            }
+            with self.assertRaisesRegex(ValueError, "status"):
+                capsule_dispatch.validate_saved_receipt(invalid)
+            snapshot = root / "attempt.capsule.md"
+            self.assertEqual(snapshot, capsule_dispatch.write_capsule_snapshot(snapshot, "frozen"))
+            self.assertEqual(snapshot, capsule_dispatch.write_capsule_snapshot(snapshot, "frozen"))
+            with self.assertRaisesRegex(ValueError, "different input"):
+                capsule_dispatch.write_capsule_snapshot(snapshot, "changed")
+            log = root / "events.jsonl"
+            log.write_text("not-json\n{}\n", encoding="utf-8")
+            self.assertIsNone(capsule_dispatch.codex_thread_id(log))
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                capsule_dispatch.codex_thread_id(root / "missing.jsonl")
+
+    def test_capsule_helpers_surface_local_host_failures_without_retrying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "canonical"):
+                capsule_dispatch.validate_saved_receipt({
+                    "schema_version": 2, "workspace": ".", "status": "attempted",
+                })
+            snapshot = root / "failure.capsule.md"
+            descriptor = {}
+
+            def fail_fdopen(value, *_arguments, **_keywords):
+                descriptor["value"] = value
+                raise OSError("disk")
+
+            with patch.object(capsule_dispatch.os, "fdopen", side_effect=fail_fdopen):
+                with self.assertRaises(OSError):
+                    capsule_dispatch.write_capsule_snapshot(snapshot, "frozen")
+            self.assertFalse(snapshot.exists())
+            with self.assertRaises(OSError):
+                capsule_dispatch.os.fstat(descriptor["value"])
+            with patch.object(capsule_dispatch, "claude_agents", side_effect=ValueError("offline")):
+                unavailable = capsule_dispatch.dispatch_claude(
+                    "claude", root, "capsule", root / "receipts", "offline", 1,
+                )
+            self.assertEqual("unavailable", unavailable["status"])
+            self.assertIn("offline", unavailable["reason"])
+            retried = capsule_dispatch.unavailable(
+                "claude", "capsule", root / "receipts", "offline", "ignored", workspace=root,
+            )
+            self.assertEqual("ignored", retried["reason"])
+
+        with patch.object(capsule_dispatch.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "PATH"):
+                capsule_dispatch.executable("codex")
+        with patch.object(capsule_dispatch.subprocess, "run", side_effect=OSError("broken")):
+            self.assertIn("failed", capsule_dispatch.capability_error("codex", "codex"))
+        completed = Mock(returncode=7, stdout="", stderr="")
+        with patch.object(capsule_dispatch.subprocess, "run", return_value=completed):
+            self.assertIn("status 7", capsule_dispatch.capability_error("codex", "codex"))
+
+    def test_dispatch_records_failed_or_timed_out_launches_without_claiming_delivery(self):
+        writer = Mock()
+        writer.is_alive.return_value = False
+        process = Mock()
+        process.returncode = 7
+        process.poll.return_value = 7
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(capsule_dispatch.subprocess, "Popen", return_value=process), \
+                patch.object(capsule_dispatch, "_start_prompt_writer", return_value=(writer, [])), \
+                patch.object(capsule_dispatch, "codex_thread_id", return_value=None):
+            failed = capsule_dispatch.dispatch_codex(
+                "codex", directory, "capsule", Path(directory) / "receipts", "failed", 1,
+            )
+            self.assertEqual("failed", failed["status"])
+            self.assertIn("status 7", failed["reason"])
+
+        listed = Mock(returncode=0, stdout=json.dumps({"agents": []}), stderr="")
+        with patch.object(capsule_dispatch.subprocess, "run", return_value=listed):
+            self.assertEqual([], capsule_dispatch.claude_agents("claude", "/tmp", time.monotonic() + 1))
+        listed.stdout = json.dumps({"agents": {}})
+        with patch.object(capsule_dispatch.subprocess, "run", return_value=listed):
+            with self.assertRaisesRegex(ValueError, "list"):
+                capsule_dispatch.claude_agents("claude", "/tmp", time.monotonic() + 1)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(capsule_dispatch, "claude_agents", return_value=[]), \
+                patch.object(capsule_dispatch.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 1)):
+            timed_out = capsule_dispatch.dispatch_claude(
+                "claude", directory, "capsule", Path(directory) / "receipts", "timed-out", 1,
+            )
+        self.assertEqual("indeterminate", timed_out["status"])
+        self.assertIn("timed out", timed_out["reason"])
+
+    def test_dispatch_helper_success_and_cli_claude_route_are_explicit(self):
+        discovered = {
+            "id": "agent-1", "sessionId": "session-1", "name": "converge-test", "cwd": "/tmp",
+        }
+        with patch.object(capsule_dispatch, "claude_agents", return_value=[None, discovered]):
+            self.assertEqual("session-1", capsule_dispatch.claude_session_registered(
+                "claude", "/tmp", "converge-test", set(), time.monotonic() + 1,
+            ))
+        with patch.object(capsule_dispatch.shutil, "which", return_value="/bin/codex"):
+            self.assertEqual("/bin/codex", capsule_dispatch.executable("codex"))
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(capsule_dispatch, "write_exclusive", side_effect=(False, True)) as write:
+            self.assertIsNone(capsule_dispatch.saved_or_new(
+                Path(directory) / "retry.json", "codex-exec-v1", "retry", "capsule", directory,
+            ))
+        self.assertEqual(2, write.call_count)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt = root / "receipts" / "existing.json"
+            receipt.parent.mkdir()
+            existing = capsule_dispatch.result(
+                "codex-exec-v1", "existing", "capsule", "delivered",
+                workspace=root, external_task_id="thread-1",
+            )
+            capsule_dispatch.persist(receipt, existing)
+            self.assertEqual(existing, capsule_dispatch.unavailable(
+                "codex", "capsule", receipt.parent, "existing", "ignored", workspace=root,
+            ))
+
+            capsule = root / "capsule.md"
+            capsule.write_text("", encoding="utf-8")
+            arguments = [
+                str(SCRIPT), "--host", "claude", "--workspace", str(root),
+                "--capsule-file", str(capsule), "--receipt-dir", str(root / "receipts"),
+            ]
+            with patch.object(sys, "argv", arguments), redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(2, capsule_dispatch.main())
+            self.assertIn("must not be empty", error.getvalue())
+
+            capsule.write_text("capsule", encoding="utf-8")
+            delivered = capsule_dispatch.result(
+                "claude-background-v1", "claude-test", "capsule", "delivered",
+                workspace=root, external_task_id="session-1",
+            )
+            with patch.object(sys, "argv", arguments + ["--attempt-id", "claude-test"]), \
+                    patch.object(capsule_dispatch, "executable", return_value="claude"), \
+                    patch.object(capsule_dispatch, "capability_error", return_value=None), \
+                    patch.object(capsule_dispatch, "dispatch_claude", return_value=delivered), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(0, capsule_dispatch.main())
+            self.assertEqual("session-1", json.loads(stdout.getvalue())["external_task_id"])
+
     def test_codex_ignores_non_object_json_before_creation_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -494,6 +649,40 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual(2, first.returncode)
         self.assertEqual("unavailable", json.loads(first.stdout)["status"])
         self.assertEqual(json.loads(first.stdout), json.loads(second.stdout))
+
+    def test_cli_routes_only_capability_checked_dispatches_and_persists_unavailability(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capsule = root / "capsule.md"
+            capsule.write_text("frozen capsule", encoding="utf-8")
+            arguments = [
+                str(SCRIPT), "--host", "codex", "--workspace", str(root),
+                "--capsule-file", str(capsule), "--receipt-dir", str(root / "receipts"),
+            ]
+            delivered = capsule_dispatch.result(
+                "codex-exec-v1", "codex-test", "frozen capsule", "delivered",
+                workspace=root, external_task_id="thread-1",
+            )
+            with patch.object(sys, "argv", arguments + ["--attempt-id", "codex-test"]), \
+                    patch.object(capsule_dispatch, "executable", return_value="codex"), \
+                    patch.object(capsule_dispatch, "capability_error", return_value=None), \
+                    patch.object(capsule_dispatch, "dispatch_codex", return_value=delivered), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(0, capsule_dispatch.main())
+            self.assertEqual("thread-1", json.loads(stdout.getvalue())["external_task_id"])
+
+            with patch.object(sys, "argv", arguments + ["--attempt-id", "missing"]), \
+                    patch.object(capsule_dispatch, "executable", side_effect=ValueError("codex is not available on PATH")), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(2, capsule_dispatch.main())
+            self.assertEqual("unavailable", json.loads(stdout.getvalue())["status"])
+
+            with patch.object(sys, "argv", arguments + ["--attempt-id", "incomplete"]), \
+                    patch.object(capsule_dispatch, "executable", return_value="codex"), \
+                    patch.object(capsule_dispatch, "capability_error", return_value="missing --json"), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(2, capsule_dispatch.main())
+            self.assertEqual("unavailable", json.loads(stdout.getvalue())["status"])
 
 
 if __name__ == "__main__":

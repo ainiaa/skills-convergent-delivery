@@ -16,7 +16,7 @@ from role_result import result_from_output, review_result
 from runner_launch import (
     command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch,
 )
-from runner_contract import bind_role_result
+from runner_contract import bind_role_result, fingerprint
 
 
 def _arguments(arguments, revision):
@@ -77,6 +77,11 @@ _STAGE_ROLES = {
     "autonomy-repair": {"implementer"},
 }
 
+_TASK_BOUNDARY_INSTRUCTION = (
+    "Work only inside this current user task. Do not create, queue, or reopen a successor task or task turn; "
+    "return the bounded result to this controller."
+)
+
 
 def _is_isolated_git_worktree(workspace):
     result = subprocess.run(
@@ -106,6 +111,13 @@ def authorize_dispatch(state, dispatch):
         raise ValueError("implementer requires an isolated Git worktree")
 
 
+def authorize_task_boundary(state, task_key):
+    """A lifecycle invocation may only act for its already-active user task."""
+    active = state.get("task_key")
+    if active is not None and active != task_key:
+        raise ValueError("runner lifecycle cannot cross the active user task boundary")
+
+
 def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
     """Derive a reviewer launch binding from its full frozen Review v3 request."""
     profile = dispatch.get("profile") if isinstance(dispatch, dict) else None
@@ -133,10 +145,41 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
         raise ValueError("review request acceptance does not match the current run")
     if request["allowed_scope"] != expected_scope:
         raise ValueError("review request allowed_scope does not match the current run")
+    _require_prior_findings(state, request)
     fingerprint = request_fingerprint(request)
     if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
         raise ValueError("review request fingerprint does not match the frozen request")
     return request, fingerprint
+
+
+def _require_prior_findings(state, request):
+    """Keep a bounded re-review focused on actual findings from its own axis."""
+    phase = request["phase"]
+    review = state.get("execution_control", {}).get("review", {})
+    rounds = review.get("rounds", []) if isinstance(review, dict) else []
+    closure_seen = any(
+        item.get("phase") == "closure"
+        for round_value in rounds if isinstance(round_value, dict)
+        for item in round_value.get("requests", []) if isinstance(item, dict)
+    )
+    full_closure = state.get("execution_control", {}).get("routing", {}).get(
+        "full_closure_required", False
+    )
+    requires_prior = phase == "re_review" or (
+        phase == "closure" and (not full_closure or closure_seen)
+    )
+    if not requires_prior:
+        return
+    prior = set(request["prior_findings"])
+    known = {
+        fingerprint
+        for round_value in rounds if isinstance(round_value, dict)
+        for item in round_value.get("requests", []) if isinstance(item, dict)
+        if item.get("axis") == request["axis"]
+        for fingerprint in item.get("finding_fingerprints", [])
+    }
+    if not prior or not prior <= known:
+        raise ValueError("review request prior findings do not match an earlier finding on the same axis")
 
 
 def _review_request_mapping(value, tasks, name):
@@ -165,31 +208,29 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    authorize_task_boundary(state, arguments.task_key)
     require_multimodel_extension(state, dispatch)
     authorize_dispatch(state, dispatch)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
     )
-    prompt = prompt_for_dispatch(dispatch, prompt, review_request)
+    prompt = prompt_for_dispatch(dispatch, f"{prompt}\n\n{_TASK_BOUNDARY_INSTRUCTION}", review_request)
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
         review_request_fingerprint=review_request_fingerprint,
         review_request=review_request,
+        implementation_reference_receipt=getattr(arguments, "implementation_reference_receipt", None),
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
     if launch["runner_id"] != "openai-compatible-v1":
         preflight(launch, prompt)
     revision = append(_arguments(arguments, state["revision"]), "runner_launches", launch)
-    execution = execute(
-        launch, prompt, allow_execute=True, allow_network=arguments.allow_network,
+    receipt, role_result = _execute_and_complete(
+        launch, prompt, review_request, execute, arguments.allow_network,
     )
-    if not isinstance(execution, dict) or set(execution) != {"receipt", "output"} \
-            or not isinstance(execution["output"], dict):
-        raise ValueError("runner execution result is invalid")
-    receipt, role_result = _completed_execution(launch, execution, review_request)
     revision = append(_arguments(arguments, revision), "runner_results", receipt)
     return {
         "status": receipt["status"], "launch": launch, "result": receipt,
@@ -222,6 +263,53 @@ def _completed_execution(launch, execution, review_request=None):
     return receipt, role_result
 
 
+def _unknown_execution(launch, error):
+    """Record a started runner whose transport did not return a usable receipt."""
+    error_type = type(error).__name__
+    if launch["runner_id"] in {"codex-exec-v1", "claude-code-v1"}:
+        effective = launch["profile"]["effective"]
+        value = {
+            "schema_version": 2,
+            "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"],
+            "status": "unknown",
+            "exit_code": 127,
+            "stdout_fingerprint": "0" * 64,
+            "stderr_fingerprint": "0" * 64,
+            "requested_model": effective["model"],
+            "requested_reasoning_effort": effective["reasoning_effort"],
+            "error_type": error_type,
+            "attestation": {
+                "model": {"status": "requested", "observed": None},
+                "usage": {"status": "unavailable", "value": None},
+            },
+        }
+    else:
+        value = {
+            "schema_version": 2,
+            "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"],
+            "status": "unknown",
+            "error_type": error_type,
+            "attestation": {
+                "model": {"status": "unavailable", "observed": None},
+                "usage": {"status": "unavailable", "value": None},
+            },
+        }
+    return {
+        "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
+        "output": {"status": "unavailable"},
+    }
+
+
+def _execute_and_complete(launch, prompt, review_request, execute, allow_network):
+    try:
+        execution = execute(launch, prompt, allow_execute=True, allow_network=allow_network)
+        return _completed_execution(launch, execution, review_request)
+    except Exception as error:
+        return _completed_execution(launch, _unknown_execution(launch, error), review_request)
+
+
 def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, review_requests=None, *, load=load_current,
                append_launches=delivery_state.append_runner_records,
                append=delivery_state.append_runner_record, execute=execute_dispatch_launch,
@@ -230,6 +318,9 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
     state = load(arguments)
+    authorize_task_boundary(state, arguments.task_key)
+    if getattr(arguments, "implementation_reference_receipt", None) is not None:
+        raise ValueError("fan-out cannot use an implementation reference receipt")
     require_multimodel_extension(state)
     from role_fanout import fan_in, tasks_for_fanout
     tasks = tasks_for_fanout(dispatch)
@@ -244,7 +335,10 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
             state, task["dispatch"], (review_requests or {}).get(task["task_id"]),
             (review_request_fingerprints or {}).get(task["task_id"]),
         )
-        prompt = prompt_for_dispatch(task["dispatch"], prompts[task["task_id"]], review_request)
+        prompt = prompt_for_dispatch(
+            task["dispatch"],
+            f"{prompts[task['task_id']]}\n\n{_TASK_BOUNDARY_INSTRUCTION}", review_request,
+        )
         launch = plan_dispatch_launch(
             task["dispatch"], prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
             claude_bin=arguments.claude_bin,
@@ -268,15 +362,14 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     with ThreadPoolExecutor(max_workers=len(prepared)) as executor:
         futures = [
             executor.submit(
-                execute, item["launch"], item["prompt"], allow_execute=True,
-                allow_network=arguments.allow_network,
+                _execute_and_complete, item["launch"], item["prompt"], item["review_request"],
+                execute, arguments.allow_network,
             )
             for item in prepared
         ]
         executions = [future.result() for future in futures]
     completed = []
-    for item, execution in zip(prepared, executions):
-        receipt, role_result = _completed_execution(item["launch"], execution, item["review_request"])
+    for item, (receipt, role_result) in zip(prepared, executions):
         revision = append(_arguments(arguments, revision), "runner_results", receipt)
         completed.append({"task_id": item["task_id"], "role_result": role_result})
     return {
@@ -305,6 +398,7 @@ def main():
     parser.add_argument("--review-request-fingerprints")
     parser.add_argument("--review-request-file", type=argparse.FileType("r"))
     parser.add_argument("--review-requests-file", type=argparse.FileType("r"))
+    parser.add_argument("--implementation-reference-receipt-file", type=argparse.FileType("r"))
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)
@@ -323,6 +417,8 @@ def main():
         )
         arguments.review_request = json.load(arguments.review_request_file) \
             if arguments.review_request_file is not None else None
+        arguments.implementation_reference_receipt = json.load(arguments.implementation_reference_receipt_file) \
+            if arguments.implementation_reference_receipt_file is not None else None
         review_requests = (
             json.load(arguments.review_requests_file) if arguments.review_requests_file is not None else None
         )

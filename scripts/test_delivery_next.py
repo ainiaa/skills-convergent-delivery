@@ -15,10 +15,14 @@ from unittest.mock import patch
 from pathlib import Path
 
 from delivery_engine import controller_identity, file_fingerprint, provider_reference
-from autonomy_contract import validate_autonomy_completion
+from autonomy_contract import validate_action_attempts, validate_autonomy, validate_autonomy_completion
 from delivery_next import (
     upgrade_state, validate_execution_control, validate_provider_reference, closure_graph_query,
-    validate_closure_gate, validate_closure_plan, validate_state,
+    normalize_open_issues, require_mapping, require_sha256, require_string,
+    validate_closure_gate, validate_closure_plan, validate_finding_records,
+    validate_native_tdd_trace, validate_state,
+    validate_host_sync,
+    validate_review_gate,
 )
 from delivery_state import validate_transition
 from evidence_contract import run_evidence, workspace_source, closure_graph_request
@@ -521,6 +525,149 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+
+    def test_low_level_state_contract_helpers_reject_malformed_values(self):
+        for value, name in ((None, "value"), (" ", "value")):
+            with self.subTest(string=value), self.assertRaises(ValueError):
+                require_string(value, name)
+        with self.assertRaises(ValueError):
+            require_mapping([], "value")
+        for value in (None, "short", "A" * 64):
+            with self.subTest(fingerprint=value), self.assertRaises(ValueError):
+                require_sha256(value, "fingerprint")
+        for invalid in (None, {"schema_version": 9}, {"schema_version": 10, "engine": "legacy"}):
+            with self.subTest(state=invalid), self.assertRaises(ValueError):
+                upgrade_state(invalid)
+
+        fingerprint = "a" * 64
+        record = {
+            "fingerprint": fingerprint, "evidence": "evidence", "impact": "impact",
+            "root_cause": "cause", "scope": "current", "classification": "defect",
+        }
+        self.assertIsNone(validate_finding_records(None, []))
+        for records, fingerprints in (([], [fingerprint]), ([{}], [fingerprint]), ([{**record, "scope": "other"}], [fingerprint])):
+            with self.subTest(records=records), self.assertRaises(ValueError):
+                validate_finding_records(records, fingerprints)
+
+        valid_sync = {
+            "mode": "native", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+        }
+        for invalid in (
+            {**valid_sync, "mode": "other"},
+            {**valid_sync, "evidence_level": "other"},
+            {**valid_sync, "mode": "text", "acknowledged_fingerprint": fingerprint},
+            {**valid_sync, "mode": "text", "fallback": {"reason": "other", "evidence_ref": "ref", "disclosure_ref": "note"}},
+        ):
+            with self.subTest(sync=invalid), self.assertRaises(ValueError):
+                validate_host_sync(invalid)
+
+    def test_state_rejects_malformed_worker_records_before_any_lifecycle_action(self):
+        worker = {
+            "ref": "worker-1", "parent_ref": None, "task_id": "task-123", "depth": 1,
+            "may_dispatch": False, "role": "scout", "owner_run_id": "run-20260818-120000",
+            "status": "working", "progress": None,
+        }
+        cases = (
+            state(workers=None),
+            state(workers=[{}]),
+            state(workers=[{**worker, "role": "reviewer"}]),
+            state(workers=[{**worker, "task_id": "other"}]),
+            state(workers=[{**worker, "parent_ref": "parent"}]),
+            state(workers=[{**worker, "depth": 2}]),
+            state(workers=[worker, {**worker}]),
+            state(workers=[{**worker, "owner_run_id": "other"}]),
+            state(workers=[{**worker, "status": "unknown"}]),
+            state(workers=[{**worker, "progress": {}}]),
+        )
+        for invalid in cases:
+            with self.subTest(invalid=invalid["workers"]), self.assertRaises(ValueError):
+                validate_state(invalid, SimpleNamespace(), check_workspace=False)
+
+    def test_autonomy_contract_rejects_invalid_service_runtime_and_manifest_boundaries(self):
+        from multi_model import resolve
+
+        payload = upgrade_state(autonomous_state())
+        autonomy = payload["execution_control"]["autonomy"]
+        routing_value = payload["execution_control"]["routing"]
+        service = {
+            "mode": "service", "runner_profile": resolve(None, workspace=WORKSPACE)["roles"]["implementer"],
+            "max_cycles": 1, "verification_argv": ["pytest"], "audit_argv": ["audit"],
+        }
+        valid = {**autonomy, "runtime": service}
+        self.assertEqual(valid, validate_autonomy(valid, SOURCE["source_fingerprint"], routing_value))
+        cases = (
+            {**valid, "runtime": {**service, "verification_argv": []}},
+            {**valid, "runtime": {**service, "audit_findings_exit_code": 0}},
+            {**valid, "audit_batches": [{}]},
+            {**valid, "manifest": {**valid["manifest"], "items": []}},
+            {**valid, "manifest": {**valid["manifest"], "items": [
+                {"id": "scope", "kind": "scope", "value": "other"},
+                {"id": "requirement", "kind": "requirement", "value": "requested"},
+                {"id": "acceptance", "kind": "acceptance", "value": "passes"},
+            ]}},
+        )
+        for invalid in cases:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_autonomy(invalid, SOURCE["source_fingerprint"], routing_value)
+        high_routing = routing(task_profile(risk_flags=["security"]))
+        with self.assertRaisesRegex(ValueError, "low-risk"):
+            validate_autonomy(valid, SOURCE["source_fingerprint"], high_routing)
+    def test_core_validation_helpers_accept_frozen_values_and_reject_tampering(self):
+        self.assertEqual([], normalize_open_issues("none"))
+        self.assertEqual(["open issue"], normalize_open_issues([" open issue "]))
+        self.assertEqual("value", require_string("value", "field"))
+        self.assertEqual({"value": 1}, require_mapping({"value": 1}, "field"))
+        self.assertEqual("a" * 64, require_sha256("a" * 64, "digest"))
+        for callback, value, message in (
+            (normalize_open_issues, [""], "open_issues"),
+            (lambda item: require_string(item, "field"), "", "non-empty"),
+            (lambda item: require_mapping(item, "field"), [], "object"),
+            (lambda item: require_sha256(item, "digest"), "not-a-digest", "sha256"),
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                callback(value)
+
+        fingerprint = "b" * 64
+        record = {
+            "fingerprint": fingerprint, "evidence": "line 10", "impact": "bad output",
+            "root_cause": "guard omitted", "scope": "current", "classification": "defect",
+        }
+        validate_finding_records([record], [fingerprint])
+        with self.assertRaisesRegex(ValueError, "match"):
+            validate_finding_records([{**record, "fingerprint": "c" * 64}], [fingerprint])
+
+    def test_native_trace_and_pending_closure_keep_unverified_work_nonterminal(self):
+        self.assertIsNone(validate_native_tdd_trace(
+            None, SOURCE, [], ["Requested behavior"], required=False, workspace=WORKSPACE,
+        ))
+        with self.assertRaisesRegex(ValueError, "requires a current source receipt"):
+            validate_native_tdd_trace(
+                tdd_trace(SOURCE), None, [], ["Requested behavior"], required=False, workspace=WORKSPACE,
+            )
+
+        frozen_routing = routing()
+        pending = {
+            "schema_version": 1, "status": "pending", "source_fingerprint": None,
+            "scope_fingerprint": frozen_routing["profile_fingerprint"], "graph_receipt": None,
+            "review_request_fingerprint": None, "plan": closure_plan(), "audit": None,
+        }
+        self.assertEqual(
+            pending,
+            validate_closure_gate(
+                pending, SOURCE["source_fingerprint"], SOURCE, frozen_routing,
+                {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
+                state()["provider_binding"],
+            ),
+        )
+        stale = {**pending, "source_fingerprint": SOURCE["source_fingerprint"]}
+        with self.assertRaisesRegex(ValueError, "stale receipt"):
+            validate_closure_gate(
+                stale, SOURCE["source_fingerprint"], SOURCE, frozen_routing,
+                {"commit": HEAD, "diff_fingerprint": SOURCE["diff_fingerprint"]},
+                state()["provider_binding"],
+            )
+
     def test_full_closure_cannot_complete_without_structured_graph_observation(self):
         payload = reviewed_complete_state(full_closure=True)
         graph = payload['execution_control']['closure']['graph_receipt']
@@ -1949,6 +2096,240 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
+
+    def test_autonomy_contract_validates_attempt_lifecycle_and_frozen_manifest(self):
+        from multi_model import resolve
+
+        payload = upgrade_state(autonomous_state())
+        autonomy = payload["execution_control"]["autonomy"]
+        frozen_routing = payload["execution_control"]["routing"]
+
+        self.assertEqual(autonomy, validate_autonomy(
+            autonomy, SOURCE["source_fingerprint"], frozen_routing,
+        ))
+        intent = committed_attempt()
+        intent.update(status="intent", events=[], observation=None, commit=None)
+        running = copy.deepcopy(intent)
+        running.update(status="running", events=[committed_attempt()["events"][0]])
+        observed = copy.deepcopy(running)
+        observed.update(status="observed", observation=committed_attempt()["observation"])
+        for attempt in (intent, running, observed, committed_attempt()):
+            with self.subTest(status=attempt["status"]):
+                self.assertEqual([attempt], validate_action_attempts([attempt]))
+
+        invalid = copy.deepcopy(intent)
+        invalid["time_policy"]["idle_seconds"] = 1
+        with self.assertRaisesRegex(ValueError, "time policy"):
+            validate_action_attempts([invalid])
+        invalid = copy.deepcopy(autonomy)
+        invalid["manifest"]["items"][1]["value"] = "outside"
+        with self.assertRaisesRegex(ValueError, "scope"):
+            validate_autonomy(invalid, SOURCE["source_fingerprint"], frozen_routing)
+        invalid = copy.deepcopy(autonomy)
+        invalid["audit_batches"] = [{
+            "source_fingerprint": "a" * 64, "phase": "initial", "status": "pass",
+            "covered_manifest_ids": ["requirement"], "finding_fingerprints": [],
+            "evidence_receipt_fingerprint": "b" * 64,
+        }]
+        with self.assertRaisesRegex(ValueError, "full coverage"):
+            validate_autonomy(invalid, SOURCE["source_fingerprint"], frozen_routing)
+
+        for mutate in (
+            lambda value: value.update(attempt_id=""),
+            lambda value: value.update(action={"action": "unknown"}),
+            lambda value: value["time_policy"].update(max_extensions=4),
+            lambda value: value.update(events=[{"kind": "bad", "at": "now", "evidence_fingerprint": "a" * 64}]),
+            lambda value: value.update(observation={"outcome": "bad", "receipt_fingerprint": "a" * 64}),
+            lambda value: value.update(status="not-a-status"),
+        ):
+            with self.subTest(mutate=mutate):
+                invalid = copy.deepcopy(intent)
+                mutate(invalid)
+                with self.assertRaises(ValueError):
+                    validate_action_attempts([invalid])
+        duplicate = copy.deepcopy(intent)
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_action_attempts([intent, duplicate])
+
+        for mutate in (
+            lambda value: value.update(enabled=False),
+            lambda value: value["manifest"].update(items=[]),
+            lambda value: value.update(repair_budget_remaining=2),
+            lambda value: value.update(audit_batches=[{
+                "source_fingerprint": "a" * 64, "phase": "re_audit", "status": "findings",
+                "covered_manifest_ids": ["requirement"], "finding_fingerprints": ["b" * 64],
+                "evidence_receipt_fingerprint": "c" * 64,
+            }]),
+        ):
+            with self.subTest(autonomy_mutation=mutate):
+                invalid = copy.deepcopy(autonomy)
+                mutate(invalid)
+                with self.assertRaises(ValueError):
+                    validate_autonomy(invalid, SOURCE["source_fingerprint"], frozen_routing)
+
+        for attempt in ("bad", {}, {**intent, "action": {}},
+                        {**intent, "time_policy": {}}, {**intent, "events": "bad"},
+                        {**intent, "commit": {}}):
+            with self.subTest(attempt=attempt), self.assertRaises(ValueError):
+                validate_action_attempts([attempt])
+        finding_audit = {
+            "source_fingerprint": "a" * 64, "phase": "initial", "status": "findings",
+            "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": ["b" * 64], "evidence_receipt_fingerprint": "c" * 64,
+        }
+        audited = copy.deepcopy(autonomy)
+        audited["audit_batches"] = [finding_audit]
+        self.assertEqual(audited, validate_autonomy(
+            audited, SOURCE["source_fingerprint"], frozen_routing,
+        ))
+        reaudited = copy.deepcopy(audited)
+        reaudited.update(repair_budget_remaining=0, re_audit_budget_remaining=0)
+        reaudited["audit_batches"].append({
+            "source_fingerprint": "d" * 64, "phase": "re_audit", "status": "pass",
+            "covered_manifest_ids": ["requirement", "scope", "acceptance"],
+            "finding_fingerprints": [], "evidence_receipt_fingerprint": "e" * 64,
+        })
+        self.assertEqual(reaudited, validate_autonomy(
+            reaudited, SOURCE["source_fingerprint"], frozen_routing,
+        ))
+        with tempfile.TemporaryDirectory() as directory:
+            profile = resolve(None, workspace=Path(directory), home=Path(directory) / "home")["roles"]["implementer"]
+        service = copy.deepcopy(autonomy)
+        service["runtime"] = {
+            "mode": "service", "runner_profile": profile, "max_cycles": 1,
+            "verification_argv": ["true"], "audit_argv": ["false"], "audit_findings_exit_code": 1,
+        }
+        self.assertEqual(service, validate_autonomy(service, SOURCE["source_fingerprint"], frozen_routing))
+
+    def test_host_sync_and_worker_progress_require_observed_controller_state(self):
+        validate_host_sync({
+            "mode": "text", "acknowledged_fingerprint": None,
+            "evidence_level": "controller_attested",
+            "fallback": {"reason": "unavailable", "evidence_ref": "log", "disclosure_ref": "message"},
+        })
+        with self.assertRaisesRegex(ValueError, "acknowledge"):
+            validate_host_sync({
+                "mode": "text", "acknowledged_fingerprint": "a" * 64,
+                "evidence_level": "controller_attested",
+            })
+
+        payload = delegated_state(runtime_binding=desktop_binding())
+        payload["workers"] = [{
+            "ref": "worker-1", "parent_ref": None, "task_id": payload["task_key"], "depth": 1,
+            "may_dispatch": False, "role": "implementer", "owner_run_id": payload["run_id"],
+            "status": "working", "progress": {
+                "sequence": 1, "objective_revision": 0, "event": "heartbeat",
+                "phase": "implementing", "milestone": "started", "activity": "editing",
+                "evidence": "host event", "evidence_level": "host_observed",
+                "next_action": "verify", "observed_at": "2026-08-27T00:00:00Z",
+            },
+        }]
+        with self.assertRaisesRegex(ValueError, "host-observed tree-query"):
+            validate_state(payload, SimpleNamespace(), check_workspace=False)
+        payload["workers"][0]["progress"]["evidence_level"] = "controller_attested"
+        with self.assertRaisesRegex(ValueError, "evidence_level"):
+            validate_state(payload, SimpleNamespace(), check_workspace=False)
+
+    def test_state_primitives_cover_findings_tdd_serialization_and_native_stage_routes(self):
+        with self.assertRaisesRegex(ValueError, "JSON-serializable"):
+            validate_native_tdd_trace({"not_json": {1}}, SOURCE, [], [], required=False, workspace=WORKSPACE)
+        self.assertEqual([], normalize_open_issues("none"))
+        self.assertEqual(["one"], normalize_open_issues([" one "]))
+        with self.assertRaisesRegex(ValueError, "open_issues"):
+            normalize_open_issues([""])
+        record = {
+            "fingerprint": "a" * 64, "evidence": "proof", "impact": "impact",
+            "root_cause": "cause", "scope": "current", "classification": "defect",
+        }
+        self.assertIsNone(validate_finding_records([record], ["a" * 64]))
+        record["scope"] = "outside"
+        with self.assertRaisesRegex(ValueError, "finding_records"):
+            validate_finding_records([record], ["a" * 64])
+        for stage, next_stage in (
+            ("scope", "round-1-build"), ("round-1-build", "round-1-semantic-review"),
+            ("verify-round-1", "round-2-risk-review"), ("round-2-risk-review", "verify-final"),
+            ("closure-repair", "closure-final-review"),
+        ):
+            with self.subTest(stage=stage):
+                self.assertEqual(next_stage, validate_state(
+                    state(current_stage=stage), SimpleNamespace(), check_workspace=False,
+                ))
+
+    def test_state_rejects_malformed_controller_worker_ledger_and_handoff_fields(self):
+        cases = (
+            lambda value: value["controller"].update(extra="unsupported"),
+            lambda value: value.update(revision=True),
+            lambda value: value.update(workspace="relative"),
+            lambda value: value["baseline"].update(extra="unsupported"),
+            lambda value: value.update(workers="not-a-list"),
+            lambda value: value.update(workers=[{
+                "ref": "worker", "parent_ref": "parent", "task_id": value["task_key"], "depth": 1,
+                "may_dispatch": False, "role": "implementer", "owner_run_id": value["run_id"],
+                "status": "working", "progress": None,
+            }]),
+            lambda value: value["ledger"].update(extra="unsupported"),
+            lambda value: value["ledger"].update(completed_rounds=3),
+            lambda value: value["ledger"].update(repair_fingerprints=["same", "same"]),
+            lambda value: value["ledger"].update(autonomy_repair_fingerprints=["bad"]),
+            lambda value: value["ledger"].update(key_changes=["change"] * 6),
+            lambda value: value["ledger"].update(checks="not-a-list"),
+            lambda value: value["ledger"].update(acceptance="not-a-list"),
+            lambda value: value["ledger"].update(acceptance_history="not-a-list"),
+            lambda value: value["ledger"].update(report_history={}),
+            lambda value: value["handoff"].update(extra="unsupported"),
+            lambda value: value["handoff"].update(goal="x" * 501),
+            lambda value: value.update(requires_stability_round="yes"),
+            lambda value: value.update(current_stage="unknown"),
+            lambda value: value.update(blocked_code="environment"),
+            lambda value: value.update(status="unknown"),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                payload = state()
+                mutate(payload)
+                with self.assertRaises(ValueError):
+                    validate_state(payload, SimpleNamespace(), check_workspace=False)
+
+    def test_execution_control_rejects_noncanonical_routing_and_review_records(self):
+        payload = state()
+        control = payload["execution_control"]
+        arguments = (SOURCE["source_fingerprint"], payload["task_key"], payload["schema_version"],
+                     payload["baseline"], payload["source_receipt"], payload["provider_binding"])
+        self.assertEqual(control["routing"], validate_execution_control(control, *arguments)[0])
+        cases = (
+            lambda value: value["routing"].update(assessment_count=3),
+            lambda value: value["routing"].update(schema_version=2),
+            lambda value: value["routing"].update(allowed_paths=["other"]),
+            lambda value: value["review"].update(repair_budget_remaining=2),
+            lambda value: value["review"].update(rounds="not-a-list"),
+            lambda value: value["review"]["rounds"][0].update(requests=[{}]),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                invalid = copy.deepcopy(control)
+                mutate(invalid)
+                with self.assertRaises(ValueError):
+                    validate_execution_control(invalid, *arguments)
+
+    def test_normal_review_gate_requires_ordered_blind_bound_reviewer_results(self):
+        frozen_routing = routing(task_profile(scope="cross-module"))
+        review = {"integration_budget_remaining": 0, "rounds": [{"requests": []}]}
+        with self.assertRaisesRegex(ValueError, "spec and quality"):
+            validate_review_gate(frozen_routing, review, "task", HEAD, SOURCE["source_fingerprint"], [], [], [], False)
+        request = lambda axis, mode="blind", independent=True: {
+            "axis": axis, "phase": "initial", "status": "pass", "mode": mode,
+            "independent": independent, "reviewer_ref": "reviewer", "task_id": "task",
+            "request_fingerprint": "a" * 64,
+        }
+        review["rounds"][0]["requests"] = [request("quality"), request("spec")]
+        with self.assertRaisesRegex(ValueError, "before quality"):
+            validate_review_gate(frozen_routing, review, "task", HEAD, SOURCE["source_fingerprint"], [], [], [], True)
+        review["rounds"][0]["requests"] = [request("spec"), request("quality", mode="shared")]
+        with self.assertRaisesRegex(ValueError, "independent blind"):
+            validate_review_gate(frozen_routing, review, "task", HEAD, SOURCE["source_fingerprint"], [], [], [], True)
+        review["rounds"][0]["requests"] = [request("spec"), request("quality")]
+        with self.assertRaisesRegex(ValueError, "completed reviewer"):
+            validate_review_gate(frozen_routing, review, "task", HEAD, SOURCE["source_fingerprint"], [], [], [], False)
 
 
 if __name__ == "__main__":

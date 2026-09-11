@@ -43,7 +43,7 @@ class SkillContractTest(unittest.TestCase):
             description = next(line for line in header.splitlines() if line.startswith("description:"))
             descriptions[name] = description
             self.assertGreater(len(text), len(header))
-            self.assertIn("compatibility: Requires Git and Python 3.9+", header)
+            self.assertIn("compatibility: Requires Git and Python 3.11+", header)
             self.assertIn("complete Converge Suite", header)
             self.assertIn("Codex and Claude Code", header)
 
@@ -124,6 +124,8 @@ class SkillContractTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
         self.assertIn("uses: actions/checkout@v4\n        with:\n          fetch-depth: 2", workflow)
+        self.assertIn('python-version: ["3.11", "3.14"]', workflow)
+        self.assertIn("python-version: ${{ matrix.python-version }}", workflow)
 
     def test_registered_extensions_require_explicit_invocation(self):
         for extension in ("converge-autonomy", "converge-multimodel"):
@@ -210,7 +212,26 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("claude_exec_runner.py", model)
         self.assertIn("不把 `max_turns` 伪称为 Codex CLI", model)
         self.assertIn("只有 `implementer`", runners)
+        self.assertIn("空 findings 且 next_action=verify", runners)
+        extension = (ROOT / "extensions/converge-multimodel/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("findings or a next action other than `verify`", extension)
         self.assertIn("工具", model)
+
+    def test_multi_model_contract_distinguishes_role_labels_from_model_bound_workers(self):
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
+        extension = (ROOT / "extensions/converge-multimodel/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Multi-model external runners require the explicit", root)
+        self.assertIn("常规 `role_flow` 路径", model)
+        self.assertIn("`desktop-task` 和 `audit --execute`", model)
+        self.assertIn("只有 `agent` 模式", model)
+        self.assertIn("不会按 profile 切换模型", model)
+        self.assertIn("not a complete role-level model orchestration", extension)
+        self.assertIn("non-multi-model Converge delivery", extension)
+        self.assertIn("serial", extension)
+        self.assertIn("MCP", extension)
+        self.assertRegex(extension, r"does not provide\s+a no-MCP configuration")
 
     def test_bounded_loops_have_distinct_termination_conditions(self):
         control = (ROOT / "references/execution-control.md").read_text(encoding="utf-8")
@@ -527,6 +548,21 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("明确“仅审查”", activation)
         self.assertIn("审查检查点", protocol)
         self.assertIn("in-scope finding", protocol)
+
+    def test_required_implementation_references_are_read_before_the_first_write(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "`codex://`",
+            "明确指定为实现依据",
+            "需求真源",
+            "另一套行为替代",
+            "首次业务写入前",
+            "普通背景链接不构成门禁",
+            "持久化任务",
+        ):
+            self.assertIn(marker, skill + protocol)
 
     def test_review_skill_is_read_only_and_freshness_bound(self):
         skill = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")

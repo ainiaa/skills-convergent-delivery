@@ -199,6 +199,7 @@ def capsule_snapshot_path(receipt, attempt_id):
 
 def write_capsule_snapshot(path, capsule):
     contents = capsule.encode("utf-8")
+    descriptor = None
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
@@ -206,9 +207,13 @@ def write_capsule_snapshot(path, capsule):
             raise ValueError("dispatch capsule snapshot is already bound to different input")
         return path
     try:
-        with os.fdopen(descriptor, "wb") as output:
+        output = os.fdopen(descriptor, "wb")
+        descriptor = None
+        with output:
             output.write(contents)
     except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
         path.unlink(missing_ok=True)
         raise
     return path

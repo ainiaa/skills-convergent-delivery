@@ -6,7 +6,7 @@ import unittest
 from role_result import result_from_output
 from runner_contract import (
     bind_role_result, fingerprint as contract_fingerprint, freeze_launch, role_results_complete,
-    runner_results_complete, validate_launch,
+    implementation_reference_binding, review_request_binding, runner_results_complete, validate_launch,
 )
 from worker_profile import fingerprint
 
@@ -223,6 +223,64 @@ class RunnerContractTest(unittest.TestCase):
         unknown["receipt_fingerprint"] = contract_fingerprint(unknown)
         with self.assertRaisesRegex(ValueError, "fields"):
             runner_results_complete([launch], [unknown])
+
+    def test_launch_helpers_reject_non_json_configuration_and_unbound_metadata(self):
+        with self.assertRaisesRegex(ValueError, "prompt"):
+            freeze_launch(profile(), "", {})
+        with self.assertRaisesRegex(ValueError, "JSON"):
+            freeze_launch(profile(), "Review", {"unsupported": {1}})
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            freeze_launch(profile(), "Review", [])
+        scout = profile()
+        with self.assertRaisesRegex(ValueError, "review request"):
+            review_request_binding(scout, "a" * 64, {})
+        reviewer = profile(role="reviewer")
+        request = {"task_id": "T1"}
+        binding = contract_fingerprint(request)
+        self.assertEqual(binding, review_request_binding(reviewer, binding, request))
+        with self.assertRaisesRegex(ValueError, "receipt"):
+            implementation_reference_binding(scout, "a" * 64)
+        implementer = profile(
+            role="implementer", permissions={"workspace": "write", "shell": True, "network": "egress"},
+        )
+        self.assertEqual("a" * 64, implementation_reference_binding(implementer, "a" * 64))
+
+    def test_runner_receipt_rejects_unknown_launches_duplicate_results_and_bad_attestations(self):
+        launch = freeze_launch(profile(), "Review", {})
+        with self.assertRaisesRegex(ValueError, "lists"):
+            runner_results_complete({}, [])
+        malformed = dict(launch)
+        malformed.pop("status")
+        with self.assertRaisesRegex(ValueError, "launch fields"):
+            validate_launch(malformed)
+        receipt = {
+            "schema_version": 2, "runner_id": launch["runner_id"],
+            "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+            "response_id": "response-1", "response_model": "glm-5.2", "usage": None,
+            "response_fingerprint": "a" * 64,
+            "attestation": {
+                "model": {"status": "observed", "observed": "glm-5.2"},
+                "usage": {"status": "observed", "value": None},
+            },
+        }
+        receipt["receipt_fingerprint"] = contract_fingerprint(receipt)
+        with self.assertRaisesRegex(ValueError, "attestation"):
+            runner_results_complete([launch], [receipt])
+        receipt["attestation"]["usage"] = {"status": "unavailable", "value": None}
+        receipt["receipt_fingerprint"] = contract_fingerprint({
+            key: value for key, value in receipt.items() if key != "receipt_fingerprint"
+        })
+        self.assertTrue(runner_results_complete([launch], [receipt]))
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            runner_results_complete([launch], [receipt, receipt])
+        with self.assertRaisesRegex(ValueError, "role"):
+            implementer = profile(
+                role="implementer", permissions={"workspace": "write", "shell": True, "network": "egress"},
+            )
+            bind_role_result(
+                freeze_launch(implementer, "Implement", {}), receipt,
+                result_from_output(launch, {"status": "unavailable"}),
+            )
 
 
 if __name__ == "__main__":

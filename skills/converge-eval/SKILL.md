@@ -2,7 +2,7 @@
 name: converge-eval
 description: Evaluate Converge Suite behavior with frozen control/candidate comparisons, fresh multi-sample decisions, and regressions selected from touched control surfaces. Use after changing Converge rules; do not use for implementation, review, or deployment.
 metadata:
-  compatibility: Requires Git and Python 3.9+; install the complete Converge Suite. Supports Codex and Claude Code.
+  compatibility: Requires Git and Python 3.11+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge Eval：独立行为验收

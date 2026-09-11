@@ -3,6 +3,7 @@
 
 import tempfile
 import unittest
+import copy
 from pathlib import Path
 
 from multi_model import resolve
@@ -104,6 +105,31 @@ class RoleFanoutTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "launch"):
             fan_in(plan, [{"task_id": "scout", "role_result": result}], {"scout": launch})
+
+    def test_fanout_rejects_mutated_dispatches_and_incomplete_fanin(self):
+        plan = plan_read_only_fanout(self.profiles, [
+            {"task_id": "a", "role": "scout"}, {"task_id": "b", "role": "reviewer"},
+        ])
+        for mutate, message in (
+            (lambda value: value.update(status="other"), "plan"),
+            (lambda value: value["tasks"].reverse(), "stable order"),
+            (lambda value: value["tasks"][0]["dispatch"].update(reason="write"), "not read-only"),
+            (lambda value: value["tasks"][0]["dispatch"]["profile"]["permissions"].update(shell=True), "invalid"),
+        ):
+            with self.subTest(message=message):
+                invalid = copy.deepcopy(plan)
+                mutate(invalid)
+                with self.assertRaisesRegex(ValueError, message):
+                    tasks_for_fanout(invalid)
+
+        launches = {
+            item["task_id"]: freeze_launch(item["dispatch"]["profile"], item["task_id"], {})
+            for item in plan["tasks"]
+        }
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            fan_in(plan, [], launches)
+        with self.assertRaisesRegex(ValueError, "launches"):
+            fan_in(plan, [], {"a": launches["a"]})
 
 
 if __name__ == "__main__":

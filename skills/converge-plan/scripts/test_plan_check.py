@@ -12,6 +12,7 @@ SCRIPT = Path(__file__).with_name("plan_check.py")
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import evidence_contract
+import plan_check
 from delivery_engine import provider_reference
 from provider_contract import canonical_fingerprint
 SHA = "a" * 64
@@ -862,6 +863,97 @@ class PlanCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertFalse(json.loads(result.stdout)["source_chain_complete"])
         self.assertFalse(json.loads(result.stdout)["complete"])
+
+    def test_plan_helpers_reject_unsafe_paths_and_unresolved_decisions(self):
+        self.assertTrue(plan_check.path_contains("src", "src/a.py"))
+        self.assertTrue(plan_check.paths_overlap("src", "src/a.py"))
+        self.assertFalse(plan_check.paths_overlap("src/a", "src/b"))
+        self.assertEqual(["new.py"], plan_check.source_delta(
+            {"changed_entries": []}, {"changed_entries": [{"path": "new.py"}]},
+        ))
+        for value in ("../escape", "/absolute", ""):
+            with self.subTest(path=value), self.assertRaisesRegex(ValueError, "workspace|non-empty"):
+                plan_check.clean_path(value, "path")
+        with self.assertRaisesRegex(ValueError, "decision_required"):
+            plan_check.validate_decisions([{
+                "id": "decision", "status": "open", "question": "which?",
+                "resolution": "tbd", "source": "user",
+            }])
+        with self.assertRaisesRegex(ValueError, "actual decision"):
+            plan_check.validate_decisions([{
+                "id": "decision", "status": "resolved", "question": "which?",
+                "resolution": "unknown", "source": "user",
+            }])
+
+    def test_low_level_plan_contracts_reject_invalid_baselines_planners_and_decisions(self):
+        for baseline, message in (
+            ({}, "baseline"),
+            ({"commit": "upper", "diff_fingerprint": "a" * 64}, "Git object"),
+            ({"commit": "a" * 40, "diff_fingerprint": "bad"}, "sha256"),
+        ):
+            with self.subTest(baseline=baseline), self.assertRaisesRegex(ValueError, message):
+                plan_check.validate_baseline(baseline)
+        with self.assertRaisesRegex(ValueError, "planner"):
+            plan_check.validate_planner({})
+        with self.assertRaisesRegex(ValueError, "built-in"):
+            plan_check.validate_planner({
+                "name": "native-plan-v1", "source_path": "/tmp/source", "source_fingerprint": "a" * 64,
+            })
+        with self.assertRaisesRegex(ValueError, "source"):
+            plan_check.validate_planner({
+                "name": "generic-plan-v1", "source_path": "/missing", "source_fingerprint": "a" * 64,
+            })
+        with self.assertRaisesRegex(ValueError, "source"):
+            plan_check.validate_decisions([{
+                "id": "decision", "status": "resolved", "question": "which?",
+                "resolution": "chosen", "source": "invented",
+            }])
+
+    def test_plan_validator_rejects_unbounded_or_illegal_task_shapes(self):
+        cases = (
+            lambda value: value.update(context="unknown"),
+            lambda value: value["baseline"].pop("source"),
+            lambda value: value.update(checkpoint="unknown"),
+            lambda value: value.update(tasks=[]),
+            lambda value: value["tasks"][0].update(execution="unknown"),
+            lambda value: value["tasks"][0].update(status="done"),
+            lambda value: value["tasks"][0].update(task_kind="unknown"),
+            lambda value: value["tasks"][0].update(outcomes=["one", "two"]),
+            lambda value: value["tasks"][0].update(owned_paths=["../escape"]),
+            lambda value: value["tasks"][0].update(depends_on=["T1"]),
+            lambda value: value["tasks"][0].update(task_kind="integration", depends_on=[]),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                value = plan([task("T1", ["src"])])
+                mutate(value)
+                with self.assertRaises(ValueError):
+                    plan_check.validate_plan(value)
+
+    def test_closure_matrix_rejects_unbounded_chains_and_unbound_graph_receipts(self):
+        base = plan([task("T1", ["src"])])
+        matrix = base["closure_matrix"]
+        acceptance = base["final_acceptance"]
+        source = base["baseline"]["source"]["source_fingerprint"]
+        cases = (
+            lambda value: value.update(schema_version=2),
+            lambda value: value.update(chains=[]),
+            lambda value: value["chains"][0].update(description="x" * 501),
+            lambda value: value["chains"][0].update(entrypoints=[]),
+            lambda value: value["chains"][0].update(entrypoints=["src", "src"]),
+            lambda value: value["chains"][0].update(callers=[]),
+            lambda value: value["chains"][0].update(coverage={}),
+            lambda value: value["chains"][0]["coverage"]["input"].update(status="bad"),
+            lambda value: value["chains"][0]["coverage"]["input"].update(acceptance=["unknown"]),
+            lambda value: value["graph_receipt"].update(tool="unknown"),
+            lambda value: value["graph_receipt"].update(source_fingerprint="b" * 64),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                value = json.loads(json.dumps(matrix))
+                mutate(value)
+                with self.assertRaises(ValueError):
+                    plan_check.validate_closure_matrix(value, acceptance, source)
 
 
 if __name__ == "__main__":

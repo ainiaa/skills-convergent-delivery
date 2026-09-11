@@ -1,6 +1,9 @@
 import importlib.util
+import io
+import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("batch_next.py")
@@ -72,6 +75,27 @@ class BatchNextTest(unittest.TestCase):
             self.assertEqual("plan-1", result["task_id"])
             if status == "blocked":
                 self.assertEqual("worker thread-1 still active", result["reason"])
+
+    def test_unroutable_batch_states_stop_without_guessing(self):
+        value = state("pending")
+        value["current_batch"] = None
+        self.assertIn("no current batch", batch_next.next_action(value)["reason"])
+
+        value = state("pending")
+        value["status"] = "paused"
+        self.assertIn("not active", batch_next.next_action(value)["reason"])
+
+        value = state("validating-receipt", "thread-1", "failed")
+        self.assertIn("did not complete", batch_next.next_action(value)["reason"])
+        self.assertIn("no safe", batch_next.next_action(state("unknown"))["reason"])
+
+    def test_cli_emits_a_blocked_action_for_invalid_input(self):
+        with patch.object(sys, "argv", ["batch_next.py", "--input", "file.json"]), \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr, \
+                patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(2, batch_next.main())
+        self.assertIn("only --input -", stderr.getvalue())
+        self.assertEqual("block", __import__("json").loads(stdout.getvalue())["action"])
 
 
 if __name__ == "__main__":

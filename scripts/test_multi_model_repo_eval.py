@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 
 from multi_model import resolve
-from multi_model_repo_eval import _fixture, _verify, compare_reports, evaluate, load_tasks
+from multi_model_repo_eval import (
+    _fixture, _path, _profile, _receipt, _verify, compare_reports, evaluate, load_tasks, validate_tasks,
+)
 from runner_contract import fingerprint, freeze_launch
 
 
@@ -28,6 +30,29 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
         self.assertEqual(2, len(tasks))
         self.assertEqual({"normalize-slug", "positive-total"}, {task["task_id"] for task in tasks})
 
+    def test_task_and_profile_contracts_reject_invalid_boundaries(self):
+        tasks = load_tasks()
+        invalid_cases = (
+            [],
+            [{"task_id": "only"}],
+            [{**tasks[0], "files": {"../escape.py": "bad"}}, tasks[1]],
+            [{**tasks[0], "verify_argv": [1]}, tasks[1]],
+        )
+        for invalid in invalid_cases:
+            with self.subTest(tasks=invalid), self.assertRaises(ValueError):
+                validate_tasks(invalid)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tasks.json"
+            path.write_text("[]", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_tasks(path)
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            _profile({"roles": {}}, "reviewer", writer=False)
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            _profile(self.profiles, "reviewer", writer=True)
+        with self.assertRaisesRegex(ValueError, "arguments"):
+            evaluate(self.profiles, mode="other")
+
     def test_catalog_rejects_constant_answers(self):
         for task in load_tasks():
             with self.subTest(task=task["task_id"]), tempfile.TemporaryDirectory() as directory:
@@ -39,7 +64,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                 )
                 self.assertEqual("failed", _verify(candidate, task["verify_argv"])["status"])
 
-    def probe(self, *, tamper=False, review_status="completed", review_output=True):
+    def probe(self, *, tamper=False, review_status="completed", review_output=True, review_content=None):
         workspaces = {}
 
         def plan(dispatch, prompt, *, workspace, **_kwargs):
@@ -69,7 +94,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                      "requested_model": launch["profile"]["effective"]["model"],
                      "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"]}
             return {"receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                    "output": {"status": "available", "content": '{"findings":[],"next_action":"verify"}'}
+                    "output": {"status": "available", "content": review_content or '{"findings":[],"next_action":"verify"}'}
                     if review_output else {"status": "unavailable"}}
 
         return evaluate(self.profiles, mode="multi", execute=True, plan_launch=plan, execute_launch=execute)
@@ -91,6 +116,21 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                     self.assertEqual("passed", item["implementation_status"])
                     self.assertEqual("incomplete", item["execution_status"])
                     self.assertGreaterEqual(item["duration_ms"], item["verification"]["duration_ms"])
+
+    def test_reviewer_result_with_findings_or_repair_fails_multi_model_evaluation(self):
+        finding = {"summary": "implementation needs repair", "evidence": [{
+            "kind": "file", "reference": "app.py:1", "content_fingerprint": "c" * 64,
+        }]}
+        for findings, next_action in (([finding], "verify"), ([], "repair")):
+            with self.subTest(findings=findings, next_action=next_action):
+                report = self.probe(review_content=json.dumps({
+                    "findings": findings, "next_action": next_action,
+                }))
+
+                self.assertEqual("failed", report["status"])
+                self.assertTrue(all(item["status"] == "failed" for item in report["results"]))
+                self.assertTrue(all(item["review"]["finding_count"] == len(findings)
+                                    for item in report["results"]))
 
     def test_plan_mode_does_not_create_a_repository_or_retain_a_prompt(self):
         report = evaluate(self.profiles)
@@ -271,6 +311,23 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     compare_reports([single, report])
 
+    def test_comparison_rejects_invalid_reports_before_surface_comparison(self):
+        with self.assertRaises(ValueError):
+            compare_reports([])
+        single = evaluate(self.profiles)
+        invalid = copy.deepcopy(single)
+        invalid["trust_level"] = "snapshot"
+        with self.assertRaises(ValueError):
+            compare_reports([single, invalid])
+        invalid = copy.deepcopy(single)
+        invalid["task_fingerprint"] = "bad"
+        with self.assertRaises(ValueError):
+            compare_reports([single, invalid])
+        duplicate = copy.deepcopy(single)
+        duplicate["mode"] = "single"
+        with self.assertRaises(ValueError):
+            compare_reports([single, duplicate])
+
     def test_comparison_accepts_complete_failed_reports_and_missing_legacy_timing(self):
         single = evaluate(self.profiles)
         report = self.probe(review_status="timed_out")
@@ -280,6 +337,21 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
         self.assertEqual("failed", comparison["modes"][1]["status"])
         self.assertEqual(2, comparison["modes"][1]["failed"])
         self.assertIsNone(comparison["modes"][1]["duration_ms"])
+
+    def test_evaluator_helpers_reject_unsafe_fixture_data_and_summarize_receipts(self):
+        for path in ("/absolute", "../escape", "bad path", ""):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "path"):
+                _path(path)
+        tasks = load_tasks()
+        invalid = copy.deepcopy(tasks)
+        invalid[0]["owned_paths"] = ["missing.py"]
+        with self.assertRaisesRegex(ValueError, "owned"):
+            validate_tasks(invalid)
+        self.assertEqual({"status": "invalid", "fingerprint": None, "attestation": None}, _receipt(None))
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            self.assertEqual("passed", _verify(workspace, ["true"])["status"])
+            self.assertEqual("failed", _verify(workspace, ["false"])["status"])
 
 
 if __name__ == "__main__":

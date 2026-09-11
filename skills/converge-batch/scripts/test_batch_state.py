@@ -199,6 +199,38 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def test_batch_state_helpers_reject_invalid_identity_evidence_and_capsules(self):
+        for helper, value in (
+            (batch_state.require_mapping, []), (batch_state.require_list, {}),
+            (batch_state.require_string, " "),
+        ):
+            with self.subTest(helper=helper), self.assertRaises(ValueError):
+                helper(value, "value")
+        with self.assertRaises(ValueError):
+            batch_state.canonical_path("relative")
+        with self.assertRaises(ValueError):
+            batch_state.scheduler_lease({"run_id": "run", "writer_id": "writer"}, 0)
+        evidence = {
+            "criterion": "accept", "evidence": "test", "result": "pass",
+            "freshness": "fresh", "source_fingerprint": "a" * 64,
+        }
+        for invalid in (
+            [{**evidence, "result": "other"}],
+            [{**evidence, "freshness": "other"}],
+            [{**evidence, "result": "fail"}],
+        ):
+            with self.subTest(evidence=invalid), self.assertRaises(ValueError):
+                batch_state.validate_evidence(invalid, "acceptance", require_pass=True,
+                                              source_fingerprint="a" * 64)
+        valid_capsule = capsule("B1")
+        for invalid in (
+            {key: value for key, value in valid_capsule.items() if key != "goal"},
+            {**valid_capsule, "batch_id": "other"},
+            {**valid_capsule, "task_id": "other"},
+        ):
+            with self.subTest(capsule=invalid), self.assertRaises(ValueError):
+                batch_state.validate_capsule(invalid, "B1", "plan-1", "T1")
+
     def test_execution_capsule_uses_verified_predecessor_and_preserves_frozen_plan(self):
         state = candidate(self.workspace)
         before = copy.deepcopy(state)
@@ -1175,6 +1207,108 @@ class BatchStateTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "recovery_count"):
             batch_state.validate_state(state)
+
+    def test_state_helpers_validate_timestamps_evidence_and_atomic_private_files(self):
+        self.assertEqual("value", batch_state.require_string("value", "field"))
+        for value in (None, "", []):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "non-empty"):
+                batch_state.require_string(value, "field")
+        lease = batch_state.scheduler_lease(candidate(self.workspace), 1)
+        self.assertFalse(batch_state.scheduler_lease_expired(lease))
+        self.assertTrue(batch_state.scheduler_lease_expired({}))
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            batch_state.parse_timestamp("2026-01-01T00:00:00")
+        with self.assertRaisesRegex(ValueError, "positive"):
+            batch_state.scheduler_lease(candidate(self.workspace), 0)
+
+        evidence = [{
+            "criterion": "works", "evidence": "proof", "result": "pass", "freshness": "fresh",
+            "source_fingerprint": "a" * 64,
+        }]
+        batch_state.validate_evidence(evidence, "acceptance", require_pass=True,
+                                      source_fingerprint="a" * 64)
+        with self.assertRaisesRegex(ValueError, "unique"):
+            batch_state.validate_evidence(evidence * 2, "acceptance")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            batch_state.write_private(path, {"answer": 42})
+            self.assertEqual({"answer": 42}, json.loads(path.read_text()))
+
+    def test_receipt_identity_and_managed_delegate_state_must_stay_bound(self):
+        for field, value, message in (
+            ("protocol_version", 3, "protocol_version"),
+            ("batch_id", "other", "batch_id"),
+            ("dispatch_id", "other", "dispatch_id"),
+            ("delegate_run_id", "other", "delegate_run_id"),
+            ("delegate_state", {}, "self-asserted"),
+        ):
+            with self.subTest(field=field):
+                state = self.completed_first_batch()
+                state["batches"][0]["receipt"][field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    batch_state.validate_state(state)
+
+        for field, value, message in (
+            ("revision", 99, "revision"), ("run_id", "other", "run_id"),
+            ("task_key", "other", "task_id"), ("workspace", "other", "workspace"),
+        ):
+            with self.subTest(delegate_field=field):
+                state = self.completed_first_batch()
+                batch = state["batches"][0]
+                path = delegate_state_path(Path(state["delegate_state_root"]), state["repo_id"],
+                                           batch["task_id"], batch["delegate_run_id"])
+                child = json.loads(path.read_text())
+                child[field] = value
+                path.write_text(json.dumps(child))
+                with self.assertRaisesRegex(ValueError, message):
+                    batch_state.validate_state(state)
+
+    def test_batch_state_rejects_malformed_plan_preflight_and_worker_lifecycle_fields(self):
+        cases = (
+            lambda value: value.update(schema_version=3),
+            lambda value: value.update(revision=-1),
+            lambda value: value.update(repo_id="relative"),
+            lambda value: value["plan"].update(extra="unsupported"),
+            lambda value: value["plan"].update(plan_revision=0),
+            lambda value: value["plan"].update(plan_fingerprint="short"),
+            lambda value: value["preflight"].pop("commit_authorized"),
+            lambda value: value["preflight"].update(passed=False),
+            lambda value: value.update(status="unknown"),
+            lambda value: value["batches"][0].update(recovery_count=2),
+            lambda value: value["batches"][0].update(worker_ref="worker"),
+            lambda value: value["batches"][0].update(status="dispatching", worker_ref="worker"),
+            lambda value: value.update(current_batch="B2"),
+            lambda value: value.update(blocked_reason="only-on-blocked"),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                state = candidate(self.workspace)
+                mutate(state)
+                with self.assertRaises(ValueError):
+                    batch_state.validate_state(state)
+
+    def test_batch_transition_rejects_immutable_identity_invalid_revisions_and_parallel_changes(self):
+        previous = candidate(self.workspace)
+        cases = (
+            lambda value: value.update(schema_version=3),
+            lambda value: value.update(repo_id="other"),
+            lambda value: value["plan"].update(plan_id="other"),
+            lambda value: value.update(revision=2),
+            lambda value: value["batches"].append(copy.deepcopy(value["batches"][0])),
+        )
+        for mutate in cases:
+            with self.subTest(mutate=mutate):
+                value = copy.deepcopy(previous)
+                value["revision"] = 1
+                mutate(value)
+                with self.assertRaises(ValueError):
+                    batch_state.validate_transition(previous, value)
+        value = copy.deepcopy(previous)
+        value["revision"] = 1
+        for batch in value["batches"]:
+            batch.update(status="dispatching", dispatch_id="dispatch-" + batch["batch_id"])
+        with self.assertRaisesRegex(ValueError, "current batch"):
+            batch_state.validate_transition(previous, value)
 
 
 if __name__ == "__main__":

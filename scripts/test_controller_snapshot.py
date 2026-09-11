@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -48,6 +49,126 @@ REQUIRED_CONTROL_REFERENCES = (
 
 
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_snapshot_validator_rejects_missing_version_and_mutable_frozen_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            (source / "VERSION").unlink()
+            with self.assertRaisesRegex(ValueError, "VERSION"):
+                controller_snapshot.create_snapshot(source, Path(directory) / "control")
+
+        with tempfile.TemporaryDirectory() as directory:
+            control = Path(directory) / "control"
+            descriptor = controller_snapshot.create_snapshot(ROOT, control)
+            snapshot = Path(descriptor["root"])
+
+            invalid = json.loads(json.dumps(descriptor))
+            invalid["files"] = []
+            with self.assertRaises(ValueError):
+                controller_snapshot.validate_snapshot(invalid)
+
+            invalid = json.loads(json.dumps(descriptor))
+            invalid["source_root"] = str(snapshot.parent)
+            with self.assertRaisesRegex(ValueError, "isolated"):
+                controller_snapshot.validate_snapshot(invalid)
+
+            snapshot.chmod(0o700)
+            with self.assertRaisesRegex(ValueError, "writable"):
+                controller_snapshot.validate_snapshot(descriptor)
+            snapshot.chmod(0o500)
+
+            script_dir = snapshot / "scripts"
+            script_dir.chmod(0o700)
+            with self.assertRaisesRegex(ValueError, "directory is writable"):
+                controller_snapshot.validate_snapshot(descriptor)
+            script_dir.chmod(0o500)
+
+            source_file = snapshot / "scripts" / "delivery_engine.py"
+            source_file.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, "file is writable"):
+                controller_snapshot.validate_snapshot(descriptor)
+
+    def test_snapshot_cli_reports_missing_create_and_run_inputs_without_writing(self):
+        with mock.patch.object(sys, "argv", [str(MODULE_PATH), "create"]), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, controller_snapshot.main())
+        self.assertIn("create requires", stderr.getvalue())
+        with mock.patch.object(sys, "argv", [str(MODULE_PATH), "run"]), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, controller_snapshot.main())
+        self.assertIn("run requires", stderr.getvalue())
+
+    def test_snapshot_error_boundaries_reject_tampering_and_unmanaged_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            (source / "VERSION").write_text("\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "empty"):
+                controller_snapshot.create_snapshot(source, Path(directory) / "control")
+
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            for mutation in (
+                lambda value: value.update(protocol_version=99),
+                lambda value: value.update(files=["../escape"]),
+                lambda value: value.update(source_root=value["root"]),
+            ):
+                invalid = json.loads(json.dumps(descriptor))
+                mutation(invalid)
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    controller_snapshot.validate_launch_snapshot(invalid)
+
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                controller_snapshot.managed_state_snapshot(Path(directory) / "missing.json")
+            state = Path(directory) / "state.json"
+            state.write_text(json.dumps({"schema_version": 11}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "identity"):
+                controller_snapshot.managed_state_snapshot(state)
+
+            removable = Path(directory) / "remove"
+            (removable / "nested").mkdir(parents=True)
+            controller_snapshot.remove_tree(removable)
+            self.assertFalse(removable.exists())
+
+        with mock.patch.object(sys, "argv", [str(MODULE_PATH), "validate", "unexpected"]), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, controller_snapshot.main())
+        self.assertIn("unexpected", stderr.getvalue())
+        with mock.patch.object(sys, "argv", [str(MODULE_PATH), "validate"]), \
+                mock.patch("sys.stdin", io.StringIO("{")), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(2, controller_snapshot.main())
+        self.assertIn("blocked", stderr.getvalue())
+
+    def test_snapshot_rejects_unavailable_version_and_provenance_tampering(self):
+        with mock.patch.object(controller_snapshot, "snapshot_files", return_value=()), \
+                mock.patch.object(controller_snapshot, "aggregate_fingerprint", return_value="fingerprint"):
+            with self.assertRaisesRegex(ValueError, "VERSION is unavailable"):
+                controller_snapshot.create_snapshot("/missing", "/tmp/control")
+
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            for mutation, message in (
+                (lambda value: value.update(control_root=str(Path(directory) / "other")), "provenance"),
+                (lambda value: value.update(protocol_version=99), "protocol changed"),
+                (lambda value: value.update(package_version="other"), "version changed"),
+            ):
+                invalid = json.loads(json.dumps(descriptor))
+                mutation(invalid)
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, message):
+                    controller_snapshot.validate_snapshot(invalid)
+            with self.assertRaisesRegex(ValueError, "descriptor"):
+                controller_snapshot.validate_launch_snapshot([])
+
+    def test_managed_snapshot_requires_a_frozen_descriptor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "state"
+            state = {"schema_version": 11, "repo_id": "repo", "task_key": "task", "run_id": "run", "controller": {}}
+            path = root / controller_snapshot.hashlib.sha256(b"repo").hexdigest() \
+                / controller_snapshot.hashlib.sha256(b"task").hexdigest() \
+                / f"{controller_snapshot.hashlib.sha256(b'run').hexdigest()}.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "no frozen"):
+                controller_snapshot.managed_state_snapshot(path)
+
     def test_core_identity_ignores_an_unselected_multimodel_extension(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
@@ -70,6 +191,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertNotIn("scripts/multi_model.py", core["files"])
             self.assertNotIn("scripts/autonomy_contract.py", core["files"])
             self.assertIn("scripts/multi_model.py", multi["files"])
+            self.assertIn("scripts/desktop_task_bridge.py", multi["files"])
             self.assertIn("scripts/multi_model_smoke.py", multi["files"])
             self.assertIn("scripts/multi_model_repo_eval.py", multi["files"])
             self.assertIn("references/multi-model-repository-evaluation.json", multi["files"])
@@ -81,6 +203,19 @@ class ControllerSnapshotTest(unittest.TestCase):
             ("multimodel", "autonomy", "autonomy-eval"),
             controller_snapshot.snapshot_extensions({"profile": "extended"}),
         )
+
+    def test_extension_normalization_rejects_unknown_duplicate_and_malformed_requests(self):
+        self.assertEqual(
+            ("autonomy", "autonomy-eval"),
+            controller_snapshot.normalize_extensions(("autonomy-eval",)),
+        )
+        for requested in ("autonomy", ("autonomy", "autonomy"), ("unknown",)):
+            with self.subTest(requested=requested), self.assertRaisesRegex(ValueError, "extensions"):
+                controller_snapshot.normalize_extensions(requested)
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            controller_snapshot.snapshot_extensions([])
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            controller_snapshot.aggregate_fingerprint(ROOT, ["missing-file"])
 
     def test_hook_autonomy_does_not_freeze_multimodel_but_service_does(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -285,6 +420,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertTrue((Path(descriptor["root"]) / "scripts/claude_exec_runner.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_launch.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/runner_lifecycle.py").is_file())
+            self.assertTrue((Path(descriptor["root"]) / "scripts/desktop_task_bridge.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/multi_model_eval.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "scripts/multi_model_repo_eval.py").is_file())
             self.assertTrue((Path(descriptor["root"]) / "providers/native-v1.json").is_file())
@@ -537,6 +673,23 @@ class ControllerSnapshotTest(unittest.TestCase):
                 str(MODULE_PATH.with_name("delivery_lease.py").resolve()),
                 command[1],
             )
+
+    def test_snapshot_helpers_normalize_dependencies_and_reject_invalid_extensions(self):
+        self.assertEqual(("autonomy", "autonomy-eval"), controller_snapshot.normalize_extensions(
+            ("autonomy-eval",)
+        ))
+        self.assertEqual(("multimodel",), controller_snapshot.normalize_extensions(["multimodel"]))
+        with self.assertRaisesRegex(ValueError, "extensions"):
+            controller_snapshot.normalize_extensions(["multimodel", "multimodel"])
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            controller_snapshot.snapshot_extensions({"profile": "unknown"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                controller_snapshot.aggregate_fingerprint(root, ["missing"])
+            descriptor = controller_snapshot.descriptor(root, "a" * 64, "1.0", files=["x"], extensions=())
+            self.assertEqual([], descriptor["extensions"])
+            self.assertEqual(["x"], descriptor["files"])
 
 
 if __name__ == "__main__":

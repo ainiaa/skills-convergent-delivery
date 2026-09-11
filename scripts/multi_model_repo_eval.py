@@ -197,6 +197,7 @@ def _result(task, profiles, mode, *, execute, allow_network, plan_launch, execut
                 "status": "skipped", "exit_code": None, "duration_ms": 0,
             }
             review = None
+            review_passed = reviewer is None
             if receipt.get("status") == "completed" and verification["status"] == "passed" \
                     and scope["status"] == "within_scope" and reviewer is not None:
                 review_prompt = {**task, "prompt": task["prompt"] + " Review the implemented change and report only the required JSON result."}
@@ -206,16 +207,22 @@ def _result(task, profiles, mode, *, execute, allow_network, plan_launch, execut
                 )
                 role_result = result_from_output(review_launch, review_output)
                 review = {"receipt": _receipt(review_receipt), "result_status": role_result["status"],
+                          "finding_count": len(role_result["findings"])
+                          if role_result["status"] == "available" else None,
                           "next_action": role_result.get("next_action")}
-            passed = receipt.get("status") == "completed" and verification["status"] == "passed" \
-                and scope["status"] == "within_scope"
+                review_passed = review["receipt"]["status"] == "completed" \
+                    and role_result["status"] == "available" and not role_result["findings"] \
+                    and role_result["next_action"] == "verify"
+            implementation_passed = receipt.get("status") == "completed" \
+                and verification["status"] == "passed" and scope["status"] == "within_scope"
+            passed = implementation_passed and review_passed
             execution_complete = receipt.get("status") == "completed" and (reviewer is None or (
                 review is not None and review["receipt"]["status"] == "completed"
                 and review["result_status"] == "available"
             ))
             return {
                 **planned, "status": "passed" if passed and execution_complete else "failed",
-                "implementation_status": "passed" if passed else "failed",
+                "implementation_status": "passed" if implementation_passed else "failed",
                 "execution_status": "completed" if execution_complete else "incomplete",
                 "duration_ms": max(0, (time.monotonic_ns() - started) // 1_000_000),
                 "implementer_receipt": _receipt(receipt), "verification": verification,

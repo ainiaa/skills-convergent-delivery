@@ -3,7 +3,7 @@
 
 import unittest
 
-from run_contract import action, delivery_action
+from run_contract import action, delivery_action, legacy_action
 
 
 class RunContractTest(unittest.TestCase):
@@ -47,6 +47,14 @@ class RunContractTest(unittest.TestCase):
             {"action": "block", "task_id": "T1", "reason": "dependency unavailable"},
             delivery_action("blocked", "T1", "dependency unavailable"),
         )
+
+    def test_actions_reject_blank_fields_and_legacy_conversion_is_exact(self):
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            action("dispatch", task_id=" ")
+        self.assertEqual("validate-receipt", legacy_action({"action": "verify", "target": "receipt"}))
+        self.assertEqual("query:worker-1", legacy_action({"action": "query", "worker_ref": "worker-1"}))
+        self.assertEqual("wait:worker-1", legacy_action({"action": "wait", "worker_ref": "worker-1"}))
+
 
 
 if __name__ == "__main__":

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Validate replayable fresh-host interaction smoke inputs and receipts."""
 
+import argparse
 import hashlib
 import json
 import re
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -19,9 +23,12 @@ QUESTIONS = {"none", "decision_required"}
 COMPLETIONS = {"verified_only", "findings_only", "not_complete"}
 SCOPES = {"in_scope", "out_of_scope", "not_applicable"}
 WORKSPACE_STRATEGIES = {"current-worktree", "desktop-worktree", "cli-isolated-worktree"}
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG_PATH = ROOT / "evals" / "converge-interaction-v1.json"
 RECEIPT_FIELDS = {
     "schema_version", "scenario_id", "catalog_fingerprint", "task_id", "baseline_commit",
-    "workspace_strategy", "observations", "result", "uncovered_reason",
+    "workspace_strategy", "unprompted_task_turns", "successor_task_dispatches", "observations",
+    "result", "uncovered_reason",
 }
 OBSERVATION_FIELDS = {
     "turn", "writes_observed", "questions_asked", "verification_observed", "completion_claim",
@@ -55,7 +62,7 @@ def validate_catalog(catalog, root):
         raise ValueError("fixture baseline_files are invalid")
     ids = set()
     for scenario in catalog["scenarios"]:
-        _validate_scenario(scenario, ids)
+        _validate_scenario(scenario, ids, fixture_path)
     if ids != SCENARIO_IDS:
         raise ValueError("scenario IDs are incomplete")
     smoke = catalog["smoke"]
@@ -65,12 +72,12 @@ def validate_catalog(catalog, root):
         "local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked",
     } or len(smoke["critical_ids"]) != 3:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 3 or smoke["receipt_schema_version"] != 1 \
+    if smoke["minimum_fresh_runs"] != 3 or smoke["receipt_schema_version"] != 2 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
 
-def _validate_scenario(scenario, ids):
+def _validate_scenario(scenario, ids, fixture_path):
     if not isinstance(scenario, dict) or set(scenario) != {"id", "setup", "turns", "expected"}:
         raise ValueError("scenario fields are invalid")
     scenario_id = _string(scenario["id"], "scenario.id")
@@ -82,6 +89,20 @@ def _validate_scenario(scenario, ids):
         raise ValueError("scenario setup fields are invalid")
     if setup["fixture"] != "status-normalizer" or not all(_string(setup[key], f"setup.{key}") for key in ("baseline", "initial_diff")):
         raise ValueError("scenario setup is invalid")
+    initial_diff = setup["initial_diff"]
+    patch_path = fixture_path / initial_diff
+    if initial_diff != "none" and (
+            Path(initial_diff).name != initial_diff or not initial_diff.endswith(".patch")
+            or not patch_path.is_file()
+            or not patch_path.resolve().is_relative_to(fixture_path.resolve())):
+        raise ValueError("scenario initial diff is unavailable")
+    if initial_diff != "none":
+        result = subprocess.run(
+            ["git", "apply", "--check", initial_diff], cwd=fixture_path,
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode:
+            raise ValueError("scenario initial diff is not replayable")
     if not isinstance(setup["decisions"], list) or any(not isinstance(item, str) or not item.strip() for item in setup["decisions"]):
         raise ValueError("scenario decisions are invalid")
     turns = scenario["turns"]
@@ -107,7 +128,7 @@ def _validate_scenario(scenario, ids):
 def validate_receipt(receipt, catalog):
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_FIELDS:
         raise ValueError("receipt fields are invalid")
-    if receipt["schema_version"] != 1:
+    if receipt["schema_version"] != 2:
         raise ValueError("receipt schema_version is invalid")
     scenarios = {item["id"]: item for item in catalog["scenarios"]}
     scenario = scenarios.get(receipt["scenario_id"])
@@ -136,11 +157,20 @@ def validate_receipt(receipt, catalog):
     result = receipt["result"]
     if result not in {"pass", "fail", "uncovered"}:
         raise ValueError("receipt result is invalid")
+    boundary_counts = (receipt["unprompted_task_turns"], receipt["successor_task_dispatches"])
     if result == "uncovered":
+        if boundary_counts != (None, None):
+            raise ValueError("uncovered receipt cannot claim task-turn boundary evidence")
         _string(receipt["uncovered_reason"], "receipt uncovered_reason")
         return
     if receipt["uncovered_reason"] is not None:
         raise ValueError("receipt uncovered_reason must be null")
+    if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in boundary_counts):
+        raise ValueError("receipt task-turn boundary counts are invalid")
+    if result == "pass" and receipt["unprompted_task_turns"]:
+        raise ValueError("passing receipt cannot contain unprompted task turns")
+    if result == "pass" and receipt["successor_task_dispatches"]:
+        raise ValueError("passing receipt cannot contain successor task dispatches")
     expected = scenario["expected"]
     if expected["writes"] in {"required", "after_review"} and not any(item["writes_observed"] for item in observations):
         raise ValueError("receipt requires observed writes")
@@ -152,3 +182,88 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:
         raise ValueError("receipt requires observed verification")
+
+
+def _timestamp(value, name):
+    _string(value, name)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{name} is invalid") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{name} must include a timezone")
+    return parsed
+
+
+def _host_timestamp(value, name):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value, timezone.utc)
+        except (OSError, OverflowError, ValueError) as error:
+            raise ValueError(f"{name} is invalid") from error
+    return _timestamp(value, name)
+
+
+def resolve_host_threads(threads, title, updated_not_before, parent_thread_id=None):
+    """Resolve one host-observed thread using its exact unique title and time window."""
+    title = _string(title, "title")
+    threshold = _timestamp(updated_not_before, "updated_not_before")
+    if parent_thread_id is not None:
+        parent_thread_id = _string(parent_thread_id, "parent_thread_id")
+    if not isinstance(threads, dict) or set(threads) != {"data", "nextCursor"} \
+            or not isinstance(threads["data"], list) or threads["nextCursor"] is not None:
+        raise ValueError("host thread list is incomplete")
+    matches = []
+    for entry in threads["data"]:
+        if not isinstance(entry, dict) or entry.get("name") != title:
+            continue
+        created_at = _host_timestamp(entry.get("createdAt"), "host thread createdAt")
+        _host_timestamp(entry.get("updatedAt"), "host thread updatedAt")
+        if created_at < threshold:
+            continue
+        if parent_thread_id is not None and entry.get("parentThreadId") != parent_thread_id:
+            continue
+        task_id = _string(entry.get("id"), "host thread task_id")
+        if task_id.startswith("client-"):
+            continue
+        matches.append(task_id)
+    if not matches:
+        raise ValueError("no host thread matches the requested title")
+    if len(set(matches)) != 1:
+        raise ValueError("host thread match is ambiguous")
+    result = {"task_id": matches[0], "title": title}
+    if parent_thread_id is not None:
+        result["parent_thread_id"] = parent_thread_id
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--receipt", type=Path)
+    source.add_argument("--host-thread-list", type=Path)
+    parser.add_argument("--title")
+    parser.add_argument("--updated-not-before")
+    parser.add_argument("--parent-thread-id")
+    arguments = parser.parse_args()
+    try:
+        if arguments.host_thread_list is not None:
+            threads = json.loads(arguments.host_thread_list.read_text(encoding="utf-8"))
+            result = resolve_host_threads(
+                threads, arguments.title, arguments.updated_not_before, arguments.parent_thread_id,
+            )
+            print(json.dumps({"status": "resolved", **result}, ensure_ascii=False))
+            return 0
+        catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+        receipt = json.loads(arguments.receipt.read_text(encoding="utf-8"))
+        validate_catalog(catalog, ROOT)
+        validate_receipt(receipt, catalog)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"status": "invalid", "reason": str(error)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"status": "valid"}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

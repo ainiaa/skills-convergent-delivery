@@ -11,9 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from multi_model import resolve
+from reference_receipt import freeze_receipt
 from role_dispatch import plan_dispatch
 from runner_contract import fingerprint
-from runner_launch import command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
+from runner_launch import _output, _profile, command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
 
 
 RUNNER_LAUNCH = Path(__file__).with_name("runner_launch.py")
@@ -63,6 +64,24 @@ class RunnerLaunchTest(unittest.TestCase):
 
         self.assertEqual("codex-exec-v1", launch["runner_id"])
         self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
+
+    def test_dispatch_helpers_reject_malformed_identity_and_omit_blank_output(self):
+        with self.assertRaisesRegex(ValueError, "dispatch"):
+            _profile({})
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        dispatch = plan_dispatch(profiles, state())
+        forged = {**dispatch, "runner_id": "other"}
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            _profile(forged)
+        reviewer = plan_dispatch(profiles, state(
+            evidence="sufficient", implementation="complete", verification="passed", review="pending",
+        ))
+        with self.assertRaisesRegex(ValueError, "only implementer"):
+            plan_dispatch_launch(
+                reviewer, "Review", workspace=self.workspace,
+                implementation_reference_receipt=freeze_receipt([]),
+            )
+        self.assertEqual({"status": "unavailable"}, _output("  "))
 
     def test_dispatch_launches_claude_with_the_frozen_profile(self):
         profiles = resolve(
@@ -118,6 +137,30 @@ class RunnerLaunchTest(unittest.TestCase):
                 dispatch, "Collect evidence", workspace="/tmp",
                 review_request_fingerprint="a" * 64,
             )
+
+    def test_implementer_requires_a_validated_reference_receipt_before_launch(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        profile = profiles["roles"]["implementer"]
+        dispatch = {
+            "status": "next", "role": "implementer", "mode": "agent", "reason": "implement",
+            "profile": profile, "profile_fingerprint": profile["profile_fingerprint"],
+            "runner_id": profile["runner_id"], "executor": "external_runner",
+        }
+
+        with self.assertRaisesRegex(ValueError, "implementation reference receipt"):
+            plan_dispatch_launch(dispatch, "Implement", workspace=self.workspace)
+
+        receipt = freeze_receipt([])
+        with patch("runner_launch.plan_codex_launch", return_value={}) as launch:
+            plan_dispatch_launch(
+                dispatch, "Implement", workspace=self.workspace,
+                implementation_reference_receipt=receipt,
+            )
+
+        self.assertEqual(
+            receipt["receipt_fingerprint"],
+            launch.call_args.kwargs["implementation_reference_receipt_fingerprint"],
+        )
 
     def test_normalizes_glm_content_as_ephemeral_output(self):
         profiles = resolve(

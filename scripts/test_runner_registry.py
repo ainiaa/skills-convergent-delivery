@@ -24,10 +24,25 @@ def profile(runner_id="codex-exec-v1", **overrides):
 
 
 class RunnerRegistryTest(unittest.TestCase):
+    def test_rejects_unknown_and_unsupported_runner_capabilities(self):
+        unknown = profile(runner_id="unknown-v1")
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            validate_runner_profile(unknown)
+        unsupported = profile(
+            "openai-compatible-v1", role="scout",
+            requested={"model": "glm-5.2", "reasoning_effort": "high"},
+            effective={"provider": "zhipu", "model": "glm-5.2", "reasoning_effort": "high"},
+            permissions={"workspace": "read", "shell": True, "network": "egress"},
+        )
+        with self.assertRaisesRegex(ValueError, "shell"):
+            validate_runner_profile(unsupported)
+
     def test_exposes_explicit_capability_sets(self):
         self.assertEqual("local_process", capabilities("codex-exec-v1")["kind"])
         self.assertEqual("network_request", capabilities("openai-compatible-v1")["kind"])
         self.assertEqual("local_process", capabilities("claude-code-v1")["kind"])
+        self.assertEqual(["read"], capabilities("claude-code-v1")["workspace"])
+        self.assertEqual([False], capabilities("claude-code-v1")["shell"])
         self.assertEqual(["egress"], capabilities("openai-compatible-v1")["network"])
         with self.assertRaisesRegex(ValueError, "unknown"):
             capabilities("future-runner")
@@ -44,7 +59,7 @@ class RunnerRegistryTest(unittest.TestCase):
         self.assertEqual(external, validate_runner_profile(external))
 
         claude = profile(
-            "claude-code-v1",
+            "claude-code-v1", role="reviewer",
             requested={"model": "sonnet", "reasoning_effort": "high"},
             effective={"provider": "anthropic", "model": "sonnet", "reasoning_effort": "high"},
             permissions={"workspace": "read", "shell": False, "network": "egress"},
@@ -77,6 +92,12 @@ class RunnerRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "role"):
             validate_runner_profile(profile("openai-compatible-v1", role="adjudicator", permissions={
                 "workspace": "read", "shell": False, "network": "egress"
+            }))
+        with self.assertRaisesRegex(ValueError, "role"):
+            validate_runner_profile(profile("claude-code-v1", requested={
+                "model": "sonnet", "reasoning_effort": "high"
+            }, effective={
+                "provider": "anthropic", "model": "sonnet", "reasoning_effort": "high"
             }))
 
 

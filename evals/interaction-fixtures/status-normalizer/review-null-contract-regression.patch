@@ -1,0 +1,10 @@
+--- a/status_normalizer.py
++++ b/status_normalizer.py
+@@ -1,5 +1,7 @@
+ """Small deterministic fixture for interaction smoke setup."""
+ 
+ 
+ def normalize_status(value):
++    if value is None:
++        return None
+     return value.strip().lower()

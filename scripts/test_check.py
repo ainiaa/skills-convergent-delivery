@@ -11,18 +11,32 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):
+    def test_full_suite_runs_desktop_task_bridge_contract(self):
+        self.assertIn("scripts/test_desktop_task_bridge.py", (ROOT / "scripts/check.sh").read_text())
+
     def test_repository_has_an_executable_full_suite_coverage_gate(self):
         import native_tdd_policy
         policy = native_tdd_policy.resolve(ROOT)
         self.assertEqual("ready", policy["status"])
-        self.assertEqual(85, policy["threshold"])
+        self.assertEqual(90, policy["threshold"])
         self.assertIn("scripts/test_coverage_gate.py", policy["argv"])
         self.assertIn("--cov", policy["argv"])
+
+    def test_project_coverage_policy_is_ninety_percent_everywhere(self):
+        expected = "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90"
+
+        self.assertIn("全量生产 Python 覆盖率必须达到 90%", (ROOT / "AGENTS.md").read_text())
+        self.assertEqual("coverage: 90\n", (ROOT / "docs/00_standards/quality-targets.yml").read_text())
+        self.assertIn("fail_under = 90", (ROOT / ".coveragerc").read_text())
+        self.assertIn("coverage: " + expected, (ROOT / "docs/00_standards/test-commands.yml").read_text())
+        self.assertIn(expected, (ROOT / ".github/workflows/ci.yml").read_text())
+        self.assertIn(expected, (ROOT / "README.md").read_text())
+        self.assertIn("--cov-fail-under=90", (ROOT / "scripts/test_python_matrix.sh").read_text())
 
     def test_ci_prepares_a_pinned_validator_and_passes_it_to_the_gate(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
         steps = workflow["jobs"]["verify"]["steps"]
-        gate_index = next(i for i, step in enumerate(steps) if step.get("run") == "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85")
+        gate_index = next(i for i, step in enumerate(steps) if step.get("run") == "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90")
         gate = steps[gate_index]
         self.assertEqual("${{ runner.temp }}/quick_validate.py", gate.get("env", {}).get("CONVERGE_QUICK_VALIDATE"))
         setup = next(step["run"] for step in steps[:gate_index] if "quick_validate.py" in step.get("run", ""))
@@ -67,7 +81,7 @@ class CheckScriptTest(unittest.TestCase):
         content = workflow.read_text(encoding="utf-8")
         self.assertIn("pull_request:", content)
         self.assertIn('\"v*\"', content)
-        self.assertIn("python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=85", content)
+        self.assertIn("python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90", content)
         self.assertIn("scripts/test_multi_model_repo_eval.py", check)
 
     def test_runtime_lock_files_are_not_tracked(self):

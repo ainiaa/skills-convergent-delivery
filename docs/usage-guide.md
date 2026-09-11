@@ -12,7 +12,7 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 ## 前置条件
 
 - 使用远程安装时需要 Bash、`curl`、`git` 和可访问 GitHub 的网络。
-- 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.9 或更高版本。
+- 使用本地 clone 安装时需要 Bash；运行项目检查和状态 helper 需要 Python 3.11 或更高版本。
 - 只有执行全量收口审计时才需要 `codegraph`；`--doctor` 会显示 CodeGraph 是否可用。
 - 安装器不需要 `codex` 或 `claude` 命令行工具，但对应运行时必须已安装才能使用 Skill。
 - 已打开的 Codex 或 Claude Code 需要重启，或按各自的 Skill 刷新机制重新加载。
@@ -22,8 +22,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 安装当前发布的稳定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.2.0/install.sh -o converge-install.sh
-bash converge-install.sh --release 0.2.0 --target all
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.3.0/install.sh -o converge-install.sh
+bash converge-install.sh --release 0.3.0 --target all
 ```
 
 从本地 clone 安装：
@@ -56,6 +56,42 @@ bash install.sh --doctor --target codex --offline
 ```
 
 `--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
+
+### 真实交互 smoke
+
+修改 Skill 触发、路由、决策或审查闭环后，在独立的 fresh Codex 会话中运行
+[`evals/converge-interaction-v1.json`](../evals/converge-interaction-v1.json) 的三条
+`critical_ids`。每条场景使用其冻结 fixture、前置决定与多轮输入，并将实际 task ID、
+baseline commit、逐轮写入/提问/验证观察和结果保存为临时 JSON receipt；不要用本地测试
+夹具或模型自述补写观察。
+
+校验 receipt：
+
+```bash
+python3 scripts/interaction_smoke.py --receipt /tmp/converge-interaction-receipt.json
+```
+
+`pass` 只证明该场景的当次观察；`uncovered` 必须保留原因，不能凭确定性回归改成通过。
+目录中 `initial_diff` 不是 `none` 的场景必须指向 fixture 内可应用的 `.patch`；执行 fresh
+会话前先在该 fixture 目录用 `git apply --check <patch>` 验证，缺少或不可应用即保持 `uncovered`。
+若 Desktop 创建 worktree 时暂时只返回 `clientThreadId`，从同一宿主的 App Server `thread/list`
+观察的完整 `result`（必须已翻完全部分页，`nextCursor=null`），再按**唯一标题**、创建后时间窗和（如适用）父 task 解析候选正式 ID：
+
+```bash
+python3 scripts/interaction_smoke.py --host-thread-list /tmp/converge-host-threads.json \
+  --title "Smoke: local fix <unique-run-id>" \
+  --updated-not-before 2026-09-07T14:00:00Z \
+  --parent-thread-id <parent-thread-id>
+```
+
+`--updated-not-before` 必填；候选必须是精确标题、同一父 task（未提供父 task 时不作该筛选）且窗口内唯一的
+正式 ID。该命令只返回候选，不是通过证据，也不放开 worker lifecycle。必须再用宿主的 `thread/read`
+核对相同标题、预期 worktree 与终态；同名、缺失或无法核对均为 `uncovered`。不要把本 CLI 输出或 App Server
+列表当作跨会话 worker lifecycle 回执。
+
+发现可复现的 Suite 行为逃逸时，先登记 defect，再补最小回归与对应 history catalog 条目。
+普通使用反馈、宿主能力缺失或未复现问题不创建新 catalog 项。此流程按变更或逃逸触发，
+不启动定时任务、后台采集或持久化记忆。
 
 ### 多模型 live smoke
 
