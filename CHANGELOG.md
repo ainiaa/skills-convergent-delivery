@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 收紧 work item 恢复重试：同一 recovery receipt 只能解锁一次相同源码与验证命令的失败重试，必须提供新的 observed pass 回执才能再次尝试。
 - 限制 work item 成功验证状态增长：同一源码与 verifier argv 的新成功回执替换旧记录，保留不同验证命令的完成证据而不重复追加。
 - 收紧 work item 完成门禁：`complete` 仅接受同一事项受控 `verify` 已记录的当前源码成功回执，不能再以无关的成功命令清场；旧的非终态记录继续兼容读取，首次成功验证后写入该记录。
 - 修复 work item verifier 的并发门禁与终态清理：gate、执行和失败回执现由同一事项锁串行，避免相同失败并发启动两次；最终当前源码 passing receipt 经 `work_item.py complete` 复核后删除非终态事项，不再把已完成工作误恢复为 active。

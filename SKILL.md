@@ -41,7 +41,7 @@ Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务�
 
 一次性 `inline` 任务不落盘。只有需要跨轮修复或已进入 `active/blocked` 的功能事项才运行 `python3 scripts/work_item.py resume ...`：它以 workspace、baseline、功能 target、需求、验收、已决 decision 与 reference receipt 冻结唯一 work item，并只恢复全量相同的唯一事项；任何基线或语义 contract 漂移都阻塞，不能按项目名或相似引用猜测续接。功能级引用必须在回执中绑定该 target、关系和行为矩阵，不能把同项目其他功能当作语义副本。
 
-对已落盘事项，验证必须通过 `work_item.py verify` 执行；它只接受事项冻结的 workspace/baseline，并在同一事项锁内完成 gate、Evidence Receipt 命令和失败落盘。不得直接运行冻结 verifier argv。相同源码与 argv 的失败返回 `blocked`，不得重复执行；只有源码、argv 或通过 `--recovery-receipt` 提供的同一源码 observed pass 回执才可重试。所有最终验收完成后，控制器只能将该事项 `verify` 已记录的当前源码 passing receipt 交给 `work_item.py complete` 清除非终态事项；任意无关命令、恢复回执或模型自述都不能完成或清场。
+对已落盘事项，验证必须通过 `work_item.py verify` 执行；它只接受事项冻结的 workspace/baseline，并在同一事项锁内完成 gate、Evidence Receipt 命令和失败落盘。不得直接运行冻结 verifier argv。相同源码与 argv 的失败返回 `blocked`，不得重复执行；只有源码、argv 或通过 `--recovery-receipt` 提供的新的同一源码 observed pass 回执才可重试。同一恢复回执只能释放一次重试。所有最终验收完成后，控制器只能将该事项 `verify` 已记录的当前源码 passing receipt 交给 `work_item.py complete` 清除非终态事项；任意无关命令、恢复回执或模型自述都不能完成或清场。
 
 持久状态使用既有 writer lease，并按 [执行协议](references/execution-protocol.md) 和 [状态](references/state-schema.md) 清场。风险等级对应的复核边界见 [审查编排](references/review-orchestration.md)；Desktop、CLI 与 subagent 的可证明边界见 [宿主能力](references/host-capabilities.md)。没有真实宿主 bridge 时，不把本地 state、capsule、子任务或模型自述称为自动续跑、完成或清场证据。
 

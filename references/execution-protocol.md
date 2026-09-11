@@ -18,7 +18,7 @@
 
 一次性 `inline` 任务不落盘。仅在工作需要跨轮修复或进入 `active/blocked` 时，创建/恢复 `work_item.py` 的功能级事项；其 contract 冻结 workspace、baseline、target、requirements、acceptance、decisions 与 reference receipt。恢复只接受这些值全部相同的唯一事项；同功能事项的基线或语义 contract 不同则 `blocked`，而不是复用、迁移或选择看似最接近的项目记录。事项状态经既有 writer lease 私有写入，终态不得作为续接候选。
 
-已落盘事项只能以 `work_item.py verify` 在其冻结的 workspace/baseline 运行验证命令，禁止直接运行该 argv 或代入其他事项的起点。它在同一事项锁内完成 gate、`evidence_contract` 命令与失败回执落盘；相同源码和命令只能失败一次，后续调用必须以退出码 2 返回 `identical_verifier_failure`，不得重复消耗重试。只有源码/argv 改变，或以 `--recovery-receipt` 提供同一源码上的 observed `pass` 回执，才允许再次运行；恢复回执不是完成证据。每个成功 `verify` 将当前源码、argv 与 receipt 指纹写入事项；同一源码和 argv 再次成功时替换旧 receipt，不追加状态。全部最终验收完成后，`work_item.py complete` 只接受精确命中该记录的 receipt，并复核事项的 workspace/baseline 后删除该非终态事项。任意无关成功命令或其他事项的回执均不得清场；终态事项不得继续落盘或恢复。
+已落盘事项只能以 `work_item.py verify` 在其冻结的 workspace/baseline 运行验证命令，禁止直接运行该 argv 或代入其他事项的起点。它在同一事项锁内完成 gate、`evidence_contract` 命令与失败回执落盘；相同源码和命令只能失败一次，后续调用必须以退出码 2 返回 `identical_verifier_failure`，不得重复消耗重试。只有源码/argv 改变，或以 `--recovery-receipt` 提供新的同一源码 observed `pass` 回执，才允许再次运行；同一恢复回执只能释放一次重试，且恢复回执不是完成证据。每个成功 `verify` 将当前源码、argv 与 receipt 指纹写入事项；同一源码和 argv 再次成功时替换旧 receipt，不追加状态。全部最终验收完成后，`work_item.py complete` 只接受精确命中该记录的 receipt，并复核事项的 workspace/baseline 后删除该非终态事项。任意无关成功命令或其他事项的回执均不得清场；终态事项不得继续落盘或恢复。
 
 同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 不得排队 successor task 或产生无用户消息的额外 task turn。执行者必须在当前 task 内消耗完有限预算并给出一个最终结果；提前停止的 active run 以 `no_progress` 终止并释放 writer lease。
 

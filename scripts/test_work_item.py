@@ -201,6 +201,26 @@ class WorkItemTest(unittest.TestCase):
             self.assertEqual({"status": "allowed"}, allow_verifier_attempt(
                 path, source_fingerprint=source, argv=argv, recovery_receipt=recovery,
             ))
+            self.assertEqual(
+                {"status": "blocked", "reason": "verifier_failed"},
+                record_verifier_failure(
+                    path, source_fingerprint=source, argv=argv,
+                    failure_receipt=self.evidence(source, argv, "f" * 64, 1),
+                    recovery_receipt=recovery,
+                ),
+            )
+            self.assertEqual(
+                {"status": "blocked", "reason": "identical_verifier_failure"},
+                allow_verifier_attempt(
+                    path, source_fingerprint=source, argv=argv, recovery_receipt=recovery,
+                ),
+            )
+            self.assertEqual({"status": "allowed"}, allow_verifier_attempt(
+                path, source_fingerprint=source, argv=argv,
+                recovery_receipt=self.evidence(
+                    source, ["./gradlew", "properties"], "g" * 64, 0,
+                ),
+            ))
 
     def test_verifier_requires_matching_observed_failure_and_passing_recovery_evidence(self):
         created = self.request()

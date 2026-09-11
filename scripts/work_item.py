@@ -227,11 +227,11 @@ def _json_argv(value):
 
 
 def _attempt_decision(state, source_fingerprint, argv, recovery_receipt_fingerprint):
-    if recovery_receipt_fingerprint is None and any(
-            attempt["source_fingerprint"] == source_fingerprint and attempt["argv"] == argv
-            for attempt in state["verifier_attempts"]
-    ):
-        return {"status": "blocked", "reason": "identical_verifier_failure"}
+    for attempt in state["verifier_attempts"]:
+        if attempt["source_fingerprint"] == source_fingerprint and attempt["argv"] == argv \
+                and (recovery_receipt_fingerprint is None
+                     or attempt["recovery_receipt_fingerprint"] == recovery_receipt_fingerprint):
+            return {"status": "blocked", "reason": "identical_verifier_failure"}
     return {"status": "allowed"}
 
 
