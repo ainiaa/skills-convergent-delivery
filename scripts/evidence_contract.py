@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shlex
 import sqlite3
 import shutil
@@ -279,11 +280,22 @@ class EvidenceCleanupError(ValueError):
     """A process group may still be alive; no receipt may be issued."""
 
 
+def _terminate_process(process):
+    """Kill an evidence command and its isolated process group."""
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            return
+        except ProcessLookupError:
+            return
+    process.kill()
+
+
 def _run_command(workspace, argv, timeout_seconds, env=None):
     process = None
     process_group_terminated = False
     try:
-        from codex_exec_runner import _terminate_process
         process = subprocess.Popen(
             argv, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True, env=env,

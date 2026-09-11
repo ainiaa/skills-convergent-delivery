@@ -552,7 +552,7 @@ else: print('explore succeeded')
         ]
 
         with patch.object(evidence_contract.subprocess, 'Popen', return_value=process), \
-                patch('codex_exec_runner._terminate_process') as terminate:
+                patch.object(evidence_contract, '_terminate_process') as terminate:
             exit_code, _stdout, _stderr = evidence_contract._run_command(
                 self.workspace, ['probe'], .1,
             )
@@ -576,7 +576,7 @@ else: print('explore succeeded')
             self.assertFalse((self.workspace / 'late.txt').exists())
 
     def test_cleanup_failure_cannot_issue_an_evidence_receipt(self):
-        with patch('codex_exec_runner._terminate_process', side_effect=PermissionError('cleanup denied')):
+        with patch.object(evidence_contract, '_terminate_process', side_effect=PermissionError('cleanup denied')):
             with self.assertRaises(evidence_contract.EvidenceCleanupError) as failure:
                 evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', 'pass'])
             self.assertIsInstance(failure.exception.__cause__, PermissionError)
