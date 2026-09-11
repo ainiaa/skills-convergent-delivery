@@ -120,6 +120,21 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("五个核心 Skill", usage)
         self.assertIn("converge-eval", usage)
 
+    def test_release_notes_template_is_user_focused_and_evidence_honest(self):
+        template = (ROOT / "docs/templates/release-notes.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "## 这一版解决了什么",
+            "## 重点内容：你现在可以",
+            "## 修复",
+            "## 验证",
+            "## 已知发布证据限制",
+        ):
+            self.assertIn(marker, template)
+        self.assertIn("templates/release-notes.md", usage)
+        self.assertIn("面向使用者", usage)
+
     def test_ci_checkout_includes_the_parent_required_by_eval_kernel(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
