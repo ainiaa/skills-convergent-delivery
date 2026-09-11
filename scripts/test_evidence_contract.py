@@ -6,7 +6,7 @@ import unittest
 import os
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import evidence_contract
 from test_delivery_next import graph_index
@@ -541,6 +541,25 @@ else: print('explore succeeded')
         self.assertEqual(hashlib.sha256(b'started\n').hexdigest(), receipt['stdout_fingerprint'])
         time.sleep(.8)
         self.assertFalse((self.workspace / 'late.txt').exists())
+
+    def test_timeout_terminates_the_process_group_once(self):
+        process = Mock()
+        process.stdout = Mock()
+        process.stderr = Mock()
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired('probe', .1),
+            (b'', b''),
+        ]
+
+        with patch.object(evidence_contract.subprocess, 'Popen', return_value=process), \
+                patch('codex_exec_runner._terminate_process') as terminate:
+            exit_code, _stdout, _stderr = evidence_contract._run_command(
+                self.workspace, ['probe'], .1,
+            )
+
+        self.assertEqual(124, exit_code)
+        terminate.assert_called_once_with(process)
+        process.wait.assert_called_once_with(timeout=1)
 
     def test_exited_command_cannot_leave_a_background_writer(self):
         child = "import time;from pathlib import Path;time.sleep(.4);Path('late.txt').write_text('late')"
