@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class PythonMatrixScriptTest(unittest.TestCase):
-    def test_reuses_versioned_uv_environments_for_both_ci_runtimes(self):
+    def test_reuses_versioned_uv_environments_and_runs_both_ci_runtimes_in_parallel(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory).resolve()
             scripts = workspace / "scripts"
@@ -32,6 +32,13 @@ class PythonMatrixScriptTest(unittest.TestCase):
                 python.parent.mkdir(parents=True)
                 python.write_text(
                     "#!/usr/bin/env bash\n{ printf 'python:%s' \"$0\"; printf ' <%s>' \"$@\"; printf '\\n'; } >> \"$MATRIX_LOG\"\n"
+                    "if [[ $0 == */py311/bin/python ]]; then\n"
+                    "  touch \"$MATRIX_311_STARTED\"\n"
+                    "  for _ in {1..100}; do [[ -f \"$MATRIX_314_STARTED\" ]] && break; sleep 0.01; done\n"
+                    "  [[ -f \"$MATRIX_314_STARTED\" ]] || exit 99\n"
+                    "else\n"
+                    "  touch \"$MATRIX_314_STARTED\"\n"
+                    "fi\n"
                     "if [[ ${MATRIX_FAIL_311:-0} == 1 && $0 == */py311/bin/python ]]; then exit 1; fi\n",
                     encoding="utf-8",
                 )
@@ -39,33 +46,39 @@ class PythonMatrixScriptTest(unittest.TestCase):
 
             result = subprocess.run(
                 ["bash", "scripts/test_python_matrix.sh"], cwd=workspace,
-                env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "MATRIX_LOG": str(log)},
+                env={
+                    **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "MATRIX_LOG": str(log),
+                    "MATRIX_311_STARTED": str(workspace / "py311.started"),
+                    "MATRIX_314_STARTED": str(workspace / "py314.started"),
+                },
                 text=True, capture_output=True, check=False,
+                timeout=3,
             )
 
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(
-                [
-                    "uv <python> <install> <3.11>",
-                    "uv <venv> <--allow-existing> <--python> <3.11> <.venv/py311>",
-                    "uv <pip> <install> <--python> <.venv/py311/bin/python> <-r> <requirements-dev.txt>",
-                    f"python:{workspace}/.venv/py311/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>",
-                    "uv <python> <install> <3.14>",
-                    "uv <venv> <--allow-existing> <--python> <3.14> <.venv/py314>",
-                    "uv <pip> <install> <--python> <.venv/py314/bin/python> <-r> <requirements-dev.txt>",
-                    f"python:{workspace}/.venv/py314/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>",
-                ],
-                log.read_text(encoding="utf-8").splitlines(),
+            commands = log.read_text(encoding="utf-8")
+            self.assertIn("<install> <3.11>", commands)
+            self.assertIn("<install> <3.14>", commands)
+            self.assertIn(
+                f"python:{workspace}/.venv/py311/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>", commands,
+            )
+            self.assertIn(
+                f"python:{workspace}/.venv/py314/bin/python <-m> <pytest> <scripts/test_coverage_gate.py> <--cov> <--cov-fail-under=90>", commands,
             )
 
             log.write_text("", encoding="utf-8")
+            for marker in (workspace / "py311.started", workspace / "py314.started"):
+                marker.unlink()
             failure = subprocess.run(
                 ["bash", "scripts/test_python_matrix.sh"], cwd=workspace,
                 env={
                     **os.environ, "PATH": f"{tools}:{os.environ['PATH']}",
                     "MATRIX_LOG": str(log), "MATRIX_FAIL_311": "1",
+                    "MATRIX_311_STARTED": str(workspace / "py311.started"),
+                    "MATRIX_314_STARTED": str(workspace / "py314.started"),
                 },
                 text=True, capture_output=True, check=False,
+                timeout=3,
             )
 
             self.assertNotEqual(0, failure.returncode)

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 并行执行 Python 3.11 与 3.14 的完整 coverage matrix，同时等待并汇总两个结果；任一版本失败仍使矩阵失败。
 - 修复 Codex 两轮“review → 继续修复”的提前收口：安装 autonomy 后，`UserPromptSubmit` 为精确的“继续修复”/`continue repair` arm 当前 workspace 的受限 gate，Desktop 与 CLI Stop 均以宿主原生 `decision:block` 在同一 task 继续，不再依赖 `codex queue`。未记录进展的重复 Stop 安全终止为 `blocked/no_progress` 并释放 lease。
 - 收紧 work item 恢复重试：同一 recovery receipt 只能解锁一次相同源码与验证命令的失败重试，必须提供新的 observed pass 回执才能再次尝试。
 - 限制 work item 成功验证状态增长：同一源码与 verifier argv 的新成功回执替换旧记录，保留不同验证命令的完成证据而不重复追加。
