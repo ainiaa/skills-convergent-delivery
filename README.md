@@ -2,15 +2,15 @@
 
 面向 Codex 与 Claude Code 的软件交付 Skill：将复杂需求拆成有限任务，要求新鲜验证与明确交付边界。
 
-当前发布版本：[0.2.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
+当前发布版本：[0.3.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
 
 ## 3 步快速开始
 
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.2.0/install.sh -o converge-install.sh
-   bash converge-install.sh --release 0.2.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.3.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.3.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。
