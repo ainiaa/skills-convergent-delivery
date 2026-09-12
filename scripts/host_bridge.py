@@ -16,6 +16,7 @@ from codex_exec_runner import _binary_identity
 PROTOCOL = "host-bridge-v1"
 HOSTS = {"codex", "claude"}
 TERMINAL_STATUSES = {"completed", "blocked", "interrupted", "failed"}
+_CODEX_SERVERS = {}
 
 
 def _fingerprint(value):
@@ -75,6 +76,7 @@ class _CodexAppServer:
         self.process = None
         self.messages = queue.Queue()
         self.request_id = 0
+        self.turn_statuses = {}
 
     def __enter__(self):
         binary, _fingerprint = _binary_identity(self.codex_bin)
@@ -89,14 +91,26 @@ class _CodexAppServer:
         return self
 
     def __exit__(self, _type, _value, _traceback):
+        self.close()
+
+    def close(self):
         if self.process is not None:
-            self.process.terminate()
+            if self.process.poll() is None:
+                self.process.terminate()
             self.process.wait(timeout=2)
+            self.process = None
 
     def _read(self):
         try:
             for line in self.process.stdout:
-                self.messages.put(json.loads(line))
+                message = json.loads(line)
+                if message.get("method") == "turn/completed":
+                    params = message.get("params")
+                    turn = params.get("turn") if isinstance(params, dict) else None
+                    if isinstance(turn, dict) and isinstance(turn.get("id"), str) \
+                            and isinstance(turn.get("status"), str):
+                        self.turn_statuses[turn["id"]] = turn["status"]
+                self.messages.put(message)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             self.messages.put(error)
 
@@ -197,8 +211,14 @@ def codex_start(value, prompt, *, codex_bin="codex", request=None):
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is not None:
         return _codex_started(value, prompt, request)
-    with _CodexAppServer(codex_bin) as server:
-        return _codex_started(value, prompt, server.request)
+    server = _CodexAppServer(codex_bin)
+    try:
+        started = _codex_started(value, prompt, server.__enter__().request)
+    except Exception:
+        server.close()
+        raise
+    _CODEX_SERVERS[started["task_id"]] = server
+    return started
 
 
 def codex_observe(value, started, *, codex_bin="codex", request=None):
@@ -209,21 +229,34 @@ def codex_observe(value, started, *, codex_bin="codex", request=None):
     if codex_schema_fingerprint(codex_bin) != value["host_fingerprint"]:
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is None:
-        with _CodexAppServer(codex_bin) as server:
-            return codex_observe(value, started, codex_bin=codex_bin, request=server.request)
-    response = request("thread/read", {"threadId": started["task_id"], "includeTurns": True})
-    turns = response.get("thread", {}).get("turns") if isinstance(response, dict) else None
+        server = _CODEX_SERVERS.get(started["task_id"])
+        if server is None:
+            raise ValueError("Codex evaluator connection is unavailable; do not retry the task")
+        status = server.turn_statuses.get(started["turn_id"])
+        if status is None:
+            return None
+        return _codex_terminal_observation(value, started, status)
+    response = request("thread/turns/list", {"threadId": started["task_id"], "limit": 100})
+    turns = response.get("data") if isinstance(response, dict) else None
     matches = [turn for turn in turns or () if isinstance(turn, dict) and turn.get("id") == started["turn_id"]]
     if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
         raise ValueError("Codex app-server did not return the started turn")
     status = matches[0]["status"]
+    return _codex_terminal_observation(value, started, status)
+
+
+def _codex_terminal_observation(value, started, status):
     if status == "inProgress":
         return None
     if status not in {"completed", "failed", "interrupted"}:
         raise ValueError("Codex app-server returned an unknown turn status")
-    return terminal_observation(
+    observation = terminal_observation(
         value, task_id=started["task_id"], status=status, host_fingerprint=value["host_fingerprint"],
     )
+    server = _CODEX_SERVERS.pop(started["task_id"], None)
+    if server is not None:
+        server.close()
+    return observation
 
 
 def _claude_agent_list(executable, workspace):
@@ -291,6 +324,49 @@ def claude_observe(value, started, *, claude_bin="claude", agents=None):
     return terminal_observation(
         value, task_id=started["task_id"], status=status, host_fingerprint=value["host_fingerprint"],
     )
+
+
+def preflight(*, codex_bin="codex", claude_bin="claude"):
+    """Report whether both real host adapters can provide lifecycle evidence."""
+    result = {}
+    try:
+        result["codex"] = {"status": "ready", "host_fingerprint": codex_schema_fingerprint(codex_bin)}
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        result["codex"] = {"status": "unavailable", "reason": str(error)}
+    try:
+        fingerprint = _binary_fingerprint(claude_bin)
+        _claude_agent_list(claude_bin, Path.cwd())
+        result["claude"] = {"status": "ready", "host_fingerprint": fingerprint}
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
+        result["claude"] = {"status": "unavailable", "reason": str(error)}
+    return result
+
+
+def start(value, prompt, **kwargs):
+    value = _package(value)
+    if value["host"] == "codex":
+        return codex_start(value, prompt, **kwargs)
+    return claude_start(value, prompt, **kwargs)
+
+
+def observe(value, started, **kwargs):
+    value = _package(value)
+    if value["host"] == "codex":
+        return codex_observe(value, started, **kwargs)
+    return claude_observe(value, started, **kwargs)
+
+
+def wait_terminal(value, started, *, deadline, poll_seconds=0.1, **kwargs):
+    if not isinstance(deadline, (int, float)) or isinstance(deadline, bool) or deadline <= 0:
+        raise ValueError("host terminal deadline is invalid")
+    if not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool) or poll_seconds <= 0:
+        raise ValueError("host poll interval is invalid")
+    while time.monotonic() < deadline:
+        observation = observe(value, started, **kwargs)
+        if observation is not None:
+            return observation
+        time.sleep(min(poll_seconds, max(0, deadline - time.monotonic())))
+    raise ValueError("host task did not become terminal before the deadline")
 
 
 def terminal_observation(value, *, task_id, status, host_fingerprint):

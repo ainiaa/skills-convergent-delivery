@@ -247,6 +247,16 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("scripts/autonomy_service_config.py", descriptor["files"])
             self.assertIn("scripts/test_autonomy_service_config.py", descriptor["files"])
 
+    def test_host_evaluation_freezes_the_bridge_and_its_multimodel_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control", extensions=("host-eval",)
+            )
+
+        self.assertEqual(["multimodel", "host-eval"], descriptor["extensions"])
+        self.assertIn("scripts/host_bridge.py", descriptor["files"])
+        self.assertIn("scripts/multi_model.py", descriptor["files"])
+
     def test_autonomy_only_snapshot_cannot_run_the_service(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = controller_snapshot.create_snapshot(

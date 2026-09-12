@@ -1,6 +1,8 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import host_bridge
@@ -75,7 +77,7 @@ class HostBridgeTest(unittest.TestCase):
             request = Mock(side_effect=[
                 {"thread": {"id": "thread-1"}},
                 {"turn": {"id": "turn-1"}},
-                {"thread": {"turns": [{"id": "turn-1", "status": "completed"}]}},
+                {"data": [{"id": "turn-1", "status": "completed"}]},
             ])
             with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT):
                 started = host_bridge.codex_start(package, "frozen prompt", request=request)
@@ -83,6 +85,22 @@ class HostBridgeTest(unittest.TestCase):
 
         self.assertEqual("thread-1", started["task_id"])
         self.assertEqual("completed", observation["status"])
+
+    def test_codex_observe_uses_the_live_connection_terminal_notification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-live",
+                "turn_id": "turn-live", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            server = SimpleNamespace(turn_statuses={"turn-live": "completed"}, close=Mock())
+            host_bridge._CODEX_SERVERS["thread-live"] = server
+            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT):
+                observation = host_bridge.codex_observe(package, started)
+
+        self.assertEqual("completed", observation["status"])
+        server.close.assert_called_once()
 
     def test_claude_start_and_observe_require_the_registered_session_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -104,6 +122,18 @@ class HostBridgeTest(unittest.TestCase):
         self.assertEqual("agent-1", started["task_id"])
         self.assertEqual("completed", observation["status"])
         self.assertEqual(["claude", "--background"], run.call_args.args[0][:2])
+
+    def test_wait_terminal_returns_no_receipt_when_the_host_never_becomes_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
+                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            with patch.object(host_bridge, "observe", return_value=None):
+                with self.assertRaisesRegex(ValueError, "did not become terminal"):
+                    host_bridge.wait_terminal(package, started, deadline=time.monotonic())
 
 
 if __name__ == "__main__":

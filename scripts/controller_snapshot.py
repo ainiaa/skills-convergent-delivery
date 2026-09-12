@@ -160,10 +160,10 @@ CORE_CONTROL_RESOURCE_FILES = (
     "skills/converge-eval/references/evaluation-contract.json",
     "skills/converge-eval/scripts/eval_contract.py",
 )
-EXTENSION_ORDER = ("multimodel", "autonomy", "autonomy-eval")
+EXTENSION_ORDER = ("multimodel", "autonomy", "autonomy-eval", "host-eval")
 LEGACY_PROFILE_EXTENSIONS = {
     "core": (),
-    "extended": EXTENSION_ORDER,
+    "extended": ("multimodel", "autonomy", "autonomy-eval"),
 }
 MULTIMODEL_CONTROLLER_FILES = (
     "scripts/runner_launch.py",
@@ -207,6 +207,10 @@ AUTONOMY_EVALUATION_FILES = (
     "scripts/test_delivery_state.py",
     "scripts/test_runtime_scenarios.py",
 )
+HOST_EVALUATION_FILES = (
+    "scripts/host_bridge.py",
+    "scripts/capsule_dispatch.py",
+)
 EXTENSIONS = {
     "multimodel": (MULTIMODEL_CONTROLLER_FILES, (
         "references/worker-runners.md", "references/multi-model.md",
@@ -219,9 +223,10 @@ EXTENSIONS = {
     "autonomy-eval": (AUTONOMY_EVALUATION_FILES, (
         "references/autonomous-delivery-evaluation.json",
     )),
+    "host-eval": (HOST_EVALUATION_FILES, ()),
 }
 EXTENSION_DEPENDENCIES = {
-    "multimodel": (), "autonomy": (), "autonomy-eval": ("autonomy",),
+    "multimodel": (), "autonomy": (), "autonomy-eval": ("autonomy",), "host-eval": ("multimodel",),
 }
 # Core is the default controller surface.
 CONTROLLER_FILES = CORE_CONTROLLER_FILES
@@ -232,8 +237,8 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17))
-PROTOCOL_VERSION = 18
+LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18))
+PROTOCOL_VERSION = 19
 
 
 def provider_files(root):
