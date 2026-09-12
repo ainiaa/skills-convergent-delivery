@@ -34,6 +34,8 @@ The adapter starts one named background session, then uses `claude agents --json
 
 ## Evaluation behavior
 
+Each frozen scenario also defines an evaluator task package: a canonical prompt, the isolated worktree source, the allowed paths, and the exact judge command. The bridge gives that package to one host task in its own worktree. After a terminal host observation, the trusted Controller Snapshot runs the frozen judge in that same worktree and records only the judge result and bounded fingerprints in the finalized receipt.
+
 The evaluator requires a valid finalized receipt for each sample. Known acceptance and selected history scenarios use the existing sample rules; critical scenarios require three distinct host tasks. A host task may be observed repeatedly but never retried under the same sample identity. Any `unavailable`, `unknown`, malformed, stale, or mismatched receipt leaves the scenario `uncovered` and the release status `uncovered`.
 
 ## Safety and verification
@@ -41,7 +43,7 @@ The evaluator requires a valid finalized receipt for each sample. Known acceptan
 - No fallback to `codex exec`, `claude --print`, local process output, or model self-report.
 - Start/observe/finalize transitions are idempotent for one frozen sample identity and reject conflicting host IDs.
 - Unit tests use fake host transports only to validate protocol parsing and error handling; they are diagnostic, not host evidence.
-- Host smoke tests run each adapter against a real task and prove launch identity, observation, terminal receipt validation, schema/binary drift rejection, timeout handling, and no prompt/transcript persistence.
+- Host smoke tests run each adapter against a real task and prove launch identity, isolated-worktree binding, observation, frozen judge execution, terminal receipt validation, schema/binary drift rejection, timeout handling, and no prompt/transcript persistence.
 
 ## Completion criteria
 
