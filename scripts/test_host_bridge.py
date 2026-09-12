@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import host_bridge
 
@@ -10,11 +11,11 @@ HOST_FINGERPRINT = "b" * 64
 
 
 class HostBridgeTest(unittest.TestCase):
-    def package(self, workspace):
+    def package(self, workspace, *, host="codex", host_fingerprint=HOST_FINGERPRINT):
         return host_bridge.package(
-            host="codex", sample_id="known_acceptance:roots", workspace=workspace,
+            host=host, sample_id="known_acceptance:roots", workspace=workspace,
             prompt="Run the frozen evaluator task.", judge_argv=["python3", "judge.py"],
-            launch_fingerprint=FINGERPRINT, host_fingerprint=HOST_FINGERPRINT,
+            launch_fingerprint=FINGERPRINT, host_fingerprint=host_fingerprint,
         )
 
     def test_package_binds_one_sample_to_one_host_and_worktree(self):
@@ -57,6 +58,52 @@ class HostBridgeTest(unittest.TestCase):
                     {"argv": ["python3", "judge.py"], "exit_code": 0,
                      "stdout_fingerprint": FINGERPRINT, "stderr_fingerprint": FINGERPRINT},
                 )
+
+    def test_codex_start_rejects_schema_drift_before_creating_a_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            request = Mock()
+            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=FINGERPRINT):
+                with self.assertRaisesRegex(ValueError, "schema changed"):
+                    host_bridge.codex_start(package, "frozen prompt", request=request)
+
+        request.assert_not_called()
+
+    def test_codex_observe_returns_a_terminal_observation_for_the_started_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            request = Mock(side_effect=[
+                {"thread": {"id": "thread-1"}},
+                {"turn": {"id": "turn-1"}},
+                {"thread": {"turns": [{"id": "turn-1", "status": "completed"}]}},
+            ])
+            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT):
+                started = host_bridge.codex_start(package, "frozen prompt", request=request)
+                observation = host_bridge.codex_observe(package, started, request=request)
+
+        self.assertEqual("thread-1", started["task_id"])
+        self.assertEqual("completed", observation["status"])
+
+    def test_claude_start_and_observe_require_the_registered_session_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory, host="claude")
+            agent_name = f"converge-eval-{host_bridge._fingerprint(package)[:24]}"
+            before = []
+            registered = [{
+                "id": "agent-1", "sessionId": "session-1", "name": agent_name,
+                "cwd": str(Path(directory).resolve()), "state": "working",
+            }]
+            completed = [{**registered[0], "state": "completed"}]
+            agents = Mock(side_effect=[before, registered, completed])
+            run = Mock(return_value=Mock(returncode=0))
+            with patch.object(host_bridge, "_binary_identity", return_value=("claude", HOST_FINGERPRINT)), \
+                    patch.object(host_bridge, "_binary_fingerprint", return_value=HOST_FINGERPRINT):
+                started = host_bridge.claude_start(package, "frozen prompt", agents=agents, run=run)
+                observation = host_bridge.claude_observe(package, started, agents=agents)
+
+        self.assertEqual("agent-1", started["task_id"])
+        self.assertEqual("completed", observation["status"])
+        self.assertEqual(["claude", "--background"], run.call_args.args[0][:2])
 
 
 if __name__ == "__main__":
