@@ -40,7 +40,7 @@
     },
     {
       "id": "batch-existing-plan-zh",
-      "prompt": "按已经批准的 Plan v5 一批一批接力执行，支持暂停和恢复。",
+      "prompt": "按已经批准的 Plan v6 一批一批接力执行，支持暂停和恢复。",
       "expected_skill": "converge-batch",
       "should_trigger": true
     },

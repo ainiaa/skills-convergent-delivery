@@ -10,9 +10,24 @@ from pathlib import Path
 
 from multi_model import resolve
 from role_dispatch import plan_dispatch, plan_read_only_fanout
+from worker_profile import fingerprint as profile_fingerprint
 
 
 ROLE_DISPATCH = Path(__file__).with_name("role_dispatch.py")
+
+
+def read_only_scout(**overrides):
+    value = {
+        "schema_version": 1, "worker_id": "scout-1", "role": "scout",
+        "runner_id": "codex-exec-v1",
+        "requested": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        "effective": {"provider": "openai", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        "permissions": {"workspace": "read", "shell": True, "network": "egress"},
+        "budget": {"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 12000},
+    }
+    value.update(overrides)
+    identity = {key: item for key, item in value.items() if key != "profile_fingerprint"}
+    return {**identity, "profile_fingerprint": profile_fingerprint(identity)}
 
 
 def state(**overrides):
@@ -109,6 +124,51 @@ class RoleDispatchTest(unittest.TestCase):
                 routing="frozen", route="planned", evidence="missing",
                 context_isolation_benefit=True,
             ))
+
+    def test_fanout_rejects_missing_and_writable_profiles(self):
+        with self.assertRaisesRegex(ValueError, "profile is missing"):
+            plan_read_only_fanout(
+                {"roles": {}}, [{"task_id": "scout", "role": "scout"}],
+            )
+        with self.assertRaisesRegex(ValueError, "rejects writable profiles"):
+            plan_read_only_fanout(
+                {"roles": {"scout": read_only_scout()}},
+                [{"task_id": "scout", "role": "scout"}],
+            )
+
+    def test_fanout_enforces_task_bounds_and_distinct_heterogeneous_profiles(self):
+        with self.assertRaisesRegex(ValueError, "at most three tasks"):
+            plan_read_only_fanout(self.profiles, [])
+        identical = {
+            "roles": {
+                "scout": read_only_scout(permissions={
+                    "workspace": "read", "shell": False, "network": "egress",
+                }),
+                "reviewer": read_only_scout(
+                    worker_id="reviewer-1", role="reviewer",
+                    permissions={"workspace": "read", "shell": False, "network": "egress"},
+                ),
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "heterogeneous fan-out requires distinct"):
+            plan_read_only_fanout(
+                identical,
+                [{"task_id": "a", "role": "scout"}, {"task_id": "b", "role": "reviewer"}],
+                require_heterogeneous=True,
+            )
+
+    def test_cli_reports_fanout_errors_as_structured_failures(self):
+        tasks = Path(self.temporary.name) / "invalid-fanout.json"
+        tasks.write_text(json.dumps([{"task_id": "", "role": "scout"}]), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(ROLE_DISPATCH), "--workspace", self.temporary.name,
+             "--fanout", str(tasks)],
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(1, result.returncode)
+        self.assertEqual("error", json.loads(result.stdout)["status"])
 
     def test_cli_exposes_the_explicit_read_only_fanout_plan(self):
         tasks = Path(self.temporary.name) / "fanout.json"

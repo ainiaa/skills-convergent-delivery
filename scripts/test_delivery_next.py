@@ -648,6 +648,20 @@ class DeliveryNextTest(unittest.TestCase):
                 tdd_trace(SOURCE), None, [], ["Requested behavior"], required=False, workspace=WORKSPACE,
             )
 
+    def test_tdd_trace_candidate_must_bind_to_the_state_source_receipt(self):
+        payload = autonomous_state()
+        payload["ledger"]["tdd_trace_candidate"] = tdd_trace(SOURCE)
+        validate_state(payload, SimpleNamespace(), check_workspace=False)
+
+        foreign = {key: value for key, value in SOURCE.items() if key != "source_fingerprint"}
+        foreign["tree_hash"] = "b" * 40
+        foreign["source_fingerprint"] = hashlib.sha256(
+            json.dumps(foreign, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["ledger"]["tdd_trace_candidate"] = tdd_trace(foreign)
+        with self.assertRaisesRegex(ValueError, "source does not match"):
+            validate_state(payload, SimpleNamespace(), check_workspace=False)
+
         frozen_routing = routing()
         pending = {
             "schema_version": 1, "status": "pending", "source_fingerprint": None,

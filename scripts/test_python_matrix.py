@@ -23,7 +23,10 @@ class PythonMatrixScriptTest(unittest.TestCase):
 
             uv = tools / "uv"
             uv.write_text(
-                "#!/usr/bin/env bash\n{ printf 'uv'; printf ' <%s>' \"$@\"; printf '\\n'; } >> \"$MATRIX_LOG\"\n",
+                "#!/usr/bin/env bash\n"
+                "while ! mkdir \"${MATRIX_LOG}.lock\" 2>/dev/null; do sleep 0.001; done\n"
+                "{ printf 'uv'; printf ' <%s>' \"$@\"; printf '\\n'; } >> \"$MATRIX_LOG\"\n"
+                "rmdir \"${MATRIX_LOG}.lock\"\n",
                 encoding="utf-8",
             )
             uv.chmod(0o755)
@@ -31,7 +34,10 @@ class PythonMatrixScriptTest(unittest.TestCase):
                 python = workspace / ".venv" / name / "bin" / "python"
                 python.parent.mkdir(parents=True)
                 python.write_text(
-                    "#!/usr/bin/env bash\n{ printf 'python:%s' \"$0\"; printf ' <%s>' \"$@\"; printf '\\n'; } >> \"$MATRIX_LOG\"\n"
+                    "#!/usr/bin/env bash\n"
+                    "while ! mkdir \"${MATRIX_LOG}.lock\" 2>/dev/null; do sleep 0.001; done\n"
+                    "{ printf 'python:%s' \"$0\"; printf ' <%s>' \"$@\"; printf '\\n'; } >> \"$MATRIX_LOG\"\n"
+                    "rmdir \"${MATRIX_LOG}.lock\"\n"
                     "if [[ $0 == */py311/bin/python ]]; then\n"
                     "  touch \"$MATRIX_311_STARTED\"\n"
                     "  for _ in {1..100}; do [[ -f \"$MATRIX_314_STARTED\" ]] && break; sleep 0.01; done\n"

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +69,7 @@ def main():
         )
         print(json.dumps(hook_output(message), sort_keys=True))
         return 0
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"decision": "block", "reason": f"could not arm Converge repair gate: {error}"}, sort_keys=True))
         return 2
 

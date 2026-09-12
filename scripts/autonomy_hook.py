@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from autonomy_gate import decide
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 from delivery_state import repository_state_root, workspace_state_roots
 
 
@@ -35,7 +36,7 @@ def active_state(workspace):
             raise ValueError(f"unreadable managed state {path}: {error}") from error
         if not isinstance(value, dict):
             raise ValueError(f"managed state {path} is not an object")
-        if value.get("workspace") == workspace and value.get("schema_version") == 11 \
+        if value.get("workspace") == workspace and value.get("schema_version") in SUPPORTED_SCHEMA_VERSIONS \
                 and value.get("execution_control", {}).get("autonomy", {}).get("enabled") is True \
                 and value.get("status") == "active":
             matches.append((path, value))
@@ -193,7 +194,7 @@ def main():
         decision, status = run_hook(arguments.host, payload, active)
         print(json.dumps(decision, sort_keys=True))
         return status
-    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, KeyError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
         reason = f"autonomous run is invalid: {error}"
     print(json.dumps({"decision": "block", "reason": reason}, sort_keys=True))
     return 2

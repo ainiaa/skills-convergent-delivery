@@ -9,6 +9,7 @@ from unittest import mock
 from pathlib import Path
 
 from claude_exec_runner import command_for_launch, execute_launch, plan_launch
+from runner_contract import freeze_launch
 from worker_profile import fingerprint
 
 
@@ -46,6 +47,94 @@ class ClaudeExecRunnerTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unsupported"):
             plan_launch(writable, "probe", workspace="/tmp", claude_bin=sys.executable)
+
+    def test_frozen_launch_boundaries_reject_invalid_or_changed_configuration(self):
+        reader = profile()
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            plan_launch(reader, "probe", workspace="/does-not-exist", claude_bin=sys.executable)
+        launch = plan_launch(reader, "probe", workspace="/tmp", claude_bin=sys.executable)
+        malformed = dict(launch["configuration"])
+        malformed.pop("tools")
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            command_for_launch(freeze_launch(reader, "probe", malformed), "probe")
+        for field, value, message in (
+            ("workspace", "/does-not-exist", "workspace"),
+            ("tools", "default", "tools"),
+            ("permission_mode", "acceptEdits", "permission mode"),
+        ):
+            with self.subTest(field=field):
+                changed = dict(launch["configuration"])
+                changed[field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    command_for_launch(freeze_launch(reader, "probe", changed), "probe")
+        with mock.patch("claude_exec_runner.validate_launch", return_value={"runner_id": "other"}):
+            with self.assertRaisesRegex(ValueError, "does not select"):
+                command_for_launch(launch, "probe")
+        with mock.patch("claude_exec_runner._binary_identity", side_effect=[("/bin/claude", "a" * 64),
+                                                                            ("/bin/claude", "b" * 64)]):
+            changed = plan_launch(reader, "probe", workspace="/tmp", claude_bin="claude")
+            with self.assertRaisesRegex(ValueError, "binary changed"):
+                command_for_launch(changed, "probe")
+
+        writable = profile(
+            role="implementer", permissions={"workspace": "write", "shell": True, "network": "egress"},
+        )
+        with mock.patch("claude_exec_runner.validate_runner_profile", return_value=writable), \
+                mock.patch("claude_exec_runner._binary_identity", return_value=("/bin/claude", "a" * 64)), \
+                mock.patch("claude_exec_runner._is_isolated_worktree", return_value=False):
+            with self.assertRaisesRegex(ValueError, "isolated"):
+                plan_launch(writable, "probe", workspace="/tmp", claude_bin="claude")
+        with mock.patch("claude_exec_runner.review_request_binding", return_value="r" * 64), \
+                mock.patch("claude_exec_runner.implementation_reference_binding", return_value="i" * 64):
+            bound = plan_launch(
+                reader, "probe", workspace="/tmp", claude_bin=sys.executable,
+                review_request_fingerprint="r" * 64, review_request={"request": True},
+                implementation_reference_receipt_fingerprint="i" * 64,
+            )
+        self.assertEqual("r" * 64, bound["configuration"]["review_request_fingerprint"])
+        self.assertEqual("i" * 64, bound["configuration"]["implementation_reference_receipt_fingerprint"])
+
+        manual = {
+            "runner_id": "claude-code-v1", "profile": writable,
+            "configuration": {
+                "claude_bin": "/bin/claude", "binary_fingerprint": "a" * 64,
+                "permission_mode": "acceptEdits", "tools": "default", "workspace": "/tmp",
+            },
+        }
+        with mock.patch("claude_exec_runner.validate_launch", return_value=manual), \
+                mock.patch("claude_exec_runner.validate_runner_profile", return_value=writable), \
+                mock.patch("claude_exec_runner._binary_identity", return_value=("/bin/claude", "a" * 64)), \
+                mock.patch("claude_exec_runner._is_isolated_worktree", return_value=False):
+            with self.assertRaisesRegex(ValueError, "isolated"):
+                command_for_launch(launch, "probe")
+
+    def test_execution_keeps_unknown_and_invalid_json_output_non_content(self):
+        launch = plan_launch(profile(), "probe", workspace="/tmp", claude_bin=sys.executable)
+        with mock.patch("claude_exec_runner._execute_process", return_value=(
+                "unknown", 127, "OSError", {"stdout": __import__("hashlib").sha256(),
+                                                "stderr": __import__("hashlib").sha256()},
+                {"stdout": bytearray(), "stderr": bytearray()},
+        )):
+            receipt = execute_launch(launch, "probe", allow_execute=True)
+        self.assertEqual(("unknown", "OSError"), (receipt["status"], receipt["error_type"]))
+
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO(b"not json")
+            stderr = io.BytesIO()
+
+            def wait(self, timeout):
+                return 0
+
+            def kill(self):
+                pass
+
+        receipt, content = execute_launch(
+            launch, "probe", allow_execute=True, capture_content=True,
+            process_factory=lambda *_args, **_kwargs: Process(),
+        )
+        self.assertEqual("completed", receipt["status"])
+        self.assertIsNone(content)
 
 
     def test_freezes_model_effort_and_read_only_tools_without_storing_the_prompt(self):

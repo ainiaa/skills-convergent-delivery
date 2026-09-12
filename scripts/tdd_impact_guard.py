@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from evidence_contract import (
@@ -388,9 +389,13 @@ def rerun(value, workspace, baseline, *, native_coverage=False,
         require_matching_coverage(value['coverage'], workspace)
     refreshed = copy.deepcopy(value)
     required_runs = 3 if STABILITY_RISKS & set(refreshed["risk_flags"]) else 2
+    deadline = time.monotonic() + timeout_seconds
 
     def current_receipt(argv):
-        receipt = run_evidence(workspace, baseline, argv, timeout_seconds=timeout_seconds)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("TDD rerun timeout budget was exhausted before every check finished")
+        receipt = run_evidence(workspace, baseline, argv, timeout_seconds=remaining)
         if receipt["source"] != expected_source:
             raise ValueError("TDD rerun changed the workspace source; clean generated artifacts first")
         return receipt

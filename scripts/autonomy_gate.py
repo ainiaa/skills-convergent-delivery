@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from delivery_next import next_runtime_action, upgrade_state, validate_active_lease, validate_state
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 
 
 def allow(terminal):
@@ -15,7 +16,7 @@ def allow(terminal):
 
 
 def decide(payload, lease_root=None):
-    if not isinstance(payload, dict) or payload.get("schema_version") != 11:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         return allow("inactive")
     autonomy = payload.get("execution_control", {}).get("autonomy")
     if not isinstance(autonomy, dict) or autonomy.get("enabled") is not True:

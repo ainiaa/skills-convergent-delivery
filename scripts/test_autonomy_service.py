@@ -1,4 +1,6 @@
 import copy
+import fcntl
+import hashlib
 import json
 import os
 import shlex
@@ -650,6 +652,281 @@ else:
 
             self.assertEqual([path], [call.args[0] for call in run.call_args_list])
 
+    def test_service_scan_retries_a_busy_terminal_state_until_its_lease_is_released(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state.update(status="blocked", blocked_code="no_progress", blocked_reason="interrupted after write")
+            path.write_text(json.dumps(state), encoding="utf-8")
+            real_run_once = autonomy_service.run_once
+            attempts = []
+
+            def busy_then_release(path_argument, *arguments):
+                attempts.append(path_argument)
+                if len(attempts) == 1:
+                    return {"status": "busy"}
+                return real_run_once(path_argument, *arguments)
+
+            with patch.object(autonomy_service, "run_once", side_effect=busy_then_release), \
+                    patch.object(autonomy_service.time, "sleep"), \
+                    patch.object(sys, "argv", [
+                        "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                        "--lease-root", str(lease_root),
+                    ]), redirect_stderr(StringIO()):
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual([path, path], attempts)
+            inspected = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "inspect",
+                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
+                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(0, inspected.returncode, inspected.stderr)
+            self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
+
+    def test_serve_stops_retrying_an_active_path_whose_service_lock_stays_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            stderr = StringIO()
+            lock_path = path.with_name(f".{path.name}.service.lock")
+            with lock_path.open("a", encoding="utf-8") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(autonomy_service, "run_once", return_value={"status": "busy"}) as run, \
+                        patch.object(autonomy_service, "MAX_BUSY_CYCLES", 2), \
+                        patch.object(autonomy_service.time, "sleep"), \
+                        patch.object(sys, "argv", [
+                            "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                            "--lease-root", str(lease_root),
+                        ]), redirect_stderr(stderr):
+                    self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual(2, run.call_count)
+            self.assertIn(str(path), stderr.getvalue())
+            self.assertIn("service lock stayed busy", stderr.getvalue())
+            self.assertEqual("active", json.loads(path.read_text(encoding="utf-8"))["status"])
+
+    def test_serve_resumes_a_busy_failed_path_after_its_service_lock_clears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            # A second, terminal state keeps the serve loop alive while the
+            # first path waits for its stuck lock to clear.
+            terminal_path = state_root / "terminal-run.json"
+            terminal = json.loads(path.read_text(encoding="utf-8"))
+            terminal.update(status="blocked", blocked_code="no_progress", blocked_reason="interrupted after write")
+            terminal_path.write_text(json.dumps(terminal), encoding="utf-8")
+            stderr = StringIO()
+            lock_path = path.with_name(f".{path.name}.service.lock")
+            lock_file = lock_path.open("a", encoding="utf-8")
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                calls = []
+
+                def busy_then_clear(path_argument, *arguments):
+                    seen = sum(1 for call in calls if call == path_argument)
+                    calls.append(path_argument)
+                    if path_argument != path:
+                        return {"status": "busy"} if seen < 2 else {"status": "terminal", "terminal": "blocked"}
+                    if seen < 2:
+                        if seen == 1:
+                            # The stuck controller releases the lock before the next probe.
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        return {"status": "busy"}
+                    current = json.loads(path_argument.read_text(encoding="utf-8"))
+                    current.update(status="blocked", blocked_code="no_progress",
+                                   blocked_reason="host stopped the run")
+                    path_argument.write_text(json.dumps(current), encoding="utf-8")
+                    return {"status": "terminal", "terminal": "blocked"}
+
+                with patch.object(autonomy_service, "run_once", side_effect=busy_then_clear), \
+                        patch.object(autonomy_service, "MAX_BUSY_CYCLES", 2), \
+                        patch.object(autonomy_service.time, "sleep"), \
+                        patch.object(sys, "argv", [
+                            "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                            "--lease-root", str(lease_root),
+                        ]), redirect_stderr(stderr):
+                    self.assertEqual(0, autonomy_service.main())
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+
+            self.assertIn("service lock stayed busy", stderr.getvalue())
+            # Two busy cycles mark the path failed, then the cleared lock resumes it.
+            self.assertEqual(4, sum(1 for call in calls if call == path))
+            final = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(("blocked", "host stopped the run"),
+                             (final["status"], final["blocked_reason"]))
+
+    def test_serve_reports_a_failed_terminal_cleanup_before_exiting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state.update(status="blocked", blocked_code="no_progress", blocked_reason="interrupted after write")
+            path.write_text(json.dumps(state), encoding="utf-8")
+            stderr = StringIO()
+
+            with patch.object(autonomy_service, "run_once", side_effect=ValueError("lease release failed")), \
+                    patch.object(sys, "argv", [
+                        "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                        "--lease-root", str(lease_root),
+                    ]), redirect_stderr(stderr):
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertIn(str(path), stderr.getvalue())
+            self.assertIn("lease release failed", stderr.getvalue())
+            self.assertEqual("blocked", json.loads(path.read_text(encoding="utf-8"))["status"])
+
+    def test_serve_cycle_budget_block_holds_the_service_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            real_run_once, real_block = autonomy_service.run_once, autonomy_service.block
+            observations = []
+
+            def advance_until_blocked(path_argument, *arguments):
+                if json.loads(path_argument.read_text(encoding="utf-8"))["status"] == "active":
+                    return {"status": "advanced"}
+                return real_run_once(path_argument, *arguments)
+
+            def guarded_block(block_path, *arguments):
+                probe = block_path.with_name(f".{block_path.name}.service.lock")
+                with probe.open("a", encoding="utf-8") as probe_file:
+                    try:
+                        fcntl.flock(probe_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        observations.append("held")
+                    else:
+                        fcntl.flock(probe_file.fileno(), fcntl.LOCK_UN)
+                        observations.append("free")
+                return real_block(block_path, *arguments)
+
+            with patch.object(autonomy_service, "run_once", side_effect=advance_until_blocked), \
+                    patch.object(autonomy_service, "block", side_effect=guarded_block), \
+                    patch.object(autonomy_service.time, "sleep"), \
+                    patch.object(sys, "argv", [
+                        "autonomy_service.py", "--serve", "--state-root", str(state_root),
+                        "--lease-root", str(lease_root),
+                    ]), redirect_stderr(StringIO()):
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual(["held"], observations)
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("blocked", current["status"])
+            self.assertIn("cycle budget", current["blocked_reason"])
+            inspected = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "inspect",
+                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
+                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(0, inspected.returncode, inspected.stderr)
+            self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
+
+    def test_block_reason_holds_the_service_lock_and_blocks_after_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            before = path.read_bytes()
+            real_block = autonomy_service.block
+            observations = []
+
+            def guarded_block(block_path, *arguments):
+                probe = block_path.with_name(f".{block_path.name}.service.lock")
+                with probe.open("a", encoding="utf-8") as probe_file:
+                    try:
+                        fcntl.flock(probe_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        observations.append("held")
+                    else:
+                        fcntl.flock(probe_file.fileno(), fcntl.LOCK_UN)
+                        observations.append("free")
+                return real_block(block_path, *arguments)
+
+            arguments = [
+                "autonomy_service.py", "--state", str(path), "--state-root", str(state_root),
+                "--lease-root", str(lease_root), "--frozen-runtime",
+                "--block-reason", "host requested stop",
+            ]
+            with patch.object(autonomy_service, "block", side_effect=guarded_block):
+                lock_path = path.with_name(f".{path.name}.service.lock")
+                with lock_path.open("a", encoding="utf-8") as lock_file:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with patch.object(sys, "argv", arguments), redirect_stdout(StringIO()) as output:
+                        self.assertEqual(0, autonomy_service.main())
+                    self.assertEqual({"status": "busy"}, json.loads(output.getvalue()))
+                self.assertEqual(before, path.read_bytes())
+
+                with patch.object(sys, "argv", arguments), redirect_stdout(StringIO()):
+                    self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual(["held"], observations)
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual("blocked", current["status"])
+            self.assertEqual("host requested stop", current["blocked_reason"])
+            inspected = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "inspect",
+                "--root", str(lease_root), "--repo", state["repo_id"], "--workspace", state["workspace"],
+                "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(0, inspected.returncode, inspected.stderr)
+            self.assertTrue(all(value is None for value in json.loads(inspected.stdout)["leases"].values()))
+
+    def test_block_reason_rejects_an_unvalidated_state_without_touching_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-service.json"
+            path.write_text(json.dumps({
+                "schema_version": 11, "status": "active",
+                "execution_control": {"autonomy": {"runtime": {"mode": "service"}}},
+            }), encoding="utf-8")
+            before = path.read_bytes()
+            stderr = StringIO()
+
+            with patch.object(sys, "argv", [
+                    "autonomy_service.py", "--state", str(path), "--frozen-runtime",
+                    "--block-reason", "host requested stop",
+            ]), redirect_stderr(stderr):
+                result = autonomy_service.main()
+
+            self.assertEqual(2, result)
+            self.assertIn("autonomous service blocked", stderr.getvalue())
+            self.assertEqual(before, path.read_bytes())
+
+    def test_block_reason_revalidates_the_state_it_reads_under_the_service_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            original = json.loads(path.read_text(encoding="utf-8"))
+            stale = copy.deepcopy(original)
+            stale["revision"] += 1
+            path.write_text(json.dumps(stale), encoding="utf-8")
+            real_lock, real_validate = autonomy_service._service_lock, autonomy_service.validate_state
+            validated = []
+
+            def rewrite_after_the_pre_lock_read(state_path):
+                # Another controller rewrites the state after the host process
+                # took its pre-lock routing snapshot but before the lock is granted.
+                path.write_text(json.dumps(original), encoding="utf-8")
+                return real_lock(state_path)
+
+            def recording_validate(state, *arguments, **keywords):
+                validated.append(copy.deepcopy(state))
+                return real_validate(state, *arguments, **keywords)
+
+            arguments = [
+                "autonomy_service.py", "--state", str(path), "--state-root", str(state_root),
+                "--lease-root", str(lease_root), "--frozen-runtime",
+                "--block-reason", "host requested stop",
+            ]
+            with patch.object(autonomy_service, "_service_lock", side_effect=rewrite_after_the_pre_lock_read), \
+                    patch.object(autonomy_service, "validate_state", side_effect=recording_validate), \
+                    patch.object(sys, "argv", arguments), redirect_stdout(StringIO()) as output:
+                self.assertEqual(0, autonomy_service.main())
+
+            self.assertEqual({"status": "blocked", "reason": "host requested stop"},
+                             json.loads(output.getvalue()))
+            self.assertEqual([original], validated)
+            final = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(("blocked", "host requested stop"),
+                             (final["status"], final["blocked_reason"]))
+            self.assertEqual(original["revision"] + 1, final["revision"])
+
     def test_service_blocks_a_restarted_running_action_without_replaying_it(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_service_state(directory)
@@ -942,6 +1219,32 @@ else:
                 self.assertEqual("pass", acceptance["result"])
                 self.assertEqual("fresh", acceptance["freshness"])
                 self.assertEqual([receipt], acceptance["evidence_receipts"])
+
+    def test_runner_results_refresh_drops_a_stale_tdd_trace_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory)
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            autonomy_service._update(
+                path, state_root, lease_root,
+                lambda value: value["ledger"].update(
+                    tdd_trace_candidate=tdd_trace(stored["source_receipt"], criterion="tests pass"),
+                ),
+            )
+            self.assertIn("tdd_trace_candidate", json.loads(path.read_text(encoding="utf-8"))["ledger"])
+
+            # The workspace changes between actions; the refreshed source receipt no
+            # longer matches the stored candidate, so the same transition drops it.
+            probe = WORKSPACE / "stale-candidate-probe.tmp"
+            probe.write_text("probe\n", encoding="utf-8")
+            self.addCleanup(lambda: probe.unlink(missing_ok=True))
+            autonomy_service._update(path, state_root, lease_root, lambda value: None, refresh_source=True)
+
+            self.assertNotIn(
+                "tdd_trace_candidate", json.loads(path.read_text(encoding="utf-8"))["ledger"],
+            )
+            self.assertNotEqual(
+                stored["source_receipt"], json.loads(path.read_text(encoding="utf-8"))["source_receipt"],
+            )
 
 
 if __name__ == "__main__":

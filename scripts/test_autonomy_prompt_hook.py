@@ -4,7 +4,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPTS = Path(__file__).parent
@@ -49,6 +52,18 @@ class AutonomyPromptHookTest(unittest.TestCase):
         self.assertEqual("block", json.loads(second_stop.stdout)["decision"])
         self.assertEqual("blocked", state["status"])
         self.assertEqual("approve", json.loads(final_stop.stdout)["decision"])
+
+    def test_subprocess_failure_blocks_instead_of_crashing(self):
+        import autonomy_prompt_hook
+        with tempfile.TemporaryDirectory():
+            with patch.object(autonomy_prompt_hook, "active_state", return_value=None), \
+                    patch.object(autonomy_prompt_hook, "run",
+                                 side_effect=subprocess.SubprocessError("runner crashed")), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": "/tmp", "prompt": "continue repair"}))), \
+                    patch.object(sys, "argv", ["autonomy_prompt_hook.py", "--host", "codex"]), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_prompt_hook.main())
+        self.assertEqual("block", json.loads(output.getvalue())["decision"])
 
     def test_english_exact_command_arms_but_other_user_prompts_are_ignored(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,8 +4,7 @@
 !.claude/skills/converge
 
 # Runtime state belongs under ~/.convergent-delivery, never in the repository.
-/*/tasks/*.json.lock
-/*/workspaces/*.json.lock
+# No ignore rules for it on purpose: any state appearing here must show up as untracked.
 
 __pycache__/
 *.py[cod]

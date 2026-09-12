@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -220,6 +221,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                     path, 'codex-exec-v1', 'attempt', 'capsule', root / '.',
                 )
                 if status == 'unavailable':
+                    # Only a launch that never started is safe to relaunch.
                     self.assertIsNone(reused)
                 else:
                     self.assertEqual('indeterminate' if status == 'attempted' else status, reused['status'])
@@ -539,6 +541,97 @@ class CapsuleDispatchTest(unittest.TestCase):
 
         self.assertEqual("delivered", result["status"])
 
+    def test_codex_retries_after_a_launch_that_never_started(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(capsule_dispatch.subprocess, "Popen", side_effect=OSError("broken")):
+                failed = capsule_dispatch.dispatch_codex(
+                    "codex", root, "capsule", root / "receipts", "retry", 1,
+                )
+            self.assertEqual("unavailable", failed["status"])
+            self.assertIn("could not start", failed["reason"])
+            codex = self.executable(
+                root, "codex",
+                'cat >/dev/null\nprintf \'{"type":"thread.started","thread_id":"thread-retry"}\\n\'\n',
+            )
+            delivered = capsule_dispatch.dispatch_codex(
+                codex, root, "capsule", root / "receipts", "retry", 1,
+            )
+            persisted = json.loads((root / "receipts" / "retry.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("delivered", delivered["status"])
+        self.assertEqual("thread-retry", delivered["external_task_id"])
+        self.assertEqual(delivered, persisted)
+
+    def test_codex_does_not_retry_a_launch_that_ran_without_confirming_a_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex = self.executable(root, "codex", 'cat >/dev/null\nexit 7\n')
+            failed = capsule_dispatch.dispatch_codex(
+                codex, root, "capsule", root / "receipts", "sticky", 1,
+            )
+            with patch.object(capsule_dispatch.subprocess, 'Popen', side_effect=AssertionError('must not replay')):
+                repeated = capsule_dispatch.dispatch_codex(
+                    codex, root, "capsule", root / "receipts", "sticky", 1,
+                )
+
+        self.assertEqual("failed", failed["status"])
+        self.assertIn("status 7", failed["reason"])
+        self.assertEqual(failed, repeated)
+
+    def test_codex_deadline_during_capsule_write_terminates_the_leftover_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "child.pid"
+            codex = self.executable(root, "codex", f'echo $$ > "{marker}"\nexec sleep 5\n')
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "x" * (512 * 1024), root / "receipts", "midwrite", 2,
+            )
+            for _ in range(100):
+                if marker.exists():
+                    break
+                time.sleep(0.05)
+            child = int(marker.read_text().strip())
+            for _ in range(100):
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("the codex child survived a deadline that hit mid-write")
+            persisted = json.loads((root / "receipts" / "midwrite.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("indeterminate", result["status"])
+        self.assertEqual(result, persisted)
+        self.assertNotIn("pid", persisted)
+
+    def test_codex_keeps_a_confirmed_prompt_child_running_and_records_its_pid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "child.pid"
+            codex = self.executable(
+                root, "codex", f'cat >/dev/null\necho $$ > "{marker}"\nexec sleep 5\n',
+            )
+            result = capsule_dispatch.dispatch_codex(
+                codex, root, "capsule", root / "receipts", "unknown", 1,
+            )
+            for _ in range(100):
+                if marker.exists():
+                    break
+                time.sleep(0.05)
+            child = int(marker.read_text().strip())
+            os.kill(child, 0)
+            persisted = json.loads((root / "receipts" / "unknown.json").read_text(encoding="utf-8"))
+        try:
+            os.kill(child, 9)
+        except ProcessLookupError:
+            pass
+
+        self.assertEqual("indeterminate", result["status"])
+        self.assertEqual(child, result["pid"])
+        self.assertEqual(result, persisted)
+
     def test_capability_preflight_rejects_missing_required_flags(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -581,7 +674,7 @@ class CapsuleDispatchTest(unittest.TestCase):
 
         self.assertEqual("indeterminate", result["status"])
 
-    def test_codex_empty_os_error_produces_a_valid_failed_receipt(self):
+    def test_codex_empty_os_error_produces_a_valid_unavailable_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch.object(capsule_dispatch.subprocess, "Popen", side_effect=OSError()):
@@ -590,8 +683,8 @@ class CapsuleDispatchTest(unittest.TestCase):
                 )
             persisted = json.loads((root / "receipts" / "attempt-one.json").read_text(encoding="utf-8"))
 
-        self.assertEqual("failed", result["status"])
-        self.assertEqual("OSError", result["reason"])
+        self.assertEqual("unavailable", result["status"])
+        self.assertIn("OSError", result["reason"])
         self.assertEqual(result, persisted)
         capsule_dispatch.validate_saved_receipt(result)
 
@@ -619,16 +712,20 @@ class CapsuleDispatchTest(unittest.TestCase):
                               'fi\n'
                               'exit 7\n',
             )
+            agents = Mock(wraps=capsule_dispatch.claude_agents)
 
-            result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
-            )
-            repeated = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
-            )
+            with patch.object(capsule_dispatch, "claude_agents", agents):
+                result = capsule_dispatch.dispatch_claude(
+                    claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                )
+                repeated = capsule_dispatch.dispatch_claude(
+                    claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                )
 
         self.assertEqual("failed", result["status"])
         self.assertEqual(result, repeated)
+        # A failed receipt means the CLI already ran, so the retry must not relaunch.
+        self.assertEqual(1, agents.call_count)
 
     def test_missing_host_is_reported_as_unavailable_with_a_reusable_receipt(self):
         with tempfile.TemporaryDirectory() as directory:

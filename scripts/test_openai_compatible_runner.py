@@ -5,7 +5,7 @@ import io
 import unittest
 from unittest.mock import patch
 
-from openai_compatible_runner import execute_request, plan_request
+from openai_compatible_runner import _http_status_error, execute_request, plan_request
 from runner_contract import freeze_launch
 from worker_profile import fingerprint
 
@@ -170,6 +170,72 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
 
         self.assertEqual("unknown", receipt["status"])
 
+    def test_classifies_non_2xx_responses_as_http_errors_instead_of_parse_failures(self):
+        class Response:
+            status = 0
+            url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+            def __init__(self, status, body):
+                self.status = status
+                self.body = io.BytesIO(body)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        launch = plan_request(
+            profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
+            effort_binding={"field": "thinking.type", "value": "enabled"},
+        )
+        for status in (400, 500):
+            with self.subTest(status=status), patch.dict("os.environ", {"GLM_API_KEY": "test-key"}):
+                receipt = execute_request(
+                    launch, "Review", allow_network=True,
+                    opener=lambda _request, status=status, **_kwargs: Response(status, b"<html>gateway</html>"),
+                )
+            self.assertEqual("unknown", receipt["status"])
+            self.assertEqual(f"HTTPError:{status}", receipt["error_type"])
+
+    def test_http_errors_carry_the_status_and_a_truncated_body_summary(self):
+        class Response:
+            status = 429
+            url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+            def __init__(self, body):
+                self.body = io.BytesIO(body)
+
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        error = _http_status_error(Response(b"x" * 500), 12000)
+        self.addCleanup(error.close)
+
+        self.assertEqual(429, error.code)
+        self.assertEqual(200, len(error.msg))
+        self.assertIn("429", str(error))
+
+    def test_http_error_summary_respects_a_tiny_output_budget(self):
+        class Response:
+            status = 500
+            url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+            def __init__(self, body):
+                self.body = io.BytesIO(body)
+
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        error = _http_status_error(Response(b"x" * 500), 10)
+        self.addCleanup(error.close)
+
+        self.assertEqual(500, error.code)
+        self.assertEqual(10, len(error.msg))
+
     def test_returns_a_terminal_receipt_when_the_frozen_credential_is_missing(self):
         launch = plan_request(
             profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
@@ -198,6 +264,84 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "approved"):
             execute_request(launch, "Review", allow_network=True)
+
+    def test_request_boundaries_reject_invalid_transport_configuration_and_payloads(self):
+        from openai_compatible_runner import (
+            _approved_url, _http_status_error, _open_without_redirect, _response_bytes, _response_content,
+            _NoRedirect,
+            _validate_approved_endpoint, _validate_provider_configuration, validate_effort_binding,
+        )
+
+        with self.assertRaisesRegex(ValueError, "binding is invalid"):
+            validate_effort_binding({"field": "bad-field", "value": "enabled"})
+        with self.assertRaisesRegex(ValueError, "environment name"):
+            plan_request(profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="",
+                         effort_binding={"field": "thinking.type", "value": "enabled"})
+        self.assertIsNone(_NoRedirect().redirect_request())
+        with patch("openai_compatible_runner.urllib.request.build_opener") as build_opener:
+            _open_without_redirect("request", 1)
+        build_opener.return_value.open.assert_called_once_with("request", timeout=1)
+        with self.assertRaisesRegex(ValueError, "base URL"):
+            _approved_url(profile(), 1)
+        with self.assertRaisesRegex(ValueError, "endpoint"):
+            _validate_approved_endpoint(profile(), "https://open.bigmodel.cn/not-completions")
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            _validate_provider_configuration(
+                profile(effective={"provider": "unknown", "model": "m", "reasoning_effort": "high"}),
+                "GLM_API_KEY", {"field": "thinking.type", "value": "enabled"},
+            )
+
+        class BadResponse:
+            def read(self, _size=-1):
+                return "not bytes"
+
+        with self.assertRaisesRegex(ValueError, "not bytes"):
+            _response_bytes(BadResponse(), 10)
+        with self.assertRaisesRegex(ValueError, "no choices"):
+            _response_content({})
+        with self.assertRaisesRegex(ValueError, "content"):
+            _response_content({"choices": [{"message": {"content": " "}}]})
+
+        class BrokenResponse:
+            status = 502
+            url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+            def read(self, _size=-1):
+                raise OSError("unavailable")
+
+        error = _http_status_error(BrokenResponse(), 10)
+        self.addCleanup(error.close)
+        self.assertEqual("", error.msg)
+
+        launch = plan_request(
+            profile(), "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
+            effort_binding={"field": "thinking.type", "value": "enabled"},
+        )
+        with self.assertRaisesRegex(ValueError, "explicit allow_network"):
+            execute_request(launch, "Review")
+        with patch("openai_compatible_runner.validate_launch", return_value={"runner_id": "other"}):
+            with self.assertRaisesRegex(ValueError, "does not select"):
+                execute_request(launch, "Review", allow_network=True)
+        malformed = freeze_launch(profile(), "Review", {})
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            execute_request(malformed, "Review", allow_network=True)
+
+        class Response:
+            def __init__(self):
+                self.body = io.BytesIO(b'{"id":"request-1","model":"glm-5.2","usage":1}')
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        with patch.dict("os.environ", {"GLM_API_KEY": "test-key"}):
+            receipt = execute_request(launch, "Review", allow_network=True, opener=lambda *_args, **_kwargs: Response())
+        self.assertEqual("unknown", receipt["status"])
 
 
 if __name__ == "__main__":

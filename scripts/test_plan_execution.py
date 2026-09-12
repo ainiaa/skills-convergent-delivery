@@ -57,6 +57,20 @@ class PlanExecutionTest(unittest.TestCase):
             decide("T1", implementation_authorized=True, validation={"status": "valid"}),
         )
 
+    def test_decide_rejects_malformed_inputs_before_choosing_an_action(self):
+        with self.assertRaisesRegex(ValueError, "task_id"):
+            decide("  ", implementation_authorized=True, validation={"status": "valid"})
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            decide("T1", implementation_authorized="yes", validation={"status": "valid"})
+        with self.assertRaisesRegex(ValueError, "must be an object"):
+            decide("T1", implementation_authorized=True, validation="valid")
+        with self.assertRaisesRegex(ValueError, "validation result is invalid"):
+            decide("T1", implementation_authorized=True, validation={"status": "uncovered"})
+        with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+            decide("T1", implementation_authorized=True, validation={
+                "status": "blocked", "reason": " ",
+            })
+
     def test_cli_emits_one_structured_execute_or_block_decision(self):
         script = Path(__file__).with_name("plan_execution.py")
         valid = subprocess.run(

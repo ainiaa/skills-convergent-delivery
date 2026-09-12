@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from delivery_lease import lock_record, replace_record, write_exclusive
-from codex_exec_runner import _start_prompt_writer
+from codex_exec_runner import _start_prompt_writer, _terminate_process
 
 
 ATTEMPT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
@@ -93,6 +93,9 @@ def saved_or_new(path, adapter, attempt_id, capsule, workspace):
                 "reason": "a previous launch attempt has no creation confirmation; do not retry it",
             })
         if existing.get("status") == "unavailable":
+            # An unavailable receipt means the host was never launched, so the
+            # frozen attempt may be relaunched. A failed receipt means the host
+            # process ran and may already have created the external task.
             replace_record(path, attempt)
             return None
         return existing
@@ -156,8 +159,11 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                     start_new_session=True,
                 )
         except (OSError, subprocess.SubprocessError) as error:
+            # The process never started, so no external task can exist and the
+            # attempt stays relaunchable instead of sticking as failed.
             return persist(path, result(
-                adapter, attempt_id, capsule, "failed", workspace=workspace, reason=error_reason(error),
+                adapter, attempt_id, capsule, "unavailable", workspace=workspace,
+                reason=f"Codex launch could not start: {error_reason(error)}",
             ))
         threading.Thread(target=process.wait, daemon=True).start()
         writer, write_errors = _start_prompt_writer(process, capsule)
@@ -186,6 +192,25 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                     ))
                 break
             time.sleep(0.02)
+        if writer.is_alive():
+            # The deadline hit while the capsule was still being written, so the child
+            # may act on a truncated prompt; its process group must not survive.
+            if process.poll() is None:
+                _terminate_process(process)
+        elif process.poll() is None:
+            # The full prompt was delivered but the outcome is unknown; keep the child
+            # running and record its pid so a human can find and stop it.
+            return persist(path, result(
+                adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
+                reason="Codex launch has no thread.started confirmation; do not retry it",
+                evidence_path=str(evidence), pid=process.pid,
+            ))
+        elif process.returncode:
+            return persist(path, result(
+                adapter, attempt_id, capsule, "failed", workspace=workspace,
+                reason=f"Codex exited before thread confirmation with status {process.returncode}",
+                evidence_path=str(evidence),
+            ))
         return persist(path, result(
             adapter, attempt_id, capsule, "indeterminate", workspace=workspace,
             reason="Codex launch has no thread.started confirmation; do not retry it",
@@ -291,8 +316,11 @@ def dispatch_claude(executable, workspace, capsule, receipt_dir, attempt_id, sta
                 reason="Claude Code launch timed out; do not retry it",
             ))
         except (OSError, subprocess.SubprocessError) as error:
+            # subprocess.run only raises here before the CLI process starts, so
+            # no background session can exist and the attempt stays relaunchable.
             return persist(path, result(
-                adapter, attempt_id, capsule, "failed", workspace=workspace, reason=error_reason(error),
+                adapter, attempt_id, capsule, "unavailable", workspace=workspace,
+                reason=f"Claude Code launch could not start: {error_reason(error)}",
             ))
         if completed.returncode:
             return persist(path, result(

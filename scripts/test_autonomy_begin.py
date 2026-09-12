@@ -288,6 +288,123 @@ class AutonomyBeginTest(unittest.TestCase):
         terminalize.assert_called_once()
         self.assertIn("service unavailable", terminalize.call_args.args[2])
 
+    def test_git_helper_requires_a_working_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+
+            with self.assertRaisesRegex(ValueError, "requires a Git workspace"):
+                autonomy_begin._git(workspace, "rev-parse", "HEAD")
+
+    def test_release_lease_rejects_unparseable_or_unreleased_cleanup_output(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        arguments = SimpleNamespace(lease_root="/leases", state_root="/state")
+        for stdout, message in (
+            ("not-json", "invalid output"), ('{"status": "kept"}', "lease cleanup failed"),
+        ):
+            with self.subTest(stdout=stdout):
+                with patch.object(autonomy_begin.subprocess, "run",
+                                  return_value=subprocess.CompletedProcess([], 0, stdout, "")):
+                    with self.assertRaisesRegex(ValueError, message):
+                        autonomy_begin._release_lease(arguments, state)
+
+    def test_terminalize_service_start_failure_reports_state_write_errors(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer", "revision": 3,
+        }
+        arguments = SimpleNamespace(state_root="/state", lease_root="/leases")
+        failed = subprocess.CompletedProcess([], 2, "", "state write blocked")
+
+        with patch.object(autonomy_begin.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(ValueError, "state write blocked"):
+                autonomy_begin._terminalize_service_start_failure(arguments, state, "reason")
+
+    def test_provider_binding_requires_a_selected_provider(self):
+        with patch.object(autonomy_begin, "selection",
+                          return_value={"status": "blocked", "reason": "no Provider available"}):
+            with self.assertRaisesRegex(ValueError, "no Provider available"):
+                autonomy_begin._provider_binding("auto", "feature")
+
+    def test_non_object_task_profile_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "task profile must be an object"):
+            initial_state(
+                ROOT, ["complete task"], ["tests pass"], ["."],
+                "run-profile-type", "writer-profile-type", mode="native", task_profile=["bad"],
+            )
+
+    def test_missing_requirement_or_scope_is_rejected_before_git_or_lease_access(self):
+        base = {
+            "workspace": str(ROOT), "requirement": [], "acceptance": ["tests pass"], "scope": ["."],
+            "runtime": "hook",
+        }
+        with self.assertRaisesRegex(ValueError, "requires a requirement"):
+            autonomy_begin.run(SimpleNamespace(**base))
+        with self.assertRaisesRegex(ValueError, "requires a scope"):
+            autonomy_begin.run(SimpleNamespace(**{**base, "requirement": ["task"], "scope": []}))
+
+    def test_failed_state_write_reports_a_failed_lease_cleanup(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        arguments = SimpleNamespace(
+            workspace=str(ROOT), requirement=["complete task"], acceptance=["tests pass"],
+            scope=["."], runtime="hook", service_runner=None, verification_argv=None,
+            audit_argv=None, audit_findings_exit_code=None, risk_flag=[], request_file=None,
+            mode="native", task_kind="feature", full_closure=False, task_profile_json=None,
+            state_root="/state", lease_root="/leases", controller_root="/control",
+        )
+        acquired = subprocess.CompletedProcess([], 0, '{"status": "acquired"}', "")
+        failed = subprocess.CompletedProcess([], 2, "", "state write blocked")
+
+        with patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
+                patch.object(autonomy_begin, "controller_identity", return_value={}), \
+                patch.object(autonomy_begin, "initial_state", return_value=state), \
+                patch.object(autonomy_begin, "arm", return_value=state), \
+                patch.object(autonomy_begin, "_release_lease",
+                             side_effect=ValueError("cleanup failed")) as release, \
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[acquired, failed]):
+            with self.assertRaisesRegex(ValueError, "lease cleanup failed"):
+                autonomy_begin.run(arguments)
+
+        release.assert_called_once()
+
+    def test_service_wake_failure_reports_a_failed_terminalization_cleanup(self):
+        state = {
+            "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
+            "run_id": "run", "writer_id": "writer",
+        }
+        arguments = SimpleNamespace(
+            workspace="/workspace", requirement=["complete task"], acceptance=["tests pass"],
+            scope=["."], runtime="service", service_runner="codex-exec-v1",
+            verification_argv='["true"]', audit_argv='["python3", "-c", "pass"]',
+            audit_findings_exit_code=None, risk_flag=[], state_root="/state",
+            lease_root="/.convergent-delivery/leases", controller_root="/control",
+            request_file=None, mode="native", task_kind="feature", full_closure=False,
+            task_profile_json=None,
+        )
+        completed = subprocess.CompletedProcess([], 0, '{"status": "ok"}', "")
+        wake_failed = subprocess.CompletedProcess([], 2, "", "service unavailable")
+
+        with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
+                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
+                patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
+                patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
+                patch.object(autonomy_begin, "controller_identity", return_value={}), \
+                patch.object(autonomy_begin, "initial_state", return_value=state), \
+                patch.object(autonomy_begin, "arm", return_value=state), \
+                patch.object(autonomy_begin, "_terminalize_service_start_failure",
+                             side_effect=ValueError("cleanup failed")), \
+                patch.object(autonomy_begin.subprocess, "run",
+                             side_effect=[completed, completed, wake_failed]):
+            with self.assertRaisesRegex(ValueError, "could not wake autonomous service"):
+                autonomy_begin.run(arguments)
+
     def test_terminalize_service_start_failure_persists_blocked_state_before_release(self):
         state = {
             "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",

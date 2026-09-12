@@ -97,6 +97,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("skills/converge-eval/scripts/test_eval_contract.py", checks)
         self.assertIn("scripts/test_trigger_evals.py", checks)
         self.assertIn("scripts/test_multi_model_repo_eval.py", checks)
+        self.assertIn("scripts/test_autonomy_contract.py", checks)
         self.assertIn("CONVERGE_CHECK_SELF_TEST=1 python3 scripts/test_check.py", checks)
         self.assertNotIn("fast_path.py", installer)
         self.assertNotIn("test_fast_path.py", checks)

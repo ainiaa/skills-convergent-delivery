@@ -1,16 +1,19 @@
 import json
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 from pathlib import Path
 
 from autonomous_delivery_eval import (
     candidate_judge_root, evaluate, evaluate_trusted, execute_scenario, validate,
 )
+import autonomous_delivery_eval
 from controller_snapshot import create_snapshot
 from delivery_state import state_path
 
@@ -29,6 +32,48 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
         self.assertEqual(15, len(validate(catalog)))
         self.assertEqual("full-fix", catalog["scenarios"][0]["id"])
+
+    def test_planned_evaluation_and_catalog_validation_reject_bad_inputs_without_execution(self):
+        catalog = self.minimal_catalog()
+        report = evaluate(catalog)
+        self.assertEqual("planned", report["status"])
+        self.assertTrue(all(item["status"] == "planned" for item in report["results"].values()))
+        self.assertIsNone(report["candidate_source_fingerprint"])
+
+        invalid_catalogs = []
+        invalid = dict(catalog)
+        invalid["schema_version"] = 2
+        invalid_catalogs.append((invalid, "fields"))
+        invalid = dict(catalog)
+        invalid["privacy"] = {"store_transcript": False, "allowed_fields": []}
+        invalid_catalogs.append((invalid, "transcript"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [{"id": "", "check": []}] * 15
+        invalid_catalogs.append((invalid, "scenario"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [{"id": str(index), "check": ["wrong", "Nope"]} for index in range(15)]
+        invalid_catalogs.append((invalid, "check"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [dict(catalog["scenarios"][0])] * 15
+        invalid_catalogs.append((invalid, "duplicated"))
+        for value, message in invalid_catalogs:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                validate(value)
+
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            evaluate_trusted(Path("/does-not-exist"))
+
+    def test_cli_requires_exactly_one_catalog_source(self):
+        for argv, message in (
+            (["autonomous_delivery_eval.py"], "requires --catalog"),
+            (["autonomous_delivery_eval.py", "--catalog", "catalog.json", "--snapshot-descriptor", "state.json"],
+             "frozen default catalog"),
+        ):
+            output = io.StringIO()
+            with self.subTest(argv=argv), patch.object(sys, "argv", argv), redirect_stdout(output):
+                self.assertEqual(2, autonomous_delivery_eval.main())
+            self.assertEqual("error", json.loads(output.getvalue())["status"])
+            self.assertIn(message, output.getvalue())
 
     def managed_snapshot_state(self, directory, descriptor):
         path = state_path(Path(directory) / "state", "/repo/eval.git", "autonomy-eval", "run-1")

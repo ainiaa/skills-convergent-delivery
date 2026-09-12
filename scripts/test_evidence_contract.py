@@ -561,6 +561,21 @@ else: print('explore succeeded')
         terminate.assert_called_once_with(process)
         process.wait.assert_called_once_with(timeout=1)
 
+    def test_secondary_drain_timeout_cannot_escape_as_a_subprocess_error(self):
+        escaped = "import time; time.sleep(5)"
+        parent = (
+            "import subprocess,sys,time;"
+            f"subprocess.Popen([sys.executable,'-c',{escaped!r}],start_new_session=True);"
+            "time.sleep(5)"
+        )
+        with self.assertRaises(evidence_contract.EvidenceCleanupError) as failure:
+            evidence_contract.run_evidence(self.workspace, self.baseline,
+                [sys.executable, '-c', parent], timeout_seconds=.3)
+
+        self.assertIsInstance(failure.exception, ValueError)
+        self.assertNotIsInstance(failure.exception, subprocess.TimeoutExpired)
+        self.assertIsInstance(failure.exception.__cause__, subprocess.TimeoutExpired)
+
     def test_exited_command_cannot_leave_a_background_writer(self):
         child = "import time;from pathlib import Path;time.sleep(.4);Path('late.txt').write_text('late')"
         for exit_code in (0, 1):

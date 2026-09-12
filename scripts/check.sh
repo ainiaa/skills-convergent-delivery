@@ -116,6 +116,7 @@ if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
     scripts/test_autonomy_service_config.py
     scripts/test_autonomy_arm.py
     scripts/test_autonomy_begin.py
+    scripts/test_autonomy_contract.py
   )
 else
   echo "Extension suite skipped; run bash scripts/check.sh --full before release."

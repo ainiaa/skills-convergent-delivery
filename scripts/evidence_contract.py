@@ -306,7 +306,12 @@ def _run_command(workspace, argv, timeout_seconds, env=None):
         except subprocess.TimeoutExpired:
             _terminate_process(process)
             process_group_terminated = True
-            stdout, stderr = process.communicate(timeout=1)
+            try:
+                stdout, stderr = process.communicate(timeout=1)
+            except subprocess.TimeoutExpired as error:
+                raise EvidenceCleanupError(
+                    "evidence command output could not be drained after termination"
+                ) from error
             exit_code = 124
             stderr = stderr or b'verification timed out'
     except FileNotFoundError as error:

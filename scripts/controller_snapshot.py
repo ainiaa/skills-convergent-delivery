@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from provider_contract import provider_manifest_paths
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS, provider_manifest_paths
 
 
 EXTENDED_CONTROLLER_FILES = (
@@ -497,7 +497,7 @@ def managed_state_snapshot(path):
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("managed state is unreadable") from error
-    if not isinstance(state, dict) or state.get("schema_version") not in {10, 11} \
+    if not isinstance(state, dict) or state.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS \
             or not all(isinstance(state.get(field), str) and state[field] for field in (
                 "repo_id", "task_key", "run_id"
             )):

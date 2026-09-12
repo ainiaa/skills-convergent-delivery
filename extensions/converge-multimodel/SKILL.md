@@ -19,11 +19,13 @@ the runner lifecycle. Do not create a runner merely to make every role use a
 different model.
 
 Read-only is a workspace boundary, not a universal side-effect boundary. The
-Codex runner inherits the user's MCP configuration. The Suite does not provide
-a no-MCP configuration or an explicit tool allowlist, so this boundary is
-`uncovered` unless the controller independently verifies such a configuration.
-Do not use the runner for untrusted instructions or sensitive external actions
-without that verification.
+Codex runner inherits the user's MCP configuration and the full host process
+environment, including credentials such as API keys, proxy settings, and host
+configuration variables; the Suite does not sanitize or allowlist it. The Suite
+also does not provide a no-MCP configuration or an explicit tool allowlist, so
+this boundary is `uncovered` unless the controller independently verifies such
+a configuration. Do not use the runner for untrusted instructions or sensitive
+external actions without that verification.
 
 Create the controller snapshot with `--extension multimodel` before executing
 its runner or evaluation helpers. The frozen descriptor is the authority for

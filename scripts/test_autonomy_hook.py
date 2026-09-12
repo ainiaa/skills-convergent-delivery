@@ -125,6 +125,27 @@ class AutonomyHookTest(unittest.TestCase):
             self.assertEqual("block", decision["decision"])
             self.assertIn("autonomous run", decision["reason"])
 
+    def test_active_legacy_schema_run_is_not_silently_approved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            state_dir = self.workspace_state_dir(home / ".convergent-delivery/state", workspace) / "a"
+            state_dir.mkdir(parents=True)
+            state = {
+                "schema_version": 10, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }
+            (state_dir / "run.json").write_text(json.dumps(state), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--host", "codex"],
+                input=json.dumps({"cwd": str(workspace)}), text=True, capture_output=True,
+                check=False, env={"HOME": str(home)},
+            )
+            self.assertEqual(2, result.returncode, result.stdout)
+            decision = json.loads(result.stdout)
+            self.assertEqual("block", decision["decision"])
+
     def test_invalid_hook_payload_fails_open(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--host", "codex"], input="not-json",
@@ -132,6 +153,13 @@ class AutonomyHookTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode)
         self.assertEqual("approve", json.loads(result.stdout)["decision"])
+
+    def test_payload_without_a_workspace_fails_open(self):
+        for payload in ({}, {"cwd": ""}, {"cwd": 3}):
+            with self.subTest(payload=payload):
+                result = self.invoke("codex", payload)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("approve", json.loads(result.stdout)["decision"])
 
     def test_multiple_active_runs_block_instead_of_failing_open(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -149,10 +177,30 @@ class AutonomyHookTest(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, str(SCRIPT), "--host", "codex"],
                 input=json.dumps({"cwd": str(workspace)}), text=True, capture_output=True,
-                check=False, env={"HOME": str(home)},
+                check=False, env=os.environ | {
+                    "HOME": str(home),
+                    "CONVERGE_STATE_ROOT": str(home / ".convergent-delivery/state"),
+                    "CONVERGE_LEASE_ROOT": str(home / ".convergent-delivery/leases"),
+                },
             )
         self.assertEqual(2, result.returncode)
         self.assertIn("multiple autonomous runs", json.loads(result.stdout)["reason"])
+
+    def test_non_object_managed_state_blocks_instead_of_approving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            state_dir = self.workspace_state_dir(root / "state", workspace) / "a"
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text("[1, 2]", encoding="utf-8")
+
+            result = self.invoke("codex", {"cwd": str(workspace)}, os.environ | {
+                "CONVERGE_STATE_ROOT": str(root / "state"),
+            })
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("is not an object", json.loads(result.stdout)["reason"])
 
     def test_unreadable_managed_state_blocks_instead_of_approving(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -357,6 +405,178 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("active lease", json.loads(result.stdout)["reason"])
         self.assertFalse(capture.exists())
+
+
+    def run_managed_hook_in_process(self, host, payload, state_path, state_root, lease_root, execute):
+        workspace = json.loads(state_path.read_text(encoding="utf-8"))["workspace"]
+        output = StringIO()
+        with patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
+                patch.object(sys, "argv", ["autonomy_hook.py", "--host", host]), \
+                patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace), **payload}))), \
+                patch.dict(os.environ, {
+                    "CONVERGE_STATE_ROOT": str(state_root),
+                    "CONVERGE_LEASE_ROOT": str(lease_root),
+                }), \
+                redirect_stdout(output):
+            result = autonomy_hook.main()
+        return result, output.getvalue()
+
+    def test_gate_allow_short_circuits_to_an_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = {"execution_control": {"autonomy": {"enabled": True}}}
+            output = StringIO()
+            with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
+                    patch.object(autonomy_hook, "decide", return_value={"decision": "allow"}), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root)}))), \
+                    redirect_stdout(output):
+                result = autonomy_hook.main()
+
+        self.assertEqual(0, result)
+        self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+
+    def test_service_mode_without_an_installed_launchagent_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = {
+                "execution_control": {"autonomy": {"enabled": True, "runtime": {"mode": "service"}}},
+            }
+            output = StringIO()
+            with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
+                    patch.object(autonomy_hook, "decide",
+                                 return_value={"decision": "block", "next_action": {}}), \
+                    patch.object(autonomy_hook.Path, "home", return_value=root / "home"), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root)}))), \
+                    redirect_stdout(output):
+                result = autonomy_hook.main()
+
+        self.assertEqual(2, result)
+        self.assertIn("not installed", json.loads(output.getvalue())["reason"])
+
+    def test_frozen_hook_failure_blocks_with_the_runner_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = {"controller": {"snapshot": {"root": str(root)}}}
+            real_run = subprocess.run
+            failed = subprocess.CompletedProcess([], 2, "", "frozen runner exploded")
+
+            def execute(command, **kwargs):
+                return failed if "controller_snapshot.py" in str(command[1]) else real_run(command, **kwargs)
+
+            output = StringIO()
+            with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
+                    patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root)}))), \
+                    redirect_stdout(output):
+                result = autonomy_hook.main()
+
+        self.assertEqual(2, result)
+        self.assertIn("frozen runner exploded", json.loads(output.getvalue())["reason"])
+
+    def test_codex_state_write_failure_blocks_instead_of_losing_the_intent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            real_run = subprocess.run
+            failed = subprocess.CompletedProcess([], 2, "", "state write blocked")
+
+            def execute(command, **kwargs):
+                return failed if "delivery_state.py" in str(command[1]) else real_run(command, **kwargs)
+
+            result, output = self.run_managed_hook_in_process(
+                "codex", {}, path, state_root, lease_root, execute,
+            )
+            current = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(2, result)
+        self.assertIn("state write blocked", json.loads(output)["reason"])
+        self.assertEqual(0, len(current["execution_control"]["autonomy"]["action_attempts"]))
+
+    def test_claude_terminalize_failure_falls_back_to_a_final_terminalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            real_run = subprocess.run
+            failed = subprocess.CompletedProcess([], 2, "", "state write blocked")
+            state_writes = []
+
+            def execute(command, **kwargs):
+                if "delivery_state.py" in str(command[1]):
+                    state_writes.append(command)
+                    if len(state_writes) == 1:
+                        return failed
+                return real_run(command, **kwargs)
+
+            result, output = self.run_managed_hook_in_process(
+                "claude", {"session_id": "thread-1"}, path, state_root, lease_root, execute,
+            )
+            current = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(2, result)
+        self.assertIn("state write blocked", json.loads(output)["reason"])
+        self.assertEqual(2, len(state_writes))
+        self.assertEqual("blocked", current["status"])
+
+    def test_claude_release_failure_blocks_instead_of_losing_the_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            real_run = subprocess.run
+
+            def execute(command, **kwargs):
+                if "delivery_lease.py" in str(command[1]):
+                    return subprocess.CompletedProcess([], 1, "", "lease unavailable")
+                return real_run(command, **kwargs)
+
+            output = StringIO()
+            with patch.object(autonomy_hook, "write_state"), \
+                    patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "claude"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"]}))), \
+                    patch.dict(os.environ, {
+                        "CONVERGE_STATE_ROOT": str(state_root),
+                        "CONVERGE_LEASE_ROOT": str(lease_root),
+                    }), \
+                    redirect_stdout(output):
+                result = autonomy_hook.main()
+            current = json.loads(path.read_text(encoding="utf-8"))
+            held = [p.exists() for p in lease_paths(
+                lease_root, state["repo_id"], state["workspace"], state["task_key"]
+            ).values()]
+
+        self.assertEqual(2, result)
+        self.assertIn("lease unavailable", json.loads(output.getvalue())["reason"])
+        self.assertEqual("active", current["status"])
+        self.assertTrue(any(held))
+
+    def test_claude_release_output_that_is_not_a_release_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            real_run = subprocess.run
+
+            def execute(command, **kwargs):
+                if "delivery_lease.py" in str(command[1]):
+                    return subprocess.CompletedProcess([], 0, '{"status": "kept"}', "")
+                return real_run(command, **kwargs)
+
+            output = StringIO()
+            with patch.object(autonomy_hook, "write_state"), \
+                    patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "claude"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"]}))), \
+                    patch.dict(os.environ, {
+                        "CONVERGE_STATE_ROOT": str(state_root),
+                        "CONVERGE_LEASE_ROOT": str(lease_root),
+                    }), \
+                    redirect_stdout(output):
+                result = autonomy_hook.main()
+            current = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(2, result)
+        self.assertIn("could not release autonomous lease", json.loads(output.getvalue())["reason"])
+        self.assertEqual("active", current["status"])
 
 
 if __name__ == "__main__":

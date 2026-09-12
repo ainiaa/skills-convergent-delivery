@@ -58,6 +58,15 @@ class TaskProfileTest(unittest.TestCase):
         for path, expected in ((".", "."), ("./", "."), ("src/", "src"), ("src\\unit", "src/unit")):
             self.assertEqual([expected], freeze_routing(profile(), [path])["allowed_paths"])
 
+    def test_non_boolean_closure_flag_and_bad_assessment_counts_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "full_closure_required must be boolean"):
+            classify(profile(), full_closure_required="yes")
+        with self.assertRaisesRegex(ValueError, "one or two frozen assessments"):
+            freeze_routing(profile(), ["."], assessment_count=3)
+        frozen = freeze_routing(profile(), ["."])
+        with self.assertRaisesRegex(ValueError, "one or two frozen assessments"):
+            validate_frozen_routing({**frozen, "assessment_count": 5})
+
     def test_local_known_task_stays_inline(self):
         self.assertEqual(classify(profile())["route"], "inline")
 

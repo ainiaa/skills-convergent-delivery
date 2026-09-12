@@ -4,6 +4,7 @@
 import json
 import copy
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -130,6 +131,95 @@ class MultiModelSmokeTest(unittest.TestCase):
                        plan_launch=plan, execute_launch=execute)
 
         self.assertEqual("failed", result["status"])
+
+    def test_smoke_requires_a_git_workspace(self):
+        with self.assertRaisesRegex(ValueError, "must be a Git worktree"):
+            smoke(self.profiles, workspace=self.temporary.name)
+
+    def test_execute_mode_reports_an_uncommitted_workspace_without_a_worktree(self):
+        empty = Path(self.temporary.name) / "empty-repo"
+        subprocess.run(["git", "init", "-q", str(empty)], check=True)
+
+        with self.assertRaisesRegex(ValueError, "cannot create a detached worktree"):
+            smoke(self.profiles, workspace=empty, execute=True,
+                  plan_launch=lambda dispatch, prompt, **_: {}, execute_launch=lambda *a, **k: {})
+
+    def test_execute_mode_surfaces_worktree_inspection_failures(self):
+        seen = {}
+
+        def plan(dispatch, prompt, *, workspace, **_kwargs):
+            seen["workspace"] = Path(workspace)
+            return freeze_launch(dispatch["profile"], prompt, {})
+
+        def execute(launch, _prompt, **_kwargs):
+            shutil.rmtree(seen["workspace"])
+            value = {
+                "schema_version": 2, "runner_id": launch["runner_id"],
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "exit_code": 0, "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+                "attestation": {
+                    "model": {"status": "requested", "observed": None},
+                    "usage": {"status": "unavailable", "value": None},
+                },
+            }
+            receipt = {**value, "receipt_fingerprint": fingerprint(value)}
+            return {
+                "receipt": receipt,
+                "output": {"status": "available", "content": json.dumps({
+                    "findings": [], "next_action": "verify",
+                })},
+            }
+
+        with self.assertRaisesRegex(ValueError, "inspect the temporary worktree"):
+            smoke(self.profiles, workspace=self.workspace, execute=True,
+                  plan_launch=plan, execute_launch=execute)
+
+    def test_execute_mode_surfaces_worktree_removal_failures(self):
+        seen = {}
+
+        def plan(dispatch, prompt, *, workspace, **_kwargs):
+            seen["workspace"] = Path(workspace)
+            return freeze_launch(dispatch["profile"], prompt, {})
+
+        def execute(launch, _prompt, **_kwargs):
+            subprocess.run(
+                ["git", "-C", str(self.workspace), "worktree", "lock", str(seen["workspace"])],
+                check=True,
+            )
+            value = {
+                "schema_version": 2, "runner_id": launch["runner_id"],
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
+                "exit_code": 0, "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
+                "attestation": {
+                    "model": {"status": "requested", "observed": None},
+                    "usage": {"status": "unavailable", "value": None},
+                },
+            }
+            receipt = {**value, "receipt_fingerprint": fingerprint(value)}
+            return {
+                "receipt": receipt,
+                "output": {"status": "available", "content": json.dumps({
+                    "findings": [], "next_action": "verify",
+                })},
+            }
+
+        with self.assertRaisesRegex(ValueError, "remove its temporary worktree"):
+            smoke(self.profiles, workspace=self.workspace, execute=True,
+                  plan_launch=plan, execute_launch=execute)
+
+    def test_cli_script_execution_plans_and_exits_zero(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("multi_model_smoke.py")),
+             "--workspace", str(self.workspace)],
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("planned", json.loads(result.stdout)["status"])
 
     def test_cli_plans_a_read_only_smoke_without_starting_a_runner(self):
         with patch.object(sys, "argv", ["multi_model_smoke.py", "--workspace", str(self.workspace)]), \

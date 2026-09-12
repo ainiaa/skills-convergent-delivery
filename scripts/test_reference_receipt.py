@@ -4,7 +4,11 @@
 import hashlib
 import unittest
 
-from reference_receipt import freeze_receipt, require_implementer_receipt
+from reference_receipt import (
+    freeze_receipt,
+    require_feature_binding,
+    require_implementer_receipt,
+)
 
 
 class ReferenceReceiptTest(unittest.TestCase):
@@ -64,6 +68,75 @@ class ReferenceReceiptTest(unittest.TestCase):
         for references, bindings in cases:
             with self.subTest(bindings=bindings), self.assertRaises(ValueError):
                 freeze_receipt(references, feature_bindings=bindings)
+
+    def test_feature_binding_rejects_malformed_binding_structures(self):
+        reference = {"reference": "codex://thread/source-feature", "status": "read", "content_fingerprint": "a" * 64}
+        behavior = {
+            "input": "input", "state": "state", "output": "output", "effect": "effect",
+            "caller": "caller", "verifier": "python3 -m unittest",
+        }
+        binding = {
+            "target": "delivery-status-normalization", "reference": reference["reference"],
+            "relation": "mirror", "behaviors": [behavior],
+        }
+        cases = (
+            "not-a-list",
+            ["not-a-binding"],
+            [{**binding, "target": 5}],
+            [{**binding, "behaviors": [{"input": "only"}]}],
+        )
+
+        for bindings in cases:
+            with self.subTest(bindings=bindings), self.assertRaises(ValueError):
+                freeze_receipt([reference], feature_bindings=bindings)
+
+    def test_require_feature_binding_returns_the_declared_binding_for_its_target(self):
+        reference = "codex://thread/source-feature"
+        binding = {
+            "target": "delivery-status-normalization", "reference": reference,
+            "relation": "analogy", "behaviors": [{
+                "input": "missing status", "state": "new", "output": "normalized status",
+                "effect": "no remote write", "caller": "delivery controller",
+                "verifier": "python3 -m unittest",
+            }],
+        }
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            feature_bindings=[binding],
+        )
+
+        self.assertEqual(binding, require_feature_binding(receipt, "delivery-status-normalization"))
+
+    def test_require_feature_binding_returns_none_without_feature_bindings(self):
+        receipt = freeze_receipt([
+            {"reference": "codex://thread/source-feature", "status": "read",
+             "content_fingerprint": "a" * 64},
+        ])
+
+        self.assertIsNone(require_feature_binding(receipt, "delivery-status-normalization"))
+
+    def test_require_implementer_receipt_rejects_malformed_receipts(self):
+        for receipt in ("nope", {"schema_version": 3}, {"schema_version": 1, "references": []}):
+            with self.subTest(receipt=receipt), self.assertRaisesRegex(
+                ValueError, "implementation reference receipt is invalid",
+            ):
+                require_implementer_receipt(receipt)
+
+    def test_require_feature_binding_rejects_unknown_targets(self):
+        reference = "codex://thread/source-feature"
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            feature_bindings=[{
+                "target": "delivery-status-normalization", "reference": reference,
+                "relation": "mirror", "behaviors": [{
+                    "input": "input", "state": "state", "output": "output", "effect": "effect",
+                    "caller": "caller", "verifier": "python3 -m unittest",
+                }],
+            }],
+        )
+
+        with self.assertRaisesRegex(ValueError, "target does not match"):
+            require_feature_binding(receipt, "another-target")
 
     def test_implementer_receipt_requires_every_declared_reference_to_be_read(self):
         receipt = freeze_receipt([

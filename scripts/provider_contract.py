@@ -6,6 +6,12 @@ import json
 from pathlib import Path
 
 
+# The only truth for readable managed state schema versions; every version gate must
+# import this. It lives in this stdlib-only leaf because delivery_next and
+# controller_snapshot both sit on opposite sides of a cycle.
+SUPPORTED_SCHEMA_VERSIONS = {10, 11}
+
+
 def fingerprint_bytes(value):
     return hashlib.sha256(value).hexdigest()
 

@@ -6,6 +6,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -41,10 +42,15 @@ def main():
         "ThrottleInterval": 5,
         "ProcessType": "Background",
     }
-    temporary = target.with_suffix(".tmp")
-    with temporary.open("wb") as handle:
-        plistlib.dump(payload, handle, sort_keys=True)
-    os.replace(temporary, target)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            plistlib.dump(payload, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
     subprocess.run(["launchctl", "bootout", domain], capture_output=True, check=False)
     subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(target)], check=True)
     return 0

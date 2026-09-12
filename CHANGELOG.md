@@ -4,20 +4,12 @@
 
 ## [Unreleased]
 
-- 缩小默认 Controller Snapshot：多模型 runner 的启动、生命周期及 Codex/Claude 执行脚本只在显式 `multimodel` extension 中冻结；核心保留 runner contract 与结果校验，以维持 state/lease 和 autonomy evaluation 的清场校验。证据与 trigger evaluator 的进程清理改用核心标准库实现，避免反向依赖 Codex runner。
-- Controller Snapshot 协议升级至 V18：新快照按当前 surface 严格校验；V16/V17 历史快照改按其描述符、只读文件与聚合哈希校验，不再重建版本专用文件布局。
-- 并行执行 Python 3.11 与 3.14 的完整 coverage matrix，同时等待并汇总两个结果；任一版本失败仍使矩阵失败。
-- 修复 Codex 两轮“review → 继续修复”的提前收口：安装 autonomy 后，`UserPromptSubmit` 为精确的“继续修复”/`continue repair` arm 当前 workspace 的受限 gate，Desktop 与 CLI Stop 均以宿主原生 `decision:block` 在同一 task 继续，不再依赖 `codex queue`。未记录进展的重复 Stop 安全终止为 `blocked/no_progress` 并释放 lease。
-- 收紧 work item 恢复重试：同一 recovery receipt 只能解锁一次相同源码与验证命令的失败重试，必须提供新的 observed pass 回执才能再次尝试。
-- 限制 work item 成功验证状态增长：同一源码与 verifier argv 的新成功回执替换旧记录，保留不同验证命令的完成证据而不重复追加。
-- 收紧 work item 完成门禁：`complete` 仅接受同一事项受控 `verify` 已记录的当前源码成功回执，不能再以无关的成功命令清场；旧的非终态记录继续兼容读取，首次成功验证后写入该记录。
-- 修复 work item verifier 的并发门禁与终态清理：gate、执行和失败回执现由同一事项锁串行，避免相同失败并发启动两次；最终当前源码 passing receipt 经 `work_item.py complete` 复核后删除非终态事项，不再把已完成工作误恢复为 active。
-- 收紧功能级 work item 的运行时边界：schema v2 的 reference binding 必须命中当前 target；恢复要求 workspace、baseline、需求、验收、decision 与回执均未漂移；受控 verifier 拒绝其他事项的 workspace/baseline，并让已验证的 `--recovery-receipt` 实际解除一次重试门禁。
-- 功能级引用和跨轮修复现在使用最小 work item 契约：一次性 inline 不落盘；只有 `active/blocked` 功能按 target、需求、验收和基线唯一续接，同项目其他功能不再可被当作语义副本。验证失败必须绑定 observed 回执；相同源码和 argv 会由 gate 阻止重复运行，只有源码、命令或通过的恢复证据变化才能重试，最终完成仍需新鲜 pass。
-- 已落盘 work item 的验证现在经由一个受控入口：先判断重复失败，再运行 Evidence Receipt 命令，并将实际失败原子落盘；不再要求控制器手工拼接 gate、命令和失败记录。
-- 计划校验现在将已知 CodeGraph/回执能力缺口规范为 `uncovered`：用户已同时授权计划和实现时，控制器继续首个冻结任务；未知契约、业务、权限和安全错误仍阻塞，且未覆盖不能宣称完成。
-- 收紧跨服务路由与交付证据：`cross-service` 风险不能再伪装为本地、单一耦合或本地验证；指定参考的状态/重试/错误映射须在首次写入前冻结，未决时阻塞。交互 smoke 升级为 v3，新增跨服务参考决策与首次 verifier 环境失败场景，后者只能阻塞而不能借重复尝试宣称完成。
-- 新增面向使用者的 GitHub Release Notes 模板，并将其纳入版本发布维护流程；测试证据与未覆盖范围仍需如实披露。
+- 强化自治 hook 的安装、注册验证与失败回滚，避免不完整配置或意外替换现有链接。
+- 提升自治服务、lease 与任务恢复的并发安全、失败处理和清理可靠性。
+- 收紧 work item、TDD trace、状态快照与跨服务路由的验证边界，防止过期或无关证据放行。
+- 明确 Capsule Dispatch 的重试、超时和失败语义，避免重复创建外部任务。
+- 改进外部模型 HTTP 错误诊断、Python 版本矩阵稳定性与运行时兼容性。
+- 同步安装、卸载、宿主能力和发布说明文档，并补充面向使用者的 Release Notes 模板。
 
 ## [0.3.0] - 2026-09-11
 
