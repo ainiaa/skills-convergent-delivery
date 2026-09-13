@@ -266,7 +266,7 @@ def _started(value, package_value):
 
 
 def _codex_started(package_value, prompt, request):
-    thread = request("thread/start", {"cwd": package_value["workspace"], "ephemeral": True})
+    thread = request("thread/start", {"cwd": package_value["workspace"], "ephemeral": False})
     task_id = thread.get("thread", {}).get("id") if isinstance(thread, dict) else None
     turn = request("turn/start", {
         "threadId": _text(task_id, "Codex thread id"),
@@ -289,10 +289,14 @@ def codex_start(value, prompt, *, codex_bin="codex", request=None, run=subproces
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is not None:
         return _codex_started(value, prompt, request)
+    recorded = load_started(value)
+    if recorded is not None:
+        return recorded
     _codex_daemon(codex_bin, run)
     server = _codex_proxy(codex_bin)
     try:
         started = _codex_started(value, prompt, server.__enter__().request)
+        started = persist_started(value, started)
     except Exception:
         server.close()
         raise
@@ -309,12 +313,31 @@ def codex_observe(value, started, *, codex_bin="codex", request=None):
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is None:
         server = _CODEX_SERVERS.get(started["task_id"])
-        if server is None:
+        if server is not None:
+            status = server.turn_statuses.get(started["turn_id"])
+            if status is None:
+                return None
+            return _codex_terminal_observation(value, started, status)
+        recorded = load_started(value)
+        if recorded is None:
             raise ValueError("Codex evaluator connection is unavailable; do not retry the task")
-        status = server.turn_statuses.get(started["turn_id"])
-        if status is None:
-            return None
-        return _codex_terminal_observation(value, started, status)
+        if recorded != started:
+            raise ValueError("Codex recovery record does not match the started task")
+        try:
+            with _codex_proxy(codex_bin) as proxy:
+                resumed = proxy.request("thread/resume", {
+                    "threadId": started["task_id"], "excludeTurns": False,
+                })
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise ValueError("Codex evaluator connection is unavailable; do not retry the task") from error
+        thread = resumed.get("thread") if isinstance(resumed, dict) else None
+        if not isinstance(thread, dict) or thread.get("id") != started["task_id"]:
+            raise ValueError("Codex resumed task does not match the started task")
+        matches = [turn for turn in thread.get("turns", ()) if isinstance(turn, dict)
+                   and turn.get("id") == started["turn_id"]]
+        if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
+            raise ValueError("Codex resumed turn does not match the started turn")
+        return _codex_terminal_observation(value, started, matches[0]["status"])
     response = request("thread/turns/list", {"threadId": started["task_id"], "limit": 100})
     turns = response.get("data") if isinstance(response, dict) else None
     matches = [turn for turn in turns or () if isinstance(turn, dict) and turn.get("id") == started["turn_id"]]
