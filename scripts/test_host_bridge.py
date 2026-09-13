@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import host_bridge
 
@@ -70,6 +70,27 @@ class HostBridgeTest(unittest.TestCase):
                     host_bridge.codex_start(package, "frozen prompt", request=request)
 
         request.assert_not_called()
+
+    def test_codex_start_bootstraps_daemon_and_uses_proxy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            run = Mock(return_value=SimpleNamespace(returncode=0))
+            proxy = MagicMock()
+            proxy.__enter__.return_value = proxy
+            proxy.request.side_effect = [
+                {"thread": {"id": "thread-1"}},
+                {"turn": {"id": "turn-1"}},
+            ]
+            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
+                    patch.object(host_bridge, "_codex_proxy", return_value=proxy):
+                started = host_bridge.codex_start(package, "frozen prompt", run=run)
+
+        self.assertEqual("thread-1", started["task_id"])
+        self.assertEqual(
+            ["codex", "app-server", "daemon", "bootstrap"], run.call_args_list[0].args[0],
+        )
+        self.assertEqual(["codex", "app-server", "daemon", "start"], run.call_args_list[1].args[0])
+        host_bridge._CODEX_SERVERS.pop("thread-1", None)
 
     def test_codex_observe_returns_a_terminal_observation_for_the_started_turn(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -70,8 +70,9 @@ def codex_schema_fingerprint(codex_bin="codex"):
 class _CodexAppServer:
     """Small synchronous JSON-RPC client for Codex's documented stdio app-server."""
 
-    def __init__(self, codex_bin, timeout_seconds=30):
+    def __init__(self, codex_bin, command=("app-server", "--stdio"), timeout_seconds=30):
         self.codex_bin = codex_bin
+        self.command = command
         self.timeout_seconds = timeout_seconds
         self.process = None
         self.messages = queue.Queue()
@@ -81,7 +82,7 @@ class _CodexAppServer:
     def __enter__(self):
         binary, _fingerprint = _binary_identity(self.codex_bin)
         self.process = subprocess.Popen(
-            [binary, "app-server", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [binary, *self.command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True,
         )
         threading.Thread(target=self._read, daemon=True).start()
@@ -135,6 +136,18 @@ class _CodexAppServer:
             if "result" not in message or set(message) != {"id", "result"}:
                 raise ValueError(f"Codex app-server rejected {method}")
             return message["result"]
+
+
+def _codex_daemon(codex_bin, run):
+    for command in ((codex_bin, "app-server", "daemon", "bootstrap"),
+                    (codex_bin, "app-server", "daemon", "start")):
+        result = run(list(command), text=True, capture_output=True, check=False)
+        if result.returncode:
+            raise ValueError("Codex app-server daemon is unavailable")
+
+
+def _codex_proxy(codex_bin):
+    return _CodexAppServer(codex_bin, ("app-server", "proxy"))
 
 
 def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint):
@@ -203,7 +216,7 @@ def _codex_started(package_value, prompt, request):
     }
 
 
-def codex_start(value, prompt, *, codex_bin="codex", request=None):
+def codex_start(value, prompt, *, codex_bin="codex", request=None, run=subprocess.run):
     value = _package(value)
     if value["host"] != "codex":
         raise ValueError("host package is not for Codex")
@@ -211,7 +224,8 @@ def codex_start(value, prompt, *, codex_bin="codex", request=None):
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is not None:
         return _codex_started(value, prompt, request)
-    server = _CodexAppServer(codex_bin)
+    _codex_daemon(codex_bin, run)
+    server = _codex_proxy(codex_bin)
     try:
         started = _codex_started(value, prompt, server.__enter__().request)
     except Exception:
