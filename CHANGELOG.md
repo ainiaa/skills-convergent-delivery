@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- autonomy hook 卸载不再受解释器漂移影响：安装时把精确注册命令记录到 `~/.convergent-delivery/autonomy-hooks.json`（按 event 合并），卸载优先读取记录做精确匹配，缺失时才回退到重新推导。
+- 首次运行 converge-eval 确定性差分桥（control=v0.3.0+suite vs candidate=v0.4.0）：无回归、2 个探针确认修复；dogfood 确认三项操作约束已写入 eval skill——冻结 suite/judge 必须以字节相同形式同时存在于两侧树、快照必须由 control 树自带的 controller_snapshot.py 创建、suite 附着操作需要精确性。
 ## [0.4.0] - 2026-09-12
 
 - 将 managed state 与 writer lease 默认迁移到 Git common-dir 的 `.git/convergent-delivery/`；Hook、lifecycle、评测和 service 均按项目路径解析，linked worktree 共享同一状态与租约。service 启动时只处理其持久化的单个 state，不再全局扫描项目或依赖 LaunchAgent。

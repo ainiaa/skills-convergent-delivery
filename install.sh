@@ -627,14 +627,49 @@ autonomy_hook_config() {
   fi
   local stop_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_hook.py") --host ${runtime}"
   local prompt_command=""
+  local record_state="${HOME}/.convergent-delivery/autonomy-hooks.json"
+  local recorded_stop="" recorded_prompt=""
+  if [[ "$remove" == "remove" && -f "$record_state" ]]; then
+    # Read both recorded commands before any removal drops the runtime entry:
+    # exact-command matching must survive interpreter drift between install and
+    # uninstall, and a second lookup after drop_record would see nothing.
+    local recorded_pair
+    recorded_pair="$("$py3" - "$record_state" "$runtime" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    entry = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get(sys.argv[2], {})
+    print(entry.get("stop_command", ""))
+    print(entry.get("prompt_command", ""))
+except (OSError, ValueError):
+    pass
+PY
+)"
+    recorded_stop="$(sed -n '1p' <<<"$recorded_pair")"
+    recorded_prompt="$(sed -n '2p' <<<"$recorded_pair")"
+    [[ -n "$recorded_stop" ]] && stop_command="$recorded_stop"
+  fi
   local args=(--config "$config" --command "$stop_command")
   [[ "$remove" == "remove" ]] && args+=(--remove)
-  "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" || return
+  if [[ "$remove" == "remove" ]]; then
+    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
+      --record-state "$record_state" --record-runtime "$runtime" || return
+  else
+    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
+      --record-state "$record_state" --record-runtime "$runtime" --record-event "Stop" || return
+  fi
   if [[ "$runtime" == "codex" ]]; then
     prompt_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_prompt_hook.py") --host codex"
+    [[ -n "$recorded_prompt" ]] && prompt_command="$recorded_prompt"
     args=(--config "$config" --command "$prompt_command" --event UserPromptSubmit)
     [[ "$remove" == "remove" ]] && args+=(--remove)
-    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" || return
+    if [[ "$remove" == "remove" ]]; then
+      "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
+        --record-state "$record_state" --record-runtime "$runtime" || return
+    else
+      "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
+        --record-state "$record_state" --record-runtime "$runtime" --record-event "UserPromptSubmit" || return
+    fi
   fi
   if [[ "$remove" == "remove" ]]; then
     echo "${runtime}: autonomy Stop hook removed"
