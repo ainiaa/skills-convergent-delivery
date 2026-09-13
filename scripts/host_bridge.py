@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import queue
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ import time
 from pathlib import Path
 
 from codex_exec_runner import _binary_identity
+from delivery_state import project_storage_root
 
 
 PROTOCOL = "host-bridge-v1"
@@ -150,18 +152,23 @@ def _codex_proxy(codex_bin):
     return _CodexAppServer(codex_bin, ("app-server", "proxy"))
 
 
-def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint):
+def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint,
+            recovery_root=None):
     host = _text(host, "host")
     if host not in HOSTS:
         raise ValueError("host is invalid")
     workspace = Path(_text(str(workspace), "workspace")).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("workspace is invalid")
+    recovery_root = Path(_text(str(recovery_root or workspace), "recovery_root")).expanduser().resolve()
+    if not recovery_root.is_dir():
+        raise ValueError("recovery_root is invalid")
     return {
         "protocol": PROTOCOL,
         "host": host,
         "sample_id": _text(sample_id, "sample_id"),
         "workspace": str(workspace),
+        "recovery_root": str(recovery_root),
         "prompt_fingerprint": _fingerprint({"prompt": _text(prompt, "prompt")}),
         "judge_argv": _argv(judge_argv, "judge_argv"),
         "launch_fingerprint": _sha256(launch_fingerprint, "launch_fingerprint"),
@@ -171,15 +178,73 @@ def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprin
 
 def _package(value):
     if not isinstance(value, dict) or set(value) != {
-            "protocol", "host", "sample_id", "workspace", "prompt_fingerprint", "judge_argv",
+            "protocol", "host", "sample_id", "workspace", "recovery_root", "prompt_fingerprint", "judge_argv",
             "launch_fingerprint", "host_fingerprint",
     } or value.get("protocol") != PROTOCOL:
         raise ValueError("host package is invalid")
     return package(
-        host=value["host"], sample_id=value["sample_id"], workspace=value["workspace"], prompt="frozen",
+        host=value["host"], sample_id=value["sample_id"], workspace=value["workspace"],
+        recovery_root=value["recovery_root"], prompt="frozen",
         judge_argv=value["judge_argv"], launch_fingerprint=value["launch_fingerprint"],
         host_fingerprint=value["host_fingerprint"],
     ) | {"prompt_fingerprint": _sha256(value["prompt_fingerprint"], "prompt_fingerprint")}
+
+
+def record_path(value):
+    value = _package(value)
+    return project_storage_root(value["recovery_root"]) / "host-bridge" / f"{_fingerprint(value)}.json"
+
+
+def load_started(value):
+    value = _package(value)
+    path = record_path(value)
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Codex recovery record is unavailable") from error
+    if not isinstance(record, dict) or set(record) != {"schema_version", "package_fingerprint", "started"} \
+            or record.get("schema_version") != 1 or record.get("package_fingerprint") != _fingerprint(value):
+        raise ValueError("Codex recovery record is unavailable")
+    return _started(record["started"], value)
+
+
+def _create_record(path, record):
+    temporary = path.with_name(f".{path.name}.tmp")
+    descriptor = None
+    try:
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            descriptor = None
+            json.dump(record, file, ensure_ascii=False, sort_keys=True)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.link(temporary, path)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def persist_started(value, started):
+    value = _package(value)
+    started = _started(started, value)
+    path = record_path(value)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    existing = load_started(value)
+    if existing is None:
+        try:
+            _create_record(path, {
+                "schema_version": 1, "package_fingerprint": _fingerprint(value), "started": started,
+            })
+        except FileExistsError:
+            pass
+        existing = load_started(value)
+    if existing != started:
+        raise ValueError("Codex recovery record is conflicting with the started task")
+    return existing
 
 
 def _started(value, package_value):

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import time
 import unittest
@@ -122,6 +123,33 @@ class HostBridgeTest(unittest.TestCase):
 
         self.assertEqual("completed", observation["status"])
         server.close.assert_called_once()
+
+    def test_started_record_reloads_after_a_bridge_restart_without_a_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
+                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            host_bridge.persist_started(package, started)
+            reloaded = host_bridge.load_started(package)
+            record = json.loads(host_bridge.record_path(package).read_text())
+
+        self.assertEqual(started, reloaded)
+        self.assertNotIn("prompt", json.dumps(record))
+
+    def test_conflicting_started_record_is_rejected_without_relaunch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
+                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            host_bridge.persist_started(package, started)
+            with self.assertRaisesRegex(ValueError, "conflicting"):
+                host_bridge.persist_started(package, {**started, "task_id": "thread-other"})
 
     def test_claude_start_and_observe_require_the_registered_session_identity(self):
         with tempfile.TemporaryDirectory() as directory:
