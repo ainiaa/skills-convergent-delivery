@@ -39,14 +39,17 @@ def decide(payload, lease_root=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
-    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--lease-root")
     arguments = parser.parse_args()
     path = Path(arguments.state)
     if not path.exists():
         print(json.dumps(allow("inactive"), sort_keys=True))
         return 0
     try:
-        decision = decide(json.loads(path.read_text(encoding="utf-8")), lease_root=arguments.lease_root)
+        state = json.loads(path.read_text(encoding="utf-8"))
+        from delivery_state import project_lease_root
+        lease_root = arguments.lease_root or str(project_lease_root(state["workspace"]))
+        decision = decide(state, lease_root=lease_root)
         print(json.dumps(decision, sort_keys=True))
         return 2 if decision["decision"] == "block" else 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

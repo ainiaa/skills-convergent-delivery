@@ -5,7 +5,6 @@ import argparse
 import copy
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import uuid
@@ -13,12 +12,11 @@ from pathlib import Path
 
 from controller_snapshot import create_snapshot
 from delivery_engine import controller_identity, selection
-from delivery_state import DEFAULT_STATE_ROOT, state_path
+from delivery_state import project_lease_root, project_state_root, state_path
 from evidence_contract import workspace_source
 from autonomy_arm import arm
 from provider_contract import canonical_fingerprint
 from task_profile import classify, freeze_routing, infer_path_risks
-
 
 def _git(workspace, *arguments):
     result = subprocess.run(["git", "-C", str(workspace), *arguments], text=True,
@@ -28,9 +26,8 @@ def _git(workspace, *arguments):
     return result.stdout.strip()
 
 
-def _task_key(workspace, baseline, scope, acceptance, requirements):
-    value = json.dumps({"workspace": str(workspace), "baseline": baseline,
-                        "scope": sorted(scope), "acceptance": sorted(acceptance),
+def _task_key(_workspace, baseline, scope, acceptance, requirements):
+    value = json.dumps({"baseline": baseline, "scope": sorted(scope), "acceptance": sorted(acceptance),
                         "requirements": sorted(requirements)},
                        ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "task-" + hashlib.sha256(value.encode()).hexdigest()
@@ -192,20 +189,19 @@ def run(arguments):
         raise ValueError("autonomy begin requires an acceptance criterion")
     if not scope:
         raise ValueError("autonomy begin requires a scope")
+    if getattr(arguments, "state_root", None) is None:
+        arguments.state_root = str(project_state_root(workspace))
+    if getattr(arguments, "lease_root", None) is None:
+        arguments.lease_root = str(project_lease_root(workspace))
     if arguments.runtime == "service" and not _is_linked_worktree(workspace):
         raise ValueError("service autonomy requires an isolated Git worktree")
-    if arguments.runtime == "service" and (
-            Path(arguments.state_root).expanduser().resolve() != DEFAULT_STATE_ROOT.resolve()
-            or Path(arguments.lease_root).expanduser().resolve()
-            != (Path.home() / ".convergent-delivery" / "leases").resolve()
-    ):
-        raise ValueError("service autonomy requires the default managed roots")
     verification_argv = (
         json.loads(arguments.verification_argv) if arguments.verification_argv is not None else None
     )
     audit_argv = json.loads(arguments.audit_argv) if arguments.audit_argv is not None else None
     task_profile = (
-        json.loads(arguments.task_profile_json) if arguments.task_profile_json is not None else None
+        json.loads(getattr(arguments, "task_profile_json", None))
+        if getattr(arguments, "task_profile_json", None) is not None else None
     )
     run_id, writer_id = f"run-{uuid.uuid4()}", f"writer-{uuid.uuid4()}"
     extensions = ("multimodel", "autonomy") if arguments.runtime == "service" else ("autonomy",)
@@ -250,13 +246,20 @@ def run(arguments):
             raise ValueError(f"{error}; lease cleanup failed: {cleanup_error}") from error
         raise
     if arguments.runtime == "service":
-        wake = subprocess.run(
-            ["launchctl", "kickstart", f"gui/{os.getuid()}/com.convergent-delivery.autonomy"],
-            text=True, capture_output=True, check=False,
-        )
-        if wake.returncode:
-            detail = wake.stderr.strip() or wake.stdout.strip() or "unknown wake failure"
-            reason = f"could not wake autonomous service: {detail}"
+        path = state_path(arguments.state_root, state["repo_id"], state["task_key"], run_id)
+        try:
+            subprocess.Popen(
+                [
+                    sys.executable, str(Path(__file__).with_name("autonomy_service.py")), "--serve",
+                    "--state", str(path), "--state-root", str(arguments.state_root),
+                    "--lease-root", str(arguments.lease_root),
+                ],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as error:
+            reason = f"could not wake autonomous service: {error}"
             try:
                 _terminalize_service_start_failure(arguments, state, reason)
             except (OSError, ValueError, json.JSONDecodeError) as cleanup_error:
@@ -285,8 +288,8 @@ def main():
                         help="rejected: use converge-plan for full closure")
     parser.add_argument("--task-profile-json")
     parser.add_argument("--request-file", type=argparse.FileType("r"))
-    parser.add_argument("--state-root", default=str(Path.home() / ".convergent-delivery" / "state"))
-    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--state-root")
+    parser.add_argument("--lease-root")
     parser.add_argument("--controller-root", default=str(Path.home() / ".convergent-delivery" / "controller"))
     arguments = parser.parse_args()
     try:

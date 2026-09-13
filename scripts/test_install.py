@@ -486,6 +486,13 @@ if arguments and arguments[0] == "clone":
                 self.assertTrue(target.is_symlink(), target)
                 self.assertEqual(source, target.resolve())
 
+    def test_autonomy_service_install_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_installer(Path(directory), "--target", "codex", "--autonomy-service")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("no longer supported", result.stderr)
+
     def test_version_and_doctor_detect_an_incomplete_suite(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -951,12 +958,13 @@ if arguments and arguments[0] == "clone":
         self.assertIn("按闭环开发", readme)
         self.assertIn("不要反复确认", readme)
 
-    def test_documentation_uses_shared_state_and_strict_resume_identity(self):
+    def test_documentation_uses_project_state_and_strict_resume_identity(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
         self.assertIn("[单任务状态 Schema](references/state-schema.md)", readme)
-        self.assertIn("~/.convergent-delivery/state/", usage)
+        self.assertIn(".git/convergent-delivery/state/", usage)
+        self.assertNotIn("--autonomy-service`", usage)
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("pdlc-v1", skill)
         self.assertIn("native-v1", skill)

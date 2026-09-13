@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 import eval_contract
@@ -211,6 +211,19 @@ class DeterministicBridgeTest(unittest.TestCase):
 
 
 class EvalAvailabilityTest(unittest.TestCase):
+    def test_preflight_requires_both_host_adapters(self):
+        bridge = Mock()
+        bridge.preflight.return_value = {
+            "codex": {"status": "ready", "host_fingerprint": "a" * 64},
+            "claude": {"status": "unavailable", "reason": "missing"},
+        }
+        with patch.object(eval_contract, "_host_bridge", return_value=bridge):
+            result = eval_contract.preflight()
+
+        self.assertEqual("uncovered", result["status"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual("unavailable_host_bridge", result["stop_reason"])
+
     def test_deterministic_cli_preflight_and_invalid_input_are_structured(self):
         script = str(Path(eval_contract.__file__))
         result = subprocess.run([sys.executable, script, '--preflight', '--deterministic'],
@@ -230,21 +243,31 @@ class EvalAvailabilityTest(unittest.TestCase):
                 self.assertTrue(json.loads(result.stdout)['stop_reason'])
 
     def test_public_evaluation_reports_missing_bridge_before_reading_artifacts(self):
-        with patch.object(eval_contract, "_worker_state", side_effect=AssertionError("read artifacts")):
+        bridge = Mock()
+        bridge.preflight.return_value = {
+            "codex": {"status": "unavailable", "reason": "missing"},
+            "claude": {"status": "unavailable", "reason": "missing"},
+        }
+        with patch.object(eval_contract, "_host_bridge", return_value=bridge), \
+                patch.object(eval_contract, "_worker_state", side_effect=AssertionError("read artifacts")):
             result = eval_contract.evaluate({}, ROOT)
         self.assertEqual("uncovered", result["status"])
         self.assertFalse(result["eligible"])
         self.assertEqual("unavailable_host_bridge", result["stop_reason"])
 
-    def test_cli_preflight_and_evaluation_cannot_claim_success(self):
-        for arguments in (["--preflight"], ["--input", "/missing/request", "--repository", str(ROOT)]):
-            with self.subTest(arguments=arguments):
-                result = subprocess.run(
-                    [sys.executable, str(Path(eval_contract.__file__)), *arguments],
-                    capture_output=True, text=True, check=False,
-                )
-                self.assertEqual(2, result.returncode)
-                self.assertEqual("uncovered", json.loads(result.stdout)["status"])
+    def test_cli_preflight_reports_bridge_readiness_but_never_fabricates_a_live_result(self):
+        preflight = subprocess.run(
+            [sys.executable, str(Path(eval_contract.__file__)), "--preflight"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(0, preflight.returncode)
+        self.assertEqual("ready", json.loads(preflight.stdout)["status"])
+        evaluation = subprocess.run(
+            [sys.executable, str(Path(eval_contract.__file__)), "--input", "/missing/request",
+             "--repository", str(ROOT)], capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(2, evaluation.returncode)
+        self.assertEqual("uncovered", json.loads(evaluation.stdout)["status"])
 
 
 class EvalKernelTest(unittest.TestCase):
@@ -676,6 +699,7 @@ class EvalKernelTest(unittest.TestCase):
     def test_frozen_eval_requires_the_default_managed_state_path(self):
         payload = {
             "repo_id": str(ROOT / ".git"),
+            "workspace": str(ROOT),
             "task_key": "task-eval",
             "run_id": "run-eval",
         }

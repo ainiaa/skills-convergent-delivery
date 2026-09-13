@@ -39,6 +39,13 @@ def native_tdd_trace(workspace, baseline, source):
 
 
 class AutonomyServiceTest(unittest.TestCase):
+
+    def test_global_serve_mode_is_rejected_without_scanning_a_state_root(self):
+        with patch.object(autonomy_service, "service_paths", side_effect=AssertionError("must not scan")), \
+                patch.object(sys, "argv", ["autonomy_service.py", "--serve"]), \
+                redirect_stderr(StringIO()) as stderr:
+            self.assertEqual(0, autonomy_service.main())
+        self.assertIn("global state scanning is disabled", stderr.getvalue())
     def setUp(self):
         # External coverage and graph tools are transport stand-ins; state/TDD validation is real.
         temporary = tempfile.TemporaryDirectory()

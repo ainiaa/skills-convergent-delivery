@@ -5,7 +5,8 @@ import json
 import os
 import shlex
 import sqlite3
-from contextlib import closing
+from contextlib import closing, redirect_stdout
+from io import StringIO
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from delivery_next import (
     validate_host_sync,
     validate_review_gate,
 )
+import delivery_next
+from delivery_state import project_lease_root
 from delivery_state import validate_transition
 from evidence_contract import run_evidence, workspace_source, closure_graph_request
 from role_result import review_result, result_from_output
@@ -2091,6 +2094,27 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, missing.returncode)
         self.assertEqual("blocked\n", inactive.stdout)
         self.assertNotEqual(0, inactive.returncode)
+
+    def test_cli_uses_the_git_common_dir_for_its_default_lease_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init"], check=True, capture_output=True)
+            path = Path(directory) / "state.json"
+            path.write_text(json.dumps({"workspace": str(workspace), "schema_version": 11}), encoding="utf-8")
+            output = StringIO()
+            with patch.object(delivery_next, "upgrade_state", side_effect=lambda value: value), \
+                    patch.object(delivery_next, "validate_state", return_value="scope"), \
+                    patch.object(delivery_next, "validate_active_lease") as validate_lease, \
+                    patch.object(delivery_next, "next_runtime_action", return_value={"action": "allow"}), \
+                    patch.object(sys, "argv", [
+                        "delivery_next.py", "--state", str(path), "--run-id", "run", "--writer-id", "writer",
+                        "--revision", "0",
+                ]), redirect_stdout(output):
+                self.assertEqual(0, delivery_next.main())
+
+            arguments = validate_lease.call_args.args[1]
+            self.assertEqual(str(project_lease_root(workspace)), arguments.lease_root)
 
     def test_active_final_verification_state_selects_its_frozen_final_action(self):
         result = self.current(state(current_stage="verify-final"))

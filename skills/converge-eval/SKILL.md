@@ -11,9 +11,9 @@ metadata:
 
 ## 当前能力预检
 
-确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。只有模型行为评估才使用默认模式，开始收集模型样本前运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`；本目录变量按下一节解析。默认模型评测模式没有 concrete evaluator lifecycle bridge，该模式的公共 API 与 CLI 返回 `status=uncovered`、`eligible=false`、`stop_reason=unavailable_host_bridge`，CLI 退出码为 2，且不读取样本工件。不得要求用户构造不可生成的 worker registry，不能把 blocked legacy fixture 或离线统计测试当作正式 Eval 通过。
+确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。模型行为评估先运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`：只有 Codex app-server schema 与 Claude Code 会话清单均可用时才返回 `status=ready`。任一宿主不可用、身份漂移或会话状态未知时返回 `uncovered`，绝不伪造成功回执。
 
-此时停止模型 Eval，保留模型行为 locked differential 为 `uncovered`；已授权的本地实现、修复与回归测试可继续，但它们不能替代正式验收或发布门禁。以下是冻结的目标证据契约及离线统计规则，只有以后落地真实 bridge 并通过入口行为测试，才可启用采样。私有 `_evaluate_receipts` 仅用于离线 bookkeeping，输出 `evidence_level=diagnostic`、`release_status=uncovered`，不是替代入口。修改判定器时继续保留旧快照，不能用本次候选自证通过。
+要收集宿主证据，必须使用修改前、显式含 `host-eval` 扩展的 Controller Snapshot，并在确定性请求中额外提供 `host`（`codex` 或 `claude`）和预检返回的对应 `host_fingerprint`。每个 control/candidate 场景侧创建独立宿主任务；任务必须终态 `completed` 且不得改动临时工作区，随后才运行冻结 judge 并生成 `host_observed` 回执。超时、消失、非 completed 或工作区改动均为 `uncovered`，不自动重试。私有 `_evaluate_receipts` 仍只用于离线 bookkeeping，输出 `evidence_level=diagnostic`、`release_status=uncovered`。
 
 ## 确定性进程 bridge
 
@@ -33,7 +33,7 @@ metadata:
 
 场景和判定器都来自 control；候选不得修改它们或超出 allowed_scope。helper 为每个场景的每一侧重新导出 Git tree，单独运行冻结判定器，退出后确认进程组清场并删除临时目录；仅支持指向临时工作区内部的相对符号链接。最多 32 个场景，总预算最多 600 秒；零测试、跳过、预期失败、错误、超时归为 uncovered；对照侧缺证据不能计为修复。exploration 单列且不抵消 gating 失败。不接受外部手填的结果样本。
 
-结果为 `deterministic-eval-v1`、`evidence_level=process_observed`，包含双侧退出码、测试分类、输出摘要、tree、suite、catalog 和 controller 指纹及四类结果；`release_status=uncovered` 保留模型行为和宿主 lifecycle 边界。临时目录与进程组是测试隔离，不是针对恶意代码的 OS sandbox；只运行已授权的本地测试。
+无宿主字段时，结果为 `deterministic-eval-v1`、`evidence_level=process_observed` 且 `release_status=uncovered`。带宿主字段时，结果为 `host_observed`，包含每侧受限宿主回执；只有全部 gating 侧均通过才可输出对应 release status。临时目录与进程组是测试隔离，不是针对恶意代码的 OS sandbox；只运行已授权的本地测试。
 
 首次加入该 bridge 时，旧快照没有此入口，不能用新候选自证旧版 locked Eval 通过。该次实现以真实 bridge 集成回归验证；后续任务可以冻结已含 bridge 的旧版本后使用。默认模型模式和既有 v5 离线统计契约保持不变，以下 worker/multi-sample 规则仅适用于模型模式。
 
@@ -41,7 +41,7 @@ metadata:
 
 先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_EVAL_SKILL_DIR`；Suite helper 从其上两级目录解析，不能依赖被测仓库的 `scripts/`。
 
-开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在默认 managed state root 推导的正式 Single State v10 路径，位于候选仓库外，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。Sample v4 的 `evidence_source` 必须是候选仓库外的绝对 JSON artifact，使用 `evaluator_attested` 明确其来源级别，并绑定 worker、judge 与双侧结果；它不能冒充宿主直接签名的结果。旧 `samples=["pass"]` 或 Sample v3 不是证据，必须拒绝。
+开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在候选项目 Git common-dir 的 `.git/convergent-delivery/state` 下推导的正式 Single State v10 路径，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。Sample v4 的 `evidence_source` 必须是候选仓库外的绝对 JSON artifact，使用 `evaluator_attested` 明确其来源级别，并绑定 worker、judge 与双侧结果；它不能冒充宿主直接签名的结果。旧 `samples=["pass"]` 或 Sample v3 不是证据，必须拒绝。
 
 通过 live trusted runner 执行冻结 helper，不能直接运行 candidate 中的副本：
 

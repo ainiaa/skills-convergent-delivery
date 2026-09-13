@@ -60,7 +60,6 @@ BLOCKED_CODES = {
     "no_progress",
     "budget_exhausted",
 }
-DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
 WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
 WORKER_ROLES = frozenset((*PROFILE_WORKER_ROLES, "pdlc", "evaluator", "controller-delegate"))
@@ -1131,7 +1130,7 @@ def main():
     parser.add_argument("--task-key")
     parser.add_argument("--writer-id")
     parser.add_argument("--revision", type=int)
-    parser.add_argument("--lease-root", default=str(DEFAULT_LEASE_ROOT))
+    parser.add_argument("--lease-root")
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--scope-fingerprint")
@@ -1143,6 +1142,9 @@ def main():
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
         raw_state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+        if arguments.lease_root is None:
+            from delivery_state import project_lease_root
+            arguments.lease_root = str(project_lease_root(raw_state["workspace"]))
         arguments.strict_evidence = raw_state.get("schema_version") in SUPPORTED_SCHEMA_VERSIONS
         state = raw_state
         state = upgrade_state(raw_state)

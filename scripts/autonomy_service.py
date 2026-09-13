@@ -18,7 +18,7 @@ from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
 from delivery_next import validate_active_lease, validate_native_tdd_trace, validate_state
-from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
+from delivery_state import project_lease_root, state_path as managed_state_path
 from evidence_contract import run_evidence, workspace_source
 from tdd_impact_guard import MAX_TRACE_BYTES, MAX_RERUN_TIMEOUT_SECONDS, rerun as rerun_tdd_trace
 
@@ -480,15 +480,17 @@ def recovering_action(state):
         and attempts[-1].get("status") in {"running", "observed"}
 
 
-def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
+def run_once(state_path, state_root=None, lease_root=None):
     state_path = Path(state_path).expanduser().resolve()
-    state_root = Path(state_root).expanduser().resolve()
-    lease_root = Path(lease_root or Path.home() / ".convergent-delivery" / "leases").expanduser().resolve()
+    state_root = Path(state_root).expanduser().resolve() if state_root else state_path.parents[2]
     with _service_lock(state_path) as acquired:
         if not acquired:
             return {"status": "busy"}
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
+            lease_root = Path(lease_root).expanduser().resolve() if lease_root else project_lease_root(
+                state["workspace"]
+            )
             validate_state(state, SimpleNamespace(strict_evidence=True),
                            check_workspace=not recovering_action(state))
             if state_path != managed_state_path(
@@ -578,28 +580,35 @@ def run_frozen_service(state_path, state_root, lease_root, block_reason=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state")
-    parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
+    parser.add_argument("--state-root")
     parser.add_argument("--lease-root")
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--frozen-runtime", action="store_true")
     parser.add_argument("--block-reason")
     arguments = parser.parse_args()
-    if bool(arguments.state) == arguments.serve:
-        raise ValueError("provide exactly one of --state or --serve")
+    if not arguments.state and not arguments.serve:
+        raise ValueError("provide --state")
+    if arguments.serve and arguments.state_root is None:
+        print("autonomous service blocked: global state scanning is disabled", file=sys.stderr)
+        return 0
     if arguments.block_reason and (not arguments.state or not arguments.frozen_runtime):
         raise ValueError("--block-reason requires --state and --frozen-runtime")
     if arguments.serve and arguments.frozen_runtime:
         raise ValueError("--frozen-runtime requires --state")
-    if arguments.state:
+    if arguments.state and not arguments.serve:
         try:
             state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+            state_root = Path(arguments.state_root).expanduser().resolve() \
+                if arguments.state_root else Path(arguments.state).expanduser().resolve().parents[2]
+            lease_root = Path(arguments.lease_root).expanduser().resolve() \
+                if arguments.lease_root else None
             if not arguments.frozen_runtime and has_frozen_snapshot(state):
-                outcome = run_frozen_service(arguments.state, arguments.state_root, arguments.lease_root)
+                outcome = run_frozen_service(
+                    arguments.state, state_root, lease_root or project_lease_root(state["workspace"]),
+                )
             elif arguments.block_reason:
                 state_path = Path(arguments.state)
-                lease_root = Path(
-                    arguments.lease_root or Path.home() / ".convergent-delivery" / "leases"
-                )
+                lease_root = lease_root or project_lease_root(state["workspace"])
                 with _service_lock(state_path) as acquired:
                     if not acquired:
                         outcome = {"status": "busy"}
@@ -612,11 +621,11 @@ def main():
                             state, SimpleNamespace(strict_evidence=True),
                             check_workspace=not recovering_action(state),
                         )
-                        block(state_path, state, Path(arguments.state_root),
+                        block(state_path, state, state_root,
                               lease_root, arguments.block_reason)
                         outcome = {"status": "blocked", "reason": arguments.block_reason}
             else:
-                outcome = run_once(arguments.state, arguments.state_root, arguments.lease_root)
+                outcome = run_once(arguments.state, state_root, lease_root)
             print(json.dumps(outcome, sort_keys=True))
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
@@ -628,7 +637,10 @@ def main():
     cleaned_terminals = set()
     failed_paths = {}
     while True:
-        paths, diagnostics = service_paths(arguments.state_root)
+        paths, diagnostics = (
+            ([Path(arguments.state).expanduser().resolve()], [])
+            if arguments.state else service_paths(arguments.state_root)
+        )
         for diagnostic in diagnostics:
             if diagnostic not in reported_diagnostics:
                 print(f"autonomous service blocked: {diagnostic}", file=sys.stderr)
@@ -672,8 +684,7 @@ def main():
                         with _service_lock(path) as acquired:
                             if acquired:
                                 block(path, state, Path(arguments.state_root),
-                                      arguments.lease_root or
-                                      Path.home() / ".convergent-delivery" / "leases", reason)
+                                      arguments.lease_root or project_lease_root(state["workspace"]), reason)
                     continue
                 if has_frozen_snapshot(state):
                     outcome = run_frozen_service(path, arguments.state_root, arguments.lease_root)

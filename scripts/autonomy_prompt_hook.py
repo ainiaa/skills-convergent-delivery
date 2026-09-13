@@ -47,7 +47,8 @@ def arm(workspace):
         scope=["."], runtime="hook", mode="native", task_kind="fix", service_runner=None,
         verification_argv=None, audit_argv=None, audit_findings_exit_code=None, risk_flag=[],
         request_file=None, full_closure=False, task_profile_json=json.dumps(PROFILE),
-        state_root=str(state_root()), lease_root=str(lease_root()), controller_root=str(controller_root),
+        state_root=str(state_root(workspace)), lease_root=str(lease_root(workspace)),
+        controller_root=str(controller_root),
     ))
 
 

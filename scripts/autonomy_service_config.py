@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Install or remove the exact macOS LaunchAgent for Converge autonomy service."""
+"""Remove the legacy macOS LaunchAgent for Converge autonomy service."""
 
 import argparse
 import os
-import plistlib
 import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 
@@ -29,31 +26,7 @@ def main():
         if target.exists():
             target.unlink()
         return 0
-    source = Path(arguments.source).expanduser().resolve()
-    script = source / "scripts" / "autonomy_service.py"
-    if not script.is_file():
-        raise ValueError("autonomy service script is missing")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "Label": LABEL,
-        "ProgramArguments": [sys.executable, str(script), "--serve"],
-        "RunAtLoad": True,
-        "KeepAlive": {"SuccessfulExit": False},
-        "ThrottleInterval": 5,
-        "ProcessType": "Background",
-    }
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            plistlib.dump(payload, handle, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, target)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-    subprocess.run(["launchctl", "bootout", domain], capture_output=True, check=False)
-    subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(target)], check=True)
-    return 0
+    raise ValueError("autonomy service LaunchAgent installation is no longer supported")
 
 
 if __name__ == "__main__":

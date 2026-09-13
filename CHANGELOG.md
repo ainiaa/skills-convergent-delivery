@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 将 managed state 与 writer lease 默认迁移到 Git common-dir 的 `.git/convergent-delivery/`；Hook、lifecycle、评测和 service 均按项目路径解析，linked worktree 共享同一状态与租约。service 启动时只处理其持久化的单个 state，不再全局扫描项目或依赖 LaunchAgent。
 - 强化自治 hook 的安装、注册验证与失败回滚，避免不完整配置或意外替换现有链接。
 - 提升自治服务、lease 与任务恢复的并发安全、失败处理和清理可靠性。
 - 收紧 work item、TDD trace、状态快照与跨服务路由的验证边界，防止过期或无关证据放行。

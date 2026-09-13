@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -98,6 +97,14 @@ class AutonomyBeginTest(unittest.TestCase):
         self.assertNotEqual(
             _task_key(*arguments, ["fix login redirect"]),
             _task_key(*arguments, ["fix payment retry"]),
+        )
+
+    def test_task_key_does_not_bind_the_worktree_path(self):
+        arguments = ("a" * 40, ["."], ["tests pass"], ["fix login redirect"])
+
+        self.assertEqual(
+            _task_key(Path("/repo/primary"), *arguments),
+            _task_key(Path("/repo/linked"), *arguments),
         )
 
     def test_service_mode_rejects_the_primary_checkout_before_acquiring_a_lease(self):
@@ -215,19 +222,7 @@ class AutonomyBeginTest(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertIn("isolated Git worktree", result.stderr)
 
-    def test_service_mode_rejects_custom_roots_that_the_launchagent_cannot_use(self):
-        arguments = SimpleNamespace(
-            workspace=str(ROOT), requirement=["complete task"], acceptance=["tests pass"], scope=["."],
-            runtime="service", service_runner="codex-exec-v1", verification_argv='["true"]',
-            audit_argv='["python3", "-c", "pass"]', risk_flag=[],
-            state_root="/tmp/converge-state", lease_root="/tmp/converge-leases",
-        )
-
-        with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True):
-            with self.assertRaisesRegex(ValueError, "default managed roots"):
-                autonomy_begin.run(arguments)
-
-    def test_service_run_wakes_the_launchagent_after_persisting_state(self):
+    def test_service_run_starts_only_its_persisted_project_state(self):
         state = {
             "repo_id": "/repo", "workspace": "/workspace", "task_key": "task",
             "run_id": "run", "writer_id": "writer",
@@ -242,19 +237,23 @@ class AutonomyBeginTest(unittest.TestCase):
         completed = subprocess.CompletedProcess([], 0, '{"status": "ok"}', "")
 
         with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
-                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
                 patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
                 patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
                 patch.object(autonomy_begin, "controller_identity", return_value={}), \
                 patch.object(autonomy_begin, "initial_state", return_value=state), \
                 patch.object(autonomy_begin, "arm", return_value=state), \
-                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed, completed]) as run:
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed]) as run, \
+                patch.object(autonomy_begin.subprocess, "Popen") as service:
             result = autonomy_begin.run(arguments)
 
         self.assertEqual("armed", result["status"])
         self.assertEqual(
-            ["launchctl", "kickstart", f"gui/{os.getuid()}/com.convergent-delivery.autonomy"],
-            run.call_args_list[2].args[0],
+            [
+                sys.executable, str(SCRIPT.with_name("autonomy_service.py")), "--serve",
+                "--state", result["state_path"], "--state-root", "/state",
+                "--lease-root", "/.convergent-delivery/leases",
+            ],
+            service.call_args.args[0],
         )
 
     def test_service_launchagent_wake_failure_terminalizes_before_releasing_the_lease(self):
@@ -273,18 +272,18 @@ class AutonomyBeginTest(unittest.TestCase):
         failed = subprocess.CompletedProcess([], 2, "", "service unavailable")
 
         with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
-                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
                 patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
                 patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
                 patch.object(autonomy_begin, "controller_identity", return_value={}), \
                 patch.object(autonomy_begin, "initial_state", return_value=state), \
                 patch.object(autonomy_begin, "arm", return_value=state), \
                 patch("autonomy_begin._terminalize_service_start_failure", create=True) as terminalize, \
-                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed, failed]) as run:
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed]), \
+                patch.object(autonomy_begin.subprocess, "Popen", side_effect=OSError("service unavailable")) as service:
             with self.assertRaisesRegex(ValueError, "could not wake autonomous service"):
                 autonomy_begin.run(arguments)
 
-        self.assertEqual(3, run.call_count)
+        service.assert_called_once()
         terminalize.assert_called_once()
         self.assertIn("service unavailable", terminalize.call_args.args[2])
 
@@ -392,7 +391,6 @@ class AutonomyBeginTest(unittest.TestCase):
         wake_failed = subprocess.CompletedProcess([], 2, "", "service unavailable")
 
         with patch.object(autonomy_begin, "_is_linked_worktree", return_value=True), \
-                patch.object(autonomy_begin, "DEFAULT_STATE_ROOT", Path("/state")), \
                 patch.object(autonomy_begin.Path, "home", return_value=Path("/")), \
                 patch.object(autonomy_begin, "create_snapshot", return_value={"root": "/control"}), \
                 patch.object(autonomy_begin, "controller_identity", return_value={}), \
@@ -400,8 +398,8 @@ class AutonomyBeginTest(unittest.TestCase):
                 patch.object(autonomy_begin, "arm", return_value=state), \
                 patch.object(autonomy_begin, "_terminalize_service_start_failure",
                              side_effect=ValueError("cleanup failed")), \
-                patch.object(autonomy_begin.subprocess, "run",
-                             side_effect=[completed, completed, wake_failed]):
+                patch.object(autonomy_begin.subprocess, "run", side_effect=[completed, completed]), \
+                patch.object(autonomy_begin.subprocess, "Popen", side_effect=OSError("service unavailable")):
             with self.assertRaisesRegex(ValueError, "could not wake autonomous service"):
                 autonomy_begin.run(arguments)
 

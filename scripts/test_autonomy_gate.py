@@ -3,8 +3,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 from autonomy_gate import decide
+from delivery_state import project_lease_root
 from test_delivery_next import (
     EVIDENCE, SOURCE, autonomous_state, committed_attempt,
 )
@@ -95,6 +99,21 @@ class AutonomyGateTest(unittest.TestCase):
 
         self.assertEqual("block", decision["decision"])
         self.assertNotIn("next_action", decision)
+
+    def test_cli_uses_the_git_common_dir_for_its_default_lease_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init"], check=True, capture_output=True)
+            path = self.write(directory, {"workspace": str(workspace)})
+            output = StringIO()
+            with patch("autonomy_gate.decide", return_value={"decision": "allow"}) as decide, \
+                    patch.object(sys, "argv", ["autonomy_gate.py", "--state", str(path)]), \
+                    redirect_stdout(output):
+                from autonomy_gate import main
+                self.assertEqual(0, main())
+
+            self.assertEqual(project_lease_root(workspace), Path(decide.call_args.kwargs["lease_root"]))
 
 
 if __name__ == "__main__":

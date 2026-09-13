@@ -3,8 +3,8 @@
 !.claude/skills/
 !.claude/skills/converge
 
-# Runtime state belongs under ~/.convergent-delivery, never in the repository.
-# No ignore rules for it on purpose: any state appearing here must show up as untracked.
+# Per-project runtime state and leases are private implementation details.
+.convergent-delivery/
 
 __pycache__/
 *.py[cod]

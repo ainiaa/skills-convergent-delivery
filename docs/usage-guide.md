@@ -152,9 +152,10 @@ bash install.sh --uninstall --target all
 ```
 
 普通 `--uninstall` 不移除已安装的 autonomy Stop Hook；需要时先执行
-`bash install.sh --autonomy-uninstall --target <host>`（service 另用 `--autonomy-service-uninstall`）。
+`bash install.sh --autonomy-uninstall --target <host>`（如曾安装旧 service，可另用
+`--autonomy-service-uninstall` 清理遗留 LaunchAgent）。
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；Schema v11 在 v10 之上冻结 autonomy manifest、预算与动作尝试记录，自治续跑 hook 按同一组受支持 schema 版本识别活跃 run。只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。异模型 leaf 使用 [Worker Runner](../references/worker-runners.md) 的冻结 profile；其 receipt 不是宿主 tree evidence，必须由 controller 复核。
+单任务协调 ledger 保存在 Git common-dir 内的 `.git/convergent-delivery/state/`，writer lease 在同一目录的 `leases/`；因此 linked worktree 共享同一状态与租约。非 Git 工作区才回退到工作目录的 `.convergent-delivery/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；Schema v11 在 v10 之上冻结 autonomy manifest、预算与动作尝试记录，自治续跑 hook 按同一组受支持 schema 版本识别活跃 run。只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。异模型 leaf 使用 [Worker Runner](../references/worker-runners.md) 的冻结 profile；其 receipt 不是宿主 tree evidence，必须由 controller 复核。
 
 Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v4 / Receipt v4。路径仅由 repo 与 `plan_id` 推导；run takeover 在同一文件转移 owner。Receipt 从派生的正式 delegate state 读取真源并校验完整 Provider Binding、Source Receipt v2 与 Git 前序链，不接受内嵌自证状态。
 
@@ -167,7 +168,7 @@ Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用
 git worktree add ../service-fix -b convergent/fix-payment HEAD
 ```
 
-Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent-delivery/state/`，因此跨运行时既会互斥，也能恢复同一任务。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
+同一 Git 项目的 Codex 与 Claude Code 共用 `.git/convergent-delivery/leases/` 和 `.git/convergent-delivery/state/`，因此跨运行时和 linked worktree 均会互斥，也能恢复同一任务。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
 
 同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
 

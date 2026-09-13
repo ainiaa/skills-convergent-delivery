@@ -127,7 +127,6 @@ OFFLINE=0
 FORCE=0
 REPLACE_SYMLINK=0
 AUTONOMY=0
-AUTONOMY_SERVICE=0
 MULTIMODEL=0
 EXTENSION_ONLY_UNINSTALL=0
 INSTALL_LOCK_HELD=0
@@ -198,7 +197,10 @@ while [[ $# -gt 0 ]]; do
     --replace-symlink) REPLACE_SYMLINK=1; shift ;;
     --autonomy) AUTONOMY=1; shift ;;
     --multimodel) MULTIMODEL=1; shift ;;
-    --autonomy-service) AUTONOMY_SERVICE=1; shift ;;
+    --autonomy-service)
+      echo "Error: --autonomy-service is no longer supported; service runs start per state." >&2
+      exit 1
+      ;;
     --autonomy-service-uninstall) ACTION="service-uninstall"; shift ;;
     --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
     --multimodel-uninstall) ACTION="uninstall"; MULTIMODEL=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
@@ -223,7 +225,7 @@ fi
 if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
   SKILL_NAMES=()
 fi
-if [[ "$AUTONOMY" -eq 1 || "$AUTONOMY_SERVICE" -eq 1 ]]; then
+if [[ "$AUTONOMY" -eq 1 ]]; then
   SKILL_NAMES+=(converge-autonomy)
 fi
 if [[ "$MULTIMODEL" -eq 1 ]]; then
@@ -730,7 +732,7 @@ autonomy_service_config() {
   local args=(--source "$SOURCE_DIR")
   [[ "$remove" == "remove" ]] && args+=(--remove)
   python3 "${SOURCE_DIR}/scripts/autonomy_service_config.py" "${args[@]}"
-  [[ "$remove" == "remove" ]] && echo "autonomy service removed" || echo "autonomy service installed"
+  echo "autonomy service removed"
 }
 
 is_skill_link() {
@@ -797,9 +799,6 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   if [[ "$AUTONOMY" -eq 1 ]]; then
     for runtime in "${RUNTIMES[@]}"; do autonomy_preflight "$runtime"; done
   fi
-  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
-    autonomy_service_config
-  fi
   for runtime in "${RUNTIMES[@]}"; do
     migrate_legacy_target "$runtime"
   done
@@ -823,10 +822,6 @@ elif [[ "$ACTION" == "uninstall" ]]; then
   if [[ "$AUTONOMY" -eq 1 ]]; then
     prepare_removal_source "scripts/autonomy_hook_config.py"
     for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime" remove; done
-  fi
-  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
-    prepare_removal_source "scripts/autonomy_service_config.py"
-    autonomy_service_config remove
   fi
   for runtime in "${RUNTIMES[@]}"; do
     for skill in "${SKILL_NAMES[@]}"; do

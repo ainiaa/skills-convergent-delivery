@@ -65,6 +65,18 @@ class AutonomyPromptHookTest(unittest.TestCase):
                 self.assertEqual(2, autonomy_prompt_hook.main())
         self.assertEqual("block", json.loads(output.getvalue())["decision"])
 
+    def test_arm_uses_the_requested_workspace_for_default_roots(self):
+        import autonomy_prompt_hook
+        workspace = "/repo/linked"
+        with patch.object(autonomy_prompt_hook, "active_state", return_value=None), \
+                patch.object(autonomy_prompt_hook, "state_root", return_value=Path("/state")) as state_root, \
+                patch.object(autonomy_prompt_hook, "lease_root", return_value=Path("/leases")) as lease_root, \
+                patch.object(autonomy_prompt_hook, "run", return_value={"status": "armed"}):
+            autonomy_prompt_hook.arm(workspace)
+
+        state_root.assert_called_once_with(workspace)
+        lease_root.assert_called_once_with(workspace)
+
     def test_english_exact_command_arms_but_other_user_prompts_are_ignored(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

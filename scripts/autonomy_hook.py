@@ -11,7 +11,7 @@ from pathlib import Path
 
 from autonomy_gate import decide
 from provider_contract import SUPPORTED_SCHEMA_VERSIONS
-from delivery_state import repository_state_root, workspace_state_roots
+from delivery_state import project_lease_root, project_state_root, repository_state_root, workspace_state_roots
 
 
 def approve():
@@ -24,7 +24,7 @@ def block(reason):
 
 def active_state(workspace):
     workspace = str(Path(workspace).expanduser().resolve())
-    base = state_root()
+    base = state_root(workspace)
     roots = [repository_state_root(base, workspace) if root == base else root
              for root in workspace_state_roots(base, workspace)]
     matches = []
@@ -45,22 +45,24 @@ def active_state(workspace):
     return matches[0] if matches else None
 
 
-def state_root():
-    return Path(os.environ.get(
-        "CONVERGE_STATE_ROOT", Path.home() / ".convergent-delivery" / "state"
-    )).expanduser().resolve()
+def state_root(workspace=None):
+    configured = os.environ.get("CONVERGE_STATE_ROOT")
+    return Path(configured).expanduser().resolve() if configured else project_state_root(
+        workspace or Path.cwd()
+    )
 
 
-def lease_root():
-    return Path(os.environ.get(
-        "CONVERGE_LEASE_ROOT", Path.home() / ".convergent-delivery" / "leases"
-    )).expanduser().resolve()
+def lease_root(workspace=None):
+    configured = os.environ.get("CONVERGE_LEASE_ROOT")
+    return Path(configured).expanduser().resolve() if configured else project_lease_root(
+        workspace or Path.cwd()
+    )
 
 
 def write_state(state):
     command = [
         sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
-        "--lease-root", str(lease_root()), "--state-root", str(state_root()),
+        "--lease-root", str(lease_root(state["workspace"])), "--state-root", str(state_root(state["workspace"])),
         "--repo-id", state["repo_id"], "--task-key", state["task_key"],
         "--run-id", state["run_id"], "--writer-id", state["writer_id"],
         "--expected-revision", str(state["revision"] - 1),
@@ -78,7 +80,7 @@ def terminalize_hook_failure(state_path, state, reason):
     write_state(candidate)
     release = subprocess.run([
         sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "release",
-        "--root", str(lease_root()), "--state-root", str(state_root()),
+        "--root", str(lease_root(state["workspace"])), "--state-root", str(state_root(state["workspace"])),
         "--repo", state["repo_id"], "--workspace", state["workspace"],
         "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
     ], text=True, capture_output=True, check=False)
@@ -124,19 +126,11 @@ def continuation_intent(state, next_action):
 
 def run_hook(host, payload, active):
     state_path, state = active
-    result = decide(state, lease_root=lease_root())
+    result = decide(state, lease_root=lease_root(state["workspace"]))
     if result["decision"] == "allow":
         return approve(), 0
     runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime", {"mode": "hook"})
     if runtime.get("mode") == "service":
-        label = "com.convergent-delivery.autonomy"
-        plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
-        if not plist.is_file():
-            raise ValueError("autonomous service is not installed")
-        subprocess.run(
-            ["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"],
-            capture_output=True, text=True, check=True, timeout=10,
-        )
         return approve(), 0
     if host == "codex":
         attempts = state["execution_control"]["autonomy"]["action_attempts"]

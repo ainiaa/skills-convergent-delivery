@@ -118,14 +118,29 @@ def _clean_touched_paths(paths):
     return clean
 
 
+def _workspace_fingerprint(root):
+    digest = hashlib.sha256()
+    for path in sorted(Path(root).rglob("*")):
+        relative = path.relative_to(root).as_posix().encode()
+        if path.is_symlink():
+            digest.update(b"link\0" + relative + b"\0" + os.readlink(path).encode())
+        elif path.is_file():
+            digest.update(b"file\0" + relative + b"\0" + path.read_bytes())
+        elif not path.is_dir():
+            raise ValueError("evaluation workspace contains an unsupported file")
+    return digest.hexdigest()
+
+
 def _require_managed_state_path(payload, path, frozen_execution):
     if not frozen_execution:
         return
-    root = Path.home() / ".convergent-delivery" / "state"
-    repo = hashlib.sha256(str(Path(payload["repo_id"]).expanduser().resolve()).encode()).hexdigest()
-    task = hashlib.sha256(payload["task_key"].encode()).hexdigest()
-    run = hashlib.sha256(payload["run_id"].encode()).hexdigest()
-    if path != (root / repo / task / f"{run}.json").resolve():
+    from delivery_state import project_state_root, state_path
+
+    expected = state_path(
+        project_state_root(payload["workspace"]), payload["repo_id"],
+        payload["task_key"], payload["run_id"],
+    )
+    if path != expected:
         raise ValueError("worker_state_source must be the managed state path")
 
 
@@ -250,19 +265,45 @@ def _sample_receipt(value, control_source, candidate_source, artifact_root,
     return value
 
 
+def _host_bridge():
+    scripts = str(CONTROL_ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import host_bridge
+    except ImportError as error:
+        raise ValueError("the frozen Controller Snapshot does not include host-eval") from error
+    return host_bridge
+
+
 def preflight():
-    """No concrete host bridge can produce this contract's evaluator registry yet."""
+    """A live evaluation needs both frozen host adapters to be available."""
+    try:
+        adapters = _host_bridge().preflight()
+    except (OSError, ValueError) as error:
+        adapters = {"codex": {"status": "unavailable", "reason": str(error)},
+                    "claude": {"status": "unavailable", "reason": str(error)}}
+    ready = all(
+        isinstance(adapters.get(host), dict) and adapters[host].get("status") == "ready"
+        for host in ("codex", "claude")
+    )
     return {
-        "status": "uncovered", "eligible": False,
-        "stop_reason": "unavailable_host_bridge",
-        "uncovered": ["locked_differential", "host_evaluator_lifecycle"],
-        "reason": "This package cannot create host-observed evaluator workers; do not fabricate a registry.",
+        "status": "ready" if ready else "uncovered", "eligible": ready,
+        "stop_reason": None if ready else "unavailable_host_bridge",
+        "uncovered": [] if ready else ["locked_differential", "host_evaluator_lifecycle"],
+        "adapters": adapters,
     }
 
 
 def evaluate(request, repository_root):
-    # ponytail: fail before collecting samples until a concrete host bridge exists.
-    return preflight()
+    availability = preflight()
+    if not availability["eligible"]:
+        return availability
+    return {
+        **availability, "status": "uncovered", "eligible": False,
+        "stop_reason": "live_collection_not_requested",
+        "uncovered": ["locked_differential", "host_evaluator_lifecycle"],
+    }
 
 
 def _evaluate_receipts(request, repository_root):
@@ -441,13 +482,28 @@ def deterministic_evaluate(request, repository_root):
         sys.path.insert(0, scripts)
     from controller_snapshot import validate_snapshot
     from evidence_contract import _run_command, test_execution_result
-    if not isinstance(request, dict) or set(request) != {
-            'controller_snapshot', 'control_source', 'candidate_source', 'suite', 'timeout_seconds'}:
+    fields = {'controller_snapshot', 'control_source', 'candidate_source', 'suite', 'timeout_seconds'}
+    host_fields = {'host', 'host_fingerprint'}
+    if not isinstance(request, dict) or set(request) not in (fields, fields | host_fields):
         raise ValueError('deterministic request fields are invalid')
     root = Path(repository_root).resolve()
     snapshot = validate_snapshot(request['controller_snapshot'])
     if Path(snapshot['root']) != CONTROL_ROOT or CONTROL_ROOT.is_relative_to(root):
         raise ValueError('run the evaluator from its frozen snapshot outside the repository')
+    bridge = None
+    host = None
+    if host_fields <= set(request):
+        from controller_snapshot import snapshot_extensions
+        if 'host-eval' not in snapshot_extensions(snapshot):
+            raise ValueError('live host evaluation requires a frozen host-eval snapshot')
+        host = request['host']
+        if host not in {'codex', 'claude'} or not isinstance(request['host_fingerprint'], str):
+            raise ValueError('host evaluation request is invalid')
+        availability = preflight()
+        adapter = availability['adapters'].get(host, {})
+        if not availability['eligible'] or adapter.get('host_fingerprint') != request['host_fingerprint']:
+            raise ValueError('frozen host adapter is unavailable or changed')
+        bridge = _host_bridge()
     timeout = request['timeout_seconds']
     if type(timeout) not in (int, float) or not 0 < timeout <= 600:
         raise ValueError('deterministic total timeout must be in (0, 600]')
@@ -544,20 +600,55 @@ sys.exit(0 if result.wasSuccessful() and result.testsRun else 1)
                 export(archives[side], workspace)
                 judge = base / 'judge.py'
                 judge.write_bytes(judges[case['judge']])
-                code, out, err = _run_command(workspace,
-                    [sys.executable, '-I', '-c', program, str(workspace), str(judge)],
-                    max(0, deadline - time.monotonic()))
+                command = [sys.executable, '-I', '-c', program, str(workspace), str(judge)]
+                host_receipt = None
+                host_completed = host is None
+                observation = None
+                if host is not None:
+                    prompt = (
+                        f'Inspect frozen evaluator scenario {case["id"]} ({side}) in the workspace. '
+                        'Do not modify files. Report completion when your read-only inspection is finished.'
+                    )
+                    package = bridge.package(
+                        host=host, sample_id=f'{case["class"]}:{case["id"]}:{side}', workspace=workspace,
+                        prompt=prompt, judge_argv=command,
+                        launch_fingerprint=hashlib.sha256(json.dumps(
+                            {'scenario': case['id'], 'class': case['class'], 'side': side,
+                             'tree': control if side == 'control' else candidate}, sort_keys=True,
+                        ).encode()).hexdigest(), host_fingerprint=request['host_fingerprint'],
+                    )
+                    before = _workspace_fingerprint(workspace)
+                    try:
+                        observation = bridge.wait_terminal(
+                            package, bridge.start(package, prompt), deadline=deadline,
+                        )
+                        if _workspace_fingerprint(workspace) != before:
+                            raise ValueError('host evaluator changed the disposable workspace')
+                        host_completed = observation['status'] == 'completed'
+                    except ValueError:
+                        observation = None
+                if host is not None and observation is None:
+                    code, out, err = 124, b'', b''
+                else:
+                    code, out, err = _run_command(workspace, command, max(0, deadline - time.monotonic()))
+                    if host is not None:
+                        host_receipt = bridge.finalize(package, observation, {
+                            'argv': command, 'exit_code': code,
+                            'stdout_fingerprint': hashlib.sha256(out).hexdigest(),
+                            'stderr_fingerprint': hashlib.sha256(err).hexdigest(),
+                        })
                 counts = test_execution_result([sys.executable, '-m', 'unittest'], out, err)
                 valid = (counts is not None and
                          not any(counts[key] for key in ('errors', 'skipped', 'xfailed', 'xpassed')))
                 passed = valid and code == 0 and counts['passed'] > 0 and counts['failed'] == 0
                 failed = valid and code == 1 and counts['failed'] > 0
-                outcome = 'pass' if passed else 'fail' if failed else 'uncovered'
+                outcome = 'pass' if passed and host_completed else 'fail' if failed and host_completed else 'uncovered'
                 if judge.read_bytes() != judges[case['judge']]:
                     raise ValueError('frozen judge changed during evaluation')
-                sample[side] = {'pass': bool(passed), 'outcome': outcome, 'exit_code': code, 'test_check': counts,
-                                'stdout_fingerprint': hashlib.sha256(out).hexdigest(),
-                                'stderr_fingerprint': hashlib.sha256(err).hexdigest()}
+                sample[side] = {'pass': bool(passed and host_completed), 'outcome': outcome, 'exit_code': code,
+                                'test_check': counts, 'stdout_fingerprint': hashlib.sha256(out).hexdigest(),
+                                'stderr_fingerprint': hashlib.sha256(err).hexdigest(),
+                                **({'host_receipt': host_receipt} if host is not None else {})}
         samples.append(sample)
     validate_snapshot(snapshot)
     differential = {key: [] for key in ('fixed', 'regressions', 'both_pass', 'both_fail')}
@@ -572,8 +663,10 @@ sys.exit(0 if result.wasSuccessful() and result.testsRun else 1)
     passed = all(item['candidate']['pass'] for item in samples if item['class'] != 'exploration')
     missing = any(item[side]['outcome'] == 'uncovered' for item in samples
                   if item['class'] != 'exploration' for side in ('control', 'candidate'))
-    return {'schema_version': 'deterministic-eval-v1', 'status': 'uncovered' if missing else 'pass' if passed else 'fail',
-            'evidence_level': 'process_observed', 'release_status': 'uncovered',
+    status = 'uncovered' if missing else 'pass' if passed else 'fail'
+    return {'schema_version': 'deterministic-eval-v1', 'status': status,
+            'evidence_level': 'host_observed' if host is not None else 'process_observed',
+            'release_status': status if host is not None else 'uncovered',
             'control_tree': control, 'candidate_tree': candidate,
             'controller_fingerprint': snapshot['protocol_fingerprint'],
             'suite_fingerprint': hashlib.sha256(suite_raw).hexdigest(),
@@ -604,8 +697,15 @@ def main():
             result = {'status': 'uncovered', 'stop_reason': str(error)}
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result['status'] in {'ready', 'pass'} else 2
-    print(json.dumps(preflight(), ensure_ascii=False, sort_keys=True))
-    return 2
+    if arguments.preflight:
+        result = preflight()
+    else:
+        try:
+            result = evaluate(json.loads(Path(arguments.input).read_text()), arguments.repository)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            result = {"status": "uncovered", "eligible": False, "stop_reason": str(error), "uncovered": []}
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0 if result["status"] == "ready" else 2
 
 
 if __name__ == "__main__":

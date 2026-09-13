@@ -97,7 +97,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("service-runner-ledger", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-invalid-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-hook-state-protected", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("service-wakeup-non-destructive", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("service-hook-approves-without-launchagent", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-report-only-revision-blocked", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-no-progress-terminalizes", [item["id"] for item in catalog["scenarios"]])
@@ -107,7 +107,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertIn("doctor-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("doctor-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("begin-release-failure-visible", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("service-launchagent-install-rejected", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
 
     def test_diagnostic_execution_runs_the_minimum_frozen_behavior_checks_without_transcripts(self):
