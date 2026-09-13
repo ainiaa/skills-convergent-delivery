@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from autonomy_arm import arm
 from delivery_engine import controller_identity
 from delivery_state import state_path
 from test_delivery_next import state
@@ -156,6 +157,72 @@ class AutonomyArmTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual({"status": "written", "revision": 1}, json.loads(result.stdout))
             self.assertEqual(11, json.loads(managed.read_text(encoding="utf-8"))["schema_version"])
+
+
+    def test_arm_requires_requirement_and_acceptance_items(self):
+        with self.assertRaisesRegex(ValueError, "requirement and acceptance"):
+            arm(state(), [], [])
+
+    def test_service_arm_rejects_a_runner_that_does_not_match_the_implementer_profile(self):
+        result = self.invoke(
+            self.service_state(), "--requirement", "fix", "--acceptance", "pass",
+            "--runtime", "service", "--service-runner", "claude-code-v1",
+            "--verification-argv", '["python3", "-m", "unittest"]',
+            "--audit-argv", '["python3", "-c", "pass"]',
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("does not match", result.stderr)
+
+    def test_service_arm_validates_the_audit_findings_exit_code(self):
+        invalid = self.invoke(
+            self.service_state(), "--requirement", "fix", "--acceptance", "pass",
+            "--runtime", "service", "--service-runner", "codex-exec-v1",
+            "--verification-argv", '["python3", "-m", "unittest"]',
+            "--audit-argv", '["python3", "-c", "pass"]',
+            "--audit-findings-exit-code", "0",
+        )
+        valid = self.invoke(
+            self.service_state(), "--requirement", "fix", "--acceptance", "pass",
+            "--runtime", "service", "--service-runner", "codex-exec-v1",
+            "--verification-argv", '["python3", "-m", "unittest"]',
+            "--audit-argv", '["python3", "-c", "pass"]',
+            "--audit-findings-exit-code", "3",
+        )
+
+        self.assertEqual(2, invalid.returncode)
+        self.assertIn("audit findings exit code", invalid.stderr)
+        self.assertEqual(0, valid.returncode, valid.stderr)
+        runtime = json.loads(valid.stdout)["execution_control"]["autonomy"]["runtime"]
+        self.assertEqual(3, runtime["audit_findings_exit_code"])
+
+    def test_hook_arm_rejects_service_only_arguments(self):
+        result = self.invoke(
+            state(), "--requirement", "fix", "--acceptance", "pass",
+            "--verification-argv", '["true"]',
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("runtime is invalid", result.stderr)
+
+    def test_write_requires_the_managed_write_parameters(self):
+        result = self.invoke(state(), "--requirement", "fix", "--acceptance", "pass", "--write")
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--write requires", result.stderr)
+
+    def test_write_reports_a_failed_managed_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.invoke(
+                state(), "--requirement", "fix", "--acceptance", "pass", "--write",
+                "--lease-root", str(root / "empty-leases"), "--state-root", str(root / "state"),
+                "--repo-id", "repo", "--task-key", "task", "--run-id", "run",
+                "--writer-id", "writer", "--expected-revision", "0",
+            )
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("state write blocked", result.stderr)
 
 
 if __name__ == "__main__":

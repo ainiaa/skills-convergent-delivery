@@ -18,9 +18,14 @@ from autonomy_gate import decide
 from claude_exec_runner import execute_launch as execute_claude, plan_launch as plan_claude
 from codex_exec_runner import execute_launch as execute_codex, plan_launch as plan_codex
 from delivery_next import validate_active_lease, validate_native_tdd_trace, validate_state
-from delivery_state import DEFAULT_STATE_ROOT, state_path as managed_state_path
+from delivery_state import project_lease_root, state_path as managed_state_path
 from evidence_contract import run_evidence, workspace_source
 from tdd_impact_guard import MAX_TRACE_BYTES, MAX_RERUN_TIMEOUT_SECONDS, rerun as rerun_tdd_trace
+
+
+# Serve retries a busy path once per 5 second cycle; 60 consecutive busy cycles
+# is about 5 minutes without any lock progress before the path needs recovery.
+MAX_BUSY_CYCLES = 60
 
 
 def service_runtime(state):
@@ -87,6 +92,12 @@ def _update(state_path, state_root, lease_root, mutate, *, refresh_source=False)
     if refresh_source:
         state["source_receipt"] = workspace_source(state["workspace"], state["baseline"]["commit"])
         state["source_fingerprint"] = state["source_receipt"]["source_fingerprint"]
+        candidate = state["ledger"].get("tdd_trace_candidate")
+        if isinstance(candidate, dict) and candidate.get("source") != state["source_receipt"]:
+            # The candidate describes the previous source; the next action re-runs the
+            # runner and stores a fresh one, so keep the transition self-consistent
+            # instead of failing validate_state until manual recovery.
+            state["ledger"].pop("tdd_trace_candidate", None)
     rounds = state["execution_control"]["review"]["rounds"]
     if rounds and rounds[-1]["source_fingerprint"] != state["source_fingerprint"]:
         # Preserve earlier reviews; a changed source starts with no review evidence.
@@ -469,15 +480,17 @@ def recovering_action(state):
         and attempts[-1].get("status") in {"running", "observed"}
 
 
-def run_once(state_path, state_root=DEFAULT_STATE_ROOT, lease_root=None):
+def run_once(state_path, state_root=None, lease_root=None):
     state_path = Path(state_path).expanduser().resolve()
-    state_root = Path(state_root).expanduser().resolve()
-    lease_root = Path(lease_root or Path.home() / ".convergent-delivery" / "leases").expanduser().resolve()
+    state_root = Path(state_root).expanduser().resolve() if state_root else state_path.parents[2]
     with _service_lock(state_path) as acquired:
         if not acquired:
             return {"status": "busy"}
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
+            lease_root = Path(lease_root).expanduser().resolve() if lease_root else project_lease_root(
+                state["workspace"]
+            )
             validate_state(state, SimpleNamespace(strict_evidence=True),
                            check_workspace=not recovering_action(state))
             if state_path != managed_state_path(
@@ -567,49 +580,73 @@ def run_frozen_service(state_path, state_root, lease_root, block_reason=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state")
-    parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
+    parser.add_argument("--state-root")
     parser.add_argument("--lease-root")
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--frozen-runtime", action="store_true")
     parser.add_argument("--block-reason")
     arguments = parser.parse_args()
-    if bool(arguments.state) == arguments.serve:
-        raise ValueError("provide exactly one of --state or --serve")
+    if not arguments.state and not arguments.serve:
+        raise ValueError("provide --state")
+    if arguments.serve and arguments.state_root is None:
+        print("autonomous service blocked: global state scanning is disabled", file=sys.stderr)
+        return 0
     if arguments.block_reason and (not arguments.state or not arguments.frozen_runtime):
         raise ValueError("--block-reason requires --state and --frozen-runtime")
     if arguments.serve and arguments.frozen_runtime:
         raise ValueError("--frozen-runtime requires --state")
-    if arguments.state:
+    if arguments.state and not arguments.serve:
         try:
             state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
+            state_root = Path(arguments.state_root).expanduser().resolve() \
+                if arguments.state_root else Path(arguments.state).expanduser().resolve().parents[2]
+            lease_root = Path(arguments.lease_root).expanduser().resolve() \
+                if arguments.lease_root else None
             if not arguments.frozen_runtime and has_frozen_snapshot(state):
-                outcome = run_frozen_service(arguments.state, arguments.state_root, arguments.lease_root)
-            elif arguments.block_reason:
-                block(
-                    Path(arguments.state), state, Path(arguments.state_root),
-                    Path(arguments.lease_root or Path.home() / ".convergent-delivery" / "leases"),
-                    arguments.block_reason,
+                outcome = run_frozen_service(
+                    arguments.state, state_root, lease_root or project_lease_root(state["workspace"]),
                 )
-                outcome = {"status": "blocked", "reason": arguments.block_reason}
+            elif arguments.block_reason:
+                state_path = Path(arguments.state)
+                lease_root = lease_root or project_lease_root(state["workspace"])
+                with _service_lock(state_path) as acquired:
+                    if not acquired:
+                        outcome = {"status": "busy"}
+                    else:
+                        # Re-read under the lock: the pre-lock snapshot was only
+                        # routing input and may be stale by the time the lock is
+                        # granted, so validation must see the current state.
+                        state = json.loads(state_path.read_text(encoding="utf-8"))
+                        validate_state(
+                            state, SimpleNamespace(strict_evidence=True),
+                            check_workspace=not recovering_action(state),
+                        )
+                        block(state_path, state, state_root,
+                              lease_root, arguments.block_reason)
+                        outcome = {"status": "blocked", "reason": arguments.block_reason}
             else:
-                outcome = run_once(arguments.state, arguments.state_root, arguments.lease_root)
+                outcome = run_once(arguments.state, state_root, lease_root)
             print(json.dumps(outcome, sort_keys=True))
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"autonomous service blocked: {error}", file=sys.stderr)
             return 2
     cycles = {}
+    busy_cycles = {}
     reported_diagnostics = set()
     cleaned_terminals = set()
-    failed_paths = set()
+    failed_paths = {}
     while True:
-        paths, diagnostics = service_paths(arguments.state_root)
+        paths, diagnostics = (
+            ([Path(arguments.state).expanduser().resolve()], [])
+            if arguments.state else service_paths(arguments.state_root)
+        )
         for diagnostic in diagnostics:
             if diagnostic not in reported_diagnostics:
                 print(f"autonomous service blocked: {diagnostic}", file=sys.stderr)
                 reported_diagnostics.add(diagnostic)
         if not paths:
-            return 0
+            break
         active_paths = False
         for path in paths:
             try:
@@ -618,13 +655,25 @@ def main():
                 if state["status"] in {"complete", "blocked"}:
                     if key not in cleaned_terminals:
                         if has_frozen_snapshot(state):
-                            run_frozen_service(path, arguments.state_root, arguments.lease_root)
+                            outcome = run_frozen_service(path, arguments.state_root, arguments.lease_root)
                         else:
-                            run_once(path, arguments.state_root, arguments.lease_root)
-                        cleaned_terminals.add(key)
+                            outcome = run_once(path, arguments.state_root, arguments.lease_root)
+                        if isinstance(outcome, dict) and outcome.get("status") == "busy":
+                            # The lease release belongs to another live controller; retry next cycle.
+                            active_paths = True
+                        else:
+                            cleaned_terminals.add(key)
                     continue
                 if key in failed_paths:
-                    continue
+                    if key not in busy_cycles:
+                        continue
+                    # A busy-failed path only waits for its stuck lock to clear;
+                    # probing the lock is cheap and never relaunches the action.
+                    with _service_lock(path) as recovered:
+                        if not recovered:
+                            continue
+                        del busy_cycles[key]
+                        del failed_paths[key]
                 active_paths = True
                 limit = service_runtime(state)["max_cycles"]
                 if cycles.get(key, 0) >= limit:
@@ -632,21 +681,34 @@ def main():
                     if has_frozen_snapshot(state):
                         run_frozen_service(path, arguments.state_root, arguments.lease_root, reason)
                     else:
-                        block(path, state, Path(arguments.state_root), arguments.lease_root or
-                              Path.home() / ".convergent-delivery" / "leases", reason)
+                        with _service_lock(path) as acquired:
+                            if acquired:
+                                block(path, state, Path(arguments.state_root),
+                                      arguments.lease_root or project_lease_root(state["workspace"]), reason)
                     continue
                 if has_frozen_snapshot(state):
                     outcome = run_frozen_service(path, arguments.state_root, arguments.lease_root)
                 else:
                     outcome = run_once(path, arguments.state_root, arguments.lease_root)
-                if outcome["status"] != "busy":
+                if outcome["status"] == "busy":
+                    busy_cycles[key] = busy_cycles.get(key, 0) + 1
+                    if busy_cycles[key] >= MAX_BUSY_CYCLES:
+                        error = f"service lock stayed busy for {busy_cycles[key]} consecutive cycles"
+                        print(f"autonomous service blocked: {path}: {error}", file=sys.stderr)
+                        failed_paths[key] = error
+                else:
+                    busy_cycles.pop(key, None)
                     cycles[key] = cycles.get(key, 0) + 1
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                 print(f"autonomous service blocked: {path}: {error}", file=sys.stderr)
-                failed_paths.add(str(path))
+                failed_paths[str(path)] = str(error)
+                busy_cycles.pop(str(path), None)
         if not active_paths:
-            return 0
+            break
         time.sleep(5)
+    for key, error in sorted(failed_paths.items()):
+        print(f"autonomous service blocked: {key}: {error}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

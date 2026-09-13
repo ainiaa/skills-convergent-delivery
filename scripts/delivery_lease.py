@@ -432,9 +432,7 @@ def main():
     parser.add_argument("--writer-id")
     parser.add_argument("--ttl-seconds", type=int, default=DEFAULT_TTL_SECONDS)
     parser.add_argument("--takeover", action="store_true")
-    parser.add_argument(
-        "--state-root", default=str(Path.home() / ".convergent-delivery" / "state")
-    )
+    parser.add_argument("--state-root")
     arguments = parser.parse_args()
 
     try:
@@ -446,6 +444,9 @@ def main():
         workspace = canonical_path(arguments.workspace)
         arguments.repo = repo
         arguments.workspace = workspace
+        if arguments.state_root is None:
+            from delivery_state import project_state_root
+            arguments.state_root = str(project_state_root(workspace))
         paths = lease_paths(
             arguments.root, repo, workspace, arguments.task_key,
             release_owner=(arguments.run_id, arguments.writer_id) if arguments.command == "release" else None,

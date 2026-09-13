@@ -159,7 +159,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_progress.py" status < state.json
 - append-only `runner_launches` 与 `runner_results`；本地 launch 的冻结 workspace 必须等于当前 run workspace。`append-runner-launch` 先于外部副作用写入；若 launch 没有对应 result，后续派发必须以执行结果未知阻塞，不能重派。完成的只读 scout/reviewer receipt 必须在同一条 `runner_results` 记录中带有经 `role_result.py` 校验的 `role_result`（launch 指纹、角色、受限 findings/evidence/next action 和结果指纹），但不得包含 prompt 或模型原文；旧 receipt 缺少该结论时不补猜，后续派发改为交接阻塞。存在冻结 launch 时，只有每项返回通过共享回执校验的 `completed` 结果，且每项只读结果齐全，才能写入 `complete`；
 - 增量回执所需的 `report_history`。
 
-`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`ledger.tdd_trace` 仅允许保存有界的 TDD/Impact Trace v5；native complete 时其 source、冻结 risk flags 和 criterion 集合必须分别等于当前 Source Receipt、Routing Receipt 与 `ledger.acceptance`，并返回 `pass`。最终验证通过 rerun 刷新该 trace 后才写入，避免旧绿灯、覆盖率或图谱回执完成新源码。`delivery_state.py doctor` 只扫描当前 workspace 与其 Git common-dir 对应的 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
+`host_sync.acknowledged_fingerprint` 与 `ledger.report_history` 只能各自在独立 revision 中更新；确认计划或记录报告时不得同时推进阶段、修改验收或改写其他任务事实。`ledger.tdd_trace` 仅允许保存有界的 TDD/Impact Trace v5；native complete 时其 source、冻结 risk flags 和 criterion 集合必须分别等于当前 Source Receipt、Routing Receipt 与 `ledger.acceptance`，并返回 `pass`。最终验证通过 rerun 刷新该 trace 后才写入，避免旧绿灯、覆盖率或图谱回执完成新源码。`delivery_state.py doctor` 只扫描当前 workspace 的项目内 state 目录；其中无法解析或非对象的 managed JSON 返回一条 `health=blocked` 的诊断（身份字段为 null），使本 workspace 的磁盘损坏不会被恢复检查静默忽略。
 
 未完成的 native run（普通 Schema v10，以及 Schema v11 Hook/service）可保存 `ledger.tdd_trace_candidate`，内容为通过结构、大小、冻结风险与验收项校验的 Trace v5。它承载执行期间的候选，不能作为正式验收事实；后续动作改变源码时允许保留历史候选供恢复，最终必须与当前 Source Receipt 匹配并通过真实 rerun。控制器在同一 complete revision 中写入正式 `ledger.tdd_trace` 并删除候选。PDLC run 不接受 native 候选；blocked 保留候选便于诊断，不能据此继续执行。正式 Trace 写入后仍不可替换，不自动改写既有正式证据。
 
@@ -169,7 +169,7 @@ Native 和第三方 TDD 使用：`scope → round-1-build → round-1-semantic-r
 
 ## 5. 路径、租约与原子写入
 
-正式根目录固定为 `~/.convergent-delivery/state/`。路径只能由 `repo_id + task_key + run_id` 推导；候选 JSON 只通过 stdin 提交。每次写入必须：
+Git 工作区的正式根目录固定为 Git common-dir 内的 `.git/convergent-delivery/state/`，lease 位于同级 `leases/`，使 linked worktree 共用同一份协调状态；非 Git 工作区才使用工作目录的 `.convergent-delivery/`。路径只能由 `repo_id + task_key + run_id` 推导；候选 JSON 只通过 stdin 提交。每次写入必须：
 
 1. 续期两小时 writer lease；
 2. 提交完整下一 revision；

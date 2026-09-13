@@ -4,7 +4,16 @@
 
 ## [Unreleased]
 
-- 新增面向使用者的 GitHub Release Notes 模板，并将其纳入版本发布维护流程；测试证据与未覆盖范围仍需如实披露。
+## [0.4.0] - 2026-09-12
+
+- 将 managed state 与 writer lease 默认迁移到 Git common-dir 的 `.git/convergent-delivery/`；Hook、lifecycle、评测和 service 均按项目路径解析，linked worktree 共享同一状态与租约。service 启动时只处理其持久化的单个 state，不再全局扫描项目或依赖 LaunchAgent。
+- 强化自治 hook 的安装、注册验证与失败回滚，避免不完整配置或意外替换现有链接。
+- 提升自治服务、lease 与任务恢复的并发安全、失败处理和清理可靠性。
+- 收紧 work item、TDD trace、状态快照与跨服务路由的验证边界，防止过期或无关证据放行。
+- 明确 Capsule Dispatch 的重试、超时和失败语义，避免重复创建外部任务。
+- 改进外部模型 HTTP 错误诊断、Python 版本矩阵稳定性与运行时兼容性。
+- 同步安装、卸载、宿主能力和发布说明文档，并补充面向使用者的 Release Notes 模板。- 新增宿主桥 v1：Codex 走原生 daemon bridge 并持久化恢复记录，Claude 走 agents 适配器；converge-eval 的 evaluator preflight 在本机双宿主可启动时返回 ready，不再永远 uncovered，lifecycle 证据按冻结轨迹保留。
+
 
 ## [0.3.0] - 2026-09-11
 

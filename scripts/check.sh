@@ -110,11 +110,13 @@ if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
     scripts/test_autonomous_delivery_eval.py
     scripts/test_autonomy_gate.py
     scripts/test_autonomy_hook.py
+    scripts/test_autonomy_prompt_hook.py
     scripts/test_autonomy_hook_config.py
     scripts/test_autonomy_preflight.py
     scripts/test_autonomy_service_config.py
     scripts/test_autonomy_arm.py
     scripts/test_autonomy_begin.py
+    scripts/test_autonomy_contract.py
   )
 else
   echo "Extension suite skipped; run bash scripts/check.sh --full before release."
@@ -128,6 +130,7 @@ TEST_FILES+=(
   scripts/test_runtime_adapter.py
   scripts/test_capsule_dispatch.py
   scripts/test_desktop_task_bridge.py
+  scripts/test_host_bridge.py
   scripts/test_task_profile.py
   scripts/test_run_contract.py
   scripts/test_runtime_scenarios.py
@@ -139,6 +142,8 @@ TEST_FILES+=(
   scripts/test_reporting_contract.py
   scripts/test_delivery_report.py
   scripts/test_skill_contracts.py
+  scripts/test_plan_execution.py
+  scripts/test_work_item.py
   scripts/test_python_matrix.py
   scripts/test_interaction_contract.py
   scripts/test_interaction_smoke.py

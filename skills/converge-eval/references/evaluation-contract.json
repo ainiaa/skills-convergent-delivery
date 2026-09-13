@@ -87,7 +87,7 @@
   "worker_state_schema": {
     "schema_version": 10,
     "source_required": true,
-    "source_location": "the delivery_state.py-derived path below ~/.convergent-delivery/state and outside the candidate repository",
+    "source_location": "the delivery_state.py-derived path below the evaluated repository's Git common-dir .git/convergent-delivery/state directory",
     "workspace_binding": "state.workspace equals the evaluated repository and state.controller.snapshot equals the executing pre-candidate snapshot",
     "required_status": "completed",
     "required_role": "evaluator",
@@ -151,9 +151,9 @@
     "stop_reason"
   ],
   "availability": {
-    "status": "unavailable",
+    "status": "conditional",
     "preflight": "eval_contract.py --preflight",
-    "reason": "No concrete host evaluator lifecycle bridge is available.",
+    "reason": "Codex app-server and Claude Code named-session adapters must both pass live capability checks.",
     "on_unavailable": {
       "status": "uncovered",
       "eligible": false,
@@ -173,6 +173,10 @@
       "suite",
       "timeout_seconds"
     ],
+    "optional_host_fields": [
+      "host",
+      "host_fingerprint"
+    ],
     "suite_fields": [
       "allowed_scope",
       "touched_control_surfaces",
@@ -183,12 +187,12 @@
       "class",
       "judge"
     ],
-    "evidence_level": "process_observed",
+    "evidence_level": "process_observed without optional_host_fields; host_observed with a frozen host-eval snapshot and completed host receipts",
     "max_scenarios": 32,
     "max_total_seconds": 600,
     "judge_source": "standalone unittest files from control Git tree",
-    "release_status": "uncovered",
-    "model_behavior": false,
-    "host_worker_lifecycle": false
+    "release_status": "uncovered without optional_host_fields; pass/fail/uncovered with valid host receipts",
+    "model_behavior": "bounded read-only host inspection only",
+    "host_worker_lifecycle": true
   }
 }

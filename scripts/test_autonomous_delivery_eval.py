@@ -1,16 +1,19 @@
 import json
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 from pathlib import Path
 
 from autonomous_delivery_eval import (
     candidate_judge_root, evaluate, evaluate_trusted, execute_scenario, validate,
 )
+import autonomous_delivery_eval
 from controller_snapshot import create_snapshot
 from delivery_state import state_path
 
@@ -30,6 +33,48 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
         self.assertEqual(15, len(validate(catalog)))
         self.assertEqual("full-fix", catalog["scenarios"][0]["id"])
 
+    def test_planned_evaluation_and_catalog_validation_reject_bad_inputs_without_execution(self):
+        catalog = self.minimal_catalog()
+        report = evaluate(catalog)
+        self.assertEqual("planned", report["status"])
+        self.assertTrue(all(item["status"] == "planned" for item in report["results"].values()))
+        self.assertIsNone(report["candidate_source_fingerprint"])
+
+        invalid_catalogs = []
+        invalid = dict(catalog)
+        invalid["schema_version"] = 2
+        invalid_catalogs.append((invalid, "fields"))
+        invalid = dict(catalog)
+        invalid["privacy"] = {"store_transcript": False, "allowed_fields": []}
+        invalid_catalogs.append((invalid, "transcript"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [{"id": "", "check": []}] * 15
+        invalid_catalogs.append((invalid, "scenario"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [{"id": str(index), "check": ["wrong", "Nope"]} for index in range(15)]
+        invalid_catalogs.append((invalid, "check"))
+        invalid = dict(catalog)
+        invalid["scenarios"] = [dict(catalog["scenarios"][0])] * 15
+        invalid_catalogs.append((invalid, "duplicated"))
+        for value, message in invalid_catalogs:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                validate(value)
+
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            evaluate_trusted(Path("/does-not-exist"))
+
+    def test_cli_requires_exactly_one_catalog_source(self):
+        for argv, message in (
+            (["autonomous_delivery_eval.py"], "requires --catalog"),
+            (["autonomous_delivery_eval.py", "--catalog", "catalog.json", "--snapshot-descriptor", "state.json"],
+             "frozen default catalog"),
+        ):
+            output = io.StringIO()
+            with self.subTest(argv=argv), patch.object(sys, "argv", argv), redirect_stdout(output):
+                self.assertEqual(2, autonomous_delivery_eval.main())
+            self.assertEqual("error", json.loads(output.getvalue())["status"])
+            self.assertIn(message, output.getvalue())
+
     def managed_snapshot_state(self, directory, descriptor):
         path = state_path(Path(directory) / "state", "/repo/eval.git", "autonomy-eval", "run-1")
         path.parent.mkdir(parents=True)
@@ -41,27 +86,28 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
 
     def test_catalog_covers_the_no_manual_continue_failure_modes_without_transcripts(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-        self.assertEqual(51, len(validate(catalog)))
+        self.assertEqual(52, len(validate(catalog)))
         self.assertIn("full-fix", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("repeated-finding", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("claude-native-stop", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("codex-no-progress", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("codex-native-stop", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("review-repair-native-continuation", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-final-audit", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-audit-failure-blocks", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-runner-ledger", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-invalid-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-hook-state-protected", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("service-wakeup-non-destructive", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("service-hook-approves-without-launchagent", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-report-only-revision-blocked", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("hook-queue-failure-terminalizes", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("hook-no-progress-terminalizes", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-verifier-failure-receipt", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-reaudit-finding-receipt", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("service-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("doctor-non-object-state-visible", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("doctor-unrelated-corrupt-state-isolated", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("begin-release-failure-visible", [item["id"] for item in catalog["scenarios"]])
-        self.assertIn("service-interpreter-selection", [item["id"] for item in catalog["scenarios"]])
+        self.assertIn("service-launchagent-install-rejected", [item["id"] for item in catalog["scenarios"]])
         self.assertIn("hook-config-preserves-peers", [item["id"] for item in catalog["scenarios"]])
 
     def test_diagnostic_execution_runs_the_minimum_frozen_behavior_checks_without_transcripts(self):

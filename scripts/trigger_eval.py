@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from codex_exec_runner import _terminate_process
+from evidence_contract import _terminate_process
 
 
 def validate_selector(selector):

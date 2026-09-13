@@ -18,6 +18,7 @@ from evidence_contract import workspace_source
 from delivery_state import (
     discover, next_native_stage, require_prefix, validate_acceptance_transition,
     validate_action_attempt_transition, validate_transition, workspace_state_roots,
+    project_lease_root, project_state_root,
 )
 import delivery_state as delivery_state_module
 from autonomy_arm import arm
@@ -159,6 +160,53 @@ def action_attempt(status="intent", *, events=None, observation=None, commit=Non
 
 
 class DeliveryStateTest(unittest.TestCase):
+
+    def test_linked_worktrees_share_project_roots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            primary = root / "primary"
+            linked = root / "linked"
+            primary.mkdir()
+            for arguments in (
+                ["init"], ["config", "user.email", "test@example.com"],
+                ["config", "user.name", "Test User"],
+            ):
+                subprocess.run(["git", "-C", str(primary), *arguments], check=True,
+                               capture_output=True, text=True)
+            (primary / "README.md").write_text("initial\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(primary), "add", "README.md"], check=True,
+                           capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(primary), "commit", "-m", "initial"], check=True,
+                           capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(primary), "worktree", "add", "-b", "linked", str(linked)],
+                           check=True, capture_output=True, text=True)
+
+            self.assertEqual(project_state_root(primary), project_state_root(linked))
+            self.assertEqual(project_lease_root(primary), project_lease_root(linked))
+
+    def test_project_roots_keep_managed_state_and_leases_out_of_the_home_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            workspace.mkdir()
+
+            self.assertEqual(
+                (workspace / ".convergent-delivery" / "state").resolve(),
+                project_state_root(workspace),
+            )
+            self.assertEqual(
+                (workspace / ".convergent-delivery" / "leases").resolve(),
+                project_lease_root(workspace),
+            )
+            result = subprocess.run(
+                [
+                    sys.executable, str(STATE_SCRIPT), "path", "--repo", "/repo/common.git",
+                    "--task-key", "task-payment", "--run-id", "run-1",
+                ],
+                cwd=workspace, text=True, capture_output=True, check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue(Path(result.stdout.strip()).is_relative_to(project_state_root(workspace)))
 
     def test_state_helpers_archive_changed_acceptance_and_fall_back_without_git(self):
         previous = [{"criterion": "works", "evidence": "old"}]
@@ -423,8 +471,10 @@ class DeliveryStateTest(unittest.TestCase):
                 sys.executable,
                 str(STATE_SCRIPT),
                 "path",
+                "--state-root", str(state_home / ".convergent-delivery" / "state"),
                 "--repo",
                 "/repo/common.git",
+                "--workspace", "/repo/worktree-a",
                 "--task-key",
                 "task-payment",
                 "--run-id",
@@ -617,7 +667,7 @@ class DeliveryStateTest(unittest.TestCase):
             )
 
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertIn("/.convergent-delivery/state/", result.stdout)
+            self.assertIn("/.git/convergent-delivery/state/", result.stdout)
             self.assertNotIn("..", result.stdout)
 
     def test_list_and_doctor_discover_recoverable_states_by_workspace(self):
@@ -629,11 +679,13 @@ class DeliveryStateTest(unittest.TestCase):
             environment = self.environment(state_home)
 
             listed = subprocess.run(
-                [sys.executable, str(STATE_SCRIPT), "list", "--workspace", "/repo/worktree-a"],
+                [sys.executable, str(STATE_SCRIPT), "list", "--state-root",
+                 str(state_home / ".convergent-delivery" / "state"), "--workspace", "/repo/worktree-a"],
                 text=True, capture_output=True, check=False, env=environment,
             )
             diagnosed = subprocess.run(
-                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", "/repo/worktree-a"],
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--state-root",
+                 str(state_home / ".convergent-delivery" / "state"), "--workspace", "/repo/worktree-a"],
                 text=True, capture_output=True, check=False, env=environment,
             )
 
@@ -666,7 +718,8 @@ class DeliveryStateTest(unittest.TestCase):
             environment = self.environment(state_home)
 
             result = subprocess.run(
-                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", str(workspace)],
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--state-root", str(state_root),
+                 "--workspace", str(workspace)],
                 text=True, capture_output=True, check=False, env=environment,
             )
 
@@ -699,7 +752,8 @@ class DeliveryStateTest(unittest.TestCase):
             (state_dir / "truncated.json").write_text("{", encoding="utf-8")
 
             result = subprocess.run(
-                [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", str(workspace)],
+                [sys.executable, str(STATE_SCRIPT), "doctor", "--state-root", str(state_root),
+                 "--workspace", str(workspace)],
                 text=True, capture_output=True, check=False, env=self.environment(state_home),
             )
 
@@ -740,6 +794,8 @@ class DeliveryStateTest(unittest.TestCase):
                 sys.executable,
                 str(STATE_SCRIPT),
                 "path",
+                "--state-root",
+                str(state_home / ".convergent-delivery" / "state"),
                 "--repo",
                 "/repo/common.git",
                 "--task-key",
@@ -765,6 +821,7 @@ class DeliveryStateTest(unittest.TestCase):
                 "-",
                 "--lease-root",
                 str(root),
+                "--state-root", str(state_home / ".convergent-delivery" / "state"),
                 "--run-id",
                 "run-1",
                 "--writer-id",
@@ -787,6 +844,7 @@ class DeliveryStateTest(unittest.TestCase):
         return subprocess.run(
             [
                 sys.executable, str(STATE_SCRIPT), command, "--input", "-", "--lease-root", str(root),
+                "--state-root", str(state_home / ".convergent-delivery" / "state"),
                 "--run-id", "run-1", "--writer-id", "writer-1", "--repo-id", "/repo/common.git",
                 "--task-key", "task-payment", "--expected-revision", str(expected_revision),
             ], input=json.dumps(payload), text=True, capture_output=True, check=False,

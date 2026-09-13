@@ -1,7 +1,9 @@
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -275,8 +277,16 @@ if arguments and arguments[0] == "clone":
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
                 for item in entry["hooks"]
             ]
-            managed = f"python3 {ROOT}/scripts/autonomy_hook.py --host codex"
+            managed = f"{shutil.which('python3')} {ROOT}/scripts/autonomy_hook.py --host codex"
             self.assertEqual(["peer", managed], commands)
+            prompt_commands = [
+                item["command"] for entry in json.loads(config.read_text())["hooks"]["UserPromptSubmit"]
+                for item in entry["hooks"]
+            ]
+            self.assertEqual(
+                [f"{shutil.which('python3')} {ROOT}/scripts/autonomy_prompt_hook.py --host codex"],
+                prompt_commands,
+            )
 
             removed = self.run_installer_from(
                 home, ROOT, "--autonomy-uninstall", "--target", "codex", path=home,
@@ -289,6 +299,121 @@ if arguments and arguments[0] == "clone":
                 for item in entry["hooks"]
             ]
             self.assertEqual(["peer"], commands)
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("UserPromptSubmit", []))
+
+    def test_all_autonomy_install_restores_existing_hooks_when_later_runtime_registration_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            codex = bin_dir / "codex"
+            codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex.chmod(0o755)
+            claude = bin_dir / "claude"
+            claude.write_text("#!/bin/sh\nprintf '2.1.246 (Claude Code)\\n'\n", encoding="utf-8")
+            claude.chmod(0o755)
+            codex_config = home / ".codex/hooks.json"
+            codex_config.parent.mkdir(parents=True)
+            original = '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"peer"}]}]}}\n'
+            codex_config.write_text(original, encoding="utf-8")
+            claude_config = home / ".claude/settings.json"
+            claude_config.parent.mkdir(parents=True)
+            claude_config.write_text("{broken", encoding="utf-8")
+
+            result = self.run_installer_from(
+                home, ROOT, "--target", "all", "--autonomy", path=bin_dir,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(original, codex_config.read_text(encoding="utf-8"))
+
+    def test_autonomy_uninstall_survives_an_incomplete_installer_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            executable = home / "codex"
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+            config = home / ".codex/hooks.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"hooks":{"Stop":[]}}\n', encoding="utf-8")
+            copied = home / "suite"
+            shutil.copytree(
+                ROOT, copied,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            installed = subprocess.run(
+                ["bash", str(copied / "install.sh"), "--target", "codex", "--autonomy"],
+                text=True, capture_output=True, check=False,
+                env=os.environ | {"HOME": str(home), "PATH": f"{home}{os.pathsep}{os.environ['PATH']}"},
+            )
+            self.assertEqual(0, installed.returncode, installed.stderr)
+
+            # The same checkout loses its entry-point markers; removal must still work
+            # without a complete tree or the network.
+            (copied / "SKILL.md").unlink()
+            (copied / "VERSION").unlink()
+            removed = subprocess.run(
+                ["bash", str(copied / "install.sh"), "--autonomy-uninstall", "--target", "codex"],
+                text=True, capture_output=True, check=False,
+                env=os.environ | {"HOME": str(home), "PATH": f"{home}{os.pathsep}{os.environ['PATH']}"},
+            )
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("Stop", []))
+
+    def test_autonomy_hook_commands_survive_a_source_path_with_spaces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "converge source copy"
+            shutil.copytree(
+                ROOT, source,
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            codex = bin_dir / "codex"
+            codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex.chmod(0o755)
+            spaced_bin = root / "interpreter bin"
+            spaced_bin.mkdir()
+            python3 = spaced_bin / "python3"
+            python3.symlink_to(sys.executable)
+
+            installed = self.run_installer_from(
+                home, source, "--target", "codex", "--autonomy",
+                path=f"{spaced_bin}{os.pathsep}{bin_dir}",
+            )
+            self.assertEqual(0, installed.returncode, installed.stderr)
+
+            config = json.loads((home / ".codex/hooks.json").read_text(encoding="utf-8"))
+            stop_commands = [
+                item["command"] for entry in config["hooks"]["Stop"] for item in entry["hooks"]
+            ]
+            managed = [command for command in stop_commands if "autonomy_hook.py" in command]
+            self.assertEqual(1, len(managed))
+            self.assertEqual(str(python3), shlex.split(managed[0])[0])
+            executed = subprocess.run(
+                ["bash", "-c", managed[0]], text=True, capture_output=True, input="{}",
+                env=os.environ | {"HOME": str(home)},
+            )
+            self.assertEqual(0, executed.returncode, executed.stderr)
+            self.assertEqual({"decision": "approve"}, json.loads(executed.stdout))
+
+            prompt_commands = [
+                item["command"]
+                for entry in config["hooks"]["UserPromptSubmit"] for item in entry["hooks"]
+            ]
+            managed_prompt = [
+                command for command in prompt_commands if "autonomy_prompt_hook.py" in command
+            ]
+            self.assertEqual(1, len(managed_prompt))
+            executed = subprocess.run(
+                ["bash", "-c", managed_prompt[0]], text=True, capture_output=True, input="{}",
+                env=os.environ | {"HOME": str(home)},
+            )
+            self.assertEqual(0, executed.returncode, executed.stderr)
+            self.assertEqual({"continue": True}, json.loads(executed.stdout))
 
     def test_legacy_multimodel_install_flag_keeps_all_registered_skills_visible(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -326,7 +451,7 @@ if arguments and arguments[0] == "clone":
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
                 for item in entry["hooks"]
             ]
-            managed = f"python3 {ROOT}/scripts/autonomy_hook.py --host claude"
+            managed = f"{shutil.which('python3')} {ROOT}/scripts/autonomy_hook.py --host claude"
             self.assertEqual([managed], commands)
 
             removed = self.run_installer_from(
@@ -360,6 +485,13 @@ if arguments and arguments[0] == "clone":
                 target = home / f".codex/skills/{name}"
                 self.assertTrue(target.is_symlink(), target)
                 self.assertEqual(source, target.resolve())
+
+    def test_autonomy_service_install_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_installer(Path(directory), "--target", "codex", "--autonomy-service")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("no longer supported", result.stderr)
 
     def test_version_and_doctor_detect_an_incomplete_suite(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -503,6 +635,28 @@ if arguments and arguments[0] == "clone":
             self.assertNotEqual(0, result.returncode)
             self.assertTrue(target.is_dir())
             self.assertIn("refusing to replace existing directory", result.stderr)
+
+    def test_install_refuses_to_replace_a_foreign_symlink_without_explicit_consent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            foreign = home / "foreign-skill"
+            foreign.mkdir()
+            target = home / ".codex/skills/converge"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(foreign)
+
+            forced = self.run_installer(home, "--target", "codex", "--force")
+
+            self.assertNotEqual(0, forced.returncode)
+            self.assertIn(str(foreign), forced.stderr)
+            self.assertIn("--replace-symlink", forced.stderr)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(foreign.resolve(), target.resolve())
+
+            replaced = self.run_installer(home, "--target", "codex", "--replace-symlink")
+
+            self.assertEqual(0, replaced.returncode, replaced.stderr)
+            self.assertEqual(ROOT, target.resolve())
 
     def test_upgrade_replaces_an_existing_managed_skill_link(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -655,6 +809,41 @@ if arguments and arguments[0] == "clone":
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertTrue((home / ".codex/skills/converge-eval").is_symlink())
 
+    def test_install_recovers_a_lock_recorded_for_an_unrelated_live_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            lock = home / ".convergent-delivery/.install.lock"
+            lock.mkdir(parents=True)
+            unrelated = subprocess.Popen(["sleep", "30"])
+            try:
+                (lock / "pid").write_text(f"{unrelated.pid}\n", encoding="utf-8")
+                result = self.run_installer(home, "--target", "codex")
+            finally:
+                unrelated.terminate()
+                unrelated.wait()
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((home / ".codex/skills/converge-eval").is_symlink())
+
+    def test_install_stays_blocked_while_a_real_installer_holds_the_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            lock = home / ".convergent-delivery/.install.lock"
+            lock.mkdir(parents=True)
+            holder = home / "install.sh"
+            holder.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+            holder.chmod(0o755)
+            running = subprocess.Popen([str(holder)])
+            try:
+                (lock / "pid").write_text(f"{running.pid}\n", encoding="utf-8")
+                result = self.run_installer(home, "--target", "codex")
+            finally:
+                running.terminate()
+                running.wait()
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("another installation is in progress", result.stderr)
+
     def test_install_migrates_known_legacy_skill_links(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -769,12 +958,13 @@ if arguments and arguments[0] == "clone":
         self.assertIn("按闭环开发", readme)
         self.assertIn("不要反复确认", readme)
 
-    def test_documentation_uses_shared_state_and_strict_resume_identity(self):
+    def test_documentation_uses_project_state_and_strict_resume_identity(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         usage = (ROOT / "docs/usage-guide.md").read_text(encoding="utf-8")
 
         self.assertIn("[单任务状态 Schema](references/state-schema.md)", readme)
-        self.assertIn("~/.convergent-delivery/state/", usage)
+        self.assertIn(".git/convergent-delivery/state/", usage)
+        self.assertNotIn("--autonomy-service`", usage)
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("pdlc-v1", skill)
         self.assertIn("native-v1", skill)

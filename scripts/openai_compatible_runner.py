@@ -125,6 +125,23 @@ def _response_bytes(response, limit):
         chunks.append(chunk)
 
 
+def _http_status_error(response, limit):
+    """Build a classified HTTP failure carrying the status and a bounded body summary."""
+    try:
+        body = response.read(min(201, max(0, limit)))
+        summary = body.decode("utf-8", errors="replace")[:200]
+    except (OSError, ValueError):
+        summary = ""
+    return urllib.error.HTTPError(getattr(response, "url", ""), getattr(response, "status"), summary, None, None)
+
+
+def _error_type(error):
+    """Classify the failure; HTTP status codes ride along in the frozen error_type string."""
+    if isinstance(error, urllib.error.HTTPError) and isinstance(getattr(error, "code", None), int):
+        return f"HTTPError:{error.code}"
+    return type(error).__name__
+
+
 def _failure(launch, status, error_type):
     value = {
         "schema_version": 2,
@@ -191,6 +208,9 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
     try:
         open_request = opener or _open_without_redirect
         with open_request(request, timeout=launch["profile"]["budget"]["timeout_seconds"]) as response:
+            status = getattr(response, "status", None)
+            if isinstance(status, int) and not 200 <= status < 300:
+                raise _http_status_error(response, launch["profile"]["budget"]["max_output_chars"])
             raw = _response_bytes(response, launch["profile"]["budget"]["max_output_chars"])
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("id"), str) \
@@ -202,7 +222,10 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
             raise ValueError("external-model response usage is invalid")
         content = _response_content(payload) if capture_content else None
     except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-        return _failure(launch, "unknown", type(error).__name__)
+        # On Python 3.14 an unclosed HTTPError wraps a temporary file and warns at GC.
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
+        return _failure(launch, "unknown", _error_type(error))
     value = {
         "schema_version": 2,
         "runner_id": "openai-compatible-v1",

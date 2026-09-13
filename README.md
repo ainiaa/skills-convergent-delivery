@@ -2,15 +2,15 @@
 
 面向 Codex 与 Claude Code 的软件交付 Skill：将复杂需求拆成有限任务，要求新鲜验证与明确交付边界。
 
-当前发布版本：[0.3.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
+当前发布版本：[0.4.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
 
 ## 3 步快速开始
 
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.3.0/install.sh -o converge-install.sh
-   bash converge-install.sh --release 0.3.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.4.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.4.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。
@@ -158,4 +158,4 @@ python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90
 
 该命令执行原有完整 gate，并采集全部生产 Python 及子进程覆盖率。Python mutation 用法见 [TDD 证据](references/tdd-providers.md#python-mutation-与本仓-coverage)；确定性双侧评估见 [Eval bridge](skills/converge-eval/SKILL.md#确定性进程-bridge)。
 
-需要同时复现 CI 的两个版本时，安装 `uv` 后运行 `bash scripts/test_python_matrix.sh`。它复用被 Git 忽略的 `.venv/py311` 与 `.venv/py314`，为每个版本同步固定开发依赖，再执行同一 coverage gate；不使用临时环境，也不改动全局 Python。
+需要同时复现 CI 的两个版本时，安装 `uv` 后运行 `bash scripts/test_python_matrix.sh`。它复用被 Git 忽略的 `.venv/py311` 与 `.venv/py314`，并行地为每个版本同步固定开发依赖、执行同一 coverage gate；不使用临时环境，也不改动全局 Python。任一版本失败时命令失败。

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from delivery_next import next_runtime_action, upgrade_state, validate_active_lease, validate_state
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 
 
 def allow(terminal):
@@ -15,7 +16,7 @@ def allow(terminal):
 
 
 def decide(payload, lease_root=None):
-    if not isinstance(payload, dict) or payload.get("schema_version") != 11:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         return allow("inactive")
     autonomy = payload.get("execution_control", {}).get("autonomy")
     if not isinstance(autonomy, dict) or autonomy.get("enabled") is not True:
@@ -38,14 +39,17 @@ def decide(payload, lease_root=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
-    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--lease-root")
     arguments = parser.parse_args()
     path = Path(arguments.state)
     if not path.exists():
         print(json.dumps(allow("inactive"), sort_keys=True))
         return 0
     try:
-        decision = decide(json.loads(path.read_text(encoding="utf-8")), lease_root=arguments.lease_root)
+        state = json.loads(path.read_text(encoding="utf-8"))
+        from delivery_state import project_lease_root
+        lease_root = arguments.lease_root or str(project_lease_root(state["workspace"]))
+        decision = decide(state, lease_root=lease_root)
         print(json.dumps(decision, sort_keys=True))
         return 2 if decision["decision"] == "block" else 0
     except (OSError, ValueError, json.JSONDecodeError) as error:

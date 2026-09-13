@@ -146,6 +146,10 @@ class RoleResultTest(unittest.TestCase):
                 validate_evidence_reference({
                     "kind": kind, "reference": reference, "content_fingerprint": fingerprint_value,
                 })
+        with self.assertRaisesRegex(ValueError, "reference"):
+            validate_evidence_reference({
+                "kind": "command", "reference": " ", "content_fingerprint": fingerprint_value,
+            })
 
     def test_review_prompt_hides_the_original_prompt_for_a_blind_request(self):
         blind = prompt_for_review("private prompt", {"mode": "blind", "axis": "quality"})
@@ -177,6 +181,76 @@ class RoleResultTest(unittest.TestCase):
         reviewer = self.launch("reviewer")
         result = review_result(reviewer, {"status": "pass"})
         self.assertEqual(result, validate_role_result(result, reviewer))
+
+    def test_result_boundaries_reject_malformed_runner_outputs_and_tampering(self):
+        launch = self.launch()
+        for output in (
+            {"status": "unknown"},
+            {"status": "unavailable", "content": "unexpected"},
+            {"status": "available", "content": 1},
+            {"status": "available", "content": "{}", "extra": True},
+        ):
+            with self.subTest(output=output), self.assertRaisesRegex(ValueError, "runner"):
+                result_from_output(launch, output)
+
+        for content in (
+            json.dumps({"findings": [{"summary": "x", "evidence": [{
+                "kind": "command", "reference": "true", "content_fingerprint": "a" * 64,
+            }]}] * 9, "next_action": "verify"}),
+            json.dumps({"findings": [{"summary": "x", "evidence": [{
+                "kind": "command", "reference": "true", "content_fingerprint": "a" * 64,
+            }], "extra": True}], "next_action": "verify"}),
+        ):
+            with self.subTest(content=content):
+                self.assertEqual("invalid", result_from_output(launch, {
+                    "status": "available", "content": content,
+                })["status"])
+
+        available = result_from_output(launch, {"status": "available", "content": json.dumps({
+            "findings": [{"summary": "x", "evidence": [{
+                "kind": "command", "reference": "true", "content_fingerprint": "a" * 64,
+            }]}], "next_action": "verify",
+        })})
+        available["next_action"] = "unknown"
+        available["result_fingerprint"] = fingerprint({
+            key: item for key, item in available.items() if key != "result_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "next_action"):
+            validate_available_result(available)
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            validate_available_result(None)
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            validate_role_result(available, self.launch("implementer"))
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            validate_role_result({}, launch)
+
+        reviewer = self.launch("reviewer")
+        review = review_result(reviewer, {"status": "pass"})
+        review["review_record"] = "not a record"
+        review["result_fingerprint"] = fingerprint({
+            key: item for key, item in review.items() if key != "result_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "record"):
+            validate_role_result(review, reviewer)
+        review["review_record"] = {"status": "pass"}
+        review["result_fingerprint"] = "bad"
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            validate_role_result(review, reviewer)
+
+        unavailable = result_from_output(launch, {"status": "unavailable"})
+        unavailable["reason"] = "other"
+        unavailable["result_fingerprint"] = fingerprint({
+            key: item for key, item in unavailable.items() if key != "result_fingerprint"
+        })
+        with self.assertRaisesRegex(ValueError, "reason"):
+            validate_role_result(unavailable, launch)
+        unavailable["reason"] = "output_unavailable"
+        unavailable["result_fingerprint"] = "bad"
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            validate_role_result(unavailable, launch)
+
+        with self.assertRaisesRegex(ValueError, "prompt"):
+            prompt_for_role("scout", "")
 
 
 if __name__ == "__main__":

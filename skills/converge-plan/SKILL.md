@@ -39,7 +39,7 @@ metadata:
 python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" validate --input -
 ```
 
-校验失败时修正一次；仍失败则停止，不把无效计划交给执行器。
+校验失败时修正一次。第二次失败仅在 `scripts/plan_execution.py` 识别为已知 `tooling` 未覆盖、且用户已同时授权计划和实现时，才交回根控制器为 `uncovered`：Plan Skill 自己仍不实现，根控制器只可按 helper 返回的 `execute` 进入首个冻结 task。不得将这类工具能力缺口升级为业务阻塞；未知计划契约、未决业务/权限/不可逆问题仍停止，不把无效计划交给执行器。
 
 ## 4. 选择执行方式
 

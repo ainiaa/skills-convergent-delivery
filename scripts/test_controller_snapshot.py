@@ -247,6 +247,16 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertIn("scripts/autonomy_service_config.py", descriptor["files"])
             self.assertIn("scripts/test_autonomy_service_config.py", descriptor["files"])
 
+    def test_host_evaluation_freezes_the_bridge_and_its_multimodel_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(
+                ROOT, Path(directory) / "control", extensions=("host-eval",)
+            )
+
+        self.assertEqual(["multimodel", "host-eval"], descriptor["extensions"])
+        self.assertIn("scripts/host_bridge.py", descriptor["files"])
+        self.assertIn("scripts/multi_model.py", descriptor["files"])
+
     def test_autonomy_only_snapshot_cannot_run_the_service(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = controller_snapshot.create_snapshot(
@@ -297,14 +307,20 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             run.assert_not_called()
 
-    def legacy_descriptor(self, directory):
+    def legacy_descriptor(self, directory, profile="extended"):
         control = Path(directory) / "control"
         temporary = control / "temporary"
-        files = [
-            *controller_snapshot.EXTENDED_CONTROLLER_FILES,
-            *controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES,
-            *controller_snapshot.provider_files(ROOT),
-        ]
+        if profile == "core":
+            controller_files = list(controller_snapshot.CORE_CONTROLLER_FILES)
+            controller_files[controller_files.index("scripts/runner_contract.py"):controller_files.index("scripts/runner_contract.py")] = (
+                "scripts/runner_launch.py", "scripts/runner_lifecycle.py",
+                "scripts/codex_exec_runner.py", "scripts/claude_exec_runner.py",
+            )
+            resource_files = controller_snapshot.CORE_CONTROL_RESOURCE_FILES
+        else:
+            controller_files = controller_snapshot.EXTENDED_CONTROLLER_FILES
+            resource_files = controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES
+        files = [*controller_files, *resource_files, *controller_snapshot.provider_files(ROOT)]
         for relative in (*files, "VERSION"):
             target = temporary / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -318,12 +334,107 @@ class ControllerSnapshotTest(unittest.TestCase):
             "root": str(snapshot), "control_root": str(control), "source_root": str(ROOT),
             "package_version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
             "protocol_version": 16, "protocol_fingerprint": fingerprint,
-            "profile": "extended", "files": files,
+            "profile": profile, "files": files,
         }
+
+    def legacy_v17_descriptor(self, directory, extensions=(), include_runner_lifecycle=True):
+        control = Path(directory) / "control"
+        temporary = control / "temporary"
+        files = list(controller_snapshot.CORE_CONTROLLER_FILES)
+        if include_runner_lifecycle:
+            files[files.index("scripts/runner_contract.py"):files.index("scripts/runner_contract.py")] = (
+                "scripts/runner_launch.py", "scripts/runner_lifecycle.py",
+                "scripts/codex_exec_runner.py", "scripts/claude_exec_runner.py",
+            )
+        resources = list(controller_snapshot.CORE_CONTROL_RESOURCE_FILES)
+        extensions = controller_snapshot.normalize_extensions(extensions)
+        for extension in extensions:
+            extension_files, extension_resources = controller_snapshot.EXTENSIONS[extension]
+            files.extend(extension_files)
+            resources.extend(extension_resources)
+        files = [*dict.fromkeys(files), *dict.fromkeys(resources), *controller_snapshot.provider_files(ROOT)]
+        for relative in (*files, "VERSION"):
+            target = temporary / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, target)
+        fingerprint = controller_snapshot.aggregate_fingerprint(temporary, files)
+        snapshot = control / fingerprint
+        temporary.rename(snapshot)
+        for path in (snapshot, *snapshot.rglob("*")):
+            path.chmod(0o555 if path.is_dir() else 0o444)
+        return {
+            "root": str(snapshot), "control_root": str(control), "source_root": str(ROOT),
+            "package_version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+            "protocol_version": 17, "protocol_fingerprint": fingerprint,
+            "extensions": list(extensions), "files": files,
+        }
+
+    def test_legacy_v17_core_descriptor_remains_valid_for_managed_state_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = self.legacy_v17_descriptor(directory)
+            state = Path(directory) / "state"
+            path = state / controller_snapshot.hashlib.sha256(b"repo").hexdigest() \
+                / controller_snapshot.hashlib.sha256(b"task").hexdigest() \
+                / f"{controller_snapshot.hashlib.sha256(b'run').hexdigest()}.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "schema_version": 11, "repo_id": "repo", "task_key": "task", "run_id": "run",
+                "controller": {"snapshot": descriptor},
+            }), encoding="utf-8")
+
+            self.assertEqual(descriptor, controller_snapshot.managed_state_snapshot(path))
+            self.assertEqual(17, controller_identity(snapshot=descriptor)["protocol_version"])
+
+    def test_transitional_v17_core_descriptor_remains_valid_for_managed_state_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = self.legacy_v17_descriptor(directory, include_runner_lifecycle=False)
+            state = Path(directory) / "state"
+            path = state / controller_snapshot.hashlib.sha256(b"repo").hexdigest() \
+                / controller_snapshot.hashlib.sha256(b"task").hexdigest() \
+                / f"{controller_snapshot.hashlib.sha256(b'run').hexdigest()}.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "schema_version": 11, "repo_id": "repo", "task_key": "task", "run_id": "run",
+                "controller": {"snapshot": descriptor},
+            }), encoding="utf-8")
+
+            self.assertEqual(descriptor, controller_snapshot.managed_state_snapshot(path))
+
+    def test_legacy_v17_descriptor_ignores_later_surface_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = self.legacy_v17_descriptor(directory, ("multimodel",))
+            extensions = dict(controller_snapshot.EXTENSIONS)
+            files, resources = extensions["multimodel"]
+            extensions["multimodel"] = (
+                (*files, "scripts/future_multimodel_runner.py"),
+                (*resources, "references/future-multimodel.md"),
+            )
+            dependencies = dict(controller_snapshot.EXTENSION_DEPENDENCIES)
+            dependencies["multimodel"] = ("autonomy",)
+            with mock.patch.object(
+                    controller_snapshot, "CORE_CONTROL_RESOURCE_FILES",
+                    (*controller_snapshot.CORE_CONTROL_RESOURCE_FILES, "references/future-core.md")), \
+                    mock.patch.object(controller_snapshot, "EXTENSIONS", extensions), \
+                    mock.patch.object(controller_snapshot, "EXTENSION_DEPENDENCIES", dependencies):
+                self.assertEqual(descriptor, controller_snapshot.validate_snapshot(descriptor))
+                self.assertEqual(("multimodel",), controller_snapshot.snapshot_extensions(descriptor))
 
     def test_legacy_v16_descriptor_can_launch_its_frozen_helper(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = self.legacy_descriptor(directory)
+            descriptor_path = Path(directory) / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+            command = controller_snapshot.trusted_command(
+                descriptor_path, "scripts/delivery_engine.py", ["select"]
+            )
+
+            self.assertEqual(sys.executable, command[0])
+            self.assertEqual(str(Path(descriptor["root"]) / "scripts/delivery_engine.py"), command[1])
+
+    def test_legacy_v16_core_descriptor_can_launch_its_frozen_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = self.legacy_descriptor(directory, profile="core")
             descriptor_path = Path(directory) / "snapshot.json"
             descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
 
@@ -464,16 +575,21 @@ class ControllerSnapshotTest(unittest.TestCase):
                     descriptor_path, "scripts/test_delivery_next.py", []
                 )
 
-    def test_core_snapshot_can_load_the_local_review_lifecycle_without_multimodel(self):
+    def test_core_snapshot_omits_the_multimodel_runner_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
             snapshot = Path(descriptor["root"])
-            result = subprocess.run([
-                sys.executable, "-c", "import runner_lifecycle; import runner_launch",
-            ], cwd=snapshot / "scripts", text=True, capture_output=True, check=False)
-            self.assertEqual(0, result.returncode, result.stderr)
+            for name in (
+                "runner_launch.py", "runner_lifecycle.py", "codex_exec_runner.py", "claude_exec_runner.py",
+            ):
+                self.assertFalse((snapshot / "scripts" / name).exists())
             self.assertFalse((snapshot / "scripts/multi_model.py").exists())
             self.assertFalse((snapshot / "scripts/openai_compatible_runner.py").exists())
+            result = subprocess.run(
+                [sys.executable, "-c", "import trigger_eval"], cwd=snapshot / "scripts",
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
 
     def test_version_only_change_creates_a_distinct_content_addressed_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -613,7 +729,7 @@ class ControllerSnapshotTest(unittest.TestCase):
             descriptor = controller_snapshot.create_snapshot(
                 ROOT, Path(directory) / "control"
             )
-            descriptor["protocol_version"] -= 1
+            descriptor["protocol_version"] = 16
             descriptor_path = Path(directory) / "snapshot.json"
             descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
 

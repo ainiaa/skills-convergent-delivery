@@ -56,6 +56,22 @@ class DeliveryTaskKeyTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("at least one acceptance", result.stderr)
 
+    def test_relative_repo_is_rejected(self):
+        result = self.run_key(
+            "--repo", "repo/common.git", "--baseline", "abc123", "--acceptance", "Export all rows"
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("repo must be absolute", result.stderr)
+
+    def test_blank_baseline_is_rejected(self):
+        result = self.run_key(
+            "--repo", "/repo/common.git", "--baseline", "   ", "--acceptance", "Export all rows"
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("baseline must be non-empty", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

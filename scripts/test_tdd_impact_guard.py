@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -609,6 +610,41 @@ else:
             tdd_impact_guard.rerun(
                 value, self.workspace, self.baseline, native_coverage=True, timeout_seconds=0.01,
             )
+
+    def test_rerun_timeout_budget_is_shared_across_all_commands(self):
+        with tempfile.TemporaryDirectory() as marker_directory:
+            marker_directory = Path(marker_directory)
+            marker = marker_directory / "executions"
+            gate = marker_directory / "slow"
+            # The fake pytest runner only hangs once the gate exists, so the trace can
+            # be built with real passing receipts before the rerun is slowed down.
+            slow = self.workspace / "pytest"
+            slow.write_text(
+                "#!/bin/sh\n"
+                f'if [ -f "{gate}" ]; then echo x >> "{marker}"; sleep 5; fi\n'
+                "echo '1 passed in 0.01s'\n",
+                encoding="utf-8",
+            )
+            slow.chmod(0o755)
+            value = self.trace(live=True)
+            for acceptance in value["acceptance"]:
+                for test in acceptance["tests"]:
+                    test["green"]["receipts"][0] = evidence_contract.run_evidence(
+                        self.workspace, self.baseline, [str(slow), "-k", test["selector"]],
+                    )
+            gate.write_text("slow\n", encoding="utf-8")
+            started = time.monotonic()
+            with self.assertRaisesRegex(ValueError, "budget"):
+                tdd_impact_guard.rerun(value, self.workspace, self.baseline, timeout_seconds=2)
+            elapsed = time.monotonic() - started
+            executions = len(marker.read_text(encoding="utf-8").splitlines())
+
+        # Eight commands would take 16s if each got its own 2s budget; only the first
+        # one (or, on a scheduling race, the second) may start before the shared
+        # deadline stops the rest.
+        self.assertLess(elapsed, 8)
+        self.assertGreaterEqual(executions, 1)
+        self.assertLessEqual(executions, 2)
 
     def test_rerun_rejects_an_unbounded_or_excessive_timeout(self):
         for timeout_seconds in (0, 3600.1):

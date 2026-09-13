@@ -8,13 +8,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
 from multi_model import resolve
 from role_dispatch import plan_dispatch, plan_read_only_fanout
 from runner_contract import fingerprint
-from runner_lifecycle import _completed_execution, review_request_binding, run_dispatch, run_fanout
+from runner_lifecycle import (
+    _completed_execution, _is_isolated_git_worktree, _unknown_execution,
+    require_multimodel_extension, review_request_binding, run_dispatch, run_fanout,
+)
 from runner_launch import plan_dispatch_launch, prompt_for_dispatch
 
 
@@ -115,6 +119,40 @@ class RunnerLifecycleTest(unittest.TestCase):
         self.assertNotIn("'content':", str(records[1][2]))
         self.assertNotIn("output", result)
         self.assertNotIn("output", records[1][2])
+
+    def test_lifecycle_boundary_guards_reject_invalid_extension_review_and_execution_inputs(self):
+        with self.assertRaisesRegex(ValueError, "controller"):
+            require_multimodel_extension({"controller": "wrong"})
+        with self.assertRaisesRegex(ValueError, "profile"):
+            require_multimodel_extension({"controller": {"extensions": ["multimodel"]}}, {"profile": "wrong"})
+        with self.assertRaisesRegex(ValueError, "reviewer"):
+            review_request_binding(managed_state(self.workspace), {"profile": {"role": "scout"}}, {"x": 1})
+
+        request = review_request(source_fingerprint="c" * 64)
+        with self.assertRaisesRegex(ValueError, "source"):
+            review_request_binding(managed_state(self.workspace), {"profile": {"role": "reviewer"}}, request)
+        request = review_request(baseline_commit="c" * 40)
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            review_request_binding(managed_state(self.workspace), {"profile": {"role": "reviewer"}}, request)
+        state = managed_state(self.workspace)
+        state.pop("ledger")
+        with self.assertRaisesRegex(ValueError, "acceptance"):
+            review_request_binding(state, {"profile": {"role": "reviewer"}}, review_request())
+        with self.assertRaisesRegex(ValueError, "execution"):
+            _completed_execution({"profile": {"role": "scout"}}, None)
+
+        launch = {
+            "runner_id": "openai-compatible-v1", "launch_fingerprint": "a" * 64,
+            "profile": {"effective": {"model": "gpt", "reasoning_effort": "low"}},
+        }
+        receipt = _unknown_execution(launch, RuntimeError("transport"))
+        self.assertEqual(("unknown", "RuntimeError"), (
+            receipt["receipt"]["status"], receipt["receipt"]["error_type"],
+        ))
+
+        completed = SimpleNamespace(returncode=0, stdout=".git\n.git\n")
+        with mock.patch("runner_lifecycle.subprocess.run", return_value=completed):
+            self.assertFalse(_is_isolated_git_worktree(self.workspace))
 
     def test_persists_an_unknown_receipt_when_execution_raises(self):
         records = []

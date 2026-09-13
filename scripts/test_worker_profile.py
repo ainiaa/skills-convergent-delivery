@@ -61,6 +61,24 @@ class WorkerProfileTest(unittest.TestCase):
             "workspace": "read", "shell": True, "network": "egress"
         })))
 
+    def test_rejects_non_object_or_wrongly_framed_profiles(self):
+        for value in ("scout", {"schema_version": 2}, {"schema_version": 1}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                    validate_worker_profile(value)
+
+    def test_rejects_non_object_model_blocks_and_malformed_permission_sets(self):
+        for requested in ("gpt-5.6-terra", {"model": "gpt-5.6-terra"}):
+            with self.subTest(requested=requested):
+                value = profile(requested=requested)
+                with self.assertRaisesRegex(ValueError, "requested fields are invalid"):
+                    validate_worker_profile(value)
+        for permissions in ("read", {"workspace": "read", "shell": False}):
+            with self.subTest(permissions=permissions):
+                value = profile(permissions=permissions)
+                with self.assertRaisesRegex(ValueError, "permissions are invalid"):
+                    validate_worker_profile(value)
+
     def test_recognizes_the_fixed_roles_and_only_implementers_may_write(self):
         for role in (
             "router", "scout", "specifier", "implementer", "verifier", "reviewer", "adjudicator",

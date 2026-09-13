@@ -50,6 +50,52 @@ class CodexExecRunnerTest(unittest.TestCase):
                                  command[command.index("--sandbox") + 1])
                 self.assertEqual(worker_profile["effective"]["model"], command[command.index("-m") + 1])
 
+    def test_planning_and_frozen_command_reject_changed_or_invalid_launch_inputs(self):
+        from codex_exec_runner import _binary_identity, _is_isolated_worktree, _response_from_jsonl, _terminate_process
+
+        reader = profile(permissions={"workspace": "read", "shell": True, "network": "egress"})
+        with self.assertRaisesRegex(ValueError, "binary"):
+            plan_launch(reader, "probe", workspace="/tmp", codex_bin="")
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            plan_launch(reader, "probe", workspace="/does-not-exist", codex_bin=sys.executable)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            _binary_identity("/does-not-exist")
+        with mock.patch("codex_exec_runner.subprocess.run", return_value=mock.Mock(returncode=1, stdout="")):
+            self.assertFalse(_is_isolated_worktree("/tmp"))
+
+        launch = plan_launch(reader, "probe", workspace="/tmp", codex_bin=sys.executable)
+        with mock.patch("codex_exec_runner.validate_launch", return_value={"runner_id": "other-runner"}):
+            with self.assertRaisesRegex(ValueError, "does not select"):
+                command_for_launch(launch, "probe")
+        malformed = dict(launch["configuration"])
+        malformed.pop("sandbox")
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            command_for_launch(freeze_launch(reader, "probe", malformed), "probe")
+        missing_workspace = dict(launch["configuration"])
+        missing_workspace["workspace"] = "/does-not-exist"
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            command_for_launch(freeze_launch(reader, "probe", missing_workspace), "probe")
+        with mock.patch("codex_exec_runner.implementation_reference_binding", return_value="i" * 64):
+            bound = plan_launch(
+                reader, "probe", workspace="/tmp", codex_bin=sys.executable,
+                implementation_reference_receipt_fingerprint="i" * 64,
+            )
+        self.assertEqual("i" * 64, bound["configuration"]["implementation_reference_receipt_fingerprint"])
+        with mock.patch("codex_exec_runner._binary_identity", side_effect=[("/bin/codex", "a" * 64),
+                                                                          ("/bin/codex", "b" * 64)]):
+            changed = plan_launch(reader, "probe", workspace="/tmp", codex_bin="codex")
+            with self.assertRaisesRegex(ValueError, "binary changed"):
+                command_for_launch(changed, "probe")
+
+        self.assertEqual("answer", _response_from_jsonl(
+            b'{"item":{"type":"agent_message","text":[{"text":"answer"},{}]}}\n'
+            b'not json\n{"item":{"type":"tool_call","text":"ignored"}}\n'
+        ))
+        self.assertIsNone(_response_from_jsonl(b'{"item":{"type":"agent_message","text":4}}\n'))
+        process = mock.Mock(pid=None)
+        _terminate_process(process)
+        process.kill.assert_called_once_with()
+
     def test_reader_and_progress_errors_never_deliver_partial_success(self):
         import claude_exec_runner
         from test_claude_exec_runner import profile as claude_profile
@@ -245,8 +291,9 @@ class CodexExecRunnerTest(unittest.TestCase):
             plan_launch(profile(), "Fix the isolated task", workspace=".")
 
     def test_rejects_a_primary_worktree_subdirectory_for_write_access(self):
+        scripts_dir = Path(__file__).resolve().parent
         with self.assertRaisesRegex(ValueError, "worktree"):
-            plan_launch(profile(), "Fix the isolated task", workspace="scripts")
+            plan_launch(profile(), "Fix the isolated task", workspace=str(scripts_dir))
 
     def test_rejects_a_directly_frozen_launch_that_escalates_read_access_to_write(self):
         binary = Path(shutil.which("codex")).resolve()

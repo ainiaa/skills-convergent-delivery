@@ -58,6 +58,15 @@ class TaskProfileTest(unittest.TestCase):
         for path, expected in ((".", "."), ("./", "."), ("src/", "src"), ("src\\unit", "src/unit")):
             self.assertEqual([expected], freeze_routing(profile(), [path])["allowed_paths"])
 
+    def test_non_boolean_closure_flag_and_bad_assessment_counts_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "full_closure_required must be boolean"):
+            classify(profile(), full_closure_required="yes")
+        with self.assertRaisesRegex(ValueError, "one or two frozen assessments"):
+            freeze_routing(profile(), ["."], assessment_count=3)
+        frozen = freeze_routing(profile(), ["."])
+        with self.assertRaisesRegex(ValueError, "one or two frozen assessments"):
+            validate_frozen_routing({**frozen, "assessment_count": 5})
+
     def test_local_known_task_stays_inline(self):
         self.assertEqual(classify(profile())["route"], "inline")
 
@@ -99,6 +108,21 @@ class TaskProfileTest(unittest.TestCase):
     def test_unknown_or_cross_service_task_requires_plan(self):
         self.assertEqual(classify(profile(uncertainty="high"))["route"], "planned")
         self.assertEqual(classify(profile(scope="cross-service"))["route"], "planned")
+
+    def test_cross_service_risk_cannot_be_hidden_in_a_local_single_profile(self):
+        for invalid in (
+            profile(risk_flags=["cross-service"]),
+            profile(risk_flags=["cross-service"], scope="cross-service"),
+            profile(risk_flags=["cross-service"], scope="cross-service", coupling="dependent"),
+        ):
+            with self.subTest(profile=invalid), self.assertRaisesRegex(ValueError, "cross-service"):
+                classify(invalid)
+
+        valid = profile(
+            risk_flags=["cross-service"], scope="cross-service", coupling="dependent",
+            verification="external",
+        )
+        self.assertEqual("planned", classify(valid)["route"])
 
     def test_risk_changes_review_tier_not_execution_topology(self):
         result = classify(profile(risk_flags=["money"]))
@@ -154,7 +178,10 @@ class TaskProfileTest(unittest.TestCase):
         self.assertEqual("error", json.loads(result.stdout)["status"])
 
     def test_frozen_routing_binds_profile_route_review_and_scope(self):
-        value = profile(scope="cross-service", risk_flags=["cross-service"])
+        value = profile(
+            scope="cross-service", coupling="dependent", verification="external",
+            risk_flags=["cross-service"],
+        )
 
         routing = freeze_routing(value, ["service-a", "service-b"])
 

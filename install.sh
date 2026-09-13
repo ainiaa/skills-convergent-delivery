@@ -75,6 +75,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/controller_snapshot.py
   scripts/autonomy_gate.py
   scripts/autonomy_hook.py
+  scripts/autonomy_prompt_hook.py
   scripts/autonomy_hook_config.py
   scripts/autonomy_preflight.py
   scripts/autonomy_service.py
@@ -87,6 +88,7 @@ REQUIRED_SOURCE_FILES=(
   scripts/test_autonomy_begin.py
   scripts/test_autonomy_gate.py
   scripts/test_autonomy_hook.py
+  scripts/test_autonomy_prompt_hook.py
   scripts/test_autonomy_preflight.py
   scripts/test_autonomy_service.py
   scripts/test_delivery_next.py
@@ -123,8 +125,8 @@ REMOTE_SELECTOR=""
 REMOTE_REF=""
 OFFLINE=0
 FORCE=0
+REPLACE_SYMLINK=0
 AUTONOMY=0
-AUTONOMY_SERVICE=0
 MULTIMODEL=0
 EXTENSION_ONLY_UNINSTALL=0
 INSTALL_LOCK_HELD=0
@@ -148,7 +150,9 @@ Skill registration has no execution side effects. Autonomy Hook enablement is
 separate (`--target <host> --autonomy`); the installer rejects hosts whose
 locally observed continuation capability is unavailable. `--multimodel` is a
 compatible no-op because its Skill is already registered; model runners still
-require an explicit user request.
+require an explicit user request. `--replace-symlink` explicitly replaces an
+existing symlink that does not point at this Suite; prefer handling such links
+manually.
 
 Remote install:
   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/main/install.sh -o converge-install.sh
@@ -190,9 +194,13 @@ while [[ $# -gt 0 ]]; do
     --doctor) ACTION="doctor"; shift ;;
     --offline) OFFLINE=1; shift ;;
     --force) FORCE=1; shift ;;
+    --replace-symlink) REPLACE_SYMLINK=1; shift ;;
     --autonomy) AUTONOMY=1; shift ;;
     --multimodel) MULTIMODEL=1; shift ;;
-    --autonomy-service) AUTONOMY_SERVICE=1; shift ;;
+    --autonomy-service)
+      echo "Error: --autonomy-service is no longer supported; service runs start per state." >&2
+      exit 1
+      ;;
     --autonomy-service-uninstall) ACTION="service-uninstall"; shift ;;
     --autonomy-uninstall) ACTION="uninstall"; AUTONOMY=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
     --multimodel-uninstall) ACTION="uninstall"; MULTIMODEL=1; EXTENSION_ONLY_UNINSTALL=1; shift ;;
@@ -217,7 +225,7 @@ fi
 if [[ "$ACTION" == "uninstall" && "$EXTENSION_ONLY_UNINSTALL" -eq 1 ]]; then
   SKILL_NAMES=()
 fi
-if [[ "$AUTONOMY" -eq 1 || "$AUTONOMY_SERVICE" -eq 1 ]]; then
+if [[ "$AUTONOMY" -eq 1 ]]; then
   SKILL_NAMES+=(converge-autonomy)
 fi
 if [[ "$MULTIMODEL" -eq 1 ]]; then
@@ -364,7 +372,7 @@ do_doctor() {
     local python_version
     python_version="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
     echo "  Python:  ${python_version}"
-    python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))' || failed=1
+    python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' || failed=1
   else
     echo "  Python:  missing"
     failed=1
@@ -422,12 +430,22 @@ release_install_lock() {
   fi
 }
 
+install_lock_pid_is_stale() {
+  local pid="$1"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  local recorded_command=""
+  recorded_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$recorded_command" != *install.sh* ]]
+}
+
 acquire_install_lock() {
   mkdir -p "$(dirname "$INSTALL_LOCK_DIR")"
   if ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
     local recorded_pid=""
     [[ -f "$INSTALL_LOCK_DIR/pid" ]] && read -r recorded_pid < "$INSTALL_LOCK_DIR/pid" || true
-    if [[ "$recorded_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$recorded_pid" 2>/dev/null; then
+    if [[ "$recorded_pid" =~ ^[0-9]+$ ]] && install_lock_pid_is_stale "$recorded_pid"; then
       local stale_lock="${INSTALL_LOCK_DIR}.stale.$$"
       if mv "$INSTALL_LOCK_DIR" "$stale_lock" 2>/dev/null; then
         rm -f "$stale_lock/pid"
@@ -444,13 +462,28 @@ acquire_install_lock() {
   trap release_install_lock EXIT INT TERM
 }
 
+# Removing a hook or service must never require a complete source tree or the network:
+# only the config writer script of the Suite checkout is needed.
+prepare_removal_source() {
+  local required="$1"
+  if [[ -n "$SOURCE_OVERRIDE" ]]; then
+    SOURCE_DIR="$SOURCE_OVERRIDE"
+  elif [[ -f "$SCRIPT_DIR/$required" ]]; then
+    SOURCE_DIR="$SCRIPT_DIR"
+  elif [[ -f "$MANAGED_SOURCE/$required" ]]; then
+    SOURCE_DIR="$MANAGED_SOURCE"
+  else
+    echo "Error: $required is required to remove the autonomy hook; pass --source <suite checkout>." >&2
+    exit 1
+  fi
+}
+
 prepare_source() {
   if [[ -n "$SOURCE_OVERRIDE" ]]; then
     SOURCE_DIR="$SOURCE_OVERRIDE"
   elif [[ -z "$REMOTE_SELECTOR" && -f "$SCRIPT_DIR/SKILL.md" && -f "$SCRIPT_DIR/VERSION" ]]; then
     SOURCE_DIR="$SCRIPT_DIR"
-  else
-    if ! command -v git >/dev/null 2>&1; then
+  else    if ! command -v git >/dev/null 2>&1; then
       echo "Error: git is required for a remote installation." >&2
       exit 1
     fi
@@ -538,11 +571,19 @@ ensure_installable() {
     return
   fi
   if [[ -L "$target" ]]; then
-    if [[ "$FORCE" -eq 1 ]]; then
+    if is_skill_link "$target" "$(basename "$target")"; then
+      if [[ "$FORCE" -ne 1 ]]; then
+        echo "Error: refusing to replace existing symlink: $target (use --force)." >&2
+        exit 1
+      fi
       return
     fi
-    echo "Error: refusing to replace existing symlink: $target (use --force)." >&2
-    exit 1
+    if [[ "$REPLACE_SYMLINK" -ne 1 ]]; then
+      echo "Error: refusing to replace unrecognized symlink: $target (resolves to $(readlink "$target"))." \
+        "Point it at this Suite manually or pass --replace-symlink." >&2
+      exit 1
+    fi
+    return
   fi
   if [[ -e "$target" ]]; then
     echo "Error: refusing to replace existing directory or file: $target" >&2
@@ -578,20 +619,112 @@ autonomy_hook_config() {
     codex) config="${HOME}/.codex/hooks.json" ;;
     claude) config="${HOME}/.claude/settings.json" ;;
   esac
-  local command="python3 ${SOURCE_DIR}/scripts/autonomy_hook.py --host ${runtime}"
-  local args=(--config "$config" --command "$command")
+  local py3
+  py3="$(command -v python3)"
+  if [[ -z "$py3" ]]; then
+    echo "Error: python3 is required to register the autonomy hook." >&2
+    exit 1
+  fi
+  local stop_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_hook.py") --host ${runtime}"
+  local prompt_command=""
+  local args=(--config "$config" --command "$stop_command")
   [[ "$remove" == "remove" ]] && args+=(--remove)
-  python3 "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}"
+  "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" || return
+  if [[ "$runtime" == "codex" ]]; then
+    prompt_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_prompt_hook.py") --host codex"
+    args=(--config "$config" --command "$prompt_command" --event UserPromptSubmit)
+    [[ "$remove" == "remove" ]] && args+=(--remove)
+    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" || return
+  fi
   if [[ "$remove" == "remove" ]]; then
     echo "${runtime}: autonomy Stop hook removed"
   else
+    AUTONOMY_HOOK_RUNTIMES+=("$runtime")
+    AUTONOMY_HOOK_STOP_COMMANDS+=("$stop_command")
+    AUTONOMY_HOOK_PROMPT_COMMANDS+=("$prompt_command")
     echo "${runtime}: autonomy Stop hook installed"
   fi
 }
 
+autonomy_hook_config_path() {
+  case "$1" in
+    codex) printf '%s\n' "${HOME}/.codex/hooks.json" ;;
+    claude) printf '%s\n' "${HOME}/.claude/settings.json" ;;
+  esac
+}
+
+backup_autonomy_hook_configs() {
+  AUTONOMY_HOOK_CONFIG_PATHS=()
+  AUTONOMY_HOOK_CONFIG_BACKUPS=()
+  AUTONOMY_HOOK_CONFIG_EXISTED=()
+  local runtime config backup
+  for runtime in "${RUNTIMES[@]}"; do
+    config="$(autonomy_hook_config_path "$runtime")"
+    AUTONOMY_HOOK_CONFIG_PATHS+=("$config")
+    if [[ -e "$config" ]]; then
+      backup="$(mktemp "${TMPDIR:-/tmp}/converge-autonomy-hook.XXXXXX")" || return 1
+      cp -p "$config" "$backup" || return 1
+      AUTONOMY_HOOK_CONFIG_BACKUPS+=("$backup")
+      AUTONOMY_HOOK_CONFIG_EXISTED+=(1)
+    else
+      AUTONOMY_HOOK_CONFIG_BACKUPS+=("")
+      AUTONOMY_HOOK_CONFIG_EXISTED+=(0)
+    fi
+  done
+}
+
+restore_autonomy_hook_configs() {
+  local index config backup
+  for index in "${!AUTONOMY_HOOK_CONFIG_PATHS[@]}"; do
+    config="${AUTONOMY_HOOK_CONFIG_PATHS[$index]}"
+    backup="${AUTONOMY_HOOK_CONFIG_BACKUPS[$index]}"
+    if [[ "${AUTONOMY_HOOK_CONFIG_EXISTED[$index]}" -eq 1 ]]; then
+      mkdir -p "$(dirname "$config")"
+      mv -f "$backup" "$config"
+      AUTONOMY_HOOK_CONFIG_BACKUPS[$index]=""
+    else
+      rm -f "$config"
+    fi
+  done
+}
+
+discard_autonomy_hook_backups() {
+  local backup
+  for backup in "${AUTONOMY_HOOK_CONFIG_BACKUPS[@]}"; do
+    [[ -z "$backup" ]] || rm -f "$backup"
+  done
+}
+
+install_autonomy_hooks() {
+  backup_autonomy_hook_configs || return 1
+  AUTONOMY_HOOK_RUNTIMES=()
+  AUTONOMY_HOOK_STOP_COMMANDS=()
+  AUTONOMY_HOOK_PROMPT_COMMANDS=()
+  local runtime index args
+  for runtime in "${RUNTIMES[@]}"; do
+    if ! autonomy_hook_config "$runtime"; then
+      restore_autonomy_hook_configs
+      return 1
+    fi
+  done
+  for index in "${!AUTONOMY_HOOK_RUNTIMES[@]}"; do
+    runtime="${AUTONOMY_HOOK_RUNTIMES[$index]}"
+    args=(--verify-registration --expect-stop "${AUTONOMY_HOOK_STOP_COMMANDS[$index]}")
+    if [[ -n "${AUTONOMY_HOOK_PROMPT_COMMANDS[$index]}" ]]; then
+      args+=(--expect-prompt "${AUTONOMY_HOOK_PROMPT_COMMANDS[$index]}")
+    fi
+    if ! autonomy_preflight "$runtime" "${args[@]}"; then
+      restore_autonomy_hook_configs
+      return 1
+    fi
+  done
+  discard_autonomy_hook_backups
+}
+
 autonomy_preflight() {
   local runtime="$1"
-  python3 "${SOURCE_DIR}/scripts/autonomy_preflight.py" --host "$runtime" --source "$SOURCE_DIR"
+  shift
+  python3 "${SOURCE_DIR}/scripts/autonomy_preflight.py" --host "$runtime" --source "$SOURCE_DIR" "$@"
 }
 
 autonomy_service_config() {
@@ -599,7 +732,7 @@ autonomy_service_config() {
   local args=(--source "$SOURCE_DIR")
   [[ "$remove" == "remove" ]] && args+=(--remove)
   python3 "${SOURCE_DIR}/scripts/autonomy_service_config.py" "${args[@]}"
-  [[ "$remove" == "remove" ]] && echo "autonomy service removed" || echo "autonomy service installed"
+  echo "autonomy service removed"
 }
 
 is_skill_link() {
@@ -649,7 +782,7 @@ fi
 acquire_install_lock
 
 if [[ "$ACTION" == "service-uninstall" ]]; then
-  prepare_source
+  prepare_removal_source "scripts/autonomy_service_config.py"
   autonomy_service_config remove
   exit 0
 fi
@@ -666,9 +799,6 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
   if [[ "$AUTONOMY" -eq 1 ]]; then
     for runtime in "${RUNTIMES[@]}"; do autonomy_preflight "$runtime"; done
   fi
-  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
-    autonomy_service_config
-  fi
   for runtime in "${RUNTIMES[@]}"; do
     migrate_legacy_target "$runtime"
   done
@@ -678,7 +808,7 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
     done
   done
   if [[ "$AUTONOMY" -eq 1 ]]; then
-    for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime"; done
+    install_autonomy_hooks
   fi
   echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Claude Code reloads Skills live; start a new Codex task only if discovery is stale."
 elif [[ "$ACTION" == "uninstall" ]]; then
@@ -690,12 +820,8 @@ elif [[ "$ACTION" == "uninstall" ]]; then
     done
   done
   if [[ "$AUTONOMY" -eq 1 ]]; then
-    prepare_source
+    prepare_removal_source "scripts/autonomy_hook_config.py"
     for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime" remove; done
-  fi
-  if [[ "$AUTONOMY_SERVICE" -eq 1 ]]; then
-    prepare_source
-    autonomy_service_config remove
   fi
   for runtime in "${RUNTIMES[@]}"; do
     for skill in "${SKILL_NAMES[@]}"; do

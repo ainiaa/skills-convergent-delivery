@@ -10,9 +10,17 @@
 
 用户明确指定为实现依据的引用（包括 `codex://`、宿主附件、PR 和指定文件）是需求真源。控制器在首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。引用未规定的内部细节沿用项目既有模式作最小选择；仅当该引用对完成需求必需但不可访问或内容不完整时阻塞。普通背景链接不构成门禁，也不要求 receipt 或内容指纹。持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取；不得用 URL、标题、模型记忆或用户转述代替读取。
 
+参考涉及状态机、公共 API 或跨服务协作时，读取后、首次写入前先冻结行为矩阵：逐项列出输入/状态、输出、共享副作用、已知 caller 和验证方式。状态映射、重试或错误语义仍有多个合理答案时是业务决策，先询问一个推荐选项；不得根据相似实现猜测或以实现后再改的方式消歧。
+
 外部 CLI implementer 在启动前还必须接收一个 `reference_receipt.py` 校验通过的回执：它显式列出实现依据（可为空）、每项实际读取结果和读取内容指纹；任一声明引用为 `unavailable` 或回执被篡改都会阻止 launch。launch 只保存该回执指纹，避免把引用正文或宿主敏感内容写入 runner ledger。
 
-同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Stop Hook 不得排队 successor task 或产生无用户消息的额外 task turn。执行者必须在当前 task 内消耗完有限预算并给出一个最终结果；提前停止的 active run 以 `no_progress` 终止并释放 writer lease。
+引用同一项目内的另一功能时，回执还必须将每个 target 绑定到明确 reference、`mirror`/`analogy`/`negative` 关系和行为矩阵。每行均写明输入、状态、输出、副作用、已知 caller 与验证方式；引用必须实际读取。缺少映射或存在多个业务语义时先进入 `blocked` 决策，绝不把项目级相似性当作自动复制许可。
+
+一次性 `inline` 任务不落盘。仅在工作需要跨轮修复或进入 `active/blocked` 时，创建/恢复 `work_item.py` 的功能级事项；其 contract 冻结 workspace、baseline、target、requirements、acceptance、decisions 与 reference receipt。恢复只接受这些值全部相同的唯一事项；同功能事项的基线或语义 contract 不同则 `blocked`，而不是复用、迁移或选择看似最接近的项目记录。事项状态经既有 writer lease 私有写入，终态不得作为续接候选。
+
+已落盘事项只能以 `work_item.py verify` 在其冻结的 workspace/baseline 运行验证命令，禁止直接运行该 argv 或代入其他事项的起点。它在同一事项锁内完成 gate、`evidence_contract` 命令与失败回执落盘；相同源码和命令只能失败一次，后续调用必须以退出码 2 返回 `identical_verifier_failure`，不得重复消耗重试。只有源码/argv 改变，或以 `--recovery-receipt` 提供新的同一源码 observed `pass` 回执，才允许再次运行；同一恢复回执只能释放一次重试，且恢复回执不是完成证据。每个成功 `verify` 将当前源码、argv 与 receipt 指纹写入事项；同一源码和 argv 再次成功时替换旧 receipt，不追加状态。全部最终验收完成后，`work_item.py complete` 只接受精确命中该记录的 receipt，并复核事项的 workspace/baseline 后删除该非终态事项。任意无关成功命令或其他事项的回执均不得清场；终态事项不得继续落盘或恢复。
+
+同一用户 task 内可以依次执行构建、复审、修复和最终复核，但 Hook 绝不创建 successor task。安装 autonomy 后，Codex 的精确用户指令“继续修复”/`continue repair` 会在 `UserPromptSubmit` 创建一个受限的 Schema v11 repair gate；Stop Hook 先写入一次性 intent，再以原生 `decision:block` 让当前 task 执行冻结的下一动作。若带 `stop_hook_active` 的下一次 Stop 仍未观察到该 intent 的提交，gate 以 `blocked/no_progress` 终态化并释放 writer lease，同时只允许报告阻塞。普通 task 不产生无用户消息的额外 task turn。
 
 仅当 workflow provider 为 `native-v1` 时读取；可选第三方 TDD provider 只替换 Build 的红绿方法。PDLC workflow 不得映射到这些阶段。
 

@@ -9,16 +9,21 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
-status=0
-for version in 3.11 3.14; do
+run_version() {
+  local version="$1"
   environment=".venv/py${version/.}"
   uv python install "$version"
   uv venv --allow-existing --python "$version" "$environment"
   uv pip install --python "$environment/bin/python" -r requirements-dev.txt
-  if ! PATH="$ROOT/$environment/bin:$PATH" "$ROOT/$environment/bin/python" \
-    -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90; then
-    status=1
+  PATH="$ROOT/$environment/bin:$PATH" "$ROOT/$environment/bin/python" \
+    -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90
+}
+
+matrix_exit=0
+for version in 3.11 3.14; do
+  if ! run_version "$version"; then
+    matrix_exit=1
   fi
 done
 
-exit "$status"
+exit "$matrix_exit"

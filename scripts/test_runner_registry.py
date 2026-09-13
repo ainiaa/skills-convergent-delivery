@@ -84,6 +84,16 @@ class RunnerRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "codex"):
             validate_runner_profile(wrong)
 
+    def test_rejects_unsupported_providers_and_workspace_permissions(self):
+        provider = profile(effective={
+            "provider": "deepseek", "model": "gpt-5.6-terra", "reasoning_effort": "high",
+        })
+        with self.assertRaisesRegex(ValueError, "provider is unsupported"):
+            validate_runner_profile(provider)
+        workspace = profile(permissions={"workspace": "none", "shell": True, "network": "egress"})
+        with self.assertRaisesRegex(ValueError, "workspace permission"):
+            validate_runner_profile(workspace)
+
     def test_rejects_roles_outside_each_runner_boundary(self):
         with self.assertRaisesRegex(ValueError, "role"):
             validate_runner_profile(profile(role="verifier", permissions={

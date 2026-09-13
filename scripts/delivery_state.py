@@ -30,7 +30,6 @@ from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
 
-DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "state"
 IMMUTABLE_FIELDS = (
     "schema_version",
     "run_id",
@@ -58,6 +57,31 @@ def repository_state_root(root, repo):
     return base / repo_digest
 
 
+def project_storage_root(workspace):
+    workspace = Path(workspace).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
+            text=True, capture_output=True, check=False, timeout=5,
+        )
+    except OSError:
+        return workspace / ".convergent-delivery"
+    if result.returncode or not result.stdout.strip():
+        return workspace / ".convergent-delivery"
+    common_dir = Path(result.stdout.strip())
+    if not common_dir.is_absolute():
+        common_dir = workspace / common_dir
+    return common_dir.resolve() / "convergent-delivery"
+
+
+def project_state_root(workspace):
+    return project_storage_root(workspace) / "state"
+
+
+def project_lease_root(workspace):
+    return project_storage_root(workspace) / "leases"
+
+
 def state_path(root, repo, task_key, run_id):
     base = repository_state_root(root, repo)
     task_digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()
@@ -66,8 +90,10 @@ def state_path(root, repo, task_key, run_id):
 
 
 def workspace_state_roots(root, workspace):
-    root = Path(root).expanduser().resolve()
     workspace = Path(workspace).expanduser().resolve()
+    if root is None:
+        return (project_state_root(workspace),)
+    root = Path(root).expanduser().resolve()
     try:
         result = subprocess.run(
             ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
@@ -86,8 +112,18 @@ def workspace_state_roots(root, workspace):
     })
 
 
-def managed_state_root(arguments):
-    return Path(getattr(arguments, "state_root", DEFAULT_STATE_ROOT)).expanduser().resolve()
+def managed_state_root(arguments, workspace=None):
+    root = getattr(arguments, "state_root", None)
+    if root is not None:
+        return Path(root).expanduser().resolve()
+    return project_state_root(workspace or getattr(arguments, "workspace", None) or Path.cwd())
+
+
+def managed_lease_root(arguments, workspace=None):
+    root = getattr(arguments, "lease_root", None)
+    if root is not None:
+        return Path(root).expanduser().resolve()
+    return project_lease_root(workspace or getattr(arguments, "workspace", None) or Path.cwd())
 
 
 def write_private(path, payload):
@@ -521,10 +557,10 @@ def write(arguments):
     candidate = upgrade_state(raw_candidate)
     validate_candidate(candidate, arguments)
     managed_path = state_path(
-        managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id
+        managed_state_root(arguments, candidate["workspace"]), arguments.repo_id, arguments.task_key, arguments.run_id
     )
     with active_lease(
-        candidate, arguments.lease_root, arguments.run_id, arguments.writer_id
+        candidate, managed_lease_root(arguments, candidate["workspace"]), arguments.run_id, arguments.writer_id
     ) as (paths, lease_records):
         managed_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_record(managed_path):
@@ -598,7 +634,7 @@ def append_runner_records(arguments, field, records):
     current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
     validate_candidate(current, arguments)
     with active_lease(
-        current, arguments.lease_root, arguments.run_id, arguments.writer_id
+        current, managed_lease_root(arguments, current["workspace"]), arguments.run_id, arguments.writer_id
     ) as (paths, lease_records):
         with lock_record(managed_path):
             current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
@@ -656,7 +692,7 @@ def append_runner_record(arguments, field, record):
     current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
     validate_candidate(current, arguments, check_workspace=check_workspace)
     with active_lease(
-        current, arguments.lease_root, arguments.run_id, arguments.writer_id
+        current, managed_lease_root(arguments, current["workspace"]), arguments.run_id, arguments.writer_id
     ) as (paths, lease_records):
         with lock_record(managed_path):
             current = upgrade_state(json.loads(managed_path.read_text(encoding="utf-8")))
@@ -692,7 +728,7 @@ def append_runner(arguments, field):
     print(json.dumps({"status": "written", "revision": revision}))
 
 
-def discover(workspace, diagnose=False, state_root=DEFAULT_STATE_ROOT):
+def discover(workspace, diagnose=False, state_root=None):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
     paths = (
@@ -741,8 +777,8 @@ def main():
         "path", "write", "append-runner-launch", "append-runner-launches", "append-runner-result", "list", "doctor",
     ))
     parser.add_argument("--input")
-    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
-    parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
+    parser.add_argument("--lease-root")
+    parser.add_argument("--state-root")
     parser.add_argument("--repo")
     parser.add_argument("--workspace")
     parser.add_argument("--task-key")

@@ -18,10 +18,15 @@ class InteractionContractTest(unittest.TestCase):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
 
         validate_catalog(catalog, ROOT)
-        self.assertEqual(2, catalog["schema_version"])
+        self.assertEqual(3, catalog["schema_version"])
         self.assertEqual("same_conversation", catalog["scope"])
-        self.assertEqual(8, len(catalog["scenarios"]))
-        self.assertEqual(3, catalog["smoke"]["minimum_fresh_runs"])
+        self.assertEqual(13, len(catalog["scenarios"]))
+        self.assertEqual(8, catalog["smoke"]["minimum_fresh_runs"])
+        self.assertTrue({
+            "cross-service-reference-decision", "verification-environment-block",
+            "authorized-plan-tooling-uncovered", "nonterminal-work-item-verifier-gate",
+            "feature-work-item-contract-bound",
+        } <= set(catalog["smoke"]["critical_ids"]))
 
     def test_catalog_rejects_duplicate_or_replaced_critical_scenarios(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))

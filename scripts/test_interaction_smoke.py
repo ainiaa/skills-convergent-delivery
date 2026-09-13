@@ -35,6 +35,7 @@ class InteractionSmokeTest(unittest.TestCase):
             lambda value: value["smoke"].update(minimum_fresh_runs=1),
             lambda value: value["scenarios"][0]["turns"][0].update(authorized_write="yes"),
             lambda value: value["scenarios"][0]["expected"].update(skill="unknown"),
+            lambda value: value["scenarios"][0]["expected"].update(failure_policy="unknown"),
         )
         for mutate in catalog_cases:
             invalid = copy.deepcopy(self.catalog)
@@ -43,7 +44,7 @@ class InteractionSmokeTest(unittest.TestCase):
                 validate_catalog(invalid, ROOT)
 
         receipt = {
-            "schema_version": 2,
+            "schema_version": 3,
             "scenario_id": "known-decision-is-not-reasked",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "resolved-task",
@@ -53,9 +54,9 @@ class InteractionSmokeTest(unittest.TestCase):
             "successor_task_dispatches": 0,
             "observations": [
                 {"turn": 1, "writes_observed": False, "questions_asked": 0,
-                 "verification_observed": [], "completion_claim": "not_complete"},
+                 "verification_observed": [], "verifier_failures": [], "completion_claim": "not_complete"},
                 {"turn": 2, "writes_observed": True, "questions_asked": 0,
-                 "verification_observed": ["pytest"], "completion_claim": "verified_only"},
+                 "verification_observed": ["pytest"], "verifier_failures": [], "completion_claim": "verified_only"},
             ],
             "result": "pass",
             "uncovered_reason": None,
@@ -145,7 +146,7 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_receipt_requires_addressable_task_current_baseline_and_observations(self):
         receipt = {
-            "schema_version": 2,
+            "schema_version": 3,
             "scenario_id": "known-decision-is-not-reasked",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -155,9 +156,9 @@ class InteractionSmokeTest(unittest.TestCase):
             "successor_task_dispatches": 0,
             "observations": [
                 {"turn": 1, "writes_observed": False, "questions_asked": 0,
-                 "verification_observed": [], "completion_claim": "not_complete"},
+                 "verification_observed": [], "verifier_failures": [], "completion_claim": "not_complete"},
                 {"turn": 2, "writes_observed": True, "questions_asked": 0,
-                 "verification_observed": ["python3 -m unittest"], "completion_claim": "verified_only"},
+                 "verification_observed": ["python3 -m unittest"], "verifier_failures": [], "completion_claim": "verified_only"},
             ],
             "result": "pass",
             "uncovered_reason": None,
@@ -186,7 +187,7 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_uncovered_receipt_must_explain_the_missing_host_evidence(self):
         receipt = {
-            "schema_version": 2,
+            "schema_version": 3,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -195,7 +196,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "unprompted_task_turns": None,
             "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
-                              "verification_observed": [], "completion_claim": "findings_only"}],
+                              "verification_observed": [], "verifier_failures": [], "completion_claim": "findings_only"}],
             "result": "uncovered",
             "uncovered_reason": "Desktop did not expose a resolvable thread ID.",
         }
@@ -204,9 +205,34 @@ class InteractionSmokeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "uncovered_reason"):
             validate_receipt(receipt, self.catalog)
 
+    def test_environment_verifier_failure_is_recorded_once_and_stays_nonterminal(self):
+        receipt = {
+            "schema_version": 3,
+            "scenario_id": "verification-environment-block",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
+            "baseline_commit": "b" * 40,
+            "workspace_strategy": "desktop-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [{
+                "turn": 1, "writes_observed": True, "questions_asked": 0,
+                "verification_observed": ["./gradlew test"],
+                "verifier_failures": ["./gradlew test"], "completion_claim": "not_complete",
+            }],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        validate_receipt(receipt, self.catalog)
+
+        duplicate = copy.deepcopy(receipt)
+        duplicate["observations"][0]["verifier_failures"].append("./gradlew test")
+        with self.assertRaisesRegex(ValueError, "first identical verifier failure"):
+            validate_receipt(duplicate, self.catalog)
+
     def test_cli_validates_a_fresh_host_receipt(self):
         receipt = {
-            "schema_version": 2,
+            "schema_version": 3,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -215,7 +241,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "unprompted_task_turns": None,
             "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
-                              "verification_observed": [], "completion_claim": "findings_only"}],
+                              "verification_observed": [], "verifier_failures": [], "completion_claim": "findings_only"}],
             "result": "uncovered",
             "uncovered_reason": "No fresh host run was available.",
         }

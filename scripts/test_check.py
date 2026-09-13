@@ -14,6 +14,9 @@ class CheckScriptTest(unittest.TestCase):
     def test_full_suite_runs_desktop_task_bridge_contract(self):
         self.assertIn("scripts/test_desktop_task_bridge.py", (ROOT / "scripts/check.sh").read_text())
 
+    def test_full_suite_runs_host_bridge_contract(self):
+        self.assertIn("scripts/test_host_bridge.py", (ROOT / "scripts/check.sh").read_text())
+
     def test_repository_has_an_executable_full_suite_coverage_gate(self):
         import native_tdd_policy
         policy = native_tdd_policy.resolve(ROOT)

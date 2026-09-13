@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from provider_contract import provider_manifest_paths
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS, provider_manifest_paths
 
 
 EXTENDED_CONTROLLER_FILES = (
@@ -54,6 +54,7 @@ EXTENDED_CONTROLLER_FILES = (
     "scripts/controller_snapshot.py",
     "scripts/autonomy_gate.py",
     "scripts/autonomy_hook.py",
+    "scripts/autonomy_prompt_hook.py",
     "scripts/autonomy_hook_config.py",
     "scripts/autonomy_preflight.py",
     "scripts/autonomy_service.py",
@@ -68,6 +69,7 @@ EXTENDED_CONTROLLER_FILES = (
     "scripts/test_autonomy_service_config.py",
     "scripts/test_autonomy_gate.py",
     "scripts/test_autonomy_hook.py",
+    "scripts/test_autonomy_prompt_hook.py",
     "scripts/test_autonomy_hook_config.py",
     "scripts/test_autonomy_preflight.py",
     "scripts/test_delivery_next.py",
@@ -122,10 +124,6 @@ CORE_CONTROLLER_FILES = (
     "scripts/worker_profile.py",
     "scripts/runner_registry.py",
     "scripts/reference_receipt.py",
-    "scripts/runner_launch.py",
-    "scripts/runner_lifecycle.py",
-    "scripts/codex_exec_runner.py",
-    "scripts/claude_exec_runner.py",
     "scripts/runner_contract.py",
     "scripts/role_result.py",
     "scripts/provider_contract.py",
@@ -162,14 +160,10 @@ CORE_CONTROL_RESOURCE_FILES = (
     "skills/converge-eval/references/evaluation-contract.json",
     "skills/converge-eval/scripts/eval_contract.py",
 )
-SNAPSHOT_PROFILES = {
-    "core": (CORE_CONTROLLER_FILES, CORE_CONTROL_RESOURCE_FILES),
-    "extended": (EXTENDED_CONTROLLER_FILES, EXTENDED_CONTROL_RESOURCE_FILES),
-}
-EXTENSION_ORDER = ("multimodel", "autonomy", "autonomy-eval")
+EXTENSION_ORDER = ("multimodel", "autonomy", "autonomy-eval", "host-eval")
 LEGACY_PROFILE_EXTENSIONS = {
     "core": (),
-    "extended": EXTENSION_ORDER,
+    "extended": ("multimodel", "autonomy", "autonomy-eval"),
 }
 MULTIMODEL_CONTROLLER_FILES = (
     "scripts/runner_launch.py",
@@ -189,6 +183,7 @@ MULTIMODEL_CONTROLLER_FILES = (
 AUTONOMY_CONTROLLER_FILES = (
     "scripts/autonomy_gate.py",
     "scripts/autonomy_hook.py",
+    "scripts/autonomy_prompt_hook.py",
     "scripts/autonomy_hook_config.py",
     "scripts/autonomy_preflight.py",
     "scripts/autonomy_service.py",
@@ -205,11 +200,16 @@ AUTONOMY_EVALUATION_FILES = (
     "scripts/test_autonomy_service_config.py",
     "scripts/test_autonomy_gate.py",
     "scripts/test_autonomy_hook.py",
+    "scripts/test_autonomy_prompt_hook.py",
     "scripts/test_autonomy_hook_config.py",
     "scripts/test_autonomy_preflight.py",
     "scripts/test_delivery_next.py",
     "scripts/test_delivery_state.py",
     "scripts/test_runtime_scenarios.py",
+)
+HOST_EVALUATION_FILES = (
+    "scripts/host_bridge.py",
+    "scripts/capsule_dispatch.py",
 )
 EXTENSIONS = {
     "multimodel": (MULTIMODEL_CONTROLLER_FILES, (
@@ -223,13 +223,12 @@ EXTENSIONS = {
     "autonomy-eval": (AUTONOMY_EVALUATION_FILES, (
         "references/autonomous-delivery-evaluation.json",
     )),
+    "host-eval": (HOST_EVALUATION_FILES, ()),
 }
 EXTENSION_DEPENDENCIES = {
-    "multimodel": (), "autonomy": (), "autonomy-eval": ("autonomy",),
+    "multimodel": (), "autonomy": (), "autonomy-eval": ("autonomy",), "host-eval": ("multimodel",),
 }
-
-# Core is the default controller surface.  The historical full surface remains
-# available only to validate an already-frozen v16 descriptor.
+# Core is the default controller surface.
 CONTROLLER_FILES = CORE_CONTROLLER_FILES
 CONTROL_RESOURCE_FILES = CORE_CONTROL_RESOURCE_FILES
 TRUSTED_RUN_SCRIPTS = frozenset((
@@ -238,7 +237,8 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-PROTOCOL_VERSION = 17
+LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18))
+PROTOCOL_VERSION = 19
 
 
 def provider_files(root):
@@ -267,10 +267,16 @@ def normalize_extensions(extensions=()):
 
 
 def snapshot_extensions(value):
-    """Return the one capability set represented by a current or v16 descriptor."""
+    """Return the capability set represented by a frozen descriptor."""
     if not isinstance(value, dict):
         raise ValueError("controller snapshot descriptor is invalid")
     if "extensions" in value:
+        if value.get("protocol_version") != PROTOCOL_VERSION:
+            extensions = value["extensions"]
+            if not isinstance(extensions, list) or len(extensions) != len(set(extensions)) \
+                    or not all(isinstance(name, str) and name for name in extensions):
+                raise ValueError("controller extensions are invalid")
+            return tuple(extensions)
         return normalize_extensions(value["extensions"])
     try:
         return LEGACY_PROFILE_EXTENSIONS[value.get("profile", "extended")]
@@ -372,6 +378,13 @@ def remove_tree(path):
     shutil.rmtree(path)
 
 
+def frozen_files_are_valid(files):
+    return isinstance(files, list) and files and len(files) == len(set(files)) and all(
+        isinstance(relative, str) and relative and not Path(relative).is_absolute()
+        and ".." not in Path(relative).parts for relative in files
+    ) and {"scripts/controller_snapshot.py", "scripts/delivery_lease.py"} <= set(files)
+
+
 def validate_snapshot(value, *, allow_legacy_release=False):
     current_fields = {
         "root", "control_root", "source_root", "package_version", "protocol_version",
@@ -389,25 +402,21 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     control_root = Path(value["control_root"])
     source_root = Path(value["source_root"])
     files = value["files"]
-    if fields == current_fields:
-        extensions = snapshot_extensions(value)
-        expected_files = list(snapshot_files(root, extensions))
-        expected_protocols = {PROTOCOL_VERSION}
+    protocol_version = value.get("protocol_version")
+    if protocol_version == PROTOCOL_VERSION:
+        if fields != current_fields:
+            raise ValueError("controller snapshot protocol changed")
+        valid_files = files == list(snapshot_files(root, snapshot_extensions(value)))
+    elif protocol_version in LEGACY_PROTOCOL_VERSIONS:
+        expected_fields = current_fields if protocol_version == 17 else legacy_fields
+        if fields != expected_fields and not allow_legacy_release:
+            raise ValueError("controller snapshot protocol changed")
+        snapshot_extensions(value)
+        valid_files = frozen_files_are_valid(files)
+    elif allow_legacy_release:
+        valid_files = frozen_files_are_valid(files)
     else:
-        profile = value.get("profile", "extended")
-        try:
-            controller_files, resource_files = SNAPSHOT_PROFILES[profile]
-        except KeyError as error:
-            raise ValueError("controller snapshot descriptor is invalid") from error
-        expected_files = list((*controller_files, *resource_files, *provider_files(root)))
-        expected_protocols = {16}
-    valid_files = files == expected_files or (
-        allow_legacy_release
-        and isinstance(files, list)
-        and len(files) == len(set(files))
-        and all(isinstance(relative, str) and relative for relative in files)
-        and {"scripts/controller_snapshot.py", "scripts/delivery_lease.py"} <= set(files)
-    )
+        raise ValueError("controller snapshot protocol changed")
     if not all(path.is_absolute() for path in (root, control_root, source_root)) \
             or not valid_files:
         raise ValueError("controller snapshot descriptor is invalid")
@@ -422,8 +431,6 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
     if root.stat().st_mode & writable:
         raise ValueError("controller snapshot root is writable")
-    if value["protocol_version"] not in expected_protocols and not allow_legacy_release:
-        raise ValueError("controller snapshot protocol changed")
     if aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
         raise ValueError("controller snapshot changed")
     for directory in (root, *(path for path in root.rglob("*") if path.is_dir())):
@@ -495,7 +502,7 @@ def managed_state_snapshot(path):
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("managed state is unreadable") from error
-    if not isinstance(state, dict) or state.get("schema_version") not in {10, 11} \
+    if not isinstance(state, dict) or state.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS \
             or not all(isinstance(state.get(field), str) and state[field] for field in (
                 "repo_id", "task_key", "run_id"
             )):

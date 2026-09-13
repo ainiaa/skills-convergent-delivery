@@ -59,6 +59,10 @@ def classify(value, full_closure_required=False):
         raise ValueError("risk_flags must be a string list")
     if set(risks) - RISK_FLAGS:
         raise ValueError("risk_flags contains an unknown value")
+    if "cross-service" in risks and (
+            value["scope"] != "cross-service" or value["coupling"] == "single"
+            or value["verification"] == "local"):
+        raise ValueError("cross-service risk requires cross-service scope, dependent coupling, and non-local verification")
     for field in ("cross_session", "context_isolation_benefit"):
         if not isinstance(value.get(field), bool):
             raise ValueError(f"{field} must be boolean")

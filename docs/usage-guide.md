@@ -22,8 +22,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 安装当前发布的稳定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.3.0/install.sh -o converge-install.sh
-bash converge-install.sh --release 0.3.0 --target all
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.4.0/install.sh -o converge-install.sh
+bash converge-install.sh --release 0.4.0 --target all
 ```
 
 从本地 clone 安装：
@@ -55,13 +55,13 @@ bash converge-install.sh --release <version> --target all
 bash install.sh --doctor --target codex --offline
 ```
 
-`--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装。
+`--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装；doctor 自身要求 Python ≥ 3.11。
 
 ### 真实交互 smoke
 
 修改 Skill 触发、路由、决策或审查闭环后，在独立的 fresh Codex 会话中运行
-[`evals/converge-interaction-v1.json`](../evals/converge-interaction-v1.json) 的三条
-`critical_ids`。每条场景使用其冻结 fixture、前置决定与多轮输入，并将实际 task ID、
+[`evals/converge-interaction-v1.json`](../evals/converge-interaction-v1.json) 的全部
+`critical_ids`（数量与 `minimum_fresh_runs` 以该 JSON 为准）。每条场景使用其冻结 fixture、前置决定与多轮输入，并将实际 task ID、
 baseline commit、逐轮写入/提问/验证观察和结果保存为临时 JSON receipt；不要用本地测试
 夹具或模型自述补写观察。
 
@@ -128,11 +128,12 @@ python3 scripts/multi_model_repo_eval.py --compare-report /tmp/converge-single.j
 
 它会创建并清理 detached 临时 worktree，只运行无 shell 的只读 scout，并输出不含 prompt 或原始模型回答的 receipt。使用 HTTPS provider 时还须显式传入 `--allow-network`。该 smoke 只证明当时的 runner 配置，不替代业务测试、模型质量评测或宿主原生 worker lifecycle。
 
-安装器先预检两个运行时的全部七个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，其他软链接仍必须明确传入 `--force` 才会替换。
+安装器先预检两个运行时的全部七个目标，再迁移旧入口和创建软链接。任一目标冲突时不会安装或迁移任何入口。普通文件或目录不会被删除；若发现旧名称 `convergent-delivery` 的已知目录，会移动到 `~/.convergent-delivery/legacy-backups/` 后再安装，指向本 Suite 的既有软链接仍须 `--force` 才会替换；指向其他目标的软链接一律拒绝，需显式传入 `--replace-symlink`（`--force` 不放行），请先确认目标内容再使用。
 
 ### 常见问题
 
 - **安装被拒绝：已有目录或文件**：先检查该目录是否有自己的修改；迁移或删除它后重试。不要对普通目录使用 `--force`。
+- **安装被拒绝：无法识别的软链接**：目标软链接不指向本 Suite 时，安装器拒绝替换；确认可安全替换后使用 `--replace-symlink`，不要对未知指向的链接盲目放行。
 - **Skill 未出现**：确认目标路径存在，再重启运行时；Claude Code 也可用 `/skills` 检查发现结果。
 - **版本检查显示 `unable to fetch`**：本地安装不受影响；检查网络或使用 `--offline` 仅查看本地版本。
 - **提示 `another installation is in progress`**：另一个安装、升级或卸载正在修改运行时入口。等待其结束后重试；确认没有进程在运行后，才人工清理 `~/.convergent-delivery/.install.lock`。
@@ -150,7 +151,11 @@ bash install.sh --version --offline
 bash install.sh --uninstall --target all
 ```
 
-单任务协调 ledger 保存在两个运行时共用的 `~/.convergent-delivery/state/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。异模型 leaf 使用 [Worker Runner](../references/worker-runners.md) 的冻结 profile；其 receipt 不是宿主 tree evidence，必须由 controller 复核。
+普通 `--uninstall` 不移除已安装的 autonomy Stop Hook；需要时先执行
+`bash install.sh --autonomy-uninstall --target <host>`（如曾安装旧 service，可另用
+`--autonomy-service-uninstall` 清理遗留 LaunchAgent）。
+
+单任务协调 ledger 保存在 Git common-dir 内的 `.git/convergent-delivery/state/`，writer lease 在同一目录的 `leases/`；因此 linked worktree 共享同一状态与租约。非 Git 工作区才回退到工作目录的 `.convergent-delivery/`。Schema v10 冻结 controller、Provider、路由、Review v3 源码轮次与宿主计划确认，并绑定 Source Receipt v2、worker 进度和清场回执；Schema v11 在 v10 之上冻结 autonomy manifest、预算与动作尝试记录，自治续跑 hook 按同一组受支持 schema 版本识别活跃 run。只有成功状态写入才续期 writer lease。无 worker 的旧状态可保守迁移，旧 worker 状态必须人工恢复。无需恢复的简单任务不创建正式 state，仍使用轻量 writer lease。异模型 leaf 使用 [Worker Runner](../references/worker-runners.md) 的冻结 profile；其 receipt 不是宿主 tree evidence，必须由 controller 复核。
 
 Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用 Batch Protocol v1 / state Schema v4 / Receipt v4。路径仅由 repo 与 `plan_id` 推导；run takeover 在同一文件转移 owner。Receipt 从派生的正式 delegate state 读取真源并校验完整 Provider Binding、Source Receipt v2 与 Git 前序链，不接受内嵌自证状态。
 
@@ -163,7 +168,7 @@ Batch 调度状态独立保存在 `~/.convergent-delivery/batch-state/`，使用
 git worktree add ../service-fix -b convergent/fix-payment HEAD
 ```
 
-Codex 与 Claude Code 共用 `~/.convergent-delivery/leases/` 和 `~/.convergent-delivery/state/`，因此跨运行时既会互斥，也能恢复同一任务。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
+同一 Git 项目的 Codex 与 Claude Code 共用 `.git/convergent-delivery/leases/` 和 `.git/convergent-delivery/state/`，因此跨运行时和 linked worktree 均会互斥，也能恢复同一任务。lease 默认两小时。任务每个阶段续期并在终态释放。过期 lease 不会被自动抢占；仅在确认原任务已经停止时，才使用 helper 的 `--takeover`，并在最终报告说明原因。
 
 同一 run 需要切换 worktree（例如从 Codex 转交 Claude Code）时，不要再次 `acquire`。先 `renew`，再执行 `delivery_lease.py move --from-workspace <旧路径> --workspace <新路径>`，并保留原来的 `task-key`、`run-id` 和 `writer-id`；成功后用新 workspace 更新 state。`move` 会保留任务 lease 并释放旧 workspace lease。
 

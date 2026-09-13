@@ -5,7 +5,8 @@ import json
 import os
 import shlex
 import sqlite3
-from contextlib import closing
+from contextlib import closing, redirect_stdout
+from io import StringIO
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from delivery_next import (
     validate_host_sync,
     validate_review_gate,
 )
+import delivery_next
+from delivery_state import project_lease_root
 from delivery_state import validate_transition
 from evidence_contract import run_evidence, workspace_source, closure_graph_request
 from role_result import review_result, result_from_output
@@ -423,6 +426,8 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
     closure_request_text = "修复全部已知问题" if full_closure else ""
     payload["execution_control"]["routing"] = freeze_routing(task_profile(
         scope="cross-service" if integration_required else "cross-module",
+        coupling="dependent" if integration_required else "single",
+        verification="external" if integration_required else "local",
         risk_flags=["cross-service"] if integration_required else [],
     ), ["."], request_text=closure_request_text, full_closure_required=full_closure)
     payload["ledger"]["tdd_trace"] = tdd_trace(
@@ -645,6 +650,20 @@ class DeliveryNextTest(unittest.TestCase):
             validate_native_tdd_trace(
                 tdd_trace(SOURCE), None, [], ["Requested behavior"], required=False, workspace=WORKSPACE,
             )
+
+    def test_tdd_trace_candidate_must_bind_to_the_state_source_receipt(self):
+        payload = autonomous_state()
+        payload["ledger"]["tdd_trace_candidate"] = tdd_trace(SOURCE)
+        validate_state(payload, SimpleNamespace(), check_workspace=False)
+
+        foreign = {key: value for key, value in SOURCE.items() if key != "source_fingerprint"}
+        foreign["tree_hash"] = "b" * 40
+        foreign["source_fingerprint"] = hashlib.sha256(
+            json.dumps(foreign, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["ledger"]["tdd_trace_candidate"] = tdd_trace(foreign)
+        with self.assertRaisesRegex(ValueError, "source does not match"):
+            validate_state(payload, SimpleNamespace(), check_workspace=False)
 
         frozen_routing = routing()
         pending = {
@@ -2075,6 +2094,27 @@ class DeliveryNextTest(unittest.TestCase):
         self.assertNotEqual(0, missing.returncode)
         self.assertEqual("blocked\n", inactive.stdout)
         self.assertNotEqual(0, inactive.returncode)
+
+    def test_cli_uses_the_git_common_dir_for_its_default_lease_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init"], check=True, capture_output=True)
+            path = Path(directory) / "state.json"
+            path.write_text(json.dumps({"workspace": str(workspace), "schema_version": 11}), encoding="utf-8")
+            output = StringIO()
+            with patch.object(delivery_next, "upgrade_state", side_effect=lambda value: value), \
+                    patch.object(delivery_next, "validate_state", return_value="scope"), \
+                    patch.object(delivery_next, "validate_active_lease") as validate_lease, \
+                    patch.object(delivery_next, "next_runtime_action", return_value={"action": "allow"}), \
+                    patch.object(sys, "argv", [
+                        "delivery_next.py", "--state", str(path), "--run-id", "run", "--writer-id", "writer",
+                        "--revision", "0",
+                ]), redirect_stdout(output):
+                self.assertEqual(0, delivery_next.main())
+
+            arguments = validate_lease.call_args.args[1]
+            self.assertEqual(str(project_lease_root(workspace)), arguments.lease_root)
 
     def test_active_final_verification_state_selects_its_frozen_final_action(self):
         result = self.current(state(current_stage="verify-final"))

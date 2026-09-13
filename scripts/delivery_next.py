@@ -16,6 +16,7 @@ from delivery_engine import (
 )
 from delivery_lease import is_expired, lease_paths, read_record, same_owner
 from controller_snapshot import normalize_extensions, snapshot_extensions, validate_snapshot
+from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
 from run_contract import action, delivery_action, legacy_action
@@ -59,7 +60,6 @@ BLOCKED_CODES = {
     "no_progress",
     "budget_exhausted",
 }
-DEFAULT_LEASE_ROOT = Path.home() / ".convergent-delivery" / "leases"
 WORKER_STATUSES = {"working", "completed", "interrupted", "blocked"}
 WORKER_TERMINAL_STATUSES = WORKER_STATUSES - {"working"}
 WORKER_ROLES = frozenset((*PROFILE_WORKER_ROLES, "pdlc", "evaluator", "controller-delegate"))
@@ -142,7 +142,7 @@ def normalize_open_issues(value):
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") not in {10, 11}:
+    if value.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError("schema_version must be 10 or 11")
     if "engine" in value:
         raise ValueError("legacy engine state is unsupported")
@@ -603,7 +603,7 @@ def validate_host_sync(host_sync):
 
 def validate_state(state, arguments, *, check_workspace=True, coverage_revision=None):
     source_schema = state.get("schema_version") if isinstance(state, dict) else None
-    strict_evidence = getattr(arguments, "strict_evidence", source_schema in {10, 11})
+    strict_evidence = getattr(arguments, "strict_evidence", source_schema in SUPPORTED_SCHEMA_VERSIONS)
     state = upgrade_state(state)
 
     controller = require_mapping(state.get("controller"), "controller")
@@ -893,7 +893,7 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
                 or state.get("status") == "complete" or not isinstance(candidate_trace, dict):
             raise ValueError("TDD trace candidate is only valid in an unfinished native run")
         validate_native_tdd_trace(
-            candidate_trace, candidate_trace.get("source"), routing["profile"]["risk_flags"],
+            candidate_trace, source_receipt, routing["profile"]["risk_flags"],
             acceptance_criteria, required=False, workspace=workspace,
         )
     acceptance_history = ledger.get("acceptance_history", [])
@@ -1130,7 +1130,7 @@ def main():
     parser.add_argument("--task-key")
     parser.add_argument("--writer-id")
     parser.add_argument("--revision", type=int)
-    parser.add_argument("--lease-root", default=str(DEFAULT_LEASE_ROOT))
+    parser.add_argument("--lease-root")
     parser.add_argument("--workspace")
     parser.add_argument("--baseline")
     parser.add_argument("--scope-fingerprint")
@@ -1142,7 +1142,10 @@ def main():
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
         raw_state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
-        arguments.strict_evidence = raw_state.get("schema_version") in {10, 11}
+        if arguments.lease_root is None:
+            from delivery_state import project_lease_root
+            arguments.lease_root = str(project_lease_root(raw_state["workspace"]))
+        arguments.strict_evidence = raw_state.get("schema_version") in SUPPORTED_SCHEMA_VERSIONS
         state = raw_state
         state = upgrade_state(raw_state)
         next_stage = validate_state(state, arguments)

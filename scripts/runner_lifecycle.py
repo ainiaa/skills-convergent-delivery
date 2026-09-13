@@ -190,7 +190,7 @@ def _review_request_mapping(value, tasks, name):
 
 def load_current(arguments):
     path = delivery_state.state_path(
-        delivery_state.DEFAULT_STATE_ROOT, arguments.repo_id, arguments.task_key, arguments.run_id,
+        delivery_state.managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id,
     )
     if not path.is_file():
         raise ValueError("runner lifecycle requires an existing managed state")
@@ -383,7 +383,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--dispatch", type=argparse.FileType("r"), required=True)
     parser.add_argument("--input", type=argparse.FileType("r"), required=True)
-    parser.add_argument("--lease-root", default=str(Path.home() / ".convergent-delivery" / "leases"))
+    parser.add_argument("--lease-root")
+    parser.add_argument("--state-root")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--writer-id", required=True)
     parser.add_argument("--repo-id", required=True)
