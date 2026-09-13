@@ -8,7 +8,7 @@ Allow a `host-bridge-v1` Codex evaluator task to be observed after the bridge pr
 
 Use the native `codex app-server daemon` and `codex app-server proxy` surface.
 
-1. The trusted bridge performs the explicitly authorized one-time `daemon bootstrap`, then `daemon start` before starting a Codex task.
+1. The trusted bridge performs the explicitly authorized one-time `daemon bootstrap`, then `daemon start` during host preflight and again before starting a Codex task; failure is reported as unavailable.
 2. It starts a non-ephemeral task through `app-server proxy`; the task remains owned by the Codex daemon rather than the bridge process.
 3. It persists one recovery record below the evaluated repository's Git common-dir: `.git/convergent-delivery/host-bridge/<package-fingerprint>.json`.
 4. A later bridge process reconnects through `proxy`, resumes exactly the stored task ID, and observes exactly the stored turn ID.

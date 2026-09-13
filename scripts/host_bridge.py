@@ -432,7 +432,9 @@ def preflight(*, codex_bin="codex", claude_bin="claude"):
     """Report whether both real host adapters can provide lifecycle evidence."""
     result = {}
     try:
-        result["codex"] = {"status": "ready", "host_fingerprint": codex_schema_fingerprint(codex_bin)}
+        fingerprint = codex_schema_fingerprint(codex_bin)
+        _codex_daemon(codex_bin, subprocess.run)
+        result["codex"] = {"status": "ready", "host_fingerprint": fingerprint}
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         result["codex"] = {"status": "unavailable", "reason": str(error)}
     try:

@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import time
 import unittest
@@ -193,6 +194,26 @@ class HostBridgeTest(unittest.TestCase):
         self.assertEqual(started, resumed)
         run.assert_not_called()
         proxy.assert_not_called()
+
+    def test_preflight_requires_a_startable_codex_daemon(self):
+        with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
+                patch.object(host_bridge, "_codex_daemon") as daemon, \
+                patch.object(host_bridge, "_binary_fingerprint", return_value=HOST_FINGERPRINT), \
+                patch.object(host_bridge, "_claude_agent_list", return_value=[]):
+            result = host_bridge.preflight()
+
+        self.assertEqual("ready", result["codex"]["status"])
+        daemon.assert_called_once_with("codex", subprocess.run)
+
+    def test_preflight_reports_an_unstartable_codex_daemon(self):
+        with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
+                patch.object(host_bridge, "_codex_daemon", side_effect=ValueError("missing standalone")), \
+                patch.object(host_bridge, "_binary_fingerprint", return_value=HOST_FINGERPRINT), \
+                patch.object(host_bridge, "_claude_agent_list", return_value=[]):
+            result = host_bridge.preflight()
+
+        self.assertEqual("unavailable", result["codex"]["status"])
+        self.assertIn("missing standalone", result["codex"]["reason"])
 
     def test_proxy_resume_identity_mismatch_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
