@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 import unittest
+import unittest.mock
 import eval_contract
 
 
@@ -112,10 +113,24 @@ class EvaluationContractTest(unittest.TestCase):
         self.assertIn("不得直接执行外部副作用", self.skill)
 
     def test_evaluator_preflight_and_path_contracts_fail_closed_without_a_host_bridge(self):
-        result = eval_contract.preflight()
-        self.assertEqual("uncovered", result["status"])
-        self.assertFalse(result["eligible"])
-        self.assertEqual(result, eval_contract.evaluate({}, ROOT))
+        # Isolate the probe from the local machine: a developer box with both host
+        # CLIs startable makes the real bridge ready, which must not flip this
+        # no-bridge contract test.
+        unavailable = {
+            "codex": {"status": "unavailable", "reason": "isolated"},
+            "claude": {"status": "unavailable", "reason": "isolated"},
+        }
+
+        class _NoBridge:
+            @staticmethod
+            def preflight():
+                return unavailable
+
+        with unittest.mock.patch.object(eval_contract, "_host_bridge", return_value=_NoBridge):
+            result = eval_contract.preflight()
+            self.assertEqual("uncovered", result["status"])
+            self.assertFalse(result["eligible"])
+            self.assertEqual(result, eval_contract.evaluate({}, ROOT))
         self.assertEqual(["one"], eval_contract._string_list(["one"], "items"))
         self.assertEqual("a" * 64, eval_contract._sha256("a" * 64, "digest"))
         self.assertEqual(["src", "."], eval_contract._clean_scope(["src/", "."]))
