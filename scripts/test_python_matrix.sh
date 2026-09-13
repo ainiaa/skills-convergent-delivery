@@ -19,15 +19,9 @@ run_version() {
     -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90
 }
 
-pids=()
-for version in 3.11 3.14; do
-  run_version "$version" &
-  pids+=("$!")
-done
-
 matrix_exit=0
-for pid in "${pids[@]}"; do
-  if ! wait "$pid"; then
+for version in 3.11 3.14; do
+  if ! run_version "$version"; then
     matrix_exit=1
   fi
 done

@@ -4,6 +4,7 @@
 import hashlib
 import itertools
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -256,12 +257,15 @@ class EvalAvailabilityTest(unittest.TestCase):
         self.assertEqual("unavailable_host_bridge", result["stop_reason"])
 
     def test_cli_preflight_reports_bridge_readiness_but_never_fabricates_a_live_result(self):
-        preflight = subprocess.run(
-            [sys.executable, str(Path(eval_contract.__file__)), "--preflight"],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(0, preflight.returncode)
-        self.assertEqual("ready", json.loads(preflight.stdout)["status"])
+        with tempfile.TemporaryDirectory() as binaries:
+            preflight = subprocess.run(
+                [sys.executable, str(Path(eval_contract.__file__)), "--preflight"],
+                capture_output=True, text=True, check=False,
+                env={**os.environ, "PATH": binaries},
+            )
+        self.assertEqual(2, preflight.returncode)
+        self.assertEqual("uncovered", json.loads(preflight.stdout)["status"])
+        self.assertEqual("unavailable_host_bridge", json.loads(preflight.stdout)["stop_reason"])
         evaluation = subprocess.run(
             [sys.executable, str(Path(eval_contract.__file__)), "--input", "/missing/request",
              "--repository", str(ROOT)], capture_output=True, text=True, check=False,

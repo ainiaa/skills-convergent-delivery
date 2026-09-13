@@ -181,7 +181,9 @@ class RuntimeScenarioTest(unittest.TestCase):
                     sys.executable, str(Path(__file__).with_name("runner_lifecycle.py")),
                     "--dispatch", str(dispatch_path), "--input", str(prompt_path),
                     "--review-request-file", str(request_path), "--codex-bin", str(binary),
-                    "--allow-execute", "--lease-root", str(leases), "--run-id", current["run_id"],
+                    "--allow-execute", "--lease-root", str(leases), "--state-root",
+                    str(home / ".convergent-delivery" / "state"),
+                    "--run-id", current["run_id"],
                     "--writer-id", current["writer_id"], "--repo-id", current["repo_id"],
                     "--task-key", current["task_key"], "--expected-revision", str(current["revision"]),
                 ], env=harness.environment(home), text=True, capture_output=True, check=False, timeout=10)
