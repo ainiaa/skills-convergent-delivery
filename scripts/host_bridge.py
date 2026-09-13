@@ -3,7 +3,6 @@
 
 import hashlib
 import json
-import os
 import queue
 import subprocess
 import tempfile
@@ -12,7 +11,6 @@ import time
 from pathlib import Path
 
 from codex_exec_runner import _binary_identity
-from delivery_state import project_storage_root
 
 
 PROTOCOL = "host-bridge-v1"
@@ -72,9 +70,8 @@ def codex_schema_fingerprint(codex_bin="codex"):
 class _CodexAppServer:
     """Small synchronous JSON-RPC client for Codex's documented stdio app-server."""
 
-    def __init__(self, codex_bin, command=("app-server", "--stdio"), timeout_seconds=30):
+    def __init__(self, codex_bin, timeout_seconds=30):
         self.codex_bin = codex_bin
-        self.command = command
         self.timeout_seconds = timeout_seconds
         self.process = None
         self.messages = queue.Queue()
@@ -84,7 +81,7 @@ class _CodexAppServer:
     def __enter__(self):
         binary, _fingerprint = _binary_identity(self.codex_bin)
         self.process = subprocess.Popen(
-            [binary, *self.command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [binary, "app-server", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True,
         )
         threading.Thread(target=self._read, daemon=True).start()
@@ -140,35 +137,18 @@ class _CodexAppServer:
             return message["result"]
 
 
-def _codex_daemon(codex_bin, run):
-    for command in ((codex_bin, "app-server", "daemon", "bootstrap"),
-                    (codex_bin, "app-server", "daemon", "start")):
-        result = run(list(command), text=True, capture_output=True, check=False)
-        if result.returncode:
-            raise ValueError("Codex app-server daemon is unavailable")
-
-
-def _codex_proxy(codex_bin):
-    return _CodexAppServer(codex_bin, ("app-server", "proxy"))
-
-
-def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint,
-            recovery_root=None):
+def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint):
     host = _text(host, "host")
     if host not in HOSTS:
         raise ValueError("host is invalid")
     workspace = Path(_text(str(workspace), "workspace")).expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("workspace is invalid")
-    recovery_root = Path(_text(str(recovery_root or workspace), "recovery_root")).expanduser().resolve()
-    if not recovery_root.is_dir():
-        raise ValueError("recovery_root is invalid")
     return {
         "protocol": PROTOCOL,
         "host": host,
         "sample_id": _text(sample_id, "sample_id"),
         "workspace": str(workspace),
-        "recovery_root": str(recovery_root),
         "prompt_fingerprint": _fingerprint({"prompt": _text(prompt, "prompt")}),
         "judge_argv": _argv(judge_argv, "judge_argv"),
         "launch_fingerprint": _sha256(launch_fingerprint, "launch_fingerprint"),
@@ -178,74 +158,15 @@ def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprin
 
 def _package(value):
     if not isinstance(value, dict) or set(value) != {
-            "protocol", "host", "sample_id", "workspace", "recovery_root", "prompt_fingerprint", "judge_argv",
+            "protocol", "host", "sample_id", "workspace", "prompt_fingerprint", "judge_argv",
             "launch_fingerprint", "host_fingerprint",
     } or value.get("protocol") != PROTOCOL:
         raise ValueError("host package is invalid")
     return package(
-        host=value["host"], sample_id=value["sample_id"], workspace=value["workspace"],
-        recovery_root=value["recovery_root"], prompt="frozen",
+        host=value["host"], sample_id=value["sample_id"], workspace=value["workspace"], prompt="frozen",
         judge_argv=value["judge_argv"], launch_fingerprint=value["launch_fingerprint"],
         host_fingerprint=value["host_fingerprint"],
     ) | {"prompt_fingerprint": _sha256(value["prompt_fingerprint"], "prompt_fingerprint")}
-
-
-def record_path(value):
-    value = _package(value)
-    return project_storage_root(value["recovery_root"]) / "host-bridge" / f"{_fingerprint(value)}.json"
-
-
-def load_started(value):
-    value = _package(value)
-    path = record_path(value)
-    if not path.exists():
-        return None
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("Codex recovery record is unavailable") from error
-    if not isinstance(record, dict) or set(record) != {"schema_version", "package_fingerprint", "started"} \
-            or record.get("schema_version") != 1 or record.get("package_fingerprint") != _fingerprint(value):
-        raise ValueError("Codex recovery record is unavailable")
-    return _started(record["started"], value)
-
-
-def _create_record(path, record):
-    temporary = path.with_name(f".{path.name}.tmp")
-    descriptor = None
-    try:
-        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-            descriptor = None
-            json.dump(record, file, ensure_ascii=False, sort_keys=True)
-            file.write("\n")
-            file.flush()
-            os.fsync(file.fileno())
-        os.link(temporary, path)
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        temporary.unlink(missing_ok=True)
-
-
-def persist_started(value, started):
-    value = _package(value)
-    started = _started(started, value)
-    path = record_path(value)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    existing = load_started(value)
-    if existing is None:
-        try:
-            _create_record(path, {
-                "schema_version": 1, "package_fingerprint": _fingerprint(value), "started": started,
-            })
-        except FileExistsError:
-            pass
-        existing = load_started(value)
-    if existing != started:
-        raise ValueError("Codex recovery record is conflicting with the started task")
-    return existing
-
 
 def _started(value, package_value):
     expected_keys = {
@@ -266,7 +187,7 @@ def _started(value, package_value):
 
 
 def _codex_started(package_value, prompt, request):
-    thread = request("thread/start", {"cwd": package_value["workspace"], "ephemeral": False})
+    thread = request("thread/start", {"cwd": package_value["workspace"], "ephemeral": True})
     task_id = thread.get("thread", {}).get("id") if isinstance(thread, dict) else None
     turn = request("turn/start", {
         "threadId": _text(task_id, "Codex thread id"),
@@ -281,7 +202,7 @@ def _codex_started(package_value, prompt, request):
     }
 
 
-def codex_start(value, prompt, *, codex_bin="codex", request=None, run=subprocess.run):
+def codex_start(value, prompt, *, codex_bin="codex", request=None):
     value = _package(value)
     if value["host"] != "codex":
         raise ValueError("host package is not for Codex")
@@ -289,14 +210,9 @@ def codex_start(value, prompt, *, codex_bin="codex", request=None, run=subproces
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is not None:
         return _codex_started(value, prompt, request)
-    recorded = load_started(value)
-    if recorded is not None:
-        return recorded
-    _codex_daemon(codex_bin, run)
-    server = _codex_proxy(codex_bin)
+    server = _CodexAppServer(codex_bin)
     try:
         started = _codex_started(value, prompt, server.__enter__().request)
-        started = persist_started(value, started)
     except Exception:
         server.close()
         raise
@@ -313,31 +229,12 @@ def codex_observe(value, started, *, codex_bin="codex", request=None):
         raise ValueError("Codex app-server schema changed after the sample was frozen")
     if request is None:
         server = _CODEX_SERVERS.get(started["task_id"])
-        if server is not None:
-            status = server.turn_statuses.get(started["turn_id"])
-            if status is None:
-                return None
-            return _codex_terminal_observation(value, started, status)
-        recorded = load_started(value)
-        if recorded is None:
+        if server is None:
             raise ValueError("Codex evaluator connection is unavailable; do not retry the task")
-        if recorded != started:
-            raise ValueError("Codex recovery record does not match the started task")
-        try:
-            with _codex_proxy(codex_bin) as proxy:
-                resumed = proxy.request("thread/resume", {
-                    "threadId": started["task_id"], "excludeTurns": False,
-                })
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            raise ValueError("Codex evaluator connection is unavailable; do not retry the task") from error
-        thread = resumed.get("thread") if isinstance(resumed, dict) else None
-        if not isinstance(thread, dict) or thread.get("id") != started["task_id"]:
-            raise ValueError("Codex resumed task does not match the started task")
-        matches = [turn for turn in thread.get("turns", ()) if isinstance(turn, dict)
-                   and turn.get("id") == started["turn_id"]]
-        if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
-            raise ValueError("Codex resumed turn does not match the started turn")
-        return _codex_terminal_observation(value, started, matches[0]["status"])
+        status = server.turn_statuses.get(started["turn_id"])
+        if status is None:
+            return None
+        return _codex_terminal_observation(value, started, status)
     response = request("thread/turns/list", {"threadId": started["task_id"], "limit": 100})
     turns = response.get("data") if isinstance(response, dict) else None
     matches = [turn for turn in turns or () if isinstance(turn, dict) and turn.get("id") == started["turn_id"]]
@@ -433,7 +330,6 @@ def preflight(*, codex_bin="codex", claude_bin="claude"):
     result = {}
     try:
         fingerprint = codex_schema_fingerprint(codex_bin)
-        _codex_daemon(codex_bin, subprocess.run)
         result["codex"] = {"status": "ready", "host_fingerprint": fingerprint}
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         result["codex"] = {"status": "unavailable", "reason": str(error)}

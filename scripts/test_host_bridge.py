@@ -1,5 +1,3 @@
-import json
-import subprocess
 import tempfile
 import time
 import unittest
@@ -73,27 +71,22 @@ class HostBridgeTest(unittest.TestCase):
 
         request.assert_not_called()
 
-    def test_codex_start_bootstraps_daemon_and_uses_proxy(self):
+    def test_codex_start_uses_the_direct_app_server_connection(self):
         with tempfile.TemporaryDirectory() as directory:
             package = self.package(directory)
-            run = Mock(return_value=SimpleNamespace(returncode=0))
-            proxy = MagicMock()
-            proxy.__enter__.return_value = proxy
-            proxy.request.side_effect = [
+            server = MagicMock()
+            server.__enter__.return_value = server
+            server.request.side_effect = [
                 {"thread": {"id": "thread-1"}},
                 {"turn": {"id": "turn-1"}},
             ]
             with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                    patch.object(host_bridge, "_codex_proxy", return_value=proxy):
-                started = host_bridge.codex_start(package, "frozen prompt", run=run)
+                    patch.object(host_bridge, "_CodexAppServer", return_value=server):
+                started = host_bridge.codex_start(package, "frozen prompt")
 
         self.assertEqual("thread-1", started["task_id"])
-        self.assertEqual(
-            ["codex", "app-server", "daemon", "bootstrap"], run.call_args_list[0].args[0],
-        )
-        self.assertEqual(["codex", "app-server", "daemon", "start"], run.call_args_list[1].args[0])
-        self.assertEqual(("thread/start", {"cwd": package["workspace"], "ephemeral": False}),
-                         proxy.request.call_args_list[0].args)
+        self.assertEqual(("thread/start", {"cwd": package["workspace"], "ephemeral": True}),
+                         server.request.call_args_list[0].args)
         host_bridge._CODEX_SERVERS.pop("thread-1", None)
 
     def test_codex_observe_returns_a_terminal_observation_for_the_started_turn(self):
@@ -126,113 +119,6 @@ class HostBridgeTest(unittest.TestCase):
 
         self.assertEqual("completed", observation["status"])
         server.close.assert_called_once()
-
-    def test_started_record_reloads_after_a_bridge_restart_without_a_prompt(self):
-        with tempfile.TemporaryDirectory() as directory:
-            package = self.package(directory)
-            started = {
-                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
-                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
-                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
-            }
-            host_bridge.persist_started(package, started)
-            reloaded = host_bridge.load_started(package)
-            record = json.loads(host_bridge.record_path(package).read_text())
-
-        self.assertEqual(started, reloaded)
-        self.assertNotIn("prompt", json.dumps(record))
-
-    def test_conflicting_started_record_is_rejected_without_relaunch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            package = self.package(directory)
-            started = {
-                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
-                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
-                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
-            }
-            host_bridge.persist_started(package, started)
-            with self.assertRaisesRegex(ValueError, "conflicting"):
-                host_bridge.persist_started(package, {**started, "task_id": "thread-other"})
-
-    def test_new_proxy_resumes_the_exact_saved_task_and_turn(self):
-        with tempfile.TemporaryDirectory() as directory:
-            package = self.package(directory)
-            started = {
-                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
-                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
-                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
-            }
-            host_bridge.persist_started(package, started)
-            proxy = MagicMock()
-            proxy.__enter__.return_value = proxy
-            proxy.request.return_value = {
-                "thread": {"id": "thread-1", "turns": [{"id": "turn-1", "status": "completed"}]},
-            }
-            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                    patch.object(host_bridge, "_codex_proxy", return_value=proxy):
-                observation = host_bridge.codex_observe(package, started)
-
-        self.assertEqual("completed", observation["status"])
-        proxy.request.assert_called_once_with(
-            "thread/resume", {"threadId": "thread-1", "excludeTurns": False},
-        )
-
-    def test_existing_started_record_never_creates_a_replacement_task(self):
-        with tempfile.TemporaryDirectory() as directory:
-            package = self.package(directory)
-            started = {
-                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
-                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
-                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
-            }
-            host_bridge.persist_started(package, started)
-            run = Mock()
-            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                    patch.object(host_bridge, "_codex_proxy") as proxy:
-                resumed = host_bridge.codex_start(package, "frozen prompt", run=run)
-
-        self.assertEqual(started, resumed)
-        run.assert_not_called()
-        proxy.assert_not_called()
-
-    def test_preflight_requires_a_startable_codex_daemon(self):
-        with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                patch.object(host_bridge, "_codex_daemon") as daemon, \
-                patch.object(host_bridge, "_binary_fingerprint", return_value=HOST_FINGERPRINT), \
-                patch.object(host_bridge, "_claude_agent_list", return_value=[]):
-            result = host_bridge.preflight()
-
-        self.assertEqual("ready", result["codex"]["status"])
-        daemon.assert_called_once_with("codex", subprocess.run)
-
-    def test_preflight_reports_an_unstartable_codex_daemon(self):
-        with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                patch.object(host_bridge, "_codex_daemon", side_effect=ValueError("missing standalone")), \
-                patch.object(host_bridge, "_binary_fingerprint", return_value=HOST_FINGERPRINT), \
-                patch.object(host_bridge, "_claude_agent_list", return_value=[]):
-            result = host_bridge.preflight()
-
-        self.assertEqual("unavailable", result["codex"]["status"])
-        self.assertIn("missing standalone", result["codex"]["reason"])
-
-    def test_proxy_resume_identity_mismatch_is_not_accepted(self):
-        with tempfile.TemporaryDirectory() as directory:
-            package = self.package(directory)
-            started = {
-                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
-                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-1",
-                "turn_id": "turn-1", "host_fingerprint": HOST_FINGERPRINT,
-            }
-            host_bridge.persist_started(package, started)
-            proxy = MagicMock()
-            proxy.__enter__.return_value = proxy
-            proxy.request.return_value = {
-                "thread": {"id": "thread-other", "turns": [{"id": "turn-1", "status": "completed"}]},
-            }
-            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT), \
-                    patch.object(host_bridge, "_codex_proxy", return_value=proxy), \
-                    self.assertRaisesRegex(ValueError, "does not match"):
-                host_bridge.codex_observe(package, started)
 
     def test_claude_start_and_observe_require_the_registered_session_identity(self):
         with tempfile.TemporaryDirectory() as directory:
