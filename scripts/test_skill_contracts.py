@@ -580,6 +580,17 @@ class SkillContractTest(unittest.TestCase):
         ):
             self.assertIn(marker, skill + protocol)
 
+    def test_reference_alignment_requires_an_explicit_user_decision_for_every_allowed_difference(self):
+        alignment = (ROOT / "references/reference-alignment.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "明确的用户决定",
+            "不得推断",
+            "允许差异",
+            "未决",
+        ):
+            self.assertIn(marker, alignment)
+
     def test_route_reference_and_business_mapping_are_frozen_before_a_write(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         routing = (ROOT / "references/task-routing.md").read_text(encoding="utf-8")

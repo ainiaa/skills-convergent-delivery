@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Converge 在用户指定唯一参考基准并要求对齐时，首次业务写入前冻结相关文件的差异分类；外部 implementer launch 同时绑定目标和已确认例外，持续事项在恢复前核对范围快照、完成时提交当前范围的最终比较。交互 smoke receipt 升为 v4，写入、提问和验证观察必须由逐轮工件及宿主终态证据推导，不能再靠自报通过。
 - autonomy hook 卸载不再受解释器漂移影响：安装时把精确注册命令记录到 `~/.convergent-delivery/autonomy-hooks.json`（按 event 合并），卸载优先读取记录做精确匹配，缺失时才回退到重新推导。
 - 首次运行 converge-eval 确定性差分桥（control=v0.3.0+suite vs candidate=v0.4.0）：无回归、2 个探针确认修复；dogfood 确认三项操作约束已写入 eval skill——冻结 suite/judge 必须以字节相同形式同时存在于两侧树、快照必须由 control 树自带的 controller_snapshot.py 创建、suite 附着操作需要精确性。
 ## [0.4.0] - 2026-09-12

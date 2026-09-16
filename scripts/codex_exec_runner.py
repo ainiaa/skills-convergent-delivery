@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 from runner_contract import (
-    fingerprint, freeze_launch, implementation_reference_binding, review_request_binding, validate_launch,
+    alignment_launch_binding, fingerprint, freeze_launch, implementation_reference_binding,
+    review_request_binding, validate_launch,
 )
 
 
@@ -52,7 +53,8 @@ def _sha256(value):
 
 
 def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request_fingerprint=None,
-                review_request=None, implementation_reference_receipt_fingerprint=None):
+                review_request=None, implementation_reference_receipt_fingerprint=None,
+                alignment_launch_binding_fingerprint=None):
     if not isinstance(codex_bin, str) or not codex_bin:
         raise ValueError("Codex binary is required")
     workspace = Path(workspace).expanduser().resolve()
@@ -78,6 +80,11 @@ def plan_launch(profile, prompt, *, workspace, codex_bin="codex", review_request
     )
     if reference_fingerprint is not None:
         configuration["implementation_reference_receipt_fingerprint"] = reference_fingerprint
+    alignment_fingerprint = alignment_launch_binding(profile, alignment_launch_binding_fingerprint)
+    if alignment_fingerprint is not None:
+        if reference_fingerprint is None:
+            raise ValueError("alignment launch binding requires an implementation reference receipt")
+        configuration["alignment_launch_binding_fingerprint"] = alignment_fingerprint
     return freeze_launch(profile, prompt, configuration)
 
 
@@ -91,6 +98,7 @@ def command_for_launch(launch, prompt):
                 "codex_bin", "binary_fingerprint", "sandbox", "workspace", "user_config_fingerprint",
                 "review_request_fingerprint", "review_request",
                 "implementation_reference_receipt_fingerprint",
+                "alignment_launch_binding_fingerprint",
             } \
             or configuration["sandbox"] not in {"read-only", "workspace-write"} \
             or not isinstance(configuration["codex_bin"], str) \
@@ -109,6 +117,12 @@ def command_for_launch(launch, prompt):
     implementation_reference_binding(
         launch["profile"], configuration.get("implementation_reference_receipt_fingerprint"),
     )
+    alignment_launch_binding(
+        launch["profile"], configuration.get("alignment_launch_binding_fingerprint"),
+    )
+    if "alignment_launch_binding_fingerprint" in configuration \
+            and "implementation_reference_receipt_fingerprint" not in configuration:
+        raise ValueError("Codex alignment launch binding is missing its reference receipt")
     if "user_config_fingerprint" in configuration \
             and configuration["user_config_fingerprint"] != _user_config_fingerprint():
         raise ValueError("Codex user config changed after launch was frozen")

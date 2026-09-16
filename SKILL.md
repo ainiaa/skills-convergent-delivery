@@ -17,6 +17,7 @@ Converge 始终是 controller，负责同一会话内已授权的软件交付；
 - 每个 finding 必须是修复、阻塞决策或范围外记录之一；不以建议替代同范围闭环。
 - 模型自述不放行。没有本轮真实验证的验收不得称完成；命令不可用、超时或权限不足为 `uncovered`，不得放松检查取得通过。
 - 用户明确指定为实现依据的引用（包括 `codex://`）是需求真源，不是背景提示。首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。若引用未规定内部细节，沿用项目既有模式作最小选择；若其对完成需求必需但不可访问则阻塞。普通背景链接不构成门禁；持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取。
+- 用户将具体项目、目录、分支或实现明确指定为唯一基准，并要求“对齐、保持一致、迁移”或“按其修改”时，按 [参考基准对齐](references/reference-alignment.md) 执行。它不是普通参考：首次业务写入前必须冻结相关文件的差异清单；参考基准变更即使仍在同一项目，也必须作废旧清单并重新比较。
 - 一个用户任务必须在当前 task 内完成其有限的构建、全范围复审、修复批和最终复核；安装 autonomy 后，Codex 的精确用户指令“继续修复”/`continue repair` 会在 `UserPromptSubmit` 受限地 arm 当前 workspace 的 repair gate，随后 Stop Hook 以原生 `decision:block` 在同一 task 交付一次冻结动作，绝不创建 successor task。普通 task 不以无用户消息重新开启审查。
 - 按需读取 reference：简单 `inline` 只读路由、TDD 和报告，其中 TDD 先读 [Inline TDD](references/inline-tdd.md)；计划、跨会话、自治、多模型或全量收口才读对应 contract。
 
