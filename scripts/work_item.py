@@ -10,17 +10,73 @@ from pathlib import Path
 from delivery_lease import lock_record
 from delivery_state import repository_state_root, write_private
 from evidence_contract import run_evidence, validate_observed_evidence_receipt, workspace_source
-from reference_receipt import require_feature_binding, require_implementer_receipt
+from reference_receipt import (
+    require_alignment_binding,
+    require_feature_binding,
+    require_implementer_receipt,
+)
 
 
 STATE_FIELDS = {
     "schema_version", "task_key", "workspace", "baseline", "target", "requirements",
     "acceptance", "decisions", "reference_receipt", "status", "revision", "verifier_attempts",
-    "verifier_successes",
+    "verifier_successes", "alignment_scope_fingerprint",
 }
-LEGACY_STATE_FIELDS = STATE_FIELDS - {"verifier_successes"}
+PRE_ALIGNMENT_STATE_FIELDS = STATE_FIELDS - {"alignment_scope_fingerprint"}
+LEGACY_STATE_FIELDS = PRE_ALIGNMENT_STATE_FIELDS - {"verifier_successes"}
+LEGACY_SUCCESS_STATE_FIELDS = STATE_FIELDS - {"verifier_successes"}
 NONTERMINAL_STATUSES = {"active", "blocked"}
 SUCCESS_FIELDS = {"source_fingerprint", "argv", "receipt_fingerprint"}
+FINAL_ALIGNMENT_FIELDS = {"target", "scope_fingerprint", "remaining_differences"}
+
+
+def _reference_contract(receipt, target, decisions):
+    require_implementer_receipt(receipt)
+    require_feature_binding(receipt, target)
+    alignment = require_alignment_binding(receipt, target)
+    if alignment is None:
+        return None
+    approved = {
+        difference["decision"] for difference in alignment["differences"]
+        if difference["classification"] == "allowed"
+    }
+    if not approved <= set(decisions):
+        raise ValueError("alignment decision is not frozen in the work item")
+    return alignment
+
+
+def _alignment_scope_fingerprint(workspace, scope):
+    digest = hashlib.sha256()
+    workspace = _workspace(workspace)
+    for relative in scope:
+        path = (workspace / relative).resolve()
+        if not path.is_relative_to(workspace) or not path.is_file():
+            raise ValueError("alignment scope is unavailable")
+        digest.update(relative.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def _final_alignment_contract(state, workspace, comparison):
+    alignment = _reference_contract(
+        state["reference_receipt"], state["target"], state["decisions"],
+    )
+    if alignment is None:
+        if comparison is not None:
+            raise ValueError("final alignment comparison is invalid")
+        return
+    if not isinstance(comparison, dict) or set(comparison) != FINAL_ALIGNMENT_FIELDS \
+            or comparison.get("target") != state["target"]:
+        raise ValueError("final alignment comparison is required")
+    _fingerprint(comparison.get("scope_fingerprint"), "final alignment scope")
+    if comparison["scope_fingerprint"] != _alignment_scope_fingerprint(workspace, alignment["scope"]):
+        raise ValueError("final alignment comparison is stale")
+    remaining = comparison.get("remaining_differences")
+    expected = [
+        difference for difference in alignment["differences"]
+        if difference["classification"] == "allowed"
+    ]
+    if remaining != expected:
+        raise ValueError("final alignment comparison does not match frozen allowed differences")
 
 
 def _string(value, name):
@@ -103,11 +159,16 @@ def work_item_path(root, workspace, baseline, target, requirements, acceptance):
 
 
 def _validate_state(state):
-    if not isinstance(state, dict) or set(state) not in (STATE_FIELDS, LEGACY_STATE_FIELDS) \
+    if not isinstance(state, dict) or set(state) not in (
+            STATE_FIELDS, PRE_ALIGNMENT_STATE_FIELDS, LEGACY_STATE_FIELDS,
+            LEGACY_SUCCESS_STATE_FIELDS,
+    ) \
             or state.get("schema_version") != 1:
         raise ValueError("work item is invalid")
     if "verifier_successes" not in state:
         state = {**state, "verifier_successes": []}
+    if "alignment_scope_fingerprint" not in state:
+        state = {**state, "alignment_scope_fingerprint": None}
     workspace = _workspace(state.get("workspace"))
     baseline = _baseline(state.get("baseline"))
     target = _string(state.get("target"), "target")
@@ -119,8 +180,12 @@ def _validate_state(state):
             or isinstance(state["revision"], bool) or state["revision"] < 0:
         raise ValueError("work item lifecycle is invalid")
     _items(state.get("decisions"), "decisions", required=False)
-    require_implementer_receipt(state.get("reference_receipt"))
-    require_feature_binding(state["reference_receipt"], target)
+    alignment = _reference_contract(state.get("reference_receipt"), target, state["decisions"])
+    snapshot = state["alignment_scope_fingerprint"]
+    if alignment is None and snapshot is not None:
+        raise ValueError("work item alignment scope is invalid")
+    if alignment is not None and snapshot is not None:
+        _fingerprint(snapshot, "alignment scope")
     attempts = state.get("verifier_attempts")
     if not isinstance(attempts, list):
         raise ValueError("work item verifier attempts are invalid")
@@ -177,7 +242,7 @@ def resume_or_create(*, state_root, workspace, baseline, target, requirements, a
     acceptance = _items(acceptance, "acceptance", required=True)
     decisions = _items(decisions, "decisions", required=False)
     reference_fingerprint = require_implementer_receipt(reference_receipt)
-    require_feature_binding(reference_receipt, target)
+    alignment = _reference_contract(reference_receipt, target, decisions)
     directory = _directory(state_root, workspace)
     registry = directory / "registry"
     with lock_record(registry):
@@ -191,7 +256,16 @@ def resume_or_create(*, state_root, workspace, baseline, target, requirements, a
             if state["decisions"] != decisions or require_implementer_receipt(
                     state["reference_receipt"]) != reference_fingerprint:
                 raise ValueError("matching work item semantic contract differs")
+            if alignment is not None:
+                snapshot = state["alignment_scope_fingerprint"]
+                if snapshot is None or snapshot != _alignment_scope_fingerprint(
+                        workspace, alignment["scope"],
+                ):
+                    raise ValueError("alignment scope changed; recompare before resuming")
             return {"status": "resumed", "path": str(path), "work_item": state}
+        snapshot = None if alignment is None else _alignment_scope_fingerprint(
+            workspace, alignment["scope"],
+        )
         state = {
             "schema_version": 1,
             "task_key": work_item_key(workspace, baseline, target, requirements, acceptance),
@@ -199,6 +273,7 @@ def resume_or_create(*, state_root, workspace, baseline, target, requirements, a
             "requirements": requirements, "acceptance": acceptance, "decisions": decisions,
             "reference_receipt": json.loads(json.dumps(reference_receipt)),
             "status": "active", "revision": 0, "verifier_attempts": [], "verifier_successes": [],
+            "alignment_scope_fingerprint": snapshot,
         }
         path = work_item_path(state_root, workspace, baseline, target, requirements, acceptance)
         write_private(path, state)
@@ -332,7 +407,7 @@ def run_work_item_evidence(path, *, workspace, baseline, argv, timeout_seconds=6
         return {**recorded, "receipt": receipt}
 
 
-def complete_work_item(path, *, workspace, baseline, receipt):
+def complete_work_item(path, *, workspace, baseline, receipt, alignment_comparison=None):
     """Remove a work item only after a current-source observed passing receipt."""
     path = Path(path)
     workspace = _workspace(workspace)
@@ -343,6 +418,7 @@ def complete_work_item(path, *, workspace, baseline, receipt):
             raise ValueError("work item workspace differs from completion workspace")
         if state["baseline"] != baseline:
             raise ValueError("work item baseline differs from completion baseline")
+        _final_alignment_contract(state, workspace, alignment_comparison)
         source_fingerprint = workspace_source(workspace, baseline)["source_fingerprint"]
         receipt_fingerprint = _receipt_fingerprint(
             receipt, "completion", source_fingerprint, passing=True,
@@ -392,6 +468,7 @@ def main():
     complete.add_argument("--workspace", required=True)
     complete.add_argument("--baseline", required=True)
     complete.add_argument("--receipt", required=True)
+    complete.add_argument("--alignment-comparison")
     arguments = parser.parse_args()
     try:
         if arguments.command == "verifier-gate":
@@ -426,6 +503,8 @@ def main():
             result = complete_work_item(
                 arguments.state, workspace=arguments.workspace, baseline=arguments.baseline,
                 receipt=_json_file(arguments.receipt, "completion receipt"),
+                alignment_comparison=None if arguments.alignment_comparison is None
+                else _json_file(arguments.alignment_comparison, "alignment comparison"),
             )
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
             return 0

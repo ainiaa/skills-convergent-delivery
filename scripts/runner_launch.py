@@ -12,6 +12,7 @@ from codex_exec_runner import command_for_launch as codex_command_for_launch
 from codex_exec_runner import execute_launch as execute_codex_launch
 from codex_exec_runner import plan_launch as plan_codex_launch
 from role_result import prompt_for_review, prompt_for_role
+from reference_receipt import alignment_launch_binding as freeze_alignment_launch_binding
 from reference_receipt import require_implementer_receipt
 from runner_contract import validate_launch
 from runner_registry import validate_runner_profile
@@ -43,12 +44,18 @@ def prompt_for_dispatch(dispatch, prompt, review_request=None):
 
 def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude",
                          review_request_fingerprint=None, review_request=None,
-                         implementation_reference_receipt=None):
+                         implementation_reference_receipt=None, alignment_target=None,
+                         alignment_decisions=None):
     """Turn exactly one frozen external-runner dispatch into a prompt-free launch receipt."""
     profile = _profile(dispatch)
     receipt_fingerprint = (
         require_implementer_receipt(implementation_reference_receipt)
         if profile["role"] == "implementer" else None
+    )
+    alignment_fingerprint = (
+        freeze_alignment_launch_binding(
+            implementation_reference_receipt, alignment_target, alignment_decisions,
+        ) if profile["role"] == "implementer" and implementation_reference_receipt is not None else None
     )
     if profile["role"] != "implementer" and implementation_reference_receipt is not None:
         raise ValueError("only implementer dispatches may have an implementation reference receipt")
@@ -58,6 +65,7 @@ def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", clau
             review_request_fingerprint=review_request_fingerprint,
             review_request=review_request,
             implementation_reference_receipt_fingerprint=receipt_fingerprint,
+            alignment_launch_binding_fingerprint=alignment_fingerprint,
         )
     if profile["runner_id"] == "claude-code-v1":
         return plan_claude_launch(
@@ -65,6 +73,7 @@ def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", clau
             review_request_fingerprint=review_request_fingerprint,
             review_request=review_request,
             implementation_reference_receipt_fingerprint=receipt_fingerprint,
+            alignment_launch_binding_fingerprint=alignment_fingerprint,
         )
     from openai_compatible_runner import PROVIDERS, plan_request
     provider = PROVIDERS.get(profile["effective"]["provider"])

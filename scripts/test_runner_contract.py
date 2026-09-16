@@ -6,7 +6,8 @@ import unittest
 from role_result import result_from_output
 from runner_contract import (
     bind_role_result, fingerprint as contract_fingerprint, freeze_launch, role_results_complete,
-    implementation_reference_binding, review_request_binding, runner_results_complete, validate_launch,
+    alignment_launch_binding, implementation_reference_binding, review_request_binding,
+    runner_results_complete, validate_launch,
 )
 from worker_profile import fingerprint
 
@@ -244,6 +245,10 @@ class RunnerContractTest(unittest.TestCase):
             role="implementer", permissions={"workspace": "write", "shell": True, "network": "egress"},
         )
         self.assertEqual("a" * 64, implementation_reference_binding(implementer, "a" * 64))
+        self.assertIsNone(alignment_launch_binding(implementer, None))
+        self.assertEqual("a" * 64, alignment_launch_binding(implementer, "a" * 64))
+        with self.assertRaisesRegex(ValueError, "alignment contract"):
+            alignment_launch_binding(scout, "a" * 64)
 
     def test_runner_receipt_rejects_unknown_launches_duplicate_results_and_bad_attestations(self):
         launch = freeze_launch(profile(), "Review", {})

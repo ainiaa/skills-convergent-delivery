@@ -72,14 +72,84 @@ def update(path, command, event="Stop", remove=False):
         Path(temporary).unlink(missing_ok=True)
 
 
+def record_command(path, runtime, event, command):
+    """Persist the exact registered command per event so removal survives drift."""
+    path = Path(path)
+    value = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(value, dict):
+        raise ValueError("hook record must be an object")
+    field = {"Stop": "stop_command", "UserPromptSubmit": "prompt_command"}.get(event)
+    if field is None:
+        raise ValueError(f"hook record does not track the {event} event")
+    entry = value.setdefault(runtime, {})
+    entry[field] = command
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            json.dump(value, file, sort_keys=True)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def recorded_command(path, runtime, which):
+    """Return the recorded exact command for a runtime, or None when absent."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        command = value.get(runtime, {}).get(which)
+    except (OSError, ValueError):
+        return None
+    return command if isinstance(command, str) and command else None
+
+
+def drop_record(path, runtime):
+    """Remove one runtime's record; delete the file when the last entry goes."""
+    path = Path(path)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(value, dict) and value.pop(runtime, None) is not None:
+        if value:
+            descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                    json.dump(value, file, sort_keys=True)
+                    file.write("\n")
+                    file.flush()
+                    os.fsync(file.fileno())
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        else:
+            path.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--command", required=True)
     parser.add_argument("--event", default="Stop")
     parser.add_argument("--remove", action="store_true")
+    parser.add_argument("--record-state")
+    parser.add_argument("--record-runtime")
+    parser.add_argument("--record-event", default="Stop")
     arguments = parser.parse_args()
     update(arguments.config, arguments.command, arguments.event, arguments.remove)
+    if arguments.record_state:
+        if not arguments.record_runtime:
+            raise ValueError("--record-state requires --record-runtime")
+        if arguments.remove:
+            drop_record(arguments.record_state, arguments.record_runtime)
+        else:
+            record_command(
+                arguments.record_state, arguments.record_runtime,
+                arguments.event, arguments.command,
+            )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import work_item
 from evidence_contract import run_evidence
 from reference_receipt import freeze_receipt
 from work_item import (
@@ -80,6 +81,55 @@ class WorkItemTest(unittest.TestCase):
                 self.request(**overrides)
         self.assertFalse(self.root.exists())
 
+    def test_state_validation_rejects_corrupt_lifecycle_and_verifier_fields(self):
+        state = self.request()["work_item"]
+        cases = (
+            lambda value: value.update(task_key="invalid"),
+            lambda value: value.update(status="complete"),
+            lambda value: value.update(decisions=[" "]),
+            lambda value: value.update(verifier_attempts={}),
+            lambda value: value.update(verifier_attempts=[{}]),
+            lambda value: value.update(verifier_successes={}),
+            lambda value: value.update(verifier_successes=[{}]),
+        )
+        for mutate in cases:
+            invalid = copy.deepcopy(state)
+            mutate(invalid)
+            with self.subTest(state=mutate), self.assertRaises(ValueError):
+                work_item._validate_state(invalid)
+        with self.assertRaisesRegex(ValueError, "sha256"):
+            work_item._fingerprint("invalid", "verifier source")
+        with self.assertRaisesRegex(ValueError, "argv"):
+            work_item._argv([])
+
+    def test_private_state_boundaries_reject_missing_or_reused_inputs(self):
+        with self.assertRaisesRegex(ValueError, "work item is invalid"):
+            work_item._validate_state({})
+        self.assertEqual([], work_item._matching(
+            self.root, self.workspace, "status-normalization",
+            ["normalize missing status"], ["missing status normalizes to empty"],
+        ))
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            work_item._load(self.root / "missing.json")
+        with self.assertRaisesRegex(ValueError, "argv JSON"):
+            work_item._json_argv("not-json")
+        with self.assertRaisesRegex(ValueError, "receipt is invalid"):
+            work_item._receipt_fingerprint({}, "failure", "a" * 64)
+
+        created = self.request()
+        with self.assertRaisesRegex(ValueError, "baseline differs"):
+            complete_work_item(created["path"], workspace=self.workspace, baseline="b" * 40, receipt={})
+
+        state = created["work_item"]
+        state["verifier_attempts"].append({
+            "source_fingerprint": "a" * 64, "argv": ["pytest"],
+            "failure_receipt_fingerprint": "b" * 64, "recovery_receipt_fingerprint": None,
+        })
+        self.assertEqual({"status": "blocked", "reason": "identical_verifier_failure"},
+                         work_item._record_verifier_failure_locked(
+                             Path(created["path"]), state, "a" * 64, ["pytest"], "b" * 64, None,
+                         ))
+
     def test_unique_nonterminal_item_is_created_then_resumed(self):
         created = self.request()
         resumed = self.request()
@@ -123,6 +173,113 @@ class WorkItemTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "feature binding target"):
             self.request(reference_receipt=receipt)
+
+    def test_alignment_exception_must_reference_a_frozen_work_item_decision(self):
+        reference = "codex://thread/gradle-baseline"
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            alignment_bindings=[{
+                "target": "status-normalization", "reference": reference,
+                "scope": ["build.gradle"],
+                "differences": [{
+                    "path": "build.gradle", "classification": "allowed",
+                    "reason": "target module name differs",
+                    "decision": "Keep the AP module name",
+                }],
+            }],
+        )
+
+        with self.assertRaisesRegex(ValueError, "alignment decision"):
+            self.request(reference_receipt=receipt)
+        (self.workspace / "build.gradle").write_text("rootProject.name = 'target'\n", encoding="utf-8")
+        created = self.request(
+            decisions=["None normalizes to empty", "Keep the AP module name"],
+            reference_receipt=receipt,
+        )
+
+        self.assertEqual("created", created["status"])
+
+    def test_resume_rejects_an_alignment_scope_that_changed_after_it_was_frozen(self):
+        scope = self.workspace / "build.gradle"
+        scope.write_text("rootProject.name = 'before'\n", encoding="utf-8")
+        reference = "codex://thread/gradle-baseline"
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            alignment_bindings=[{
+                "target": "status-normalization", "reference": reference,
+                "scope": ["build.gradle"], "differences": [{
+                    "path": "build.gradle", "classification": "allowed",
+                    "reason": "target module name differs",
+                    "decision": "Keep the AP module name",
+                }],
+            }],
+        )
+        self.request(
+            decisions=["None normalizes to empty", "Keep the AP module name"],
+            reference_receipt=receipt,
+        )
+        scope.write_text("rootProject.name = 'after'\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "alignment scope changed"):
+            self.request(
+                decisions=["None normalizes to empty", "Keep the AP module name"],
+                reference_receipt=receipt,
+            )
+
+    def test_completion_requires_a_final_alignment_comparison(self):
+        workspace = Path(self.directory.name) / "alignment-workspace"
+        workspace.mkdir()
+        scope = workspace / "build.gradle"
+        scope.write_text("rootProject.name = 'before'\n", encoding="utf-8")
+        for arguments in (
+                ["git", "init", "-q"], ["git", "config", "user.email", "test@example.com"],
+                ["git", "config", "user.name", "Test"], ["git", "add", "build.gradle"],
+                ["git", "commit", "-qm", "baseline"],
+        ):
+            subprocess.run(arguments, cwd=workspace, check=True)
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        reference = "codex://thread/gradle-baseline"
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            alignment_bindings=[{
+                "target": "aligned-build", "reference": reference,
+                "scope": ["build.gradle"], "differences": [{
+                    "path": "build.gradle", "classification": "must-align",
+                    "reason": "project name differs", "decision": None,
+                }],
+            }],
+        )
+        created = resume_or_create(
+            state_root=self.root, workspace=workspace, baseline=baseline,
+            target="aligned-build", requirements=["align the build file"],
+            acceptance=["the build file is aligned"], decisions=[],
+            reference_receipt=receipt, continuation=True,
+        )
+        scope.write_text("rootProject.name = 'after'\n", encoding="utf-8")
+        passed = run_work_item_evidence(
+            created["path"], workspace=workspace, baseline=baseline,
+            argv=[sys.executable, "-c", "pass"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "final alignment"):
+            complete_work_item(
+                created["path"], workspace=workspace, baseline=baseline, receipt=passed["receipt"],
+            )
+        completed = complete_work_item(
+            created["path"], workspace=workspace, baseline=baseline, receipt=passed["receipt"],
+            alignment_comparison={
+                "target": "aligned-build",
+                "scope_fingerprint": work_item._alignment_scope_fingerprint(
+                    workspace, ["build.gradle"],
+                ),
+                "remaining_differences": [],
+            },
+        )
+
+        self.assertEqual({"status": "complete"}, completed)
 
     def test_resume_rejects_a_changed_frozen_decision_or_reference_receipt(self):
         reference = "codex://thread/source-feature"

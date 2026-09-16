@@ -222,6 +222,8 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
         review_request_fingerprint=review_request_fingerprint,
         review_request=review_request,
         implementation_reference_receipt=getattr(arguments, "implementation_reference_receipt", None),
+        alignment_target=getattr(arguments, "alignment_target", None),
+        alignment_decisions=getattr(arguments, "alignment_decisions", None),
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
@@ -400,6 +402,8 @@ def main():
     parser.add_argument("--review-request-file", type=argparse.FileType("r"))
     parser.add_argument("--review-requests-file", type=argparse.FileType("r"))
     parser.add_argument("--implementation-reference-receipt-file", type=argparse.FileType("r"))
+    parser.add_argument("--alignment-target")
+    parser.add_argument("--alignment-decision", action="append", dest="alignment_decisions")
     arguments = parser.parse_args()
     try:
         dispatch = json.load(arguments.dispatch)

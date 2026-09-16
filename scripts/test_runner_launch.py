@@ -162,6 +162,69 @@ class RunnerLaunchTest(unittest.TestCase):
             launch.call_args.kwargs["implementation_reference_receipt_fingerprint"],
         )
 
+    def test_alignment_receipt_cannot_launch_without_a_frozen_target_and_decisions(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        profile = profiles["roles"]["implementer"]
+        dispatch = {
+            "status": "next", "role": "implementer", "mode": "agent", "reason": "implement",
+            "profile": profile, "profile_fingerprint": profile["profile_fingerprint"],
+            "runner_id": profile["runner_id"], "executor": "external_runner",
+        }
+        receipt = freeze_receipt(
+            [{"reference": "codex://thread/gradle", "status": "read",
+              "content_fingerprint": "a" * 64}],
+            alignment_bindings=[{
+                "target": "gradle-build", "reference": "codex://thread/gradle",
+                "scope": ["build.gradle"], "differences": [{
+                    "path": "build.gradle", "classification": "allowed",
+                    "reason": "target module name differs", "decision": "Keep the AP module name",
+                }],
+            }],
+        )
+
+        with patch("runner_launch.plan_codex_launch", return_value={}):
+            with self.assertRaisesRegex(ValueError, "alignment.*target"):
+                plan_dispatch_launch(
+                    dispatch, "Implement", workspace=self.workspace,
+                    implementation_reference_receipt=receipt,
+                )
+
+    def test_alignment_launch_binds_the_approved_target_and_decisions(self):
+        profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+        profile = profiles["roles"]["implementer"]
+        dispatch = {
+            "status": "next", "role": "implementer", "mode": "agent", "reason": "implement",
+            "profile": profile, "profile_fingerprint": profile["profile_fingerprint"],
+            "runner_id": profile["runner_id"], "executor": "external_runner",
+        }
+        receipt = freeze_receipt(
+            [{"reference": "codex://thread/gradle", "status": "read",
+              "content_fingerprint": "a" * 64}],
+            alignment_bindings=[{
+                "target": "gradle-build", "reference": "codex://thread/gradle",
+                "scope": ["build.gradle"], "differences": [{
+                    "path": "build.gradle", "classification": "allowed",
+                    "reason": "target module name differs", "decision": "Keep the AP module name",
+                }],
+            }],
+        )
+
+        with patch("runner_launch.plan_codex_launch", return_value={}) as launch:
+            with self.assertRaisesRegex(ValueError, "alignment decision"):
+                plan_dispatch_launch(
+                    dispatch, "Implement", workspace=self.workspace,
+                    implementation_reference_receipt=receipt,
+                    alignment_target="gradle-build", alignment_decisions=[],
+                )
+            plan_dispatch_launch(
+                dispatch, "Implement", workspace=self.workspace,
+                implementation_reference_receipt=receipt,
+                alignment_target="gradle-build",
+                alignment_decisions=["Keep the AP module name"],
+            )
+
+        self.assertRegex(launch.call_args.kwargs["alignment_launch_binding_fingerprint"], r"^[0-9a-f]{64}$")
+
     def test_normalizes_glm_content_as_ephemeral_output(self):
         profiles = resolve(
             None, workspace=self.workspace, home=self.workspace / "home",

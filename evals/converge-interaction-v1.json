@@ -65,6 +65,12 @@
       "expected": {"skill": "converge", "action": "ask", "writes": "none", "question": "decision_required", "completion": "not_complete", "scope": "not_applicable", "failure_policy": "not_applicable"}
     },
     {
+      "id": "reference-alignment-gate",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": []},
+      "turns": [{"prompt": "以 /repo/base 为唯一参考，把 /repo/target 的 Gradle 构建配置对齐。已授权实现，但 target 的项目名、模块列表与凭据规则是否可以保留尚未决定。先给出允许差异清单；在其冻结前不要写入。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "ask", "writes": "forbidden", "question": "decision_required", "completion": "not_complete", "scope": "in_scope", "failure_policy": "not_applicable"}
+    },
+    {
       "id": "verification-environment-block",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "none", "decisions": ["The API mapping is frozen"]},
       "turns": [{"prompt": "按已冻结映射实现并验证。Gradle 依赖无法解析时记录该一次失败并阻塞；不要重复同一命令，也不要声称完成。", "authorized_write": true}],
@@ -96,9 +102,9 @@
     }
   ],
   "smoke": {
-    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "verification-environment-block", "nonterminal-work-item-verifier-gate", "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered"],
-    "minimum_fresh_runs": 8,
-    "receipt_schema_version": 3,
+    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "reference-alignment-gate", "verification-environment-block", "nonterminal-work-item-verifier-gate", "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered"],
+    "minimum_fresh_runs": 9,
+    "receipt_schema_version": 4,
     "unavailable_result": "uncovered"
   }
 }

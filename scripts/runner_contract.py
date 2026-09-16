@@ -98,6 +98,15 @@ def implementation_reference_binding(profile, value):
     return value
 
 
+def alignment_launch_binding(profile, value):
+    """Allow only an implementer launch to carry a frozen alignment binding."""
+    if value is None:
+        return None
+    if profile["role"] != "implementer" or not _sha256(value):
+        raise ValueError("only implementer launches may bind an alignment contract")
+    return value
+
+
 def _requires_role_result(launch):
     profile = launch["profile"]
     return profile["role"] in {"scout", "reviewer"} \

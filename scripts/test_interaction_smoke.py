@@ -2,6 +2,7 @@
 """Regression tests for replayable interaction smoke contracts."""
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import unittest
 from pathlib import Path
 
 from interaction_smoke import (
+    _host_timestamp,
+    _timestamp,
     catalog_fingerprint,
     resolve_host_threads,
     validate_catalog,
@@ -24,6 +27,49 @@ CATALOG_PATH = ROOT / "evals" / "converge-interaction-v1.json"
 class InteractionSmokeTest(unittest.TestCase):
     def setUp(self):
         self.catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+
+    def _behavior_evidence(self, receipt):
+        def fingerprint(value):
+            return hashlib.sha256(json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+
+        host_receipt = {
+            "schema_version": 1,
+            "protocol": "host-bridge-v1",
+            "host": "codex",
+            "sample_id": "interaction-smoke",
+            "task_id": receipt["task_id"],
+            "terminal_status": "completed",
+            "host_fingerprint": "a" * 64,
+            "launch_fingerprint": "b" * 64,
+            "package_fingerprint": "c" * 64,
+            "judge": {
+                "argv": ["interaction-observer-v1"], "exit_code": 0,
+                "stdout_fingerprint": "d" * 64, "stderr_fingerprint": "e" * 64,
+            },
+            "evidence_level": "host_observed",
+        }
+        host_receipt["receipt_fingerprint"] = fingerprint(host_receipt)
+        return {
+            "scenario_id": receipt["scenario_id"],
+            "catalog_fingerprint": receipt["catalog_fingerprint"],
+            "host_receipt": host_receipt,
+            "turns": [
+                {
+                    "turn": item["turn"],
+                    "assistant_transcript": "?" * item["questions_asked"] or "completed",
+                    "workspace_before": "f" * 64,
+                    "workspace_after": "0" * 64 if item["writes_observed"] else "f" * 64,
+                    "verification": [
+                        {"command": command, "exit_code": 0,
+                         "stdout_fingerprint": "1" * 64, "stderr_fingerprint": "2" * 64}
+                        for command in item["verification_observed"]
+                    ],
+                }
+                for item in receipt["observations"]
+            ],
+        }
 
     def test_catalog_and_receipt_reject_invalid_contract_boundaries(self):
         catalog_cases = (
@@ -44,7 +90,7 @@ class InteractionSmokeTest(unittest.TestCase):
                 validate_catalog(invalid, ROOT)
 
         receipt = {
-            "schema_version": 3,
+            "schema_version": 4,
             "scenario_id": "known-decision-is-not-reasked",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "resolved-task",
@@ -61,6 +107,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "result": "pass",
             "uncovered_reason": None,
         }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
         receipt_cases = (
             lambda value: value.update(schema_version=1),
             lambda value: value.update(scenario_id="missing"),
@@ -135,6 +182,172 @@ class InteractionSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "initial diff"):
                 validate_catalog(invalid, temporary_root)
 
+    def test_reference_alignment_blocks_writes_until_the_difference_allowlist_is_frozen(self):
+        scenario = next(item for item in self.catalog["scenarios"]
+                        if item["id"] == "reference-alignment-gate")
+
+        self.assertTrue(scenario["turns"][0]["authorized_write"])
+        self.assertEqual("ask", scenario["expected"]["action"])
+        self.assertEqual("forbidden", scenario["expected"]["writes"])
+        self.assertEqual("decision_required", scenario["expected"]["question"])
+        self.assertEqual("not_complete", scenario["expected"]["completion"])
+
+    def test_reference_alignment_receipt_requires_an_observed_decision_request(self):
+        receipt = {
+            "schema_version": 4,
+            "scenario_id": "reference-alignment-gate",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": [], "verifier_failures": [],
+                 "completion_claim": "not_complete"},
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+
+        with self.assertRaisesRegex(ValueError, "requires a decision question"):
+            validate_receipt(receipt, self.catalog)
+
+    def test_receipt_derives_write_question_and_verification_observations_from_host_artifacts(self):
+        receipt = {
+            "schema_version": 4,
+            "scenario_id": "known-decision-is-not-reasked",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "resolved-task",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": [], "verifier_failures": [], "completion_claim": "not_complete"},
+                {"turn": 2, "writes_observed": True, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [], "completion_claim": "verified_only"},
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+        validate_receipt(receipt, self.catalog)
+
+        forged = copy.deepcopy(receipt)
+        forged["observations"][1]["writes_observed"] = False
+        with self.assertRaisesRegex(ValueError, "writes_observed"):
+            validate_receipt(forged, self.catalog)
+
+        forged = copy.deepcopy(receipt)
+        forged["observations"][0]["questions_asked"] = 1
+        with self.assertRaisesRegex(ValueError, "questions_asked"):
+            validate_receipt(forged, self.catalog)
+
+        forged = copy.deepcopy(receipt)
+        forged["observations"][1]["verification_observed"] = []
+        with self.assertRaisesRegex(ValueError, "verification_observed"):
+            validate_receipt(forged, self.catalog)
+
+        forged = copy.deepcopy(receipt)
+        forged["observations"][0]["questions_asked"] = 1
+        forged["behavior_evidence"]["turns"][0]["assistant_transcript"] = "?"
+        with self.assertRaisesRegex(ValueError, "forbids questions"):
+            validate_receipt(forged, self.catalog)
+
+        evidence_cases = (
+            (lambda value: value.update(scenario_id="other"), "behavior evidence"),
+            (lambda value: value["host_receipt"].update(terminal_status="failed"), "host behavior evidence"),
+            (lambda value: value["host_receipt"].update(host_fingerprint="bad"), "host_receipt.host_fingerprint"),
+            (lambda value: value["host_receipt"]["judge"].update(exit_code=1), "host behavior judge"),
+            (lambda value: value["host_receipt"].update(receipt_fingerprint="0" * 64), "host behavior fingerprint"),
+            (lambda value: value.update(turns=[]), "evidence turns"),
+            (lambda value: value["turns"][0].update(assistant_transcript=None), "evidence turn"),
+            (lambda value: value["turns"][0].update(verification="bad"), "verification evidence"),
+            (lambda value: value["turns"][1]["verification"][0].update(exit_code=True), "verification evidence"),
+        )
+        for mutate, message in evidence_cases:
+            forged = copy.deepcopy(receipt)
+            mutate(forged["behavior_evidence"])
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                validate_receipt(forged, self.catalog)
+
+    def test_catalog_and_receipt_cover_remaining_contract_boundaries(self):
+        catalog_cases = (
+            lambda value: value.update(fixture=[]),
+            lambda value: value.update(smoke=[]),
+            lambda value: value["scenarios"].__setitem__(0, []),
+            lambda value: value["scenarios"].__setitem__(1, value["scenarios"][0]),
+            lambda value: value["scenarios"][0].update(setup=[]),
+            lambda value: value["scenarios"][0]["setup"].update(fixture="other"),
+            lambda value: value["scenarios"][0]["setup"].update(decisions="not-a-list"),
+            lambda value: value["scenarios"][0].update(turns=[]),
+            lambda value: value["scenarios"][0]["turns"].__setitem__(0, []),
+            lambda value: value["scenarios"][0].update(expected=[]),
+        )
+        for mutate in catalog_cases:
+            invalid = copy.deepcopy(self.catalog)
+            mutate(invalid)
+            with self.subTest(catalog=mutate), self.assertRaises(ValueError):
+                validate_catalog(invalid, ROOT)
+
+        receipt = {
+            "schema_version": 4, "scenario_id": "known-decision-is-not-reasked",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog), "task_id": "resolved-task",
+            "baseline_commit": "a" * 40, "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0, "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": [], "verifier_failures": [], "completion_claim": "not_complete"},
+                {"turn": 2, "writes_observed": True, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [], "completion_claim": "verified_only"},
+            ], "result": "pass", "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+        receipt_cases = (
+            lambda value: value.update(unprompted_task_turns=True),
+            lambda value: value["observations"][1].update(questions_asked=1),
+        )
+        for mutate in receipt_cases:
+            invalid = copy.deepcopy(receipt)
+            mutate(invalid)
+            with self.subTest(receipt=mutate), self.assertRaises(ValueError):
+                validate_receipt(invalid, self.catalog)
+
+    def test_reference_gate_and_host_resolution_reject_invalid_observations(self):
+        receipt = {
+            "schema_version": 4, "scenario_id": "reference-alignment-gate",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog), "task_id": "resolved-task",
+            "baseline_commit": "a" * 40, "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0, "successor_task_dispatches": 0,
+            "observations": [{
+                "turn": 1, "writes_observed": True, "questions_asked": 1,
+                "verification_observed": [], "verifier_failures": [], "completion_claim": "not_complete",
+            }], "result": "pass", "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+        receipt["behavior_evidence"]["turns"][0]["workspace_after"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "forbids observed writes"):
+            validate_receipt(receipt, self.catalog)
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            _timestamp("not-a-time", "timestamp")
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            _timestamp("2026-09-16T00:00:00", "timestamp")
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            _host_timestamp(float("inf"), "timestamp")
+
+        base = {"name": "target", "createdAt": "2026-09-16T00:00:00Z",
+                "updatedAt": "2026-09-16T00:00:00Z"}
+        with self.assertRaisesRegex(ValueError, "no host thread"):
+            resolve_host_threads({"data": [{**base, "id": "client-pending"}], "nextCursor": None},
+                                 "target", "2026-09-15T00:00:00Z")
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            resolve_host_threads({"data": [{**base, "id": "one"}, {**base, "id": "two"}],
+                                  "nextCursor": None}, "target", "2026-09-15T00:00:00Z")
+
     def test_named_initial_diff_is_a_replayable_fixture_patch(self):
         patch = ROOT / "evals/interaction-fixtures/status-normalizer/review-null-contract-regression.patch"
         result = subprocess.run(
@@ -146,7 +359,7 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_receipt_requires_addressable_task_current_baseline_and_observations(self):
         receipt = {
-            "schema_version": 3,
+            "schema_version": 4,
             "scenario_id": "known-decision-is-not-reasked",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -163,6 +376,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "result": "pass",
             "uncovered_reason": None,
         }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
         validate_receipt(receipt, self.catalog)
 
         invalid = copy.deepcopy(receipt)
@@ -187,7 +401,7 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_uncovered_receipt_must_explain_the_missing_host_evidence(self):
         receipt = {
-            "schema_version": 3,
+            "schema_version": 4,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -197,17 +411,22 @@ class InteractionSmokeTest(unittest.TestCase):
             "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
                               "verification_observed": [], "verifier_failures": [], "completion_claim": "findings_only"}],
+            "behavior_evidence": None,
             "result": "uncovered",
             "uncovered_reason": "Desktop did not expose a resolvable thread ID.",
         }
         validate_receipt(receipt, self.catalog)
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+        with self.assertRaisesRegex(ValueError, "cannot claim host behavior evidence"):
+            validate_receipt(receipt, self.catalog)
+        receipt["behavior_evidence"] = None
         receipt["uncovered_reason"] = None
         with self.assertRaisesRegex(ValueError, "uncovered_reason"):
             validate_receipt(receipt, self.catalog)
 
     def test_environment_verifier_failure_is_recorded_once_and_stays_nonterminal(self):
         receipt = {
-            "schema_version": 3,
+            "schema_version": 4,
             "scenario_id": "verification-environment-block",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -223,6 +442,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "result": "pass",
             "uncovered_reason": None,
         }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
         validate_receipt(receipt, self.catalog)
 
         duplicate = copy.deepcopy(receipt)
@@ -232,7 +452,7 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_cli_validates_a_fresh_host_receipt(self):
         receipt = {
-            "schema_version": 3,
+            "schema_version": 4,
             "scenario_id": "explicit-review-only",
             "catalog_fingerprint": catalog_fingerprint(self.catalog),
             "task_id": "01a07a8e-5874-7671-8e99-d294a7672477",
@@ -242,6 +462,7 @@ class InteractionSmokeTest(unittest.TestCase):
             "successor_task_dispatches": None,
             "observations": [{"turn": 1, "writes_observed": False, "questions_asked": 0,
                               "verification_observed": [], "verifier_failures": [], "completion_claim": "findings_only"}],
+            "behavior_evidence": None,
             "result": "uncovered",
             "uncovered_reason": "No fresh host run was available.",
         }

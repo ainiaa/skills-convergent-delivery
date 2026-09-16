@@ -15,6 +15,7 @@ SCENARIO_IDS = {
     "local-fix", "review-checkpoint-closes-in-scope-finding", "explicit-review-only",
     "out-of-scope-finding", "known-decision-is-not-reasked", "irreversible-decision",
     "simple-inline", "complex-plan", "cross-service-reference-decision",
+    "reference-alignment-gate",
     "verification-environment-block", "nonterminal-work-item-verifier-gate",
     "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered",
 }
@@ -31,12 +32,23 @@ CATALOG_PATH = ROOT / "evals" / "converge-interaction-v1.json"
 RECEIPT_FIELDS = {
     "schema_version", "scenario_id", "catalog_fingerprint", "task_id", "baseline_commit",
     "workspace_strategy", "unprompted_task_turns", "successor_task_dispatches", "observations",
-    "result", "uncovered_reason",
+    "behavior_evidence", "result", "uncovered_reason",
 }
 OBSERVATION_FIELDS = {
     "turn", "writes_observed", "questions_asked", "verification_observed", "verifier_failures",
     "completion_claim",
 }
+BEHAVIOR_EVIDENCE_FIELDS = {"scenario_id", "catalog_fingerprint", "host_receipt", "turns"}
+EVIDENCE_TURN_FIELDS = {
+    "turn", "assistant_transcript", "workspace_before", "workspace_after", "verification",
+}
+EVIDENCE_VERIFICATION_FIELDS = {"command", "exit_code", "stdout_fingerprint", "stderr_fingerprint"}
+HOST_RECEIPT_FIELDS = {
+    "schema_version", "protocol", "host", "sample_id", "task_id", "terminal_status",
+    "host_fingerprint", "launch_fingerprint", "package_fingerprint", "judge", "evidence_level",
+    "receipt_fingerprint",
+}
+HOST_JUDGE_FIELDS = {"argv", "exit_code", "stdout_fingerprint", "stderr_fingerprint"}
 
 
 def catalog_fingerprint(catalog):
@@ -48,6 +60,78 @@ def _string(value, name):
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
     return value
+
+
+def _sha256(value, name):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError(f"{name} is invalid")
+    return value
+
+
+def _fingerprint(value):
+    return hashlib.sha256(json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+
+
+def _validate_behavior_evidence(receipt):
+    evidence = receipt["behavior_evidence"]
+    if not isinstance(evidence, dict) or set(evidence) != BEHAVIOR_EVIDENCE_FIELDS \
+            or evidence["scenario_id"] != receipt["scenario_id"] \
+            or evidence["catalog_fingerprint"] != receipt["catalog_fingerprint"]:
+        raise ValueError("receipt behavior evidence is invalid")
+    host_receipt = evidence["host_receipt"]
+    if not isinstance(host_receipt, dict) or set(host_receipt) != HOST_RECEIPT_FIELDS \
+            or host_receipt["schema_version"] != 1 or host_receipt["protocol"] != "host-bridge-v1" \
+            or host_receipt["terminal_status"] != "completed" \
+            or host_receipt["evidence_level"] != "host_observed" \
+            or host_receipt["task_id"] != receipt["task_id"]:
+        raise ValueError("receipt host behavior evidence is invalid")
+    for field in ("host", "sample_id", "task_id"):
+        _string(host_receipt[field], f"receipt host_receipt.{field}")
+    for field in ("host_fingerprint", "launch_fingerprint", "package_fingerprint"):
+        _sha256(host_receipt[field], f"receipt host_receipt.{field}")
+    judge = host_receipt["judge"]
+    if not isinstance(judge, dict) or set(judge) != HOST_JUDGE_FIELDS \
+            or not isinstance(judge["argv"], list) or not judge["argv"] \
+            or any(not isinstance(item, str) or not item for item in judge["argv"]) \
+            or not isinstance(judge["exit_code"], int) or isinstance(judge["exit_code"], bool) \
+            or judge["exit_code"] != 0:
+        raise ValueError("receipt host behavior judge is invalid")
+    for field in ("stdout_fingerprint", "stderr_fingerprint"):
+        _sha256(judge[field], f"receipt host_receipt.judge.{field}")
+    without_fingerprint = {key: value for key, value in host_receipt.items() if key != "receipt_fingerprint"}
+    if host_receipt["receipt_fingerprint"] != _fingerprint(without_fingerprint):
+        raise ValueError("receipt host behavior fingerprint is invalid")
+    turns = evidence["turns"]
+    if not isinstance(turns, list) or len(turns) != len(receipt["observations"]):
+        raise ValueError("receipt behavior evidence turns are invalid")
+    for observation, turn in zip(receipt["observations"], turns):
+        if not isinstance(turn, dict) or set(turn) != EVIDENCE_TURN_FIELDS \
+                or turn["turn"] != observation["turn"] \
+                or not isinstance(turn["assistant_transcript"], str):
+            raise ValueError("receipt behavior evidence turn is invalid")
+        for field in ("workspace_before", "workspace_after"):
+            _sha256(turn[field], f"receipt behavior evidence {field}")
+        verification = turn["verification"]
+        if not isinstance(verification, list):
+            raise ValueError("receipt behavior verification evidence is invalid")
+        commands = []
+        for command in verification:
+            if not isinstance(command, dict) or set(command) != EVIDENCE_VERIFICATION_FIELDS \
+                    or not isinstance(command["exit_code"], int) \
+                    or isinstance(command["exit_code"], bool) or command["exit_code"] < 0:
+                raise ValueError("receipt behavior verification evidence is invalid")
+            commands.append(_string(command["command"], "receipt behavior verification command"))
+            for field in ("stdout_fingerprint", "stderr_fingerprint"):
+                _sha256(command[field], f"receipt behavior verification {field}")
+        if observation["writes_observed"] != (turn["workspace_before"] != turn["workspace_after"]):
+            raise ValueError("receipt writes_observed does not match host evidence")
+        questions = turn["assistant_transcript"].count("?") + turn["assistant_transcript"].count("？")
+        if observation["questions_asked"] != questions:
+            raise ValueError("receipt questions_asked does not match host evidence")
+        if observation["verification_observed"] != commands:
+            raise ValueError("receipt verification_observed does not match host evidence")
 
 
 def validate_catalog(catalog, root):
@@ -78,9 +162,10 @@ def validate_catalog(catalog, root):
         "nonterminal-work-item-verifier-gate",
         "feature-work-item-contract-bound",
         "authorized-plan-tooling-uncovered",
-    } or len(smoke["critical_ids"]) != 8:
+        "reference-alignment-gate",
+    } or len(smoke["critical_ids"]) != 9:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 8 or smoke["receipt_schema_version"] != 3 \
+    if smoke["minimum_fresh_runs"] != 9 or smoke["receipt_schema_version"] != 4 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
@@ -139,7 +224,7 @@ def _validate_scenario(scenario, ids, fixture_path):
 def validate_receipt(receipt, catalog):
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_FIELDS:
         raise ValueError("receipt fields are invalid")
-    if receipt["schema_version"] != 3:
+    if receipt["schema_version"] != 4:
         raise ValueError("receipt schema_version is invalid")
     scenarios = {item["id"]: item for item in catalog["scenarios"]}
     scenario = scenarios.get(receipt["scenario_id"])
@@ -174,6 +259,8 @@ def validate_receipt(receipt, catalog):
     if result == "uncovered":
         if boundary_counts != (None, None):
             raise ValueError("uncovered receipt cannot claim task-turn boundary evidence")
+        if receipt["behavior_evidence"] is not None:
+            raise ValueError("uncovered receipt cannot claim host behavior evidence")
         _string(receipt["uncovered_reason"], "receipt uncovered_reason")
         return
     if receipt["uncovered_reason"] is not None:
@@ -184,6 +271,7 @@ def validate_receipt(receipt, catalog):
         raise ValueError("passing receipt cannot contain unprompted task turns")
     if result == "pass" and receipt["successor_task_dispatches"]:
         raise ValueError("passing receipt cannot contain successor task dispatches")
+    _validate_behavior_evidence(receipt)
     expected = scenario["expected"]
     if expected["writes"] in {"required", "after_review"} and not any(item["writes_observed"] for item in observations):
         raise ValueError("receipt requires observed writes")
@@ -191,6 +279,9 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt forbids observed writes")
     if expected["question"] == "none" and sum(item["questions_asked"] for item in observations):
         raise ValueError("receipt forbids questions")
+    if expected["question"] == "decision_required" and not sum(
+            item["questions_asked"] for item in observations):
+        raise ValueError("receipt requires a decision question")
     if result == "pass" and observations[-1]["completion_claim"] != expected["completion"]:
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:

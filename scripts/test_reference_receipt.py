@@ -5,7 +5,9 @@ import hashlib
 import unittest
 
 from reference_receipt import (
+    alignment_launch_binding,
     freeze_receipt,
+    require_alignment_binding,
     require_feature_binding,
     require_implementer_receipt,
 )
@@ -90,6 +92,76 @@ class ReferenceReceiptTest(unittest.TestCase):
             with self.subTest(bindings=bindings), self.assertRaises(ValueError):
                 freeze_receipt([reference], feature_bindings=bindings)
 
+    def test_alignment_binding_freezes_scope_differences_and_user_approved_exceptions(self):
+        reference = "codex://thread/gradle-baseline"
+        binding = {
+            "target": "gradle-build", "reference": reference,
+            "scope": ["build.gradle", "settings.gradle"],
+            "differences": [
+                {"path": "build.gradle", "classification": "must-align",
+                 "reason": "repository order differs", "decision": None},
+                {"path": "settings.gradle", "classification": "allowed",
+                 "reason": "target module name differs",
+                 "decision": "Keep the AP module name"},
+            ],
+        }
+        receipt = freeze_receipt(
+            [{"reference": reference, "status": "read", "content_fingerprint": "a" * 64}],
+            alignment_bindings=[binding],
+        )
+
+        self.assertEqual(3, receipt["schema_version"])
+        self.assertEqual(binding, require_alignment_binding(receipt, "gradle-build"))
+        with self.assertRaisesRegex(ValueError, "metadata requires"):
+            alignment_launch_binding(freeze_receipt([]), "gradle-build", [])
+        with self.assertRaisesRegex(ValueError, "alignment decisions"):
+            alignment_launch_binding(receipt, "gradle-build", [""])
+
+    def test_alignment_binding_rejects_unapproved_or_out_of_scope_differences(self):
+        reference = {"reference": "codex://thread/gradle-baseline", "status": "read",
+                     "content_fingerprint": "a" * 64}
+        base = {
+            "target": "gradle-build", "reference": reference["reference"],
+            "scope": ["build.gradle"],
+            "differences": [{"path": "build.gradle", "classification": "allowed",
+                             "reason": "target difference", "decision": "approved"}],
+        }
+        cases = (
+            {**base, "differences": [{**base["differences"][0], "decision": None}]},
+            {**base, "differences": [{**base["differences"][0], "path": "settings.gradle"}]},
+            {**base, "differences": [{**base["differences"][0], "classification": "unresolved"}]},
+        )
+
+        for binding in cases:
+            with self.subTest(binding=binding), self.assertRaises(ValueError):
+                freeze_receipt([reference], alignment_bindings=[binding])
+
+    def test_alignment_binding_rejects_malformed_scope_and_unknown_target(self):
+        reference = {"reference": "codex://thread/gradle-baseline", "status": "read",
+                     "content_fingerprint": "a" * 64}
+        binding = {
+            "target": "gradle-build", "reference": reference["reference"],
+            "scope": ["build.gradle"],
+            "differences": [{"path": "build.gradle", "classification": "must-align",
+                             "reason": "repository order differs", "decision": None}],
+        }
+        cases = (
+            [], ["not-a-binding"], [binding, binding],
+            [{**binding, "scope": []}], [{**binding, "scope": ["/build.gradle"]}],
+            [{**binding, "scope": ["build.gradle", "build.gradle"]}],
+            [{**binding, "differences": "not-a-list"}],
+            [{**binding, "differences": ["not-a-difference"]}],
+            [{**binding, "differences": [{**binding["differences"][0], "decision": "approved"}]}],
+        )
+
+        for bindings in cases:
+            with self.subTest(bindings=bindings), self.assertRaises(ValueError):
+                freeze_receipt([reference], alignment_bindings=bindings)
+
+        receipt = freeze_receipt([reference], alignment_bindings=[binding])
+        with self.assertRaisesRegex(ValueError, "target does not match"):
+            require_alignment_binding(receipt, "another-target")
+
     def test_require_feature_binding_returns_the_declared_binding_for_its_target(self):
         reference = "codex://thread/source-feature"
         binding = {
@@ -114,6 +186,16 @@ class ReferenceReceiptTest(unittest.TestCase):
         ])
 
         self.assertIsNone(require_feature_binding(receipt, "delivery-status-normalization"))
+
+    def test_schema_two_empty_feature_bindings_do_not_bypass_target_validation(self):
+        receipt = freeze_receipt(
+            [{"reference": "codex://thread/source-feature", "status": "read",
+              "content_fingerprint": "a" * 64}],
+            feature_bindings=[],
+        )
+
+        with self.assertRaisesRegex(ValueError, "target does not match"):
+            require_feature_binding(receipt, "delivery-status-normalization")
 
     def test_require_implementer_receipt_rejects_malformed_receipts(self):
         for receipt in ("nope", {"schema_version": 3}, {"schema_version": 1, "references": []}):

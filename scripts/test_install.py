@@ -328,6 +328,37 @@ if arguments and arguments[0] == "clone":
             self.assertNotEqual(0, result.returncode)
             self.assertEqual(original, codex_config.read_text(encoding="utf-8"))
 
+    def test_autonomy_uninstall_uses_the_recorded_commands_after_interpreter_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            executable = home / "codex"
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+            config = home / ".codex/hooks.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"hooks":{"Stop":[]}}\n', encoding="utf-8")
+            installed = self.run_installer_from(
+                home, ROOT, "--target", "codex", "--autonomy", path=home,
+            )
+            self.assertEqual(0, installed.returncode, installed.stderr)
+
+            # A different python3 now resolves first; the recorded commands from
+            # install time must still drive an exact-match removal.
+            shim_bin = home / "shim"
+            shim_bin.mkdir()
+            shim = shim_bin / "python3"
+            shim.write_text(f"#!/bin/sh\nexec {shutil.which('python3')} \"$@\"\n", encoding="utf-8")
+            shim.chmod(0o755)
+            removed = self.run_installer_from(
+                home, ROOT, "--autonomy-uninstall", "--target", "codex",
+                path=f"{shim_bin}{os.pathsep}{home}",
+            )
+            self.assertEqual(0, removed.returncode, removed.stderr)
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("Stop", []))
+            self.assertEqual([], json.loads(config.read_text())["hooks"].get("UserPromptSubmit", []))
+            record = home / ".convergent-delivery/autonomy-hooks.json"
+            self.assertFalse(record.exists())
+
     def test_autonomy_uninstall_survives_an_incomplete_installer_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

@@ -56,6 +56,8 @@ request 中的 `judge_source` 必须精确指向 `<old-snapshot-root>/skills/con
 
 control 与 candidate 必须运行相同场景、输入、判定器和样本预算；分别保存原始结果，再计算差分。不能冻结旧版时不得用当前候选冒充对照。
 
+确定性桥的三项操作约束（首次 dogfood 实证）：冻结 suite 与 judge 文件必须以字节相同的形式同时存在于 control 与 candidate 两棵树——diff 检查会把两侧不一致的 suite/judge 路径判为 `candidate changes frozen judges, suite, or files outside allowed scope`，不存在"只在 control 侧、helper 自动豁免"的语义；创建 Controller Snapshot 必须使用 control 树自带的 `controller_snapshot.py`，否则新协议描述符会被冻结 evaluator 自带的校验器拒绝；把 suite 附着到 candidate 树时只允许新增 suite/judge 文件本身，附着操作的精确性由 `git diff --name-only` 的路径数核对。
+
 仅 Controller Protocol v9→v10 首次把 Eval helper 加入 trusted runner 时，旧 v9 Snapshot 虽含 helper 但确定性拒绝执行。该次迁移必须保存旧 runner 的 unauthorized 证据、一个 fresh 独立只读 evaluator 报告和全量/定向测试，并把 locked differential 明确列为 `uncovered`；不得宣称 locked eval 通过。此 bootstrap 不适用于 v10 之后的任何变更。
 
 ## 场景集合
