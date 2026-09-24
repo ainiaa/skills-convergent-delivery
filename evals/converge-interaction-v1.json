@@ -20,6 +20,12 @@
       "expected": {"skill": "converge", "action": "review", "writes": "after_review", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
     },
     {
+      "id": "authorized-delivery-closes-review-findings",
+      "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "two-scoped-regressions.patch", "decisions": ["None normalizes to an empty string", "Existing text normalization remains unchanged"]},
+      "turns": [{"prompt": "修复状态标准化：None 应返回空字符串，并保持原有字符串去空白和大小写归一行为。范围与规则已确定，请在这个任务内完成实现、检查受影响行为、修复复核发现的同范围问题并验证后交付。", "authorized_write": true}],
+      "expected": {"skill": "converge", "action": "implement", "writes": "required", "question": "none", "completion": "verified_only", "scope": "in_scope", "failure_policy": "not_applicable"}
+    },
+    {
       "id": "explicit-review-only",
       "setup": {"fixture": "status-normalizer", "baseline": "fixture-base-v1", "initial_diff": "review-null-contract-regression.patch", "decisions": []},
       "turns": [{"prompt": "仅审查当前 status-normalizer diff，报告有证据的 finding，不要修改。", "authorized_write": false}],
@@ -102,8 +108,8 @@
     }
   ],
   "smoke": {
-    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked", "cross-service-reference-decision", "reference-alignment-gate", "verification-environment-block", "nonterminal-work-item-verifier-gate", "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered"],
-    "minimum_fresh_runs": 9,
+    "critical_ids": ["local-fix", "review-checkpoint-closes-in-scope-finding", "authorized-delivery-closes-review-findings", "known-decision-is-not-reasked", "cross-service-reference-decision", "reference-alignment-gate", "verification-environment-block", "nonterminal-work-item-verifier-gate", "feature-work-item-contract-bound", "authorized-plan-tooling-uncovered"],
+    "minimum_fresh_runs": 10,
     "receipt_schema_version": 4,
     "unavailable_result": "uncovered"
   }

@@ -11,31 +11,26 @@ from openai_compatible_runner import execute_request, plan_request
 from worker_profile import fingerprint, validate_worker_profile
 
 
-MODEL_ROLES = ("router", "scout", "specifier", "implementer", "reviewer", "adjudicator")
+MODEL_ROLES = ("scout", "implementer", "reviewer")
+CONTROLLER_ROLES = ("router", "specifier", "adjudicator")
 ROLES = set(MODEL_ROLES)
 DEFAULT_CONFIG = {
     "schema_version": 4,
     "default_profile": "default",
     "profiles": {
         "default": {
-            "router": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
-            "scout": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
-            "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-            "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
-            "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-            "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"},
+            "scout": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
+            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
+            "reviewer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
         },
         "claude-code": {
-            "router": {"model": "haiku", "reasoning_effort": "medium"},
             "scout": {"model": "haiku", "reasoning_effort": "medium"},
-            "specifier": {"model": "sonnet", "reasoning_effort": "high"},
-            "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
             "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
-            "adjudicator": {"model": "opus", "reasoning_effort": "xhigh"},
         },
     },
 }
-OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
+OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}
 CLAUDE_ALIASES = {"fable", "haiku", "sonnet", "opus"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CONFIG_FIELDS = {"schema_version", "default_profile", "profiles"}
@@ -57,14 +52,14 @@ def _profile(worker_id, role, runner_id, provider, model, effort, permissions, b
     return validate_worker_profile(value)
 
 
-def _config_path(path, workspace, home):
+def _config_path(path, workspace, home, profile_name):
     if path is not None:
         return Path(path).expanduser().resolve()
     project = Path(workspace).expanduser().resolve() / ".converge" / "multi-model.json"
     if project.is_file():
         return project
     user = Path(home).expanduser().resolve() / ".convergent-delivery" / "multi-model.json"
-    return user if user.is_file() else None
+    return user if profile_name is not None and user.is_file() else None
 
 
 def _load(path):
@@ -106,9 +101,13 @@ def _selected_profile(config, profile_name, role_overrides):
     if not isinstance(name, str) or name not in profiles:
         raise ValueError("multi-model profile is unavailable")
     profile = json.loads(json.dumps(profiles[name]))
-    if set(profile) != ROLES:
+    if set(profile) not in (ROLES, ROLES | set(CONTROLLER_ROLES)):
         raise ValueError("multi-model profile roles are invalid")
-    if not isinstance(role_overrides, dict) or set(role_overrides) - ROLES:
+    if not isinstance(role_overrides, dict):
+        raise ValueError("multi-model role overrides are invalid")
+    if set(role_overrides) & set(CONTROLLER_ROLES):
+        raise ValueError("serial controller roles cannot override the model")
+    if set(role_overrides) - ROLES:
         raise ValueError("multi-model role overrides are invalid")
     for role, override in role_overrides.items():
         if not isinstance(override, dict) or set(override) != ROLE_FIELDS:
@@ -148,7 +147,7 @@ def _role_profile(role, model, effort):
 
 
 def resolve(path=None, *, workspace=None, home=None, profile_name=None, role_overrides=None):
-    selected_path = _config_path(path, workspace or Path.cwd(), home or Path.home())
+    selected_path = _config_path(path, workspace or Path.cwd(), home or Path.home(), profile_name)
     config = _load(selected_path)
     profile_name, selected = _selected_profile(config, profile_name, role_overrides or {})
     roles = {role: _role_profile(role, *_role(selected, role)) for role in MODEL_ROLES}
@@ -157,6 +156,7 @@ def resolve(path=None, *, workspace=None, home=None, profile_name=None, role_ove
         "config_source": str(selected_path) if selected_path is not None else "default",
         "profile_name": profile_name,
         "roles": roles,
+        "controller_roles": list(CONTROLLER_ROLES),
         "tool_roles": ["verifier"],
     }
 
@@ -194,6 +194,8 @@ def parse_role_overrides(values):
         if "@" not in assignment:
             raise ValueError("multi-model role override must be role=model@effort")
         model, effort = assignment.rsplit("@", 1)
+        if role in CONTROLLER_ROLES:
+            raise ValueError("serial controller roles cannot override the model")
         if role not in ROLES or not model or not effort or role in overrides:
             raise ValueError("multi-model role override is invalid")
         overrides[role] = {"model": model, "reasoning_effort": effort}

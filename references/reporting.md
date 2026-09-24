@@ -2,7 +2,7 @@
 
 此文件定义 `converge` 的最终回复。它只决定如何表达已记录的事实，**不会触发新的检查、Agent、状态写入或修复轮次**。完整证据仍保存在 ledger、PDLC 产物和命令输出中。
 
-终态先使用 `python3 "$CONVERGE_SKILL_DIR/scripts/delivery_report.py"` 以严格完成门禁验证受支持的 Schema v10/v11（支持集见 `provider_contract.SUPPORTED_SCHEMA_VERSIONS`）；旧 Schema、Evidence v1、`controller_attested` 验收或未绑定清场不能渲染为 ready。报告只把 fresh/pass 且具有 observed Evidence Receipt v2 的 acceptance 计入“已验证”；普通 pass check 仍显示为控制器记录，但不混入验证范围。新状态以 `handoff.open_issues: []` 保存逐项问题；报告分别展示“未通过验收数”和“其他待处理数”。Git 工作区不可读时最多输出 `attention`。
+终态先使用 `python3 "$CONVERGE_SKILL_DIR/scripts/delivery_report.py"` 以严格完成门禁验证受支持的 Schema v10/v11（支持集见 `provider_contract.SUPPORTED_SCHEMA_VERSIONS`）；旧 Schema、Evidence v1、`controller_attested` 验收或未绑定清场不能渲染为 ready。报告只把 fresh/pass 且具有 observed Evidence Receipt v2 的 acceptance 计入“已验证”；普通 pass check 仍显示为控制器记录，但不混入验证范围。新状态以 `handoff.open_issues: []` 保存逐项待处理问题；非空时不得进入 `complete`，只能在 `blocked` 回执中展示，不能渲染成“已完成，需关注”。报告分别展示“未通过验收数”和“其他待处理数”。Git 工作区不可读时最多输出 `attention`。
 
 ## 先选用户状态
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | `blocked` | 环境、权限、依赖或客观检查使工作不能继续 | 暂时无法继续 |
 | `decision` | 存在需要用户选择的业务、范围、兼容性或发布问题 | 需你确认 |
-| `attention` | 工作完成但有不阻塞使用的明确风险或后续建议 | 已完成，需关注 |
+| `attention` | 已通过完成门禁，但 Git 工作区不可读或有不属于待修缺陷的明确风险 | 已完成，需关注 |
 | `ready` | 所有验收项都有新鲜通过证据，且没有待确认项 | 已完成，可使用 |
 
 `decision` 优先于 `ready`。因此不得同时写“已完成”与“需要业务确认”。`unknown`、`stale` 或未覆盖的验证不能支撑 `ready`。

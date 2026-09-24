@@ -13,6 +13,7 @@ from pathlib import Path
 
 SCENARIO_IDS = {
     "local-fix", "review-checkpoint-closes-in-scope-finding", "explicit-review-only",
+    "authorized-delivery-closes-review-findings",
     "out-of-scope-finding", "known-decision-is-not-reasked", "irreversible-decision",
     "simple-inline", "complex-plan", "cross-service-reference-decision",
     "reference-alignment-gate",
@@ -157,15 +158,16 @@ def validate_catalog(catalog, root):
     if not isinstance(smoke, dict) or set(smoke) != {"critical_ids", "minimum_fresh_runs", "receipt_schema_version", "unavailable_result"}:
         raise ValueError("smoke fields are invalid")
     if set(smoke["critical_ids"]) != {
-        "local-fix", "review-checkpoint-closes-in-scope-finding", "known-decision-is-not-reasked",
+        "local-fix", "review-checkpoint-closes-in-scope-finding",
+        "authorized-delivery-closes-review-findings", "known-decision-is-not-reasked",
         "cross-service-reference-decision", "verification-environment-block",
         "nonterminal-work-item-verifier-gate",
         "feature-work-item-contract-bound",
         "authorized-plan-tooling-uncovered",
         "reference-alignment-gate",
-    } or len(smoke["critical_ids"]) != 9:
+    } or len(smoke["critical_ids"]) != 10:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 9 or smoke["receipt_schema_version"] != 4 \
+    if smoke["minimum_fresh_runs"] != 10 or smoke["receipt_schema_version"] != 4 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 

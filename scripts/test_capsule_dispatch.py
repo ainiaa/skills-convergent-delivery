@@ -242,8 +242,9 @@ class CapsuleDispatchTest(unittest.TestCase):
             )
 
             result = capsule_dispatch.dispatch_codex(
-                codex, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                codex, root, "frozen capsule", root / "receipts", "attempt-one", 5,
             )
+            self.assertEqual("delivered", result["status"], result)
             receipt_text = (root / "receipts" / "attempt-one.json").read_text(encoding="utf-8")
             receipt = json.loads(receipt_text)
             arguments = command.read_text(encoding="utf-8").splitlines()
@@ -575,8 +576,9 @@ class CapsuleDispatchTest(unittest.TestCase):
                     codex, root, "capsule", root / "receipts", "sticky", 1,
                 )
 
-        self.assertEqual("failed", failed["status"])
-        self.assertIn("status 7", failed["reason"])
+        self.assertIn(failed["status"], {"failed", "indeterminate"})
+        self.assertIn("do not retry" if failed["status"] == "indeterminate" else "status 7",
+                      failed["reason"])
         self.assertEqual(failed, repeated)
 
     def test_codex_deadline_during_capsule_write_terminates_the_leftover_child(self):

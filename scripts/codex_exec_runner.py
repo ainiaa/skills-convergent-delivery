@@ -35,7 +35,7 @@ def _is_isolated_worktree(workspace):
         )
         if result.returncode != 0 or not result.stdout.strip():
             return False
-        values.append(Path(result.stdout.strip()).resolve())
+        values.append(Path(result.stdout.removesuffix("\n")).resolve())
     top_level, git_dir, common_dir = values
     return workspace.resolve() == top_level and git_dir != common_dir
 

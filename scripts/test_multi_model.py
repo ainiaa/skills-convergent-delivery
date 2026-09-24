@@ -11,7 +11,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from multi_model import audit_request, desktop_task_action, main, resolve
+from multi_model import audit_request, desktop_task_action, main, parse_role_overrides, resolve
 
 
 def delivery_profile(*, router="gpt-5.6-terra", reviewer="gpt-5.6-terra"):
@@ -41,18 +41,35 @@ def config(*, default="default", profiles=None):
 
 
 class MultiModelTest(unittest.TestCase):
-    def test_default_profile_assigns_each_model_backed_role(self):
+    def test_default_profile_only_assigns_models_to_dispatchable_roles(self):
         with tempfile.TemporaryDirectory() as directory:
             value = resolve(None, workspace=Path(directory) / "repo", home=Path(directory) / "home")
         self.assertEqual("default", value["profile_name"])
-        self.assertEqual("gpt-5.6-terra", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual({"scout", "implementer", "reviewer"}, set(value["roles"]))
+        self.assertEqual(["router", "specifier", "adjudicator"], value["controller_roles"])
+        self.assertEqual("gpt-6-luna", value["roles"]["scout"]["effective"]["model"])
         self.assertEqual("medium", value["roles"]["scout"]["effective"]["reasoning_effort"])
-        self.assertEqual("high", value["roles"]["specifier"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-5.6-luna", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-6-sol", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("high", value["roles"]["implementer"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-6-astra", value["roles"]["adjudicator"]["effective"]["model"])
-        self.assertEqual("low", value["roles"]["adjudicator"]["effective"]["reasoning_effort"])
+        self.assertEqual("gpt-6-sol", value["roles"]["reviewer"]["effective"]["model"])
         self.assertNotIn("verifier", value["roles"])
+
+    def test_user_profiles_are_opt_in_and_do_not_shadow_the_builtin_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            user_path = home / ".convergent-delivery" / "multi-model.json"
+            user_path.parent.mkdir(parents=True)
+            user_path.write_text(json.dumps(config(profiles={
+                "default": delivery_profile(), "backup": delivery_profile(router="gpt-5.6-luna"),
+            })), encoding="utf-8")
+            default = resolve(None, workspace=root / "repo", home=home)
+            backup = resolve(None, workspace=root / "repo", home=home, profile_name="backup")
+
+        self.assertEqual("default", default["config_source"])
+        self.assertEqual("gpt-6-luna", default["roles"]["scout"]["effective"]["model"])
+        self.assertEqual(str(user_path.resolve()), backup["config_source"])
+        self.assertEqual("gpt-5.6-luna", backup["roles"]["implementer"]["effective"]["model"])
 
     def test_selects_named_profile_and_allows_per_run_role_override(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -65,7 +82,7 @@ class MultiModelTest(unittest.TestCase):
                 "reviewer": {"model": "glm-5.2", "reasoning_effort": "high"},
             })
         self.assertEqual("fast", value["profile_name"])
-        self.assertEqual("gpt-5.6-luna", value["roles"]["router"]["effective"]["model"])
+        self.assertNotIn("router", value["roles"])
         self.assertEqual("glm-5.2", value["roles"]["reviewer"]["effective"]["model"])
         self.assertEqual("openai-compatible-v1", value["roles"]["reviewer"]["runner_id"])
 
@@ -76,10 +93,9 @@ class MultiModelTest(unittest.TestCase):
                 profile_name="claude-code",
             )
         self.assertEqual("claude-code", value["profile_name"])
-        self.assertEqual("haiku", value["roles"]["router"]["effective"]["model"])
-        self.assertEqual("gpt-5.6-luna", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-6-sol", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("codex-exec-v1", value["roles"]["implementer"]["runner_id"])
-        self.assertEqual("opus", value["roles"]["adjudicator"]["effective"]["model"])
+        self.assertNotIn("adjudicator", value["roles"])
         self.assertEqual("claude-code-v1", value["roles"]["reviewer"]["runner_id"])
 
     def test_configured_haiku_alias_uses_the_claude_runner(self):
@@ -103,6 +119,27 @@ class MultiModelTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "implementer"):
                 resolve(path, profile_name="claude-code")
 
+    def test_new_codex_models_are_valid_and_legacy_profiles_still_resolve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            home = Path(directory) / "home"
+            current = resolve(None, workspace=workspace, home=home, role_overrides={
+                "implementer": {"model": "gpt-6-luna", "reasoning_effort": "low"},
+            })
+            path = Path(directory) / "multi-model.json"
+            path.write_text(json.dumps(config()), encoding="utf-8")
+            legacy = resolve(path)
+
+        self.assertEqual("codex-exec-v1", current["roles"]["implementer"]["runner_id"])
+        self.assertEqual("gpt-6-luna", current["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-5.6-luna", legacy["roles"]["implementer"]["effective"]["model"])
+
+    def test_unknown_openai_model_is_not_routed_to_claude(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "model must be"):
+                resolve(None, workspace=Path(directory) / "repo", home=Path(directory) / "home",
+                        role_overrides={"reviewer": {"model": "gpt-6-unknown", "reasoning_effort": "high"}})
+
     def test_read_only_roles_do_not_receive_shell_access_for_either_cli_runner(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "repo"
@@ -111,7 +148,7 @@ class MultiModelTest(unittest.TestCase):
             claude = resolve(None, workspace=workspace, home=home, profile_name="claude-code")
 
         for profiles in (codex, claude):
-            for role in ("router", "scout", "specifier", "reviewer", "adjudicator"):
+            for role in ("scout", "reviewer"):
                 self.assertFalse(profiles["roles"][role]["permissions"]["shell"])
             self.assertTrue(profiles["roles"]["implementer"]["permissions"]["shell"])
 
@@ -140,7 +177,27 @@ class MultiModelTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "profile"):
                 resolve(project_path, profile_name="missing")
         self.assertEqual(str(project_path.resolve()), value["config_source"])
-        self.assertEqual("gpt-5.6-terra", value["roles"]["router"]["effective"]["model"])
+        self.assertEqual("gpt-5.6-terra", value["roles"]["scout"]["effective"]["model"])
+
+    def test_legacy_six_role_config_is_accepted_but_serial_models_are_not_dispatched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi-model.json"
+            path.write_text(json.dumps(config()), encoding="utf-8")
+            value = resolve(path)
+        self.assertEqual({"scout", "implementer", "reviewer"}, set(value["roles"]))
+        self.assertEqual(["router", "specifier", "adjudicator"], value["controller_roles"])
+
+    def test_three_role_config_needs_no_controller_model_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi-model.json"
+            profile = {role: delivery_profile()[role] for role in ("scout", "implementer", "reviewer")}
+            path.write_text(json.dumps(config(profiles={"default": profile})), encoding="utf-8")
+            value = resolve(path)
+        self.assertEqual({"scout", "implementer", "reviewer"}, set(value["roles"]))
+
+    def test_serial_role_override_is_rejected_instead_of_silently_ignored(self):
+        with self.assertRaisesRegex(ValueError, "serial.*controller"):
+            parse_role_overrides(["adjudicator=gpt-6-astra@high"])
 
     def test_rejects_invalid_audit_and_never_stores_a_glm_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -174,7 +231,7 @@ class MultiModelTest(unittest.TestCase):
             )
 
         self.assertEqual("desktop-task-v1", action["adapter"])
-        self.assertEqual("gpt-5.6-luna", action["arguments"]["model"])
+        self.assertEqual("gpt-6-sol", action["arguments"]["model"])
         self.assertEqual("high", action["arguments"]["thinking"])
         self.assertEqual("requested", action["model_binding"]["status"])
         self.assertEqual(
@@ -188,7 +245,7 @@ class MultiModelTest(unittest.TestCase):
             prompt = root / "prompt.txt"
             prompt.write_text("Implement the bounded task.", encoding="utf-8")
             output = io.StringIO()
-            with patch.object(sys, "argv", [
+            with patch("multi_model._config_path", return_value=None), patch.object(sys, "argv", [
                 "multi_model.py", "desktop-task", "--workspace", str(root / "repo"),
                 "--project-id", "project-1", "--title", "Bridge task", "--input", str(prompt),
             ]), redirect_stdout(output):
@@ -196,7 +253,7 @@ class MultiModelTest(unittest.TestCase):
 
         action = json.loads(output.getvalue())
         self.assertEqual("create", action["kind"])
-        self.assertEqual("gpt-5.6-luna", action["arguments"]["model"])
+        self.assertEqual("gpt-6-sol", action["arguments"]["model"])
 
 
 if __name__ == "__main__":

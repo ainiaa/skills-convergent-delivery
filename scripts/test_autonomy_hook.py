@@ -110,6 +110,455 @@ class AutonomyHookTest(unittest.TestCase):
             self.assertIn(str(path), command)
             self.assertIn("--frozen-runtime", command)
 
+    def test_frozen_hook_receives_the_active_run_workspace_from_a_subdirectory(self):
+        workspace = SCRIPT.parent.parent.resolve()
+        subdirectory = workspace / "scripts"
+        state = {"controller": {"snapshot": {"root": "/frozen"}}, "workspace": str(workspace)}
+        active = (Path("/state/run.json"), state)
+        frozen_result = subprocess.CompletedProcess([], 0, '{"decision":"block","reason":"active"}\n', "")
+        with patch.object(autonomy_hook, "active_state", side_effect=[None, active]), \
+                patch.object(autonomy_hook, "may_have_managed_state", return_value=True), \
+                patch.object(autonomy_hook, "git_root", return_value=workspace), \
+                patch.object(autonomy_hook, "run_frozen_hook", return_value=frozen_result) as frozen, \
+                patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                patch("sys.stdin", StringIO(json.dumps({"cwd": str(subdirectory)}))), \
+                redirect_stdout(StringIO()) as output:
+            self.assertEqual(0, autonomy_hook.main())
+
+        self.assertEqual("block", json.loads(output.getvalue())["decision"])
+        self.assertEqual(str(workspace), frozen.call_args.args[2]["cwd"])
+
+    def test_terminal_history_does_not_trigger_per_state_git_lookups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            states = self.workspace_state_dir(root, "/repo")
+            states.mkdir()
+            (states / "history.json").write_text(json.dumps({
+                "workspace": "/repo/old", "schema_version": 11, "status": "complete",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            with patch.dict(os.environ, {"CONVERGE_STATE_ROOT": str(root)}), \
+                    patch.object(autonomy_hook, "state_root", return_value=root), \
+                    patch.object(autonomy_hook, "workspace_state_roots", return_value=(states,)), \
+                    patch.object(autonomy_hook, "git_root", return_value=Path("/repo")) as git_root:
+                self.assertIsNone(autonomy_hook.active_state("/repo"))
+            git_root.assert_not_called()
+
+    def test_git_root_lookup_has_a_bounded_runtime(self):
+        completed = subprocess.CompletedProcess([], 1, b"", b"not a git repository")
+        with patch.object(autonomy_hook.subprocess, "run", return_value=completed) as run:
+            self.assertIsNone(autonomy_hook.git_root("/repo"))
+        self.assertEqual(5, run.call_args.kwargs["timeout"])
+
+    def test_git_timeout_does_not_block_an_unmanaged_non_git_task(self):
+        for empty_state_dir in (False, True):
+            with self.subTest(empty_state_dir=empty_state_dir), tempfile.TemporaryDirectory() as directory:
+                if empty_state_dir:
+                    (Path(directory) / ".convergent-delivery" / "state").mkdir(parents=True)
+                with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                        patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                        patch("sys.stdin", StringIO(json.dumps({"cwd": directory}))), \
+                        redirect_stdout(StringIO()) as output:
+                    self.assertEqual(0, autonomy_hook.main())
+                self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+
+    def test_git_timeout_does_not_block_a_git_worktree_without_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            linked = Path(directory) / "linked"
+            subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
+            for target in (workspace, linked):
+                with self.subTest(target=target), \
+                        patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                        patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                        patch("sys.stdin", StringIO(json.dumps({"cwd": str(target)}))), \
+                        redirect_stdout(StringIO()) as output:
+                    self.assertEqual(0, autonomy_hook.main())
+                self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+
+    def test_git_timeout_still_blocks_a_worktree_with_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            state_dir = workspace / ".git" / "convergent-delivery" / "state" \
+                / hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertEqual("block", json.loads(output.getvalue())["decision"])
+
+    def test_git_error_still_blocks_a_worktree_with_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            state_dir = workspace / ".git" / "convergent-delivery" / "state" \
+                / hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            failed = subprocess.CompletedProcess([], 1, b"", b"git failed")
+            with patch.object(autonomy_hook.subprocess, "run", return_value=failed), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertEqual("block", json.loads(output.getvalue())["decision"])
+
+    def test_git_timeout_still_blocks_a_linked_worktree_with_managed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            linked = Path(directory) / "linked"
+            subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
+            common = workspace / ".git"
+            state_dir = common / "convergent-delivery" / "state" \
+                / hashlib.sha256(str(common.resolve()).encode()).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(linked.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(linked)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertEqual("block", json.loads(output.getvalue())["decision"])
+
+    def test_git_timeout_does_not_trust_an_invalid_git_pointer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            (workspace / ".git").write_text("gitdir: .\n", encoding="utf-8")
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertEqual("block", json.loads(output.getvalue())["decision"])
+
+    def test_dangling_git_symlink_blocks_instead_of_approving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            (workspace / ".git").symlink_to(Path(directory) / "missing-admin")
+            result = self.invoke("codex", {"cwd": str(workspace)})
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_trailing_space_in_git_root_does_not_hide_active_run_from_subdirectory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo "
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            state_dir = self.workspace_state_dir(
+                workspace / ".git" / "convergent-delivery" / "state", workspace,
+            )
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            self.assertEqual(workspace.resolve(), autonomy_hook.git_root(subdirectory))
+            result = self.invoke("codex", {"cwd": str(subdirectory)})
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_trailing_space_in_separate_git_dir_does_not_hide_active_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "repo"
+            admin = root / "admin "
+            subprocess.run(["git", "init", "-q", "--separate-git-dir", str(admin), str(workspace)], check=True)
+            state_dir = self.workspace_state_dir(admin / "convergent-delivery" / "state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            result = self.invoke("codex", {"cwd": str(workspace)})
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_environment_without_marker_finds_active_common_dir_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "repo"
+            workspace.mkdir()
+            admin = root / "admin.git"
+            subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+            state_dir = self.workspace_state_dir(admin / "convergent-delivery" / "state", admin)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(workspace)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_environment_overrides_ancestor_repository_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outer = root / "outer"
+            outer.mkdir()
+            subprocess.run(["git", "init", "-q", str(outer)], check=True)
+            workspace = outer / "inner"
+            workspace.mkdir()
+            admin = root / "admin.git"
+            subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+            state_dir = self.workspace_state_dir(admin / "convergent-delivery" / "state", admin)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(workspace)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_outer_git_environment_does_not_hide_nested_repository_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory) / "outer"
+            inner = outer / "inner"
+            inner.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(outer)], check=True)
+            subprocess.run(["git", "init", "-q", str(inner)], check=True)
+            state_dir = self.workspace_state_dir(inner / ".git" / "convergent-delivery" / "state", inner)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(inner.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(outer / ".git"), "GIT_WORK_TREE": str(outer)}
+            result = self.invoke("codex", {"cwd": str(inner)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_outer_git_environment_without_nested_repository_state_approves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory) / "outer"
+            inner = outer / "inner"
+            inner.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(outer)], check=True)
+            subprocess.run(["git", "init", "-q", str(inner)], check=True)
+            for selected in (outer, inner):
+                with self.subTest(selected=selected):
+                    environment = {
+                        key: value for key, value in os.environ.items()
+                        if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+                    } | {"GIT_DIR": str(outer / ".git"), "GIT_WORK_TREE": str(selected)}
+                    result = self.invoke("codex", {"cwd": str(inner)}, environment)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+
+    def test_foreign_git_dir_cannot_hide_state_at_explicit_worktree_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory) / "outer"
+            inner = outer / "inner"
+            inner.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(outer)], check=True)
+            subprocess.run(["git", "init", "-q", str(inner)], check=True)
+            state_dir = self.workspace_state_dir(inner / ".git" / "convergent-delivery" / "state", inner)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(inner.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(outer / ".git"), "GIT_WORK_TREE": str(inner)}
+            result = self.invoke("codex", {"cwd": str(inner)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_outer_active_state_does_not_block_unmanaged_nested_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory) / "outer"
+            inner = outer / "inner"
+            inner.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(outer)], check=True)
+            subprocess.run(["git", "init", "-q", str(inner)], check=True)
+            state_dir = self.workspace_state_dir(outer / ".git" / "convergent-delivery" / "state", outer)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(outer.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            for selected in (outer, inner):
+                with self.subTest(selected=selected):
+                    environment = {
+                        key: value for key, value in os.environ.items()
+                        if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+                    } | {"GIT_DIR": str(outer / ".git"), "GIT_WORK_TREE": str(selected)}
+                    result = self.invoke("codex", {"cwd": str(inner)}, environment)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+
+    def test_matching_git_environment_with_worktree_marker_keeps_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            state_dir = self.workspace_state_dir(workspace / ".git" / "convergent-delivery" / "state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(workspace / ".git"), "GIT_WORK_TREE": str(workspace)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_environment_without_managed_state_approves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "repo"
+            workspace.mkdir()
+            admin = root / "admin.git"
+            subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(workspace)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+
+    def test_git_environment_for_another_worktree_does_not_hide_local_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / "selected"
+            workspace = root / "workspace"
+            selected.mkdir()
+            workspace.mkdir()
+            admin = root / "admin.git"
+            subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+            state_dir = self.workspace_state_dir(workspace / ".convergent-delivery" / "state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(selected)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_environment_for_another_worktree_does_not_hide_git_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / "selected"
+            workspace = root / "workspace"
+            selected.mkdir()
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+            admin = root / "admin.git"
+            subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+            state_dir = self.workspace_state_dir(workspace / ".git" / "convergent-delivery" / "state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+            } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(selected)}
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_environment_for_another_worktree_with_no_state_approves(self):
+        for git_workspace in (False, True):
+            with self.subTest(git_workspace=git_workspace), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                selected = root / "selected"
+                workspace = root / "workspace"
+                selected.mkdir()
+                workspace.mkdir()
+                if git_workspace:
+                    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+                admin = root / "admin.git"
+                subprocess.run(["git", "init", "--bare", "-q", str(admin)], check=True)
+                environment = {
+                    key: value for key, value in os.environ.items()
+                    if key not in {"CONVERGE_STATE_ROOT", "CONVERGE_LEASE_ROOT"}
+                } | {"GIT_DIR": str(admin), "GIT_WORK_TREE": str(selected)}
+                result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+
+    def test_invalid_git_environment_without_marker_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            environment = os.environ | {
+                "GIT_DIR": str(Path(directory) / "missing-admin"), "GIT_WORK_TREE": str(workspace),
+            }
+            result = self.invoke("codex", {"cwd": str(workspace)}, environment)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_git_timeout_ignores_only_terminal_managed_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            state_dir = workspace / ".git" / "convergent-delivery" / "state" \
+                / hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace.resolve()), "status": "complete",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(0, autonomy_hook.main())
+            self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+
     def test_no_active_autonomous_run_approves_for_both_hosts(self):
         with tempfile.TemporaryDirectory() as directory:
             for host in ("codex", "claude"):
@@ -137,6 +586,71 @@ class AutonomyHookTest(unittest.TestCase):
             decision = json.loads(result.stdout)
             self.assertEqual("block", decision["decision"])
             self.assertIn("autonomous run", decision["reason"])
+
+    def test_malformed_active_state_returns_a_structured_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            state_dir = self.workspace_state_dir(workspace / ".convergent-delivery/state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace), "status": "active",
+                "execution_control": None,
+            }), encoding="utf-8")
+            result = self.invoke("codex", {"cwd": str(workspace)})
+            self.assertEqual(2, result.returncode, result.stderr)
+            self.assertEqual("block", json.loads(result.stdout)["decision"])
+            self.assertEqual("", result.stderr)
+
+    def test_active_state_without_workspace_returns_a_structured_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            state_dir = self.workspace_state_dir(workspace / ".convergent-delivery/state", workspace)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            result = self.invoke("codex", {"cwd": str(workspace)})
+            self.assertEqual(2, result.returncode, result.stderr)
+            self.assertEqual("block", json.loads(result.stdout)["decision"])
+            self.assertEqual("", result.stderr)
+
+    def test_active_state_with_unsupported_schema_is_not_approved(self):
+        for schema in (12, [], {}, True):
+            with self.subTest(schema=schema), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory) / "workspace"
+                workspace.mkdir()
+                state_dir = self.workspace_state_dir(workspace / ".convergent-delivery/state", workspace)
+                state_dir.mkdir(parents=True)
+                (state_dir / "run.json").write_text(json.dumps({
+                    "schema_version": schema, "workspace": str(workspace), "status": "active",
+                    "execution_control": {"autonomy": {"enabled": True}},
+                }), encoding="utf-8")
+                result = self.invoke("codex", {"cwd": str(workspace)})
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertEqual("block", json.loads(result.stdout)["decision"])
+                self.assertIn("unsupported", json.loads(result.stdout)["reason"])
+
+    def test_active_state_in_this_workspace_directory_cannot_claim_another_workspace(self):
+        for is_git in (False, True):
+            with self.subTest(is_git=is_git), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory) / "workspace"
+                workspace.mkdir()
+                if is_git:
+                    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+                base = (workspace / ".git" / "convergent-delivery" / "state" if is_git
+                        else workspace / ".convergent-delivery" / "state")
+                state_dir = self.workspace_state_dir(base, workspace)
+                state_dir.mkdir(parents=True)
+                (state_dir / "run.json").write_text(json.dumps({
+                    "schema_version": 11, "workspace": str(Path(directory) / "other"),
+                    "status": "active", "execution_control": {"autonomy": {"enabled": True}},
+                }), encoding="utf-8")
+                result = self.invoke("codex", {"cwd": str(workspace)})
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertIn("workspace", json.loads(result.stdout)["reason"])
 
     def test_active_legacy_schema_run_is_not_silently_approved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -247,6 +761,132 @@ class AutonomyHookTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("approve", json.loads(result.stdout)["decision"])
+
+    def test_malformed_active_state_from_a_sibling_worktree_does_not_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            sibling = Path(directory) / "linked"
+            subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(sibling)], check=True)
+            common = workspace / ".git"
+            state_dir = common / "convergent-delivery" / "state" \
+                / hashlib.sha256(str(common.resolve()).encode()).hexdigest()
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(sibling), "status": "active",
+                "execution_control": None,
+            }), encoding="utf-8")
+            with patch.object(autonomy_hook.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace)}))), \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(0, autonomy_hook.main())
+            self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+
+    def test_shared_active_state_with_an_unverified_other_owner_blocks(self):
+        for owner_kind in ("missing", "different-repo"):
+            with self.subTest(owner_kind=owner_kind), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                workspace = base / "repo"
+                workspace.mkdir()
+                subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+                owner = base / "other"
+                if owner_kind == "different-repo":
+                    owner.mkdir()
+                    subprocess.run(["git", "-C", str(owner), "init", "-q"], check=True)
+                common = workspace / ".git"
+                state_dir = self.workspace_state_dir(common / "convergent-delivery" / "state", common)
+                state_dir.mkdir(parents=True)
+                (state_dir / "run.json").write_text(json.dumps({
+                    "schema_version": 11, "workspace": str(owner), "status": "active",
+                    "execution_control": {"autonomy": {"enabled": True}},
+                }), encoding="utf-8")
+                result = self.invoke("codex", {"cwd": str(workspace)})
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertEqual("block", json.loads(result.stdout)["decision"])
+                self.assertIn("workspace", json.loads(result.stdout)["reason"])
+
+    def test_forged_linked_worktree_pointer_cannot_hide_shared_active_state(self):
+        for marker_kind in ("copy", "symlink"):
+            with self.subTest(marker_kind=marker_kind), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                workspace = base / "repo"
+                workspace.mkdir()
+                subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+                subprocess.run([
+                    "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                    "commit", "--allow-empty", "-qm", "base",
+                ], check=True)
+                sibling = base / "linked"
+                subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(sibling)], check=True)
+                forged = base / "forged"
+                forged.mkdir()
+                marker = forged / ".git"
+                if marker_kind == "copy":
+                    marker.write_text((sibling / ".git").read_text(encoding="utf-8"), encoding="utf-8")
+                else:
+                    marker.symlink_to(sibling / ".git")
+                common = workspace / ".git"
+                state_dir = self.workspace_state_dir(common / "convergent-delivery" / "state", common)
+                state_dir.mkdir(parents=True)
+                (state_dir / "run.json").write_text(json.dumps({
+                    "schema_version": 11, "workspace": str(forged), "status": "active",
+                    "execution_control": None,
+                }), encoding="utf-8")
+                result = self.invoke("codex", {"cwd": str(workspace)})
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_unregistered_worktree_admin_cannot_hide_shared_active_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            common = (workspace / ".git").resolve()
+            forged = base / "forged"
+            forged.mkdir()
+            admin = base / "unregistered-admin"
+            admin.mkdir()
+            (forged / ".git").write_text(f"gitdir: {admin.resolve()}\n", encoding="utf-8")
+            (admin / "commondir").write_text(str(common), encoding="utf-8")
+            (admin / "gitdir").write_text(str((forged / ".git").resolve()), encoding="utf-8")
+            state_dir = self.workspace_state_dir(common / "convergent-delivery" / "state", common)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(forged), "status": "active",
+                "execution_control": None,
+            }), encoding="utf-8")
+            result = self.invoke("codex", {"cwd": str(workspace)})
+            self.assertEqual(2, result.returncode, result.stderr)
+            self.assertEqual("block", json.loads(result.stdout)["decision"])
+
+    def test_separate_git_dir_without_owner_backlink_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            common = base / "common.git"
+            subprocess.run(["git", "init", "-q", "--separate-git-dir", str(common), str(workspace)], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            sibling = base / "linked"
+            subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(sibling)], check=True)
+            state_dir = self.workspace_state_dir(common / "convergent-delivery" / "state", common)
+            state_dir.mkdir(parents=True)
+            (state_dir / "run.json").write_text(json.dumps({
+                "schema_version": 11, "workspace": str(workspace), "status": "active",
+                "execution_control": {"autonomy": {"enabled": True}},
+            }), encoding="utf-8")
+            result = self.invoke("codex", {"cwd": str(sibling)})
+            self.assertEqual(2, result.returncode, result.stderr)
+            self.assertEqual("block", json.loads(result.stdout)["decision"])
 
     def test_codex_stop_blocks_in_the_same_task_and_records_one_intent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -375,6 +1015,31 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertEqual("block", json.loads(result.stdout)["decision"])
 
+    def test_session_bound_run_does_not_continue_in_another_conversation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state["execution_control"]["autonomy"]["runtime"]["session_id"] = "thread-a"
+            path.write_text(json.dumps(state), encoding="utf-8")
+            environment = os.environ | {
+                "CONVERGE_STATE_ROOT": str(state_root),
+                "CONVERGE_LEASE_ROOT": str(lease_root),
+            }
+
+            other = self.invoke("codex", {
+                "cwd": state["workspace"], "session_id": "thread-b",
+            }, environment)
+            missing = self.invoke("codex", {"cwd": state["workspace"]}, environment)
+            same = self.invoke("codex", {
+                "cwd": state["workspace"], "session_id": "thread-a",
+            }, environment)
+
+            self.assertEqual({"decision": "approve"}, json.loads(other.stdout))
+            self.assertEqual("block", json.loads(missing.stdout)["decision"])
+            self.assertEqual("block", json.loads(same.stdout)["decision"])
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(current["execution_control"]["autonomy"]["action_attempts"]))
+
     def test_claude_active_run_never_blocks_stop_for_a_successor_task(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_hook_state(directory)
@@ -480,7 +1145,7 @@ class AutonomyHookTest(unittest.TestCase):
     def test_frozen_hook_failure_blocks_with_the_runner_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            state = {"controller": {"snapshot": {"root": str(root)}}}
+            state = {"workspace": str(root), "controller": {"snapshot": {"root": str(root)}}}
             real_run = subprocess.run
             failed = subprocess.CompletedProcess([], 2, "", "frozen runner exploded")
 

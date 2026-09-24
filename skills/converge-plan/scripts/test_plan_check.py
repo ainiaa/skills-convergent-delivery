@@ -355,12 +355,51 @@ class PlanCheckTest(unittest.TestCase):
 
         self.assertEqual([], source["changed_paths"])
 
-    def test_closure_matrix_is_required_and_uncovered_blocks_complete_audit(self):
+    def test_ordinary_plan_can_audit_without_closure_matrix(self):
         value = plan([task("T1", ["src"])])
-        missing = json.loads(json.dumps(value))
-        missing.pop("closure_matrix")
-        self.assertNotEqual(0, self.run_check("validate", missing).returncode)
+        value.pop("closure_matrix")
+        value["tasks"][0]["verification"] = ["bash scripts/check.sh"]
+        source = evidence_contract.workspace_source(self.workspace, self.baseline)
+        value["baseline"] = {"commit": self.baseline, "source": source}
 
+        self.assertEqual(0, self.run_check("validate", value).returncode)
+        result = self.run_check("audit", {
+            "plan": value,
+            "task_results": {"T1": {
+                "status": "DONE", "fresh_pass": True,
+                "source_before": source, "source_after": source,
+                "evidence": [evidence_receipt(source)],
+            }},
+            "final_acceptance": final_evidence(source),
+        }, self.workspace, require_complete=True)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["complete"])
+
+    def test_ordinary_plan_without_matrix_still_rejects_scope_drift(self):
+        value = plan([task("T1", ["src"])])
+        value.pop("closure_matrix")
+        value["baseline"] = {
+            "commit": self.baseline,
+            "source": evidence_contract.workspace_source(self.workspace, self.baseline),
+        }
+        self.write_changes("outside.txt")
+
+        result = self.run_check("audit", {
+            "plan": value, "task_results": {}, "final_acceptance": [],
+        }, self.workspace, require_complete=True)
+
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertEqual(["outside.txt"], json.loads(result.stdout)["scope_drift"])
+
+    def test_present_closure_matrix_cannot_be_empty(self):
+        value = plan([task("T1", ["src"])])
+        value["closure_matrix"] = None
+
+        self.assertNotEqual(0, self.run_check("validate", value).returncode)
+
+    def test_uncovered_closure_matrix_blocks_complete_audit(self):
+        value = plan([task("T1", ["src"])])
         value["closure_matrix"]["chains"][0]["coverage"]["recovery"] = {
             "status": "uncovered", "reason": "recovery path has no executable evidence",
         }

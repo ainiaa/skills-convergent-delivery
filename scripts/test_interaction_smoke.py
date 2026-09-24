@@ -131,6 +131,12 @@ class InteractionSmokeTest(unittest.TestCase):
 
     def test_catalog_requires_replayable_setup_and_a_concrete_prior_decision(self):
         validate_catalog(self.catalog, ROOT)
+        first_delivery = next(item for item in self.catalog["scenarios"]
+                              if item["id"] == "authorized-delivery-closes-review-findings")
+        self.assertEqual(1, len(first_delivery["turns"]))
+        self.assertTrue(first_delivery["turns"][0]["authorized_write"])
+        self.assertEqual("none", first_delivery["expected"]["question"])
+        self.assertEqual("verified_only", first_delivery["expected"]["completion"])
         scenario = next(item for item in self.catalog["scenarios"]
                         if item["id"] == "known-decision-is-not-reasked")
         self.assertGreaterEqual(len(scenario["turns"]), 2)

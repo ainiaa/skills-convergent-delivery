@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 import unittest
@@ -233,6 +234,16 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("findings or a next action other than `verify`", extension)
         self.assertIn("工具", model)
 
+    def test_documented_multi_model_default_matches_dispatchable_builtin_roles(self):
+        from multi_model import DEFAULT_CONFIG
+
+        model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
+        example = re.search(r"## 配置.*?```json\n(.*?)\n```", model, re.DOTALL)
+        self.assertIsNotNone(example)
+        documented = json.loads(example.group(1))
+        self.assertEqual(DEFAULT_CONFIG["schema_version"], documented["schema_version"])
+        self.assertEqual(DEFAULT_CONFIG["profiles"]["default"], documented["profiles"]["default"])
+
     def test_multi_model_contract_distinguishes_role_labels_from_model_bound_workers(self):
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         model = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
@@ -242,7 +253,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("常规 `role_flow` 路径", model)
         self.assertIn("`desktop-task` 和 `audit --execute`", model)
         self.assertIn("只有 `agent` 模式", model)
-        self.assertIn("不会按 profile 切换模型", model)
+        self.assertIn("`serial` 复用当前 controller，不切换模型", model)
         self.assertIn("not a complete role-level model orchestration", extension)
         self.assertIn("non-multi-model Converge delivery", extension)
         self.assertIn("serial", extension)
@@ -391,13 +402,12 @@ class SkillContractTest(unittest.TestCase):
             "文字降级",
         ):
             self.assertIn(marker, skill + control)
-        self.assertIn("完成消息发送后，必须先结束该 commentary", skill)
-        self.assertIn("下一步的开始只能在随后新的 commentary 中发送", skill)
-        self.assertIn("不得在完成消息中声明、计划或调用下一步的动作", skill)
-        self.assertIn("每个步骤边界都必须调用一次原生计划工具", skill)
-        self.assertIn("不得只在初始建表或最终收口时批量更新", skill)
-        self.assertIn("下一步开始 commentary 之后立即调用", skill)
-        self.assertIn("同一次原生调用不得同时覆盖前一步完成和下一步开始", skill)
+        self.assertIn("逐步修复 / 分步执行 / 按计划一步步做", skill)
+        self.assertIn("references/execution-control.md#分步可见交付", skill)
+        self.assertNotIn("完成消息发送后，必须先结束该 commentary", skill)
+        self.assertIn("结束消息不得与下一步的开始合并", control)
+        self.assertIn("下一步开始 commentary 之后立即调用", control)
+        self.assertIn("不得只在初始建表或最终收口时批量更新", control)
         self.assertIn("每个开始和完成边界都必须有一次成功的原生计划调用", control)
         self.assertIn("同一 `receipt_ref` 不得覆盖两个步骤边界", control)
         self.assertNotIn("一次真实调用可同时满足前步完成和后步开始", control)
@@ -564,6 +574,15 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("明确“仅审查”", activation)
         self.assertIn("审查检查点", protocol)
         self.assertIn("in-scope finding", protocol)
+
+    def test_exhausted_review_budget_is_per_run_not_a_same_session_authorization_end(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        review = (ROOT / "references/review-orchestration.md").read_text(encoding="utf-8")
+
+        self.assertIn("复核额度耗尽", skill)
+        self.assertIn("新的不同根因", review)
+        self.assertIn("不得在同一 run 回填预算", review)
+        self.assertIn("无源码或证据进展", review)
 
     def test_required_implementation_references_are_read_before_the_first_write(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

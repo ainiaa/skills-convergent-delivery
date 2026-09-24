@@ -2,19 +2,19 @@
 
 用户明确说“使用多模型配合开发”时启用；普通任务保持原路径。角色是固定契约，Agent 是按需创建的可选运行实例。控制器每次只选择一个下一角色，不执行固定的多模型流水线。
 
-这是选择性外部 runner 扩展，不是完整的角色级模型编排。在常规 `role_flow` 路径，配置中的模型仅在角色被选为 `agent` 时才会冻结并启动；`serial` 明确复用当前 controller，不会按 profile 切换模型，也不会产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色。不要将它们的配置或 `--role` 覆盖理解为已实际派发的模型选择。
+这是选择性外部 runner 扩展，不是完整的角色级模型编排。在常规 `role_flow` 路径，只有 `agent` 角色有模型 profile；`serial` 复用当前 controller，不切换模型，也不产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色，不接受模型覆盖。
 
 `desktop-task` 和 `audit --execute` 是显式的直接入口，不经过 `role_flow`：前者只用 implementer profile 生成 host 的模型请求，后者只用 GLM reviewer profile 发起一次诊断请求。两者各自的 receipt 语义仍适用，不能伪装为 `runner_lifecycle` 的常规角色执行或远端模型已观察事实。
 
-| 角色 | 默认模型 / 推理 | 边界 |
+| 角色 | 内置画像 / 推理 | 边界 |
 |---|---|---|
-| `router` | Terra medium | 选择下一动作，不写代码 |
-| `scout` | Terra medium | 收集定点证据，不决定需求 |
-| `specifier` | Terra high | 冻结 TaskSpec 与验收 |
-| `implementer` | Luna high | 在批准范围内测试先行并修改代码 |
+| `router` | 当前 controller（串行） | 选择下一动作，不写代码 |
+| `scout` | GPT-6 Luna medium | 收集定点证据，不决定需求 |
+| `specifier` | 当前 controller（串行） | 冻结 TaskSpec 与验收 |
+| `implementer` | GPT-6 Sol high | 在批准范围内测试先行并修改代码 |
 | `verifier` | 工具 | 运行测试、检查 diff；不由模型自证通过 |
-| `reviewer` | Terra high | 只读检查规格与实现；高风险时使用新上下文 |
-| `adjudicator` | GPT-6 Astra low | 处理语义冲突、范围升级和高风险取舍；仅复杂裁决时显式升级为 high |
+| `reviewer` | GPT-6 Sol high | 只读检查规格与实现；高风险时使用新上下文 |
+| `adjudicator` | 当前 controller（串行） | 处理语义冲突、范围升级和高风险取舍 |
 
 只有 `implementer` 可以请求工作区写入。同一工作区一次只有一个 implementer。`verifier` 是工具角色，不配置模型画像；模型可以解释失败，但不能替代其测试和源码证据。
 
@@ -53,6 +53,8 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 对两个及以上已执行的 snapshot 报告，可用同一评测器的 `--compare-report` 生成横向摘要；它拒绝 controller 或题库指纹不同的报告，并汇总 pass/fail、已执行场景数、提前停止原因、耗时和 provider 已返回的整数 usage 字段。比较产物固定标为 `trust_level=diagnostic`，不得用于控制面放行或模型路由；它不推断 token 价格或货币成本：缺少供应商可审计定价/用量时，报告必须保持该项为空而不是估算。
 
+模型档位校准另复用已有的 `scripts/multi_model_repo_eval.py`，不以以上 16 个合成只读场景推断编码质量。先冻结 2–3 个代表性 Git 任务及正常、边界、异常测试；对同一题库分别执行同模式的 `implementer=gpt-6-sol@medium` 与 `@high`（或明确比较 `single`/`multi`），保存两份报告，再用 `--compare-report` 核对相同的题库与评测器指纹、profile 身份、通过率和耗时。内置的两个小题仅用于评测器 smoke，不代表真实项目质量。执行需要显式 `--allow-execute`；模型成本和人工打断次数没有可审计观测时保持 `uncovered`。未获得真实任务对比前，不因 GPT-6 升级而自动下调 Sol high 或提高 Astra 用量。
+
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD"
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD" --execute \
@@ -64,7 +66,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" \
 
 GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `--allow-network`；这不会绕过凭据、预算或 runner 的既有网络授权。
 
-## 机制依据（2026-08）
+## 机制依据（2026-09）
 
 | 参考与决定 | 采用 / 不采用 | 原因 | 行为测试 |
 | --- | --- | --- | --- |
@@ -72,6 +74,11 @@ GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `
 | [Anthropic 的小样本评测与隐私观测](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用固定、显式执行的 16 场景评测 | 先测合规、路由和用量，且报告不存 transcript | `test_multi_model_eval.py` |
 | [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |
 | peer swarm、成员互聊、自动扩容 | 不采用 | 编码任务依赖高；当前目标是可恢复的单写入者控制 | `test_role_flow.py`、`test_runner_lifecycle.py` |
+| [Git rev-parse 路径输出](https://git-scm.com/docs/git-rev-parse) | 采用只移除行终止符的隔离 worktree 身份检查；不新增路径注册表 | 合法路径末尾空格不应改变单写入者隔离判定 | `test_writer_accepts_isolated_worktree_with_trailing_space_in_path` |
+| [OpenAI 模型选择](https://developers.openai.com/api/docs/guides/model-selection)、[GPT-6 迁移](https://developers.openai.com/api/docs/guides/latest-model) | 采用 GPT-6 Luna/Sol 的实际可派发角色分层；不采用串行 Astra 画像 | 只有 runner 能切换模型；Sol high→medium 须经真实同模式任务对比，不把官方建议当作本仓质量结论 | `test_multi_model.py`、`test_multi_model_repo_eval.py` |
+| [OpenAI GPT-6 Skill 指南](https://learn.chatgpt.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)、[skill-creator](https://developers.openai.com/codex/skills) | 采用短入口和按需加载；不新增 GPT-6 专属状态机 | 减少默认上下文与无效角色配置，同时保留既有授权、验证和有限退出边界 | `test_skill_contracts.py`、`test_multi_model.py` |
+| [Claude Code 模型别名](https://code.claude.com/docs/en/model-config) | 采用现有 `haiku`/`sonnet`/`opus` 别名；不钉死具体版本 | 别名随宿主与提供方变化，保留显式 profile 与真实 smoke 门槛 | `test_multi_model.py`、`test_multi_model_smoke.py` |
+| [多代理模式原始 Skill](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md)、[Superpowers 原始 Skill](https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md) | 不采用每角色常驻或每阶段强制新代理 | 更强模型不构成增加代理的证据；保持单控制器与按需隔离 | `test_role_flow.py`、`test_role_dispatch.py` |
 
 本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob` 与 `plan` permission mode。Codex 以 sandbox 强制边界；Claude 没有可验证的等价 OS sandbox，因此不开放其可写角色。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
 
@@ -83,7 +90,7 @@ Desktop controller 若实际暴露 `create_thread`、`wait_threads` 与 `set_thr
 
 ## 配置
 
-配置支持命名 profile；默认选择 `default_profile`。`schema_version: 4` 必须为六个模型角色完整指定模型与推理等级：
+配置支持命名 profile；默认选择 `default_profile`。`schema_version: 4` 新配置只需为三个可派发角色指定模型与推理等级：
 
 ```json
 {
@@ -91,18 +98,15 @@ Desktop controller 若实际暴露 `create_thread`、`wait_threads` 与 `set_thr
   "default_profile": "default",
   "profiles": {
     "default": {
-      "router": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
-      "scout": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
-      "specifier": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-      "implementer": {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
-      "reviewer": {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-      "adjudicator": {"model": "gpt-6-astra", "reasoning_effort": "low"}
+      "scout": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
+      "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
+      "reviewer": {"model": "gpt-6-sol", "reasoning_effort": "high"}
     }
   }
 }
 ```
 
-配置优先级为显式 `--config`、项目 `.converge/multi-model.json`、用户级 `~/.convergent-delivery/multi-model.json`、内置默认。模板命令：
+配置优先级为显式 `--config`、项目 `.converge/multi-model.json`、内置默认。仅显式选择 `--profile` 时，才在无项目配置的情况下读取用户级 `~/.convergent-delivery/multi-model.json`；因此本机命名备选 profile 不遮蔽内置默认。模板命令：
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" config
@@ -116,16 +120,16 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve --profile claude-co
 
 `claude-code` 是可选兼容 profile，不携带账号、token 或 Provider 配置。它只用于只读角色；`implementer` 始终使用受 sandbox 约束的 Codex runner。只有在用户环境完成真实 smoke 后，才可将其视为已验收能力；未验收时不阻塞 Codex-only 的发布，也不得在发布说明中声称 Claude 已验证可用。
 
-仅支持 `schema_version: 4`。Codex profile 支持 GPT-5.6 系列与 `gpt-6-astra`；Claude Code profile 支持 `haiku`、`fable`、`sonnet`、`opus` 及 `claude-*` 标识。旧的 v3 固定流水线配置会明确失败；使用 `multi_model.py config` 输出新模板后直接替换即可。
+仅支持 `schema_version: 4`。旧的六角色 v4 配置仍可读取，但 `router`、`specifier`、`adjudicator` 项不再生成可派发 profile；命令行覆盖这三个串行角色会明确报错。本机 `backup` 等旧配置无需改写，实际派发的三个角色继续按其显式值运行；旧 v3 固定流水线配置仍明确失败。Codex profile 支持旧 GPT-5.6 系列及 GPT-6 Astra/Sol/Luna；Claude Code profile 支持 `haiku`、`fable`、`sonnet`、`opus` 及 `claude-*` 标识。模型是否能在具体账号与宿主执行仍需 smoke 验证。
 
 单次任务可覆盖模型角色，例如：
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve \
-  --role implementer=gpt-5.6-luna@max \
-  --role adjudicator=gpt-6-astra@high
+  --role implementer=gpt-6-sol@max \
+  --role reviewer=gpt-6-astra@high
 ```
 
-`max` 是实施遇到已证实难点时的升级档，不是默认流程。默认 adjudicator 使用 `gpt-6-astra@low`；仅在已证实的复杂裁决中显式覆盖为 `gpt-6-astra@high`。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。它的输出固定标记为 `diagnostic`，不等同 Review v3 或可用于控制面放行。
+`max` 是实施遇到已证实难点时的升级档，不是默认流程。审查需要更深推理时可显式覆盖为 `gpt-6-astra@high`；串行 adjudicator 始终继承当前 controller，不再提供虚假的 Astra 模型画像。只有 `reviewer=glm-5.2@high` 支持外部只读审查；`multi_model.py audit --execute` 仍需显式执行授权，并且不保存 prompt、密钥或审查文本到正式回执。它的输出固定标记为 `diagnostic`，不等同 Review v3 或可用于控制面放行。
 
 每个模型角色的 profile 冻结 requested/effective model、推理等级、权限和预算。模型结论不能替代真实测试、源码指纹或发布授权；宿主无法真实指定或查询 worker 时应交接，不能伪造派发。

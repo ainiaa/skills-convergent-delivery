@@ -7,6 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import delivery_lease
 from runner_contract import fingerprint, freeze_launch
@@ -62,6 +63,86 @@ class DeliveryLeaseTest(unittest.TestCase):
                                    task_key="stale", ttl_seconds=600, takeover=False)
             self.assertEqual(2, delivery_lease.acquire(args, stale_paths, repo, workspace))
             self.assertFalse(legacy.exists())
+
+    def test_release_race_cannot_recreate_a_root_level_subdirectory_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            workspace = base / "repo"
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            leases = base / "leases"
+            repo = "/repo/common.git"
+            legacy = leases / "workspaces" / f"{delivery_lease.digest(str(subdirectory.resolve()))}.json"
+            delivery_lease.write_exclusive(legacy, delivery_lease.make_record(
+                "workspace", repo, str(subdirectory.resolve()), "old", "old-run", "old-writer", 600,
+            ))
+            stale_paths = delivery_lease.lease_paths(leases, repo, str(workspace), "stale")
+            self.assertEqual(legacy, stale_paths["workspace"])
+
+            delivery_lease.remove_if_owned(legacy, "old-run", "old-writer")
+            self.assertEqual(0, self.run_lease(leases, "acquire", workspace=str(workspace), task_key="new").returncode)
+            args = SimpleNamespace(root=str(leases), run_id="stale-run", writer_id="stale-writer",
+                                   task_key="stale", ttl_seconds=600, takeover=False)
+            self.assertEqual(2, delivery_lease.acquire(args, stale_paths, repo, str(workspace.resolve())))
+            self.assertFalse(legacy.exists())
+
+    def test_git_lookup_failure_in_a_worktree_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            with patch.object(delivery_lease.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)):
+                with self.assertRaises(ValueError):
+                    delivery_lease.worktree_root(str(subdirectory))
+
+    def test_git_root_with_trailing_space_keeps_one_workspace_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo "
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            self.assertEqual(str(workspace.resolve()), delivery_lease.worktree_root(str(subdirectory)))
+
+    def test_dangling_git_symlink_does_not_bypass_workspace_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            (workspace / ".git").symlink_to(Path(directory) / "missing-admin")
+            with self.assertRaises(ValueError):
+                delivery_lease.worktree_root(str(workspace))
+
+    def test_move_cannot_recreate_a_released_target_legacy_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            leases = base / "leases"
+            source = "/repo/source"
+            target = base / "target"
+            subdirectory = target / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+            repo = "/repo/common.git"
+            first = self.run_lease(leases, "acquire", workspace=source, task_key="task")
+            self.assertEqual(0, first.returncode, first.stdout)
+            owner = json.loads(first.stdout)
+            legacy = leases / "workspaces" / f"{delivery_lease.digest(str(subdirectory))}.json"
+            delivery_lease.write_exclusive(legacy, delivery_lease.make_record(
+                "workspace", repo, str(subdirectory), "old", "old-run", "old-writer", 600,
+            ))
+            stale_paths = delivery_lease.lease_paths(leases, repo, str(target), "task")
+            self.assertEqual(legacy, stale_paths["workspace"])
+            delivery_lease.remove_if_owned(legacy, "old-run", "old-writer")
+            self.assertEqual(0, self.run_lease(leases, "acquire", workspace=str(target), task_key="other").returncode)
+            args = SimpleNamespace(root=str(leases), from_workspace=source, task_key="task",
+                                   run_id=owner["run_id"], writer_id=owner["writer_id"])
+            self.assertEqual(2, delivery_lease.move(args, stale_paths, repo, str(target)))
+            self.assertFalse(legacy.exists())
+            with patch.object(delivery_lease.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["git"], 128, "", "failed"
+            )):
+                with self.assertRaises(ValueError):
+                    delivery_lease.worktree_root(str(subdirectory))
 
     def test_acquire_rejects_same_owner_with_different_task_or_workspace(self):
         for field in ("task_key", "workspace"):
@@ -285,6 +366,130 @@ class DeliveryLeaseTest(unittest.TestCase):
 
             retry = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory")
             self.assertEqual(0, retry.returncode, retry.stderr)
+
+    def test_git_subdirectory_and_root_share_one_writer_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            (workspace / "src").mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            for first_path, second_path in ((workspace / "src", workspace), (workspace, workspace / "src")):
+                with self.subTest(first_path=first_path), tempfile.TemporaryDirectory() as leases:
+                    first = self.run_lease(Path(leases), "acquire", workspace=str(first_path), task_key="old")
+                    second = self.run_lease(Path(leases), "acquire", workspace=str(second_path), task_key="new")
+                    self.assertEqual(0, first.returncode, first.stdout)
+                    self.assertEqual(2, second.returncode, second.stdout)
+                    self.assertEqual("blocked_workspace", json.loads(second.stdout)["status"])
+
+    def test_root_acquire_respects_a_pre_upgrade_subdirectory_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            leases = base / "leases"
+            legacy = leases / "workspaces" / f"{delivery_lease.digest(str(subdirectory.resolve()))}.json"
+            delivery_lease.write_exclusive(legacy, delivery_lease.make_record(
+                "workspace", "/repo/common.git", str(subdirectory.resolve()),
+                "old", "old-run", "old-writer", 600,
+            ))
+
+            acquired = self.run_lease(leases, "acquire", workspace=str(workspace), task_key="new")
+            self.assertEqual(2, acquired.returncode, acquired.stdout)
+            self.assertEqual("blocked_workspace", json.loads(acquired.stdout)["status"])
+
+    def test_distinct_git_worktrees_keep_independent_workspace_leases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            (workspace / "file.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "-qm", "base",
+            ], check=True)
+            linked = base / "linked"
+            subprocess.run(["git", "-C", str(workspace), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
+            leases = base / "leases"
+
+            first = self.run_lease(leases, "acquire", workspace=str(workspace), task_key="one")
+            second = self.run_lease(leases, "acquire", workspace=str(linked), task_key="two")
+            self.assertEqual(0, first.returncode, first.stdout)
+            self.assertEqual(0, second.returncode, second.stdout)
+
+    def test_unrelated_malformed_workspace_lease_does_not_block_acquire(self):
+        for content in ("{", "[]", "null"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                unrelated = root / "workspaces" / f"{delivery_lease.digest('/other/workspace')}.json"
+                unrelated.parent.mkdir(parents=True)
+                unrelated.write_text(content, encoding="utf-8")
+
+                acquired = self.run_lease(root, "acquire", workspace="/repo/a", task_key="new")
+                self.assertEqual(0, acquired.returncode, acquired.stdout)
+
+    def test_unrelated_legacy_lease_with_broken_git_pointer_does_not_block_acquire(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "current"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            unrelated = base / "unrelated"
+            unrelated.mkdir()
+            (unrelated / ".git").write_text("gitdir: missing\n", encoding="utf-8")
+            leases = base / "leases"
+            delivery_lease.write_exclusive(
+                leases / "workspaces" / "old.json",
+                delivery_lease.make_record(
+                    "workspace", "/old/common.git", str(unrelated), "old-task", "old-run", "old-writer", 600,
+                ),
+            )
+
+            acquired = self.run_lease(leases, "acquire", workspace=str(workspace), task_key="new")
+            self.assertEqual(0, acquired.returncode, acquired.stdout)
+
+    def test_broken_legacy_lease_inside_current_worktree_still_blocks_acquire(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "current"
+            legacy_workspace = workspace / "src"
+            legacy_workspace.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            (legacy_workspace / ".git").write_text("gitdir: missing\n", encoding="utf-8")
+            leases = base / "leases"
+            delivery_lease.write_exclusive(
+                leases / "workspaces" / "old.json",
+                delivery_lease.make_record(
+                    "workspace", str(workspace / ".git"), str(legacy_workspace),
+                    "old-task", "old-run", "old-writer", 600,
+                ),
+            )
+
+            acquired = self.run_lease(leases, "acquire", workspace=str(workspace), task_key="new")
+            self.assertNotEqual(0, acquired.returncode, acquired.stdout)
+
+    def test_move_rejects_a_different_path_in_the_same_git_worktree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            workspace = base / "repo"
+            subdirectory = workspace / "src"
+            subdirectory.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            leases = base / "leases"
+            first = self.run_lease(leases, "acquire", workspace=str(subdirectory), task_key="one")
+            self.assertEqual(0, first.returncode, first.stdout)
+            owner = json.loads(first.stdout)
+            before = {str(path): path.read_bytes() for path in leases.rglob("*.json")}
+
+            moved = self.run_lease(
+                leases, "move", workspace=str(workspace), from_workspace=str(subdirectory),
+                task_key="one", run_id=owner["run_id"], writer_id=owner["writer_id"],
+            )
+            self.assertEqual(2, moved.returncode, moved.stdout)
+            self.assertEqual(before, {str(path): path.read_bytes() for path in leases.rglob("*.json")})
 
     def test_same_task_is_exclusive_across_worktrees(self):
         with tempfile.TemporaryDirectory() as directory:

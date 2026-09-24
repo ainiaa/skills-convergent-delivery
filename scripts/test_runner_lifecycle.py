@@ -94,7 +94,8 @@ class RunnerLifecycleTest(unittest.TestCase):
                 "schema_version": 1, "runner_id": "codex-exec-v1",
                 "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
                 "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
-                "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "medium",
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
@@ -331,7 +332,8 @@ class RunnerLifecycleTest(unittest.TestCase):
                 "schema_version": 1, "runner_id": "codex-exec-v1",
                 "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
                 "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
-                "requested_model": "gpt-5.6-terra", "requested_reasoning_effort": "medium",
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},

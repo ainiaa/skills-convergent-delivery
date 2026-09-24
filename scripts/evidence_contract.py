@@ -45,7 +45,7 @@ def _git(workspace, *arguments):
 
 def workspace_source(workspace, baseline_commit="HEAD"):
     workspace = Path(workspace).expanduser().resolve()
-    root = Path(_git(workspace, "rev-parse", "--show-toplevel").decode().strip()).resolve()
+    root = Path(_git(workspace, "rev-parse", "--show-toplevel").decode().removesuffix("\n")).resolve()
     baseline = _git(root, "rev-parse", "--verify", f"{baseline_commit}^{{commit}}").decode().strip()
     commit_id = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
     tree_hash = _git(root, "rev-parse", "HEAD^{tree}").decode().strip()

@@ -23,7 +23,7 @@ def _git(workspace, *arguments):
                             capture_output=True, check=False)
     if result.returncode or not result.stdout.strip():
         raise ValueError("autonomy begin requires a Git workspace")
-    return result.stdout.strip()
+    return result.stdout.removesuffix("\n")
 
 
 def _task_key(_workspace, baseline, scope, acceptance, requirements):
@@ -220,6 +220,7 @@ def run(arguments):
     state = arm(
         state, requirements, acceptance, arguments.runtime, arguments.service_runner,
         verification_argv, audit_argv, arguments.audit_findings_exit_code,
+        getattr(arguments, "host_session_id", None),
     )
     lease = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
@@ -291,6 +292,7 @@ def main():
     parser.add_argument("--state-root")
     parser.add_argument("--lease-root")
     parser.add_argument("--controller-root", default=str(Path.home() / ".convergent-delivery" / "controller"))
+    parser.add_argument("--host-session-id")
     arguments = parser.parse_args()
     try:
         print(json.dumps(run(arguments), sort_keys=True))
