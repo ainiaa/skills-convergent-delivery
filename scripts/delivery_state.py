@@ -68,7 +68,7 @@ def project_storage_root(workspace):
         return workspace / ".convergent-delivery"
     if result.returncode or not result.stdout.strip():
         return workspace / ".convergent-delivery"
-    common_dir = Path(result.stdout.strip())
+    common_dir = Path(result.stdout.removesuffix("\n"))
     if not common_dir.is_absolute():
         common_dir = workspace / common_dir
     return common_dir.resolve() / "convergent-delivery"
@@ -103,7 +103,7 @@ def workspace_state_roots(root, workspace):
         return (root,)
     if result.returncode:
         return (root,)
-    common_dir = Path(result.stdout.strip())
+    common_dir = Path(result.stdout.removesuffix("\n"))
     if not common_dir.is_absolute():
         common_dir = workspace / common_dir
     return tuple({

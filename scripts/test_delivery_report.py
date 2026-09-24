@@ -415,15 +415,25 @@ class DeliveryReportTest(unittest.TestCase):
                 self.assertIn("open_issues", result.stderr)
 
     def test_structured_open_issues_preserve_the_exact_item_count(self):
-        payload = state()
+        payload = state("blocked")
         payload["handoff"]["open_issues"] = ["first issue", "second issue"]
 
         result = self.run_report(payload)
 
         self.assertEqual(0, result.returncode, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual("attention", report["outcome"])
-        self.assertEqual(2, report["pending_items"])
+        self.assertEqual("blocked", report["outcome"])
+        self.assertEqual(["first issue", "second issue"], report["open_issues"])
+        self.assertEqual(3, report["pending_items"])
+
+    def test_complete_with_known_open_issues_cannot_render_as_attention(self):
+        payload = state()
+        payload["handoff"]["open_issues"] = ["Scoped regression still reproduces"]
+
+        result = self.run_report(payload)
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("open_issues", result.stderr)
 
     def test_ready_text_leads_with_useful_changes_without_internal_terms(self):
         result = self.run_report(state(), "text")

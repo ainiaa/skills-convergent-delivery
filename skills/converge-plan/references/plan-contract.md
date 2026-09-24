@@ -46,7 +46,7 @@
 
 任务 ID 唯一，依赖必须存在且无循环；路径必须是工作区内相对路径。`task_kind` 明确区分垂直切片、单结果宽重构和跨任务集成；`outcomes` 必须恰好一个，多个独立结果必须拆成多个 `vertical_slice`。`integration` 必须至少依赖一个前置 task。一个 step 只包含一个动作。`provider_run` 必须严格声明一个 task 范围、禁止递归规划；`workflow_provider` 与每个 stage 都必须是完整 Provider Reference v2（manifest、task contract、entrypoint 与 closure 来源），摘要 ID 一律拒绝。项目计划或第三方 planner 必须冻结绝对来源路径与内容摘要；内置 planner 不伪造来源。
 
-只接受 v6 计划；用于全量收口 closure gate 时，`requirement_fingerprint` 必须等于 Routing Receipt 冻结的原始请求 SHA-256，所有 task 的完整 Provider Binding 必须等于 state 的冻结 Binding。必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix.schema_version=3` 至少一条链，每条必须有非空的 workspace 内 `entrypoints` 和 `callers`（无仓库 caller 时明确写 `external`），并覆盖全部 task `owned_paths`；`graph_receipt` 必须来自冻结 Source Receipt、声明 `codegraph`，并同时绑定链的 `id/entrypoints/callers` 投影。任一调用面或入口变化都必须重新出具回执；每条还必须覆盖 `input/freeze/effect/receipt/recovery`。`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
+只接受 v6 计划；上例中的 `closure_matrix` 对普通计划可省略，显式全量收口 closure gate 必填。普通计划若携带矩阵，也必须完整校验。用于全量收口时，`requirement_fingerprint` 必须等于 Routing Receipt 冻结的原始请求 SHA-256，所有 task 的完整 Provider Binding 必须等于 state 的冻结 Binding。必须冻结 Source Receipt v2，不能用当前 `HEAD` 或一个裸 diff hash 伪造任务起点。`closure_matrix.schema_version=3` 至少一条链，每条必须有非空的 workspace 内 `entrypoints` 和 `callers`（无仓库 caller 时明确写 `external`），并覆盖全部 task `owned_paths`；`graph_receipt` 必须来自冻结 Source Receipt、声明 `codegraph`，并同时绑定链的 `id/entrypoints/callers` 投影。任一调用面或入口变化都必须重新出具回执；每条还必须覆盖 `input/freeze/effect/receipt/recovery`。`covered` 或 `not_applicable` 必须引用一条 `final_acceptance`，`uncovered` 必须给原因且会阻止 complete。long context 单任务必须显式声明唯一 outcome，或拆成多个垂直切片。不得写 `engine` 或旧 schema。
 
 ## 2. Provider delegation barrier
 
@@ -143,7 +143,9 @@ python3 "$CONVERGE_PLAN_SKILL_DIR/scripts/plan_check.py" audit \
 }
 ```
 
-`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v6 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动；任一 `uncovered` closure cell 或最终 diff 不在任何 matrix entrypoint 下都使 audit 不完整，并分别输出 `uncovered_closure` / `closure_scope_drift`。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v2 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。`--require-complete` 在输出审计 JSON 后以退出码 1 表示未完成；不带该参数只用于中途诊断，不能作为最终完成门禁。
+`audit` 自己从 `--workspace` 读取真实 Git `HEAD`、tree、`git diff <baseline>` 和未跟踪文件，计算 Source Receipt Schema v2；receipt 同时绑定路径、文件/符号链接/删除类型、执行权限和内容摘要，非 UTF-8 路径明确阻塞。v6 以冻结 baseline receipt 为游标，逐个核对 task 的 `source_before/source_after` 连续性和 `owned_paths` 增量，任务开始前已有脏文件不会被误算为本任务改动；有矩阵时，任一 `uncovered` closure cell 或最终 diff 不在任何 matrix entrypoint 下都使 audit 不完整，并分别输出 `uncovered_closure` / `closure_scope_drift`。普通计划无矩阵时，这两项返回空列表，不跳过任务范围漂移、源码连续性或最终验收检查。helper 只运行固定的只读 Git 子命令；Evidence Receipt Schema v2 中的 `command` 只作为已执行证据描述校验，绝不由 audit 执行。`--require-complete` 在输出审计 JSON 后以退出码 1 表示未完成；不带该参数只用于中途诊断，不能作为最终完成门禁。
+
+规划机制取舍：参考 [Skills.sh 的 writing-plans 分类](https://www.skills.sh/obra/superpowers/writing-plans) 核对[原始 Skill](https://github.com/obra/superpowers/blob/main/skills/writing-plans/SKILL.md)，采用其按可独立验收结果切片的原则，保留现有 `outcomes`/`verification` 校验（行为测试：`test_independent_tasks_share_a_wave_and_dependencies_form_the_next_wave`）。未采用其每步独立提交和所有任务同等重量的计划模板，因为本控制器的同会话普通计划无需跨会话 checkpoint，且用户未授权提交；以 `test_ordinary_plan_can_audit_without_closure_matrix` 与 `test_full_closure_requires_a_closure_matrix` 验证轻路径与强门禁分离。
 
 状态语义：
 

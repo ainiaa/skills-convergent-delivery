@@ -20,9 +20,10 @@ class InteractionContractTest(unittest.TestCase):
         validate_catalog(catalog, ROOT)
         self.assertEqual(3, catalog["schema_version"])
         self.assertEqual("same_conversation", catalog["scope"])
-        self.assertEqual(14, len(catalog["scenarios"]))
-        self.assertEqual(9, catalog["smoke"]["minimum_fresh_runs"])
+        self.assertEqual(15, len(catalog["scenarios"]))
+        self.assertEqual(10, catalog["smoke"]["minimum_fresh_runs"])
         self.assertTrue({
+            "authorized-delivery-closes-review-findings",
             "cross-service-reference-decision", "verification-environment-block",
             "authorized-plan-tooling-uncovered", "nonterminal-work-item-verifier-gate",
             "feature-work-item-contract-bound", "reference-alignment-gate",

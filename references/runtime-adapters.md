@@ -28,12 +28,14 @@ service 只能执行 `execute-inline` 和带 `phase` 的 `verify`；其他宿主
 
 Hook 从 stdin 读取宿主提供的 `cwd`。仅当该 Git 项目 `.git/convergent-delivery/state/` 中存在唯一的、同 workspace 的 Schema v11 `active` run 才接管 Stop：
 
-- `autonomy_gate.py` 返回下一 action：Codex 与 Claude Hook 均先写入一次性 intent，再返回 `decision:block` 与同一 action，由宿主继续当前会话。仅 Codex 的 `UserPromptSubmit` 会为精确的“继续修复”/`continue repair` arm 新 gate；它不读取或保存 transcript，范围保守地为当前 workspace。带 `stop_hook_active` 的重复 Stop 若仍未观察到 intent 提交，Hook 通过确定性 `delivery_state.py write` 将 run 终态化为 `blocked/no_progress` 并释放 lease，返回一次 block 以要求报告阻塞；下一次 Stop 才 approve。该私有回执只记录源码、阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。控制器只执行该动作后再进入下一轮。
+- `autonomy_gate.py` 返回下一 action：Codex 与 Claude Hook 均先写入一次性 intent，再返回 `decision:block` 与同一 action，由宿主继续当前会话。仅 Codex 的 `UserPromptSubmit` 会为精确的“继续修复”/`continue repair` arm 新 gate；它不读取或保存 transcript，以 Git 根目录作为 workspace，范围仍保守地为整个仓库，但路径风险只由 Source Receipt 的实际变更推导。Stop 从仓库子目录触发时也查找该根目录的 active run。带 `stop_hook_active` 的重复 Stop 若仍未观察到 intent 提交，Hook 通过确定性 `delivery_state.py write` 将 run 终态化为 `blocked/no_progress` 并释放 lease，返回一次 block 以要求报告阻塞；下一次 Stop 才 approve。该私有回执只记录源码、阶段和 action fingerprint，不是任务状态、也不保存 prompt/transcript。控制器只执行该动作后再进入下一轮。
 - 状态经过 gate 验证为 `complete` 或 `blocked`：Hook approve，控制器生成由 `delivery_report.py` 派生的最终报告。
 - 多个 run、状态损坏（含不可解析或非对象 JSON）、scope/risk 漂移或证据不新鲜：block 并写明可恢复原因。
-- 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。
+- 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。非 Git cwd 的 `continue repair` Prompt 不 arm，也不阻断该用户消息；旧版以子目录建的 active run 仍优先按原 workspace 接续。
 
 Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是 arm 受限 repair gate、写入 continuation intent，或将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Codex 原生 Stop continuation 不需要 `session_id`/`thread_id`，因此 Desktop 与 CLI 使用同一 adapter。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次 block 后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
+
+本轮参考取舍：采用 [HumanLayer 控制回路](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) 的单一可重复测量边界，复用已有 Source Receipt 而不增加第二个全仓文件扫描；不采用其定时 actuator/记忆文件，因为本 Hook 只处理当前任务的一次有限续跑。对应行为测试为 `test_subdirectory_prompt_uses_repo_root_without_unchanged_security_risk`。采用 [Superpowers 新鲜验证](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) 的当前源码证据原则，不把风险路径扫描当作验收；对应 `test_autonomy_prompt_hook.py` 与全量测试门禁。
 
 ## Arm
 

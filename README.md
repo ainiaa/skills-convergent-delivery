@@ -2,15 +2,15 @@
 
 面向 Codex 与 Claude Code 的软件交付 Skill：将复杂需求拆成有限任务，要求新鲜验证与明确交付边界。
 
-当前发布版本：[0.5.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
+当前发布版本：[0.6.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
 
 ## 3 步快速开始
 
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.5.0/install.sh -o converge-install.sh
-   bash converge-install.sh --release 0.5.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.6.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.6.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。
@@ -84,7 +84,7 @@ Codex 使用 `$skill-name`，Claude Code 使用 `/skill-name`；两者都可使�
 
 ## 多模型协作
 
-默认不启用。用户明确说“使用多模型配合开发”时，才按需为隔离的 scout、implementer 或 reviewer 启动固定 profile；`serial` 的路由、规格和裁决仍由当前 controller 执行，不会自动切换模型。固定角色的默认模型包括：router/scout 使用 Terra medium，implementer 使用 Luna high，adjudicator 使用 GPT-6 Astra low。它不能替代真实测试或发布授权。Claude profile 为可选兼容配置，需用户自行配置有效的 Claude CLI/Provider；没有通过真实 smoke 时，不作为本次发布的已验收能力。完整边界和配置见 [多模型协作](references/multi-model.md)。
+默认不启用。用户明确说“使用多模型配合开发”时，才按需为隔离的 scout、implementer 或 reviewer 启动固定 profile；`serial` 的路由、规格和裁决仍由当前 controller 执行，不会自动切换模型，也不再生成无效的模型画像。内置 profile 为实际可派发的 scout 配置 GPT-6 Luna medium，为 implementer/reviewer 配置 GPT-6 Sol high；旧六角色配置继续兼容，但串行模型值不生效。它不能替代真实测试或发布授权。Claude profile 为可选兼容配置，需用户自行配置有效的 Claude CLI/Provider；没有通过真实 smoke 时，不作为本次发布的已验收能力。完整边界和配置见 [多模型协作](references/multi-model.md)。
 
 ```text
 使用 $converge-multimodel 配合开发修复支付重试问题；运行相关测试，不要发布。

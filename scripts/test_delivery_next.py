@@ -531,6 +531,13 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
 
 class DeliveryNextTest(unittest.TestCase):
 
+    def test_complete_rejects_known_open_issues_even_when_acceptance_passes(self):
+        payload = state(status="complete", current_stage="verify-final")
+        payload["handoff"]["open_issues"] = ["Scoped regression still reproduces"]
+
+        with self.assertRaisesRegex(ValueError, "open_issues"):
+            validate_state(payload, SimpleNamespace(check_workspace=False))
+
     def test_low_level_state_contract_helpers_reject_malformed_values(self):
         for value, name in ((None, "value"), (" ", "value")):
             with self.subTest(string=value), self.assertRaises(ValueError):
@@ -890,6 +897,13 @@ class DeliveryNextTest(unittest.TestCase):
         del payload["execution_control"]["closure"]["plan"]
 
         with self.assertRaisesRegex(ValueError, "closure gate fields are invalid"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_full_closure_requires_a_closure_matrix(self):
+        payload = reviewed_complete_state(full_closure=True)
+        payload["execution_control"]["closure"]["plan"].pop("closure_matrix")
+
+        with self.assertRaisesRegex(ValueError, "closure_matrix"):
             validate_state(payload, SimpleNamespace())
 
     def test_full_closure_rejects_a_plan_for_another_request(self):

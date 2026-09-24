@@ -36,6 +36,21 @@ def profile(**overrides):
 
 
 class CodexExecRunnerTest(unittest.TestCase):
+    def test_writer_accepts_isolated_worktree_with_trailing_space_in_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            primary = root / "repo"
+            primary.mkdir()
+            subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(primary), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            linked = root / "linked "
+            subprocess.run(["git", "-C", str(primary), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
+            launch = plan_launch(profile(), "probe", workspace=linked, codex_bin=sys.executable)
+        self.assertEqual("workspace-write", launch["configuration"]["sandbox"])
+
     def test_leaf_commands_override_agent_settings_for_readers_and_writers(self):
         for access in ("read", "write"):
             with self.subTest(access=access), mock.patch("codex_exec_runner._is_isolated_worktree", return_value=True):

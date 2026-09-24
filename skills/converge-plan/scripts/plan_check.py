@@ -276,7 +276,7 @@ def validate_closure_matrix(value, final_acceptance, source_fingerprint):
 def validate_plan(plan):
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
-    if set(plan) != PLAN_FIELDS:
+    if not PLAN_FIELDS - {"closure_matrix"} <= set(plan) <= PLAN_FIELDS:
         raise ValueError("plan fields are invalid")
     if plan.get("schema_version") != 6:
         raise ValueError("schema_version must be 6")
@@ -355,16 +355,17 @@ def validate_plan(plan):
             verification_argv(command)
         tasks.append(task)
 
-    closure_matrix = validate_closure_matrix(
-        plan.get("closure_matrix"), final_acceptance, plan["baseline"]["source"]["source_fingerprint"]
-    )
-    matrix_entrypoints = [
-        path for chain in closure_matrix["chains"] for path in chain["entrypoints"]
-    ]
-    for task in tasks:
-        for owned_path in task["owned_paths"]:
-            if not any(paths_overlap(entrypoint, owned_path) for entrypoint in matrix_entrypoints):
-                raise ValueError("closure_matrix entrypoints must cover every owned_paths entry")
+    if "closure_matrix" in plan:
+        closure_matrix = validate_closure_matrix(
+            plan["closure_matrix"], final_acceptance, plan["baseline"]["source"]["source_fingerprint"]
+        )
+        matrix_entrypoints = [
+            path for chain in closure_matrix["chains"] for path in chain["entrypoints"]
+        ]
+        for task in tasks:
+            for owned_path in task["owned_paths"]:
+                if not any(paths_overlap(entrypoint, owned_path) for entrypoint in matrix_entrypoints):
+                    raise ValueError("closure_matrix entrypoints must cover every owned_paths entry")
 
     for task in tasks:
         unknown = set(task["depends_on"]) - task_ids
@@ -455,25 +456,24 @@ def audit(envelope, workspace):
             raise ValueError(f"task_results.{task_id} is invalid")
         status = result["status"]
         if status == "DONE":
-            evidence_source = source
-            if plan["schema_version"] == 6:
-                before = result.get("source_before")
-                after = result.get("source_after")
-                if isinstance(before, dict):
-                    validate_source_receipt(before)
-                if isinstance(after, dict):
-                    validate_source_receipt(after)
-                delta = source_delta(before or {}, after or {})
-                drift = [
-                    path for path in delta
-                    if not any(path_contains(owner, path) for owner in task["owned_paths"])
-                ]
-                task_scope_drift[task_id] = drift
-                if before != cursor or not isinstance(after, dict) or drift:
-                    status = "PARTIAL"
-                else:
-                    cursor = after
-                    evidence_source = after
+            before = result.get("source_before")
+            after = result.get("source_after")
+            if isinstance(before, dict):
+                validate_source_receipt(before)
+            if isinstance(after, dict):
+                validate_source_receipt(after)
+            delta = source_delta(before or {}, after or {})
+            drift = [
+                path for path in delta
+                if not any(path_contains(owner, path) for owner in task["owned_paths"])
+            ]
+            task_scope_drift[task_id] = drift
+            if before != cursor or not isinstance(after, dict) or drift:
+                status = "PARTIAL"
+                evidence_source = source
+            else:
+                cursor = after
+                evidence_source = after
             if result.get("fresh_pass") is not True \
                     or not valid_evidence_receipts(result.get("evidence"), evidence_source) \
                     or not {tuple(verification_argv(command)) for command in task["verification"]}.issubset(
@@ -498,15 +498,16 @@ def audit(envelope, workspace):
         ):
             passed_final.add(entry["criterion"])
     final_acceptance_pass = passed_final == expected_final
+    chains = plan.get("closure_matrix", {}).get("chains", [])
     uncovered_closure = [
         f"{chain['id']}:{dimension}"
-        for chain in plan["closure_matrix"]["chains"]
+        for chain in chains
         for dimension, cell in chain["coverage"].items()
         if cell["status"] == "uncovered"
     ]
     matrix_scope_drift = [
         path for path in changed_paths
-        if not any(path_contains(entrypoint, path) for chain in plan["closure_matrix"]["chains"]
+        if chains and not any(path_contains(entrypoint, path) for chain in chains
                    for entrypoint in chain["entrypoints"])
     ]
     closure_complete = not uncovered_closure and not matrix_scope_drift

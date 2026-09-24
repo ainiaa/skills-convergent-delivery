@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Implement/fix/refactor authorized work: 实现/修复/重构/按方案修改/修复已知问题/闭环完成. Multi-model external runners require the explicit converge-multimodel extension; excludes standalone read-only review, autonomous continuation, and multi-Batch."
+description: "Use when implementing, fixing, or refactoring authorized software work (实现/修复/重构/按方案修改/修复已知问题), including same-session in-scope review findings. Multi-model external runners require the explicit converge-multimodel extension; not for standalone read-only review or multi-Batch."
 metadata:
   compatibility: Requires Git and Python 3.11+; native runtime tasks require an indexed CodeGraph CLI and configured coverage; full-closure audits also require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
@@ -9,19 +9,26 @@ metadata:
 
 Converge 始终是 controller，负责同一会话内已授权的软件交付；规划用 `converge-plan`，独立只读审查用 `converge-review`。触发见 [激活](references/activation.md)。
 
+## 单任务交付契约
+
+用户的目标是：**新需求或 Bug 修复 → 确定范围与验收 → 确定实现逻辑和回归风险 → 实现、复核并结束**。在同一个已授权 task 中，先冻结要改变和要保持的行为，再按 TDD 实现；对本次范围及受影响调用面做最终复核。发现可复现的同范围缺陷时，直接补回归测试、修根因、重新验证并复核，不把“已完成，另有 Bug 待修”交给用户，也不等待“继续修复”。
+
+`complete` 只表示当前源码满足冻结验收、有新鲜验证证据、所需复核通过，且**没有已知未解决的同范围缺陷**；不得承诺未知 Bug 为零。检查不可运行、需要业务/权限/范围外决定，或同一根因无进展、有限预算耗尽时，保留问题与证据，明确 `blocked/uncovered`，不能改写成完成。只读审查、新会话和用户停止的授权边界仍按下文执行。
+
 ## 每轮约束
 
-- 同一会话的写入授权持续有效，直到用户明确“仅审查/不要修改”、停止、取消，或提出范围外的新目标。
-- 已授权写入任务中的审查是只读检查点：审查本身不写入；完成后，同范围 finding 自动修复并验证。范围外 finding 只记录影响并一次提出所需决定。
+- 同一会话的写入授权持续有效，但仅限同一已冻结事项；交付报告不撤销授权，用户明确“仅审查/不要修改”、停止、取消，或转向范围外的新目标则撤销或结束该授权。`complete` 是上轮证据的终态，不是授权撤销。不得仅凭相同 workspace 或 Hook `session_id` 推定当前话题仍是该事项。
+- 已授权事项中的审查是只读检查点：先确认 finding，再对同范围 finding 直接补红灯、修复、验证和复核，不要求用户再说“继续修复”。交付后或当前复核额度耗尽后发现可复现的不同同范围 Bug，保留旧回执，按 [审查编排](references/review-orchestration.md) 在同一会话开启新的有限修复轮次；同一 finding 无源码或证据进展时阻塞，不能通过重开轮次清零预算。范围外 finding 只记录影响并一次提出所需决定。
+- 新会话的“还有问题吗”只授权检查与报告，发现问题后询问是否修复；新会话若已明确要求修复，则直接按新授权执行，不二次确认。身份、事项或范围无法核实时不借用旧授权；Hook 缺失或未信任也不得声称自动续修已生效。
 - 先从当前任务、代码、测试和已决事项取得答案；不重复询问。只在业务规则、公共兼容、权限、发布或不可逆操作需要决定时提问，并给出一个推荐。
 - 每个 finding 必须是修复、阻塞决策或范围外记录之一；不以建议替代同范围闭环。
 - 模型自述不放行。没有本轮真实验证的验收不得称完成；命令不可用、超时或权限不足为 `uncovered`，不得放松检查取得通过。
 - 用户明确指定为实现依据的引用（包括 `codex://`）是需求真源，不是背景提示。首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。若引用未规定内部细节，沿用项目既有模式作最小选择；若其对完成需求必需但不可访问则阻塞。普通背景链接不构成门禁；持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取。
 - 用户将具体项目、目录、分支或实现明确指定为唯一基准，并要求“对齐、保持一致、迁移”或“按其修改”时，按 [参考基准对齐](references/reference-alignment.md) 执行。它不是普通参考：首次业务写入前必须冻结相关文件的差异清单；参考基准变更即使仍在同一项目，也必须作废旧清单并重新比较。
-- 一个用户任务必须在当前 task 内完成其有限的构建、全范围复审、修复批和最终复核；安装 autonomy 后，Codex 的精确用户指令“继续修复”/`continue repair` 会在 `UserPromptSubmit` 受限地 arm 当前 workspace 的 repair gate，随后 Stop Hook 以原生 `decision:block` 在同一 task 交付一次冻结动作，绝不创建 successor task。普通 task 不以无用户消息重新开启审查。
+- 首次终态回复前，一个用户任务必须在当前 task 内完成有限的构建、全范围复审、修复批和最终复核；若合法的同范围修复仍能继续，不得提前给出最终回执。安装 autonomy 后，Codex 的明确快捷指令“继续修复”/“继续修复已知问题”/`continue repair` 会在 `UserPromptSubmit` 受限地 arm 当前 workspace 的 repair gate，随后 Stop Hook 以原生 `decision:block` 在同一 task 交付一次冻结动作，绝不创建 successor task。该快捷门禁只是执行辅助；普通 task 不依赖它来完成首次闭环，也不以无用户消息重新开启已完成事项。
 - 按需读取 reference：简单 `inline` 只读路由、TDD 和报告，其中 TDD 先读 [Inline TDD](references/inline-tdd.md)；计划、跨会话、自治、多模型或全量收口才读对应 contract。
 
-用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，每步开始与结束各用一条独立的 commentary 消息，结束不得与下一步开始合并。完成消息发送后，必须先结束该 commentary；下一步的开始只能在随后新的 commentary 中发送。不得在完成消息中声明、计划或调用下一步的动作；任何用于下一步的计划更新或工具调用，都只能放在该开始消息之后。原生计划工具可用时，每个步骤边界都必须调用一次原生计划工具：初始创建后，每次完成消息之后先将当前项更新为 completed，每次下一步开始 commentary 之后立即调用，将该项更新为 in_progress；同一次原生调用不得同时覆盖前一步完成和下一步开始。不得只在初始建表或最终收口时批量更新，也不得在对应调用成功前执行下一步工具。原生计划工具不可用时明确文字降级，不把文字说成原生面板。
+用户要求“逐步修复 / 分步执行 / 按计划一步步做”时，按需读取并执行 [分步可见交付](references/execution-control.md#分步可见交付)。
 
 ## 开始与验证
 

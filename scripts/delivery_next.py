@@ -256,6 +256,8 @@ def plan_check_module():
 def validate_closure_plan(plan, routing, baseline, provider_binding):
     module = plan_check_module()
     module.validate_plan(plan)
+    if "closure_matrix" not in plan:
+        raise ValueError("closure_matrix is required for full closure")
     if plan["requirement_fingerprint"] != routing["request_fingerprint"]:
         raise ValueError("closure plan requirement does not match frozen routing")
     if plan["baseline"]["commit"] != baseline["commit"]:
@@ -989,6 +991,8 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
     ):
         raise ValueError("blocked metadata is only valid for blocked state")
     if status == "complete":
+        if open_issues:
+            raise ValueError("complete state cannot have handoff.open_issues")
         if routing["status"] != "frozen":
             raise ValueError("complete state requires a frozen route")
         if routing["schema_version"] != 3:

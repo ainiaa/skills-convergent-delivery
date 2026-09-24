@@ -283,6 +283,34 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same frozen"):
             compare_reports([single, altered])
 
+    def test_comparison_can_calibrate_two_efforts_in_the_same_execution_mode(self):
+        medium = resolve(None, workspace=self.workspace, home=self.workspace / "home", role_overrides={
+            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
+        })
+        high_report = evaluate(self.profiles, mode="single")
+        medium_report = evaluate(medium, mode="single")
+
+        comparison = compare_reports([high_report, medium_report])
+
+        self.assertEqual(["single", "single"], [item["mode"] for item in comparison["modes"]])
+        self.assertNotEqual(comparison["modes"][0]["profile_fingerprint"],
+                            comparison["modes"][1]["profile_fingerprint"])
+        with self.assertRaisesRegex(ValueError, "unique"):
+            compare_reports([high_report, high_report])
+
+    def test_comparison_rejects_malformed_or_inconsistent_profile_identity(self):
+        baseline = evaluate(self.profiles, mode="single")
+        for invalid_id in (["not-hashable"], "not-a-sha256", "g" * 64):
+            with self.subTest(invalid_id=invalid_id):
+                altered = copy.deepcopy(baseline)
+                altered["results"][0]["implementer_profile_fingerprint"] = invalid_id
+                with self.assertRaisesRegex(ValueError, "profile fingerprints"):
+                    compare_reports([baseline, altered])
+        altered = copy.deepcopy(baseline)
+        altered["results"][0]["reviewer_profile_fingerprint"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "profile fingerprints"):
+            compare_reports([baseline, altered])
+
     def test_comparison_rejects_incomplete_or_inconsistent_results(self):
         single = evaluate(self.profiles)
         executed = self.probe()

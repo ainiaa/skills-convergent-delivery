@@ -38,7 +38,7 @@
   "runtime_binding": null,
   "host_sync": {"mode": "native | text | legacy_unavailable", "acknowledged_fingerprint": null, "evidence_level": "controller_attested | host_observed", "fallback": "optional: {reason, evidence_ref, disclosure_ref}; text only"},
   "execution_control": {
-    "routing": {"schema_version": 2, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile": {"schema_version": 2, "assessment_phase": "frozen", "scope": "local", "coupling": "single", "uncertainty": "low", "verification": "local", "risk_flags": [], "cross_session": false, "delegable_tasks": 0, "context_isolation_benefit": false}, "allowed_paths": ["src"], "integration_required": false, "profile_fingerprint": "<sha256>"},
+    "routing": {"schema_version": 3, "status": "frozen", "assessment_count": 1, "route": "inline", "review_tier": "low", "profile": {"schema_version": 2, "assessment_phase": "frozen", "scope": "local", "coupling": "single", "uncertainty": "low", "verification": "local", "risk_flags": [], "cross_session": false, "delegable_tasks": 0, "context_isolation_benefit": false}, "allowed_paths": ["src"], "integration_required": false, "request_fingerprint": "<sha256>", "full_closure_required": false, "profile_fingerprint": "<sha256>"},
     "review": {"protocol_version": 3, "repair_budget_remaining": 1, "re_review_budget_remaining": 1, "integration_budget_remaining": 0, "rounds": [{"source_fingerprint": "<source>", "requests": []}]}
   },
   "current_stage": "scope",
@@ -53,7 +53,7 @@
 
 `package_version` 只说明安装包版本。Snapshot closure 默认只包含根控制器、状态/报告/TDD references、实际可路由的 plan/review/batch/eval Skill 与确定性 helper。`extensions` 是创建时冻结的有序集合：`multimodel` 增加 runner、角色与评测运行时；`autonomy` 增加有界续跑；仅开发/发布时显式选择的 `autonomy-eval` 才增加自治评测器与 fixtures。Hook 自治只冻结 `autonomy`，service 自治额外冻结 `multimodel`；旧 v16 `extended` descriptor 统一映射到三者，所有读取路径得到同一能力集合。descriptor 冻结 `source_root/control_root`；验证要求 `root.parent=control_root`、目录名等于内容 fingerprint、所有中间目录和文件只读且 root 不在 source/目标 workspace 内。后续 helper 必须由 live `controller_snapshot.py run` 启动：它先验证快照不可变性（含被启动 bootstrap 的内容），再由快照自身验证其冻结协议并执行，不能直接启动 snapshot Python 文件；因此升级不会把有效 active run 改按新协议解释。trusted runner 只额外授权冻结的 `skills/converge-batch/scripts/batch_next.py` 与 `batch_state.py`，不得执行任意 `skills/` 路径或测试脚本。旧快照只允许协议明示的精确清场兼容，不能伪造升级。
 
-`handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
+`handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。`complete` 必须为空；已知同范围缺陷不能被“验收通过”或报告中的 `attention` 掩盖，无法关闭时应保留在 `blocked` 状态。范围外观察不作为已授权任务的待修问题，不得靠它扩大写入范围。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
 无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
 
@@ -198,3 +198,5 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
 不得把 `/tmp` 文件、调用者指定的任意路径或自然语言回执当作状态真源。workspace 只有在同 owner 的有效 lease move 后才能改变；revision、worker 身份和终态均不可回退。
 
 普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。
+
+Hook runtime 可额外冻结非空 `session_id`；Codex 新建 Prompt Hook 门禁要求该 ID，缺失时不 arm。Codex Stop 只有在宿主输入同一 ID 时才续跑，其他会话不得接管，身份缺失记为未覆盖。此 ID 不证明事项身份或跨宿主恢复时稳定；完成记录保持终态，后续同会话同事项的 Bug 必须开启新 run，不复活旧状态。缺少新进展的 blocked 事项不得靠新 run 重置预算。

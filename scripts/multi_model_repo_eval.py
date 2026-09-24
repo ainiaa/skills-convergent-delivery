@@ -259,8 +259,6 @@ def compare_reports(reports):
             surface = identity
         elif identity != surface:
             raise ValueError("repository evaluation comparison requires the same frozen surface")
-        if report["mode"] in {item["mode"] for item in modes}:
-            raise ValueError("repository evaluation comparison modes must be unique")
         results = report["results"]
         if report.get("schema_version") != 1 or not 2 <= len(results) <= 3 or any(
             not isinstance(item, dict) or not isinstance(item.get("task_id"), str)
@@ -273,6 +271,26 @@ def compare_reports(reports):
         if len(identifiers) != len(results) or task_ids is not None and identifiers != task_ids:
             raise ValueError("repository evaluation comparison requires the same unique task ids")
         task_ids = identifiers
+        profiles = []
+        for item in results:
+            implementer_id = item.get("implementer_profile_fingerprint")
+            reviewer_id = item.get("reviewer_profile_fingerprint")
+            required_ids = (implementer_id, reviewer_id) if report["mode"] == "multi" else (implementer_id,)
+            if (report["mode"] == "single" and reviewer_id is not None) or any(
+                not isinstance(value, str) or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+                for value in required_ids
+            ):
+                raise ValueError("repository evaluation comparison profile fingerprints are invalid")
+            profiles.append((implementer_id, reviewer_id))
+        if len(set(profiles)) != 1:
+            raise ValueError("repository evaluation comparison profile fingerprints are invalid")
+        implementer_id, reviewer_id = profiles[0]
+        profile_fingerprint = _fingerprint((implementer_id, reviewer_id))
+        if (report["mode"], profile_fingerprint) in {
+            (item["mode"], item["profile_fingerprint"]) for item in modes
+        }:
+            raise ValueError("repository evaluation comparison mode and profile must be unique")
         statuses = {item["status"] for item in results}
         if "planned" in statuses and len(statuses) != 1:
             raise ValueError("repository evaluation comparison mixes planned and executed tasks")
@@ -283,7 +301,8 @@ def compare_reports(reports):
             raise ValueError("repository evaluation comparison summary does not match task results")
         durations = [item.get("duration_ms") if isinstance(item, dict) else None for item in results]
         modes.append({
-            "mode": report["mode"], "status": report["status"],
+            "mode": report["mode"], "profile_fingerprint": profile_fingerprint,
+            "status": report["status"],
             "duration_ms": sum(durations) if durations and all(
                 isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in durations
             ) else None,

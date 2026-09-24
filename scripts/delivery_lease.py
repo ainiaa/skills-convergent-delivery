@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -42,13 +43,55 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def worktree_root(workspace):
+    try:
+        result = subprocess.run(
+            ["git", "-C", workspace, "rev-parse", "--show-toplevel"],
+            text=True, capture_output=True, check=False, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is not None and result.returncode == 0 and result.stdout.strip():
+        return str(Path(result.stdout.removesuffix("\n")).resolve())
+    path = Path(workspace).resolve()
+    if any((ancestor / ".git").exists() or (ancestor / ".git").is_symlink()
+           for ancestor in (path, *path.parents)):
+        raise ValueError(f"cannot verify Git worktree root for {workspace}")
+    return workspace
+
+
 def lease_paths(root, repo, workspace, task_key, *, release_owner=None):
     root = Path(root).expanduser().resolve()
     base = root / digest(repo)
-    name = f"{digest(workspace)}.json"
+    worktree = worktree_root(workspace)
+    name = f"{digest(worktree)}.json"
     workspace_path = root / "workspaces" / name
     # Preserve existing leases while sharing one workspace lock across repository aliases.
-    existing = [path for path in [workspace_path, *root.glob(f"*/workspaces/{name}")] if path.exists()]
+    candidates = [*root.glob("workspaces/*.json"), *root.glob("*/workspaces/*.json")]
+    existing = []
+    for path in candidates:
+        if path == workspace_path or path.name == name:
+            existing.append(path)
+            continue
+        with lock_record(path):
+            try:
+                record = read_record(path)
+            except ValueError:
+                # An unrelated incomplete/corrupt record cannot identify this worktree.
+                continue
+        if isinstance(record, dict) and record.get("kind") == "workspace" \
+                and isinstance(record.get("workspace"), str) \
+                and Path(record["workspace"]).is_absolute():
+            owner = Path(record["workspace"]).resolve()
+            try:
+                same_worktree = worktree_root(record["workspace"]) == worktree
+            except ValueError:
+                current = Path(worktree).resolve()
+                if owner == current or owner in current.parents or current in owner.parents:
+                    raise  # A possibly local lease must not be ignored.
+                continue
+            if same_worktree:
+                existing.append(path)
     if len(existing) > 1 and release_owner is not None:
         existing = [path for path in existing if same_owner(read_record(path), *release_owner)
                     and read_record(path).get("repo_id") == repo]
@@ -185,8 +228,10 @@ def make_record(kind, repo, workspace, task_key, run_id, writer_id, ttl_seconds)
     }
 
 
-def acquire_one(path, record, *, takeover):
+def acquire_one(path, record, *, takeover, allow_create=True):
     with lock_record(path):
+        if not allow_create and not path.exists():
+            return "missing", None
         if write_exclusive(path, record):
             return "acquired", record
 
@@ -224,8 +269,12 @@ def acquire(arguments, paths, repo, workspace):
         "workspace", repo, workspace, arguments.task_key, run_id, writer_id, arguments.ttl_seconds
     )
     workspace_result, workspace_holder = acquire_one(
-        paths["workspace"], workspace_record, takeover=arguments.takeover
+        paths["workspace"], workspace_record, takeover=arguments.takeover,
+        allow_create=paths["workspace"].name == f"{digest(worktree_root(workspace))}.json",
     )
+    if workspace_result == "missing":
+        payload("blocked_workspace", reason="legacy lease changed during acquisition; retry")
+        return 2
     if workspace_result in {"active", "expired"}:
         payload(
             f"blocked_workspace{('_expired' if workspace_result == 'expired' else '')}",
@@ -360,6 +409,9 @@ def validate_cleanup_for_release(state, arguments):
 def move(arguments, paths, repo, workspace):
     """Move one active writer to a new worktree without leaving the old lease behind."""
     from_workspace = canonical_path(arguments.from_workspace)
+    if from_workspace != workspace and worktree_root(from_workspace) == worktree_root(workspace):
+        payload("blocked_workspace", reason="move requires a different Git worktree")
+        return 2
     if from_workspace != workspace and paths["workspace"].parent.parent != Path(arguments.root).expanduser().resolve():
         payload("blocked_workspace", reason="release the legacy target owner before moving")
         return 2
@@ -382,6 +434,9 @@ def move(arguments, paths, repo, workspace):
                 return 2
 
         target_path = paths["workspace"]
+        if target_path.name != f"{digest(worktree_root(workspace))}.json" and not target_path.exists():
+            payload("blocked_workspace", reason="legacy lease changed during move; retry")
+            return 2
         if target_path != old_paths["workspace"] and target_path.exists():
             target_record = read_record(target_path)
             if not same_binding(target_record, {**expected, "kind": "workspace", "workspace": workspace}):

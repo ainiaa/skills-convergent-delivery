@@ -20,7 +20,7 @@ def _argv(value, name):
 
 
 def arm(state, requirements, acceptance, runtime="hook", service_runner=None, verification_argv=None,
-        audit_argv=None, audit_findings_exit_code=None):
+        audit_argv=None, audit_findings_exit_code=None, host_session_id=None):
     if not isinstance(state, dict) or state.get("schema_version") != 10:
         raise ValueError("only an active Schema v10 state can be explicitly armed")
     if state.get("status") != "active":
@@ -40,6 +40,10 @@ def arm(state, requirements, acceptance, runtime="hook", service_runner=None, ve
     ]
     updated["schema_version"] = 11
     runtime_value = {"mode": "hook"}
+    if host_session_id is not None:
+        if runtime != "hook" or not isinstance(host_session_id, str) or not host_session_id.strip():
+            raise ValueError("hook session id is invalid")
+        runtime_value["session_id"] = host_session_id
     if runtime == "service":
         if routing["review_tier"] != "low":
             raise ValueError("service autonomy supports only low-risk routes")

@@ -91,6 +91,8 @@ def validate_autonomy(value, source_fingerprint, routing):
     runtime = require_mapping(value["runtime"], "autonomy runtime")
     if runtime == {"mode": "hook"}:
         pass
+    elif set(runtime) == {"mode", "session_id"} and runtime["mode"] == "hook":
+        require_string(runtime["session_id"], "autonomy hook session id")
     elif set(runtime) in ({"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv"},
                           {"mode", "runner_profile", "max_cycles", "verification_argv", "audit_argv", "audit_findings_exit_code"}) \
             and runtime["mode"] == "service":

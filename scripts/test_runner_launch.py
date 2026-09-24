@@ -63,7 +63,7 @@ class RunnerLaunchTest(unittest.TestCase):
         command = command_for_dispatch(launch, "Collect evidence")
 
         self.assertEqual("codex-exec-v1", launch["runner_id"])
-        self.assertEqual("gpt-5.6-terra", command[command.index("-m") + 1])
+        self.assertEqual("gpt-6-luna", command[command.index("-m") + 1])
 
     def test_dispatch_helpers_reject_malformed_identity_and_omit_blank_output(self):
         with self.assertRaisesRegex(ValueError, "dispatch"):

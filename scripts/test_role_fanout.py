@@ -49,8 +49,15 @@ class RoleFanoutTest(unittest.TestCase):
     def test_heterogeneous_fanout_is_explicit_and_requires_distinct_profiles(self):
         tasks = [{"task_id": "scout", "role": "scout"}, {"task_id": "review", "role": "reviewer"}]
 
+        plan = plan_read_only_fanout(self.profiles, tasks, require_heterogeneous=True)
+        self.assertTrue(plan["heterogeneous"])
+
+        homogeneous = resolve(
+            None, workspace=Path(self.temporary.name), home=Path(self.temporary.name) / "home",
+            role_overrides={"reviewer": {"model": "gpt-6-luna", "reasoning_effort": "high"}},
+        )
         with self.assertRaisesRegex(ValueError, "heterogeneous"):
-            plan_read_only_fanout(self.profiles, tasks, require_heterogeneous=True)
+            plan_read_only_fanout(homogeneous, tasks, require_heterogeneous=True)
 
         profiles = resolve(
             None, workspace=Path(self.temporary.name), home=Path(self.temporary.name) / "home",
