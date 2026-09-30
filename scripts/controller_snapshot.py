@@ -209,6 +209,8 @@ AUTONOMY_EVALUATION_FILES = (
 )
 HOST_EVALUATION_FILES = (
     "scripts/host_bridge.py",
+    "scripts/interaction_replay.py",
+    "scripts/skillopt_adapter.py",
     "scripts/capsule_dispatch.py",
 )
 EXTENSIONS = {

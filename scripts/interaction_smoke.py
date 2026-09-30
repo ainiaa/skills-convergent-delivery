@@ -304,6 +304,16 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:
         raise ValueError("receipt requires observed verification")
+    if result == "pass" and expected["completion"] == "verified_only":
+        for index, (turn, observation) in enumerate(zip(scenario["turns"], observations)):
+            if turn.get("review_checkpoint") and (
+                    observation["completion_claim"] != "verified_only"
+                    or not observation["verification_observed"]
+                    or observation["verifier_failures"]
+                    or receipt["behavior_evidence"]["turns"][index]["verification"][-1]["exit_code"] != 0):
+                raise ValueError("receipt review checkpoint requires verified completion without verifier failures")
+        if receipt["behavior_evidence"]["turns"][-1]["verification"][-1]["exit_code"] != 0:
+            raise ValueError("receipt requires successful verification for verified completion")
     failures = [item for observation in observations for item in observation["verifier_failures"]]
     if expected["failure_policy"] == "block_first_failure" and (
             len(failures) != 1 or len(failures) != len(set(failures))):

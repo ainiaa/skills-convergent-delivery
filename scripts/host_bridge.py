@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import math
 import queue
 import subprocess
 import tempfile
@@ -80,6 +81,7 @@ class _CodexAppServer:
         self.messages = queue.Queue()
         self.request_id = 0
         self.turn_statuses = {}
+        self.turn_items = {}
         self.stream_closed = False
 
     def __enter__(self):
@@ -112,6 +114,14 @@ class _CodexAppServer:
         try:
             for line in self.process.stdout:
                 message = json.loads(line)
+                if message.get("method") == "item/completed":
+                    params = message.get("params", {})
+                    if isinstance(params, dict) and isinstance(params.get("turnId"), str) \
+                            and isinstance(params.get("item"), dict):
+                        items = self.turn_items.setdefault(params["turnId"], [])
+                        if len(items) >= 1000:
+                            raise ValueError("Codex turn exceeded item budget")
+                        items.append(params["item"])
                 if message.get("method") == "turn/completed":
                     params = message.get("params")
                     turn = params.get("turn") if isinstance(params, dict) else None
@@ -146,6 +156,60 @@ class _CodexAppServer:
             if "result" not in message or set(message) != {"id", "result"}:
                 raise ValueError(f"Codex app-server rejected {method}")
             return message["result"]
+
+
+class CodexSession:
+    """Keep one ephemeral host thread across bounded evaluation turns."""
+
+    def __init__(self, workspace, policy, *, codex_bin="codex", model="gpt-6.1-sol", deadline):
+        if type(deadline) not in (int, float) or not math.isfinite(deadline):
+            raise ValueError("Codex evaluation deadline is invalid")
+        self.workspace = str(Path(workspace).resolve())
+        self.policy, self.codex_bin, self.model, self.deadline = policy, codex_bin, model, deadline
+        self.server = None
+        self.task_id = None
+        self.started = False
+        self.last_text = ""
+
+    def turn(self, prompt):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Codex evaluation deadline expired")
+        if self.server is None:
+            self.server = _CodexAppServer(self.codex_bin, timeout_seconds=min(30, remaining))
+            self.server.__enter__()
+            thread = self.server.request("thread/start", {
+                "cwd": self.workspace, "ephemeral": True, "model": self.model,
+                "sandbox": "workspace-write", "approvalPolicy": "never",
+                "developerInstructions": self.policy,
+            })
+            self.task_id = _text(thread.get("thread", {}).get("id"), "Codex thread id")
+            self.started = True
+        self.server.timeout_seconds = max(0.01, min(30, self.deadline - time.monotonic()))
+        turn = self.server.request("turn/start", {
+            "threadId": self.task_id, "effort": "medium",
+            "input": [{"type": "text", "text": _text(prompt, "prompt")}],
+        })
+        turn_id = _text(turn.get("turn", {}).get("id"), "Codex turn id")
+        while time.monotonic() < self.deadline:
+            status = self.server.turn_statuses.get(turn_id)
+            if status is not None:
+                text = "\n".join(item.get("text", "") for item in self.server.turn_items.get(turn_id, [])
+                                 if item.get("type") == "agentMessage")
+                self.last_text = text
+                return {"task_id": self.task_id, "turn_id": turn_id, "status": status,
+                        "reasoning_effort": "medium",
+                        "questions": text.count("?") + text.count("？"),
+                        "transcript_fingerprint": hashlib.sha256(text.encode()).hexdigest()}
+            if self.server.stream_closed:
+                raise ValueError("Codex evaluation connection closed")
+            time.sleep(min(0.1, max(0, self.deadline - time.monotonic())))
+        raise ValueError("Codex evaluation deadline expired")
+
+    def close(self):
+        if self.server is not None:
+            self.server.close()
+            self.server = None
 
 
 def package(*, host, sample_id, workspace, prompt, judge_argv, launch_fingerprint, host_fingerprint):

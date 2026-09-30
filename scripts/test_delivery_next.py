@@ -530,6 +530,37 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
 
 
 class DeliveryNextTest(unittest.TestCase):
+    def test_final_verification_routes_unresolved_findings_to_bounded_repair(self):
+        payload = reviewed_complete_state()
+        payload.update(status="active", current_stage="verify-final")
+        payload["handoff"]["open_issues"] = ["confirmed in-scope F1"]
+        requests = payload["execution_control"]["review"]["rounds"][-1]["requests"]
+        request = copy.deepcopy(requests[-1])
+        requests[-1] = request
+        request.update(status="findings", finding_fingerprints=["a" * 64], finding_records=[{
+            "fingerprint": "a" * 64, "evidence": "regression failed", "impact": "wrong result",
+            "root_cause": "normalization omitted", "scope": "current", "classification": "defect",
+        }])
+        result = self.current(payload, output_format="json")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("review-repair", json.loads(result.stdout)["phase"])
+        cleared = copy.deepcopy(request)
+        cleared.update(status="pass", finding_fingerprints=[], finding_records=[])
+        requests.append(cleared)
+        payload["handoff"]["open_issues"] = []
+        from delivery_next import next_runtime_action
+        self.assertEqual("verify-final", next_runtime_action(payload, "verify-final")["phase"])
+        requests.pop()
+        payload["execution_control"]["review"]["repair_budget_remaining"] = 0
+        result = self.current(payload, output_format="json")
+        self.assertEqual("block", json.loads(result.stdout)["action"])
+
+    def test_followup_never_repairs_out_of_scope_or_unclassified_issues(self):
+        payload = state(current_stage="verify-final")
+        payload["handoff"]["open_issues"] = ["unclassified issue"]
+        result = self.current(payload, output_format="json")
+        self.assertEqual("block", json.loads(result.stdout)["action"])
+
 
     def test_complete_rejects_known_open_issues_even_when_acceptance_passes(self):
         payload = state(status="complete", current_stage="verify-final")

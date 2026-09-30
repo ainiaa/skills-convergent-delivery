@@ -64,7 +64,9 @@
 - SkillOpt 的结果只作为候选；必须通过 Converge 自己的行为门禁后再人工采纳。自动追加、自动部署、nightly/sleep 不启用，候选不得自动晋升。
 - 当前宿主 smoke 仍需 fresh-host receipt；若拿不到同会话多轮的 host-observed 证据，模型行为状态保持 `uncovered`，不能用文字规则断言替代。
 
-本次改动尚未执行 SkillOpt 的模型优化训练：现有 host-eval bridge 不能自动在同一宿主线程中回放 control/candidate 的多轮用户消息；SkillOpt 官方新 benchmark 流程需要额外的环境 adapter。已新增的多轮关键场景先锁定为回归门禁，之后可在不改 judge/catalog 的离线试验中评估 SkillOpt 候选。
+已实现可选 `scripts/skillopt_adapter.py`：显式调用 `adapter_class()` 才导入 SkillOpt，默认拒绝真实 rollout。按官方 EnvAdapter 实现 build_train_env/build_eval_env/rollout/get_task_types，继承 setup/reflect；使用者在 SkillOpt train 与 eval_only 两个 CLI registry 注册返回的类。官方接口参考：https://github.com/microsoft/SkillOpt/blob/main/docs/guide/new-benchmark.md 。初次实现仅以接口契约替身验证。2026-09-30 后续已在临时隔离 venv 安装官方 SkillOpt 0.2.0（commit 79124b37e9a6371e13b753f8bcd7adb1e493ade1），验证真实 EnvAdapter 与训练、评估两个 CLI 注册入口，并实际执行单 epoch、单 step、单编辑预算训练。选择集和训练 hard 均为 1，failure_only 路径没有补丁，保留原 Skill。训练器内部 test 关闭，由独立冻结回放执行全部三类留出场景；三类全部通过。没有候选 diff，故不存在候选晋升或相对改善结论。目标模型通过 app-server 调用，官方训练摘要的零 token 只反映优化器无调用，不能代表目标模型零成本。
+
+宿主回放使用一个 app-server thread，默认 gpt-6.1-sol，最多三个样本、总时限 600 秒、每个检查点一次修复。公开训练场景与 held-out 场景分开；仅合成场景可显式保存轨迹。无进展场景由外部固定判定器持续失败，模型不得修改它；超时或断流标记 uncovered 并停止，不作为训练失败样本。提问计数目前按问号启发式计算，不能替代语义审查。`release_status` 始终保留 uncovered：这套开发回放尚不具备正式隔离 held-out 晋升所需的完整证据。正式候选优化仍须冻结 evaluator、control 和 held-out，单假设、单轮 epoch、单编辑预算，未经独立验收不得晋升。周度开关仍只复核证据，不会自动运行该适配器。
 
 ## 最小协议
 
@@ -121,3 +123,10 @@ verified defect / repeated correction
 ## 试验启用条件
 
 用户明确授权后才运行候选优化；control、judge 和 held-out 必须先冻结，worker provenance 可追溯，且需有足够的已归类重复轨迹。任何一项未满足时只完成 defect-driven hardening，模型优化结果保持 `uncovered`。本文不会被普通任务自动读取。
+
+## 实际运行后的约束修补
+
+- 同线程回放每轮通过官方 turn/start effort 固定为 medium，避免继承本机 xhigh；三样本批次的总时限仍为 600 秒，未启动的样本记 uncovered。补充独立同条件样本后，有三个不同线程完成带注入缺陷的两轮闭环，不能删除原批次的超时记录。
+- 普通场景若需要控制器额外催修，SkillOpt hard=0；最终正确仅给予部分 soft 分数。无进展场景按一次修复后 blocked 判为符合停止契约。
+- predictions 下分别保存 conversation.json（仅合成轨迹）与 result.json（宿主身份、写入、验证和结果摘要）。default allow_execute=false 不变，周度开关不会启动训练。
+- 实验摘要见 docs/04_testing/defects/evidence/followup-validation-20260930/。这属于开发回归与实际包集成验收，仍不冒充 locked control/candidate 正式晋升证据。

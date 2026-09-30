@@ -14,6 +14,37 @@ HOST_FINGERPRINT = "b" * 64
 
 
 class HostBridgeTest(unittest.TestCase):
+    def test_multi_turn_session_keeps_exact_thread_and_closes_once(self):
+        server = MagicMock()
+        server.__enter__.return_value = server
+        server.request.side_effect = [{"thread": {"id": "same-thread"}},
+                                      {"turn": {"id": "one"}}, {"turn": {"id": "two"}}]
+        server.turn_statuses = {"one": "completed", "two": "completed"}
+        server.turn_items = {"one": [{"type": "agentMessage", "text": "done"}],
+                             "two": [{"type": "agentMessage", "text": "May I repair?"}]}
+        with patch.object(host_bridge, "_CodexAppServer", return_value=server):
+            session = host_bridge.CodexSession("/tmp", "policy", deadline=time.monotonic() + 2)
+            one, two = session.turn("implement"), session.turn("review")
+            session.close()
+        self.assertEqual(one["task_id"], two["task_id"])
+        self.assertEqual(1, two["questions"])
+        self.assertEqual("same-thread", server.request.call_args_list[2].args[1]["threadId"])
+        self.assertEqual("medium", server.request.call_args_list[2].args[1]["effort"])
+        server.close.assert_called_once()
+
+    def test_multi_turn_session_timeout_does_not_create_a_thread(self):
+        with patch.object(host_bridge, "_CodexAppServer") as server:
+            session = host_bridge.CodexSession("/tmp", "policy", deadline=time.monotonic() - 1)
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                session.turn("implement")
+            session.close()
+        server.assert_not_called()
+
+    def test_multi_turn_session_rejects_nonfinite_deadlines(self):
+        for deadline in (float("inf"), float("nan")):
+            with self.subTest(deadline=deadline), self.assertRaises(ValueError):
+                host_bridge.CodexSession("/tmp", "policy", deadline=deadline)
+
     def package(self, workspace, *, host="codex", host_fingerprint=HOST_FINGERPRINT):
         return host_bridge.package(
             host=host, sample_id="known_acceptance:roots", workspace=workspace,

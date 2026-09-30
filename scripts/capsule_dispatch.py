@@ -177,13 +177,14 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
                     reason="Codex process started but the capsule write was not confirmed; do not retry it",
                     evidence_path=str(evidence),
                 ))
+            exited = process.poll() is not None
             task_id = codex_thread_id(evidence)
             if task_id is not None:
                 return persist(path, result(
                     adapter, attempt_id, capsule, "delivered", workspace=workspace, external_task_id=task_id,
                     evidence_path=str(evidence),
                 ))
-            if process.poll() is not None:
+            if exited:
                 if process.returncode:
                     return persist(path, result(
                         adapter, attempt_id, capsule, "failed", workspace=workspace,

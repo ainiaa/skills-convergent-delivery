@@ -255,6 +255,8 @@ class ControllerSnapshotTest(unittest.TestCase):
 
         self.assertEqual(["multimodel", "host-eval"], descriptor["extensions"])
         self.assertIn("scripts/host_bridge.py", descriptor["files"])
+        self.assertIn("scripts/interaction_replay.py", descriptor["files"])
+        self.assertIn("scripts/skillopt_adapter.py", descriptor["files"])
         self.assertIn("scripts/multi_model.py", descriptor["files"])
 
     def test_autonomy_only_snapshot_cannot_run_the_service(self):
