@@ -188,6 +188,86 @@ class InteractionSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "initial diff"):
                 validate_catalog(invalid, temporary_root)
 
+    def test_after_review_write_must_be_observed_on_the_review_checkpoint_turn(self):
+        catalog = copy.deepcopy(self.catalog)
+        scenario = next(item for item in catalog["scenarios"]
+                        if item["id"] == "review-checkpoint-closes-in-scope-finding")
+        scenario["turns"] = [
+            {"prompt": "Continue the authorized implementation.", "authorized_write": True},
+            {"prompt": "Review the same implementation.", "authorized_write": True,
+             "review_checkpoint": True},
+        ]
+        scenario["expected"]["writes"] = "after_review"
+        receipt = {
+            "schema_version": 4,
+            "scenario_id": scenario["id"],
+            "catalog_fingerprint": catalog_fingerprint(catalog),
+            "task_id": "review-task",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": True, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [],
+                 "completion_claim": "verified_only"},
+                {"turn": 2, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [],
+                 "completion_claim": "verified_only"},
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+
+        with self.assertRaisesRegex(ValueError, "review checkpoint"):
+            validate_receipt(receipt, catalog)
+
+    def test_same_session_review_requires_each_checkpoint_to_finish_with_evidence(self):
+        receipt = {
+            "schema_version": 4,
+            "scenario_id": "same-session-review-followup-closes-in-scope",
+            "catalog_fingerprint": catalog_fingerprint(self.catalog),
+            "task_id": "same-session-review-task",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": turn, "writes_observed": turn == 1, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [],
+                 "completion_claim": "verified_only"}
+                for turn in range(1, 4)
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+        # Clean reviews need evidence, but must not be forced to change correct code.
+        validate_receipt(receipt, self.catalog)
+        for field, value in (("completion_claim", "findings_only"),
+                             ("verification_observed", []),
+                             ("verifier_failures", ["pytest failed"])):
+            with self.subTest(field=field):
+                invalid = copy.deepcopy(receipt)
+                invalid["observations"][1][field] = value
+                invalid["behavior_evidence"] = self._behavior_evidence(invalid)
+                with self.assertRaisesRegex(ValueError, "review checkpoint"):
+                    validate_receipt(invalid, self.catalog)
+        invalid = copy.deepcopy(receipt)
+        invalid["behavior_evidence"]["turns"][1]["verification"][-1]["exit_code"] = 1
+        with self.assertRaisesRegex(ValueError, "review checkpoint"):
+            validate_receipt(invalid, self.catalog)
+        invalid = copy.deepcopy(receipt)
+        catalog = copy.deepcopy(self.catalog)
+        scenario = next(item for item in catalog["scenarios"] if item["id"] == receipt["scenario_id"])
+        scenario["turns"][2].pop("review_checkpoint")
+        invalid["catalog_fingerprint"] = catalog_fingerprint(catalog)
+        invalid["behavior_evidence"] = self._behavior_evidence(invalid)
+        invalid["behavior_evidence"]["turns"][2]["verification"][-1]["exit_code"] = 1
+        with self.assertRaisesRegex(ValueError, "successful verification"):
+            validate_receipt(invalid, catalog)
+
     def test_reference_alignment_blocks_writes_until_the_difference_allowlist_is_frozen(self):
         scenario = next(item for item in self.catalog["scenarios"]
                         if item["id"] == "reference-alignment-gate")

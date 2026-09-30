@@ -3,10 +3,22 @@
 
 import unittest
 
-from run_contract import action, delivery_action, legacy_action
+from run_contract import action, delivery_action, legacy_action, followup_action
 
 
 class RunContractTest(unittest.TestCase):
+    def test_followup_repairs_known_findings_without_requesting_permission(self):
+        self.assertEqual("execute-inline", followup_action(task_id="T1", open_issues=["F1"],
+                                                          repair_budget_remaining=1)["action"])
+        self.assertEqual("block", followup_action(task_id="T1", open_issues=["F1"],
+                                                 repair_budget_remaining=0)["action"])
+        self.assertIsNone(followup_action(task_id="T1", open_issues=[], repair_budget_remaining=0))
+
+    def test_followup_rejects_invalid_inputs(self):
+        for issues, budget in (("F1", 1), ([""], 1), (["F1"], True), (["F1"], -1)):
+            with self.subTest(issues=issues, budget=budget), self.assertRaises(ValueError):
+                followup_action(task_id="T1", open_issues=issues, repair_budget_remaining=budget)
+
     def test_actions_require_their_runtime_identity(self):
         invalid = (
             ("execute-inline", {"task_id": "T1"}),

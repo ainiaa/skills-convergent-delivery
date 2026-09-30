@@ -1,11 +1,13 @@
 ---
 name: converge-review
-description: Perform an evidence-based read-only review of a software diff or implementation. Use for “检查/评审当前改动”, independent intent review, or fresh-context blind review; do not use to implement or fix code. The read-only checkpoints inside an authorized write task are handled by the root controller and do not route here.
+description: Perform an evidence-based read-only review of a software diff or implementation only when no same-session authorized implementation task is active. Use for standalone “检查/评审当前改动”, independent intent review, or fresh-context blind review; do not use to implement or fix code. Review follow-ups on the active task stay with the root controller.
 metadata:
   compatibility: Requires Git and Python 3.11+; install the complete Converge Suite. Supports Codex and Claude Code.
 ---
 
 # Converge Review：独立只读审查
+
+仅在当前会话没有活动的已授权实现任务时触发。若用户是在同一任务中要求“仔细审查”或“还有没有其他问题”，同一任务的后续审查由根控制器接手并继续闭环。
 
 只负责发现和说明问题。不得修改代码、测试、文档、状态、Git 历史或外部系统；不得扩大验收范围、决定发布或把建议写成已确认缺陷。
 

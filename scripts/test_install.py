@@ -965,11 +965,16 @@ if arguments and arguments[0] == "clone":
 
         for marker in (
             "## 多模型协作", "使用多模型配合开发", "默认不启用",
-            "scout 配置 GPT-6 Luna medium", "implementer/reviewer 配置 GPT-6 Sol high",
+            "scout 配置 GPT-6 Luna medium", "implementer/reviewer 配置 GPT-6.1 Sol high",
             "旧六角色配置继续兼容，但串行模型值不生效", "[多模型协作](references/multi-model.md)",
             "不能替代真实测试", "Claude profile 为可选兼容配置", "不作为本次发布的已验收能力",
         ):
             self.assertIn(marker, readme)
+
+        reference = (ROOT / "references/multi-model.md").read_text(encoding="utf-8")
+        for role in ("implementer", "reviewer"):
+            self.assertIn(f"| `{role}` | GPT-6.1 Sol high |", reference)
+        self.assertIn("顺序地为每个版本", readme)
 
     def test_public_project_documents_are_linked_from_readme(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

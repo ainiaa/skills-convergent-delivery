@@ -41,6 +41,18 @@ def delivery_action(stage, task_id, blocked_reason=None):
     return action("execute-inline", task_id=task_id, phase=stage)
 
 
+def followup_action(*, task_id, open_issues, repair_budget_remaining):
+    """Route validated, already authorized in-scope findings; never infer authorization."""
+    if not isinstance(open_issues, list) or any(not isinstance(x, str) or not x.strip() for x in open_issues) \
+            or type(repair_budget_remaining) is not int or repair_budget_remaining not in (0, 1):
+        raise ValueError("followup findings or repair budget are invalid")
+    if not open_issues:
+        return None
+    if not repair_budget_remaining:
+        return action("block", task_id=task_id, reason="review repair budget exhausted; unresolved in-scope findings")
+    return action("execute-inline", task_id=task_id, phase="review-repair")
+
+
 def legacy_action(value):
     kind = value["action"]
     if kind == "block":

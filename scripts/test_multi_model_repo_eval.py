@@ -285,7 +285,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
 
     def test_comparison_can_calibrate_two_efforts_in_the_same_execution_mode(self):
         medium = resolve(None, workspace=self.workspace, home=self.workspace / "home", role_overrides={
-            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
+            "implementer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
         })
         high_report = evaluate(self.profiles, mode="single")
         medium_report = evaluate(medium, mode="single")

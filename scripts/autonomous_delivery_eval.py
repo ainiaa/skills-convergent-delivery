@@ -72,7 +72,7 @@ def candidate_judge_root(root, workspace, destination):
         root,
         destination,
         ignore=shutil.ignore_patterns(
-            ".git", ".claude", ".codex", ".codegraph", ".venv", "__pycache__",
+            ".git", ".claude", ".codex", ".codegraph", ".code-review-graph", ".venv", "__pycache__",
         ),
     )
     for source in (workspace / "scripts").glob("*.py"):

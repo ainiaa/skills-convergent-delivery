@@ -25,6 +25,10 @@ Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读
 
 ## 本轮机制取舍
 
+受管理的 schema 10 run 在最终验证前由 `delivery_next.next_runtime_action` 检查当前源码指纹与各轴最新审查。范围内已确认缺陷复用 `run_contract.followup_action` 和现有一次修复预算；旧 findings 被后续 pass 覆盖后不再修复。未分类问题或预算耗尽返回 block。schema 11 继续使用已有自治审计。普通桌面对话只有 Skill 引导，不能宣称拥有结束/提问拦截能力。
+
+本轮采用 HumanLayer 控制循环的显式下一动作和有限退出，复用现有机器状态；不增加第二套授权账本或常驻监督代理。行为回归：`test_final_verification_routes_unresolved_findings_to_bounded_repair`、`test_followup_never_repairs_out_of_scope_or_unclassified_issues`。采用 SkillOpt 官方 EnvAdapter 的四个环境方法及继承反思接口；不在运行时自动训练或修改判定器。回归：`test_skillopt_adapter.py` 与 `test_interaction_replay.py`。
+
 | 参考 | 采用 | 不采用及原因 | 对应行为测试 |
 |---|---|---|---|
 | 本机 `skill-creator`、[Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 先让已知问题穿过完成门禁，再补失败回归和单轮交互场景 | 不增设另一套可写问题台账；现有 `handoff.open_issues` 已是待处理真源 | `test_complete_rejects_known_open_issues_even_when_acceptance_passes`、`authorized-delivery-closes-review-findings` |

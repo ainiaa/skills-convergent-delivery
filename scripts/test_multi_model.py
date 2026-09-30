@@ -49,9 +49,9 @@ class MultiModelTest(unittest.TestCase):
         self.assertEqual(["router", "specifier", "adjudicator"], value["controller_roles"])
         self.assertEqual("gpt-6-luna", value["roles"]["scout"]["effective"]["model"])
         self.assertEqual("medium", value["roles"]["scout"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-6-sol", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-6.1-sol", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("high", value["roles"]["implementer"]["effective"]["reasoning_effort"])
-        self.assertEqual("gpt-6-sol", value["roles"]["reviewer"]["effective"]["model"])
+        self.assertEqual("gpt-6.1-sol", value["roles"]["reviewer"]["effective"]["model"])
         self.assertNotIn("verifier", value["roles"])
 
     def test_user_profiles_are_opt_in_and_do_not_shadow_the_builtin_default(self):
@@ -93,7 +93,7 @@ class MultiModelTest(unittest.TestCase):
                 profile_name="claude-code",
             )
         self.assertEqual("claude-code", value["profile_name"])
-        self.assertEqual("gpt-6-sol", value["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-6.1-sol", value["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("codex-exec-v1", value["roles"]["implementer"]["runner_id"])
         self.assertNotIn("adjudicator", value["roles"])
         self.assertEqual("claude-code-v1", value["roles"]["reviewer"]["runner_id"])
@@ -124,21 +124,32 @@ class MultiModelTest(unittest.TestCase):
             workspace = Path(directory) / "repo"
             home = Path(directory) / "home"
             current = resolve(None, workspace=workspace, home=home, role_overrides={
-                "implementer": {"model": "gpt-6-luna", "reasoning_effort": "low"},
+                "implementer": {"model": "gpt-6.1-sol", "reasoning_effort": "low"},
             })
             path = Path(directory) / "multi-model.json"
             path.write_text(json.dumps(config()), encoding="utf-8")
             legacy = resolve(path)
 
         self.assertEqual("codex-exec-v1", current["roles"]["implementer"]["runner_id"])
-        self.assertEqual("gpt-6-luna", current["roles"]["implementer"]["effective"]["model"])
+        self.assertEqual("gpt-6.1-sol", current["roles"]["implementer"]["effective"]["model"])
         self.assertEqual("gpt-5.6-luna", legacy["roles"]["implementer"]["effective"]["model"])
 
     def test_unknown_openai_model_is_not_routed_to_claude(self):
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "model must be"):
-                resolve(None, workspace=Path(directory) / "repo", home=Path(directory) / "home",
-                        role_overrides={"reviewer": {"model": "gpt-6-unknown", "reasoning_effort": "high"}})
+            for model in ("gpt-6-unknown",):
+                with self.subTest(model=model), self.assertRaisesRegex(ValueError, "model must be"):
+                    resolve(None, workspace=Path(directory) / "repo", home=Path(directory) / "home",
+                            role_overrides={"reviewer": {"model": model, "reasoning_effort": "high"}})
+
+    def test_existing_custom_profiles_can_still_use_gpt_6_sol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi-model.json"
+            profile = delivery_profile()
+            profile["implementer"] = {"model": "gpt-6-sol", "reasoning_effort": "high"}
+            path.write_text(json.dumps(config(default="legacy", profiles={"legacy": profile})), encoding="utf-8")
+            value = resolve(path)
+
+        self.assertEqual("gpt-6-sol", value["roles"]["implementer"]["effective"]["model"])
 
     def test_read_only_roles_do_not_receive_shell_access_for_either_cli_runner(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -231,7 +242,7 @@ class MultiModelTest(unittest.TestCase):
             )
 
         self.assertEqual("desktop-task-v1", action["adapter"])
-        self.assertEqual("gpt-6-sol", action["arguments"]["model"])
+        self.assertEqual("gpt-6.1-sol", action["arguments"]["model"])
         self.assertEqual("high", action["arguments"]["thinking"])
         self.assertEqual("requested", action["model_binding"]["status"])
         self.assertEqual(
@@ -253,7 +264,7 @@ class MultiModelTest(unittest.TestCase):
 
         action = json.loads(output.getvalue())
         self.assertEqual("create", action["kind"])
-        self.assertEqual("gpt-6-sol", action["arguments"]["model"])
+        self.assertEqual("gpt-6.1-sol", action["arguments"]["model"])
 
 
 if __name__ == "__main__":

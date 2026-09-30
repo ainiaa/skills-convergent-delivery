@@ -14,6 +14,37 @@ HOST_FINGERPRINT = "b" * 64
 
 
 class HostBridgeTest(unittest.TestCase):
+    def test_multi_turn_session_keeps_exact_thread_and_closes_once(self):
+        server = MagicMock()
+        server.__enter__.return_value = server
+        server.request.side_effect = [{"thread": {"id": "same-thread"}},
+                                      {"turn": {"id": "one"}}, {"turn": {"id": "two"}}]
+        server.turn_statuses = {"one": "completed", "two": "completed"}
+        server.turn_items = {"one": [{"type": "agentMessage", "text": "done"}],
+                             "two": [{"type": "agentMessage", "text": "May I repair?"}]}
+        with patch.object(host_bridge, "_CodexAppServer", return_value=server):
+            session = host_bridge.CodexSession("/tmp", "policy", deadline=time.monotonic() + 2)
+            one, two = session.turn("implement"), session.turn("review")
+            session.close()
+        self.assertEqual(one["task_id"], two["task_id"])
+        self.assertEqual(1, two["questions"])
+        self.assertEqual("same-thread", server.request.call_args_list[2].args[1]["threadId"])
+        self.assertEqual("medium", server.request.call_args_list[2].args[1]["effort"])
+        server.close.assert_called_once()
+
+    def test_multi_turn_session_timeout_does_not_create_a_thread(self):
+        with patch.object(host_bridge, "_CodexAppServer") as server:
+            session = host_bridge.CodexSession("/tmp", "policy", deadline=time.monotonic() - 1)
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                session.turn("implement")
+            session.close()
+        server.assert_not_called()
+
+    def test_multi_turn_session_rejects_nonfinite_deadlines(self):
+        for deadline in (float("inf"), float("nan")):
+            with self.subTest(deadline=deadline), self.assertRaises(ValueError):
+                host_bridge.CodexSession("/tmp", "policy", deadline=deadline)
+
     def package(self, workspace, *, host="codex", host_fingerprint=HOST_FINGERPRINT):
         return host_bridge.package(
             host=host, sample_id="known_acceptance:roots", workspace=workspace,
@@ -206,6 +237,15 @@ class HostBridgeTest(unittest.TestCase):
 
         self.assertIsInstance(server.messages.get_nowait(), OSError)
 
+    def test_app_server_reader_reports_clean_eof_as_a_lost_connection(self):
+        server = host_bridge._CodexAppServer("codex", timeout_seconds=1)
+        server.process = SimpleNamespace(stdout=[], stdin=Mock())
+
+        server._read()
+
+        with self.assertRaisesRegex(ValueError, "stream is invalid"):
+            server.request("thread/start", {})
+
     def test_app_server_enters_and_closes_its_ephemeral_process(self):
         process = Mock()
         process.poll.return_value = None
@@ -219,6 +259,19 @@ class HostBridgeTest(unittest.TestCase):
 
         process.terminate.assert_called_once()
         process.wait.assert_called_once_with(timeout=2)
+
+    def test_app_server_close_kills_a_process_that_ignores_terminate(self):
+        process = Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = [host_bridge.subprocess.TimeoutExpired("codex", 2), 0]
+        server = host_bridge._CodexAppServer("codex")
+        server.process = process
+
+        server.close()
+
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        self.assertEqual(2, process.wait.call_count)
 
     def test_app_server_request_rejects_timeout_and_invalid_stream(self):
         timeout = host_bridge._CodexAppServer("codex", timeout_seconds=0)
@@ -283,6 +336,12 @@ class HostBridgeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "did not generate"):
                 host_bridge.codex_schema_fingerprint()
 
+    def test_codex_schema_fingerprint_bounds_schema_generation(self):
+        with patch.object(host_bridge, "_binary_identity", return_value=("codex", FINGERPRINT)), \
+                patch.object(host_bridge.subprocess, "run", side_effect=host_bridge.subprocess.TimeoutExpired("codex", 10)):
+            with self.assertRaisesRegex(ValueError, "schema generation timed out"):
+                host_bridge.codex_schema_fingerprint()
+
     def test_codex_observe_rejects_a_lost_ephemeral_connection(self):
         with tempfile.TemporaryDirectory() as directory:
             package = self.package(directory)
@@ -294,6 +353,21 @@ class HostBridgeTest(unittest.TestCase):
             with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT):
                 with self.assertRaisesRegex(ValueError, "connection is unavailable"):
                     host_bridge.codex_observe(package, started)
+
+    def test_codex_observe_rejects_a_closed_stream_before_the_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-closed",
+                "turn_id": "turn-closed", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            server = SimpleNamespace(turn_statuses={}, stream_closed=True, close=Mock())
+            host_bridge._CODEX_SERVERS["thread-closed"] = server
+            with patch.object(host_bridge, "codex_schema_fingerprint", return_value=HOST_FINGERPRINT):
+                with self.assertRaisesRegex(ValueError, "connection closed"):
+                    host_bridge.codex_observe(package, started)
+            host_bridge._CODEX_SERVERS.pop("thread-closed", None)
 
     def test_codex_observe_handles_active_and_unknown_turn_statuses(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -377,6 +451,16 @@ class HostBridgeTest(unittest.TestCase):
                     host_bridge.claude_start(
                         package, "frozen prompt", agents=Mock(return_value=[]),
                         run=Mock(return_value=SimpleNamespace(returncode=1)),
+                    )
+
+    def test_claude_start_bounds_background_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory, host="claude")
+            with patch.object(host_bridge, "_binary_identity", return_value=("claude", HOST_FINGERPRINT)):
+                with self.assertRaisesRegex(ValueError, "launch timed out"):
+                    host_bridge.claude_start(
+                        package, "frozen prompt", agents=Mock(return_value=[]),
+                        run=Mock(side_effect=host_bridge.subprocess.TimeoutExpired("claude", 30)),
                     )
 
     def test_claude_start_rejects_a_non_claude_package(self):
@@ -481,6 +565,38 @@ class HostBridgeTest(unittest.TestCase):
             with patch.object(host_bridge, "observe", return_value=None):
                 with self.assertRaisesRegex(ValueError, "did not become terminal"):
                     host_bridge.wait_terminal(package, started, deadline=time.monotonic())
+
+    def test_wait_terminal_closes_codex_connection_on_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory)
+            started = {
+                "protocol": "host-bridge-v1", "host": "codex", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "thread-timeout",
+                "turn_id": "turn-timeout", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            server = SimpleNamespace(close=Mock())
+            host_bridge._CODEX_SERVERS["thread-timeout"] = server
+            with patch.object(host_bridge, "observe", return_value=None):
+                with self.assertRaisesRegex(ValueError, "did not become terminal"):
+                    host_bridge.wait_terminal(package, started, deadline=time.monotonic())
+
+        server.close.assert_called_once()
+        self.assertNotIn("thread-timeout", host_bridge._CODEX_SERVERS)
+
+    def test_wait_terminal_stops_claude_session_on_observation_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = self.package(directory, host="claude")
+            started = {
+                "protocol": "host-bridge-v1", "host": "claude", "sample_id": package["sample_id"],
+                "package_fingerprint": host_bridge._fingerprint(package), "task_id": "agent-timeout",
+                "turn_id": "session-timeout", "host_fingerprint": HOST_FINGERPRINT,
+            }
+            with patch.object(host_bridge, "observe", side_effect=ValueError("lost session")), \
+                    patch.object(host_bridge.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                with self.assertRaisesRegex(ValueError, "lost session"):
+                    host_bridge.wait_terminal(package, started, deadline=time.monotonic() + 1)
+
+        self.assertEqual(["claude", "stop", "agent-timeout"], run.call_args.args[0])
 
 
 if __name__ == "__main__":

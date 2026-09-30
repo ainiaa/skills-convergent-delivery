@@ -1,0 +1,286 @@
+{
+  "schema_version": 6,
+  "plan_id": "followup-closure-20260930",
+  "requirement_fingerprint": "e39d00210ebffe70492124b3661e0182b6424fab9b0feef5eedb2ca0d729034e",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "short",
+  "baseline": {
+    "commit": "a46cd2d1d1750d1cd96d46b6b1216ed56bf83cea",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "a46cd2d1d1750d1cd96d46b6b1216ed56bf83cea",
+      "commit_id": "a46cd2d1d1750d1cd96d46b6b1216ed56bf83cea",
+      "tree_hash": "ec92ec0869e94c558047a0bd88174bb70207385f",
+      "diff_fingerprint": "493a8f32444001bab2d3ebe234a29901c7b6bdc060c03ec1712edd61905003b7",
+      "changed_paths": [
+        "docs/04_testing/defects/B20260929-same-task-review-followup-defect.md",
+        "scripts/interaction_smoke.py",
+        "scripts/test_capsule_dispatch.py",
+        "scripts/test_interaction_smoke.py"
+      ],
+      "changed_entries": [
+        {
+          "path": "docs/04_testing/defects/B20260929-same-task-review-followup-defect.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "721ef3d94ee2f39451d59d6f8ceb2fa39661c39bab007ad00125f2d6a7992afc"
+        },
+        {
+          "path": "scripts/interaction_smoke.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "c38b29fdb55ce5d2d28c61c5fce3f74a4d7bec8d42931431e28ac16e085f159f"
+        },
+        {
+          "path": "scripts/test_capsule_dispatch.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e704129056e119661e43db131d4edd57bec4c9902fe08332c778bad362def8ad"
+        },
+        {
+          "path": "scripts/test_interaction_smoke.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "5cb037c32d744ff47033ec2d6e80fac6c288e68f2aad84b725e74cfe2b8e693b"
+        }
+      ],
+      "source_fingerprint": "87d2440a5fe0dbc80decca5b3f2ee781a52ba1ecdc9329ceb5f897945034a301"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "Replay a defect introduced before a review in one exact host thread"
+      ],
+      "goal": "Replay a defect introduced before a review in one exact host thread",
+      "owned_paths": [
+        "scripts/host_bridge.py",
+        "scripts/test_host_bridge.py",
+        "scripts/interaction_replay.py",
+        "scripts/test_interaction_replay.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "Write failing regression",
+        "Run failing regression",
+        "Implement minimum shared path",
+        "Run focused verification"
+      ],
+      "acceptance": [
+        "Replay a defect introduced before a review in one exact host thread"
+      ],
+      "verification": [
+        "python3 -m pytest scripts/test_host_bridge.py scripts/test_interaction_replay.py -q"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "a43c016ea5daecbf5e74ea93840c1e489fe7ce85f926bb651fdbf36064028770",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "feature",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "e04abc991b64aa44f1f760489b8c33bb40c03458b1e8c63a6eea860247bd300c",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "feature"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "Reject unresolved in-scope review results through the shared next-action entrypoint"
+      ],
+      "goal": "Reject unresolved in-scope review results through the shared next-action entrypoint",
+      "owned_paths": [
+        "scripts/run_contract.py",
+        "scripts/test_run_contract.py",
+        "scripts/delivery_next.py",
+        "scripts/test_delivery_next.py",
+        "scripts/interaction_replay.py",
+        "scripts/test_interaction_replay.py",
+        "references/review-orchestration.md",
+        "SKILL.md"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "Write failing regression",
+        "Run failing regression",
+        "Implement minimum shared path",
+        "Run focused verification"
+      ],
+      "acceptance": [
+        "Reject unresolved in-scope review results through the shared next-action entrypoint"
+      ],
+      "verification": [
+        "python3 -m pytest scripts/test_run_contract.py scripts/test_delivery_next.py scripts/test_interaction_replay.py -q"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "a43c016ea5daecbf5e74ea93840c1e489fe7ce85f926bb651fdbf36064028770",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "feature",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "e04abc991b64aa44f1f760489b8c33bb40c03458b1e8c63a6eea860247bd300c",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "feature"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "Expose a bounded offline SkillOpt adapter and compare frozen policies on real host samples"
+      ],
+      "goal": "Expose a bounded offline SkillOpt adapter and compare frozen policies on real host samples",
+      "owned_paths": [
+        "scripts/skillopt_policy.py",
+        "scripts/test_skillopt_policy.py",
+        "scripts/interaction_replay.py",
+        "scripts/test_interaction_replay.py",
+        "scripts/check.sh",
+        "CHANGELOG.md",
+        "docs/02_design/architecture/self-improving.md",
+        "docs/04_testing/defects/B20260929-same-task-review-followup-defect.md",
+        "scripts/skillopt_adapter.py",
+        "scripts/test_skillopt_adapter.py",
+        "scripts/controller_snapshot.py",
+        "scripts/test_controller_snapshot.py",
+        "scripts/capsule_dispatch.py",
+        "scripts/test_capsule_dispatch.py",
+        "scripts/test_python_matrix.py"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "Write failing regression",
+        "Run failing regression",
+        "Implement minimum shared path",
+        "Run focused verification"
+      ],
+      "acceptance": [
+        "Expose a bounded offline SkillOpt adapter and compare frozen policies on real host samples"
+      ],
+      "verification": [
+        "python3 -m pytest scripts/test_skillopt_policy.py scripts/test_interaction_replay.py -q"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "a43c016ea5daecbf5e74ea93840c1e489fe7ce85f926bb651fdbf36064028770",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "feature",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "e04abc991b64aa44f1f760489b8c33bb40c03458b1e8c63a6eea860247bd300c",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "feature"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "Bounded same-thread replay, controller routing, offline candidate isolation and all production checks pass"
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "Implement the proposed plan?",
+      "resolution": "User approved sequential implementation; retain default-off weekly review and no automatic promotion",
+      "source": "user"
+    }
+  ]
+}

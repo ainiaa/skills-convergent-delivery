@@ -131,6 +131,8 @@ TEST_FILES+=(
   scripts/test_capsule_dispatch.py
   scripts/test_desktop_task_bridge.py
   scripts/test_host_bridge.py
+  scripts/test_interaction_replay.py
+  scripts/test_skillopt_adapter.py
   scripts/test_task_profile.py
   scripts/test_run_contract.py
   scripts/test_runtime_scenarios.py
@@ -141,6 +143,7 @@ TEST_FILES+=(
   scripts/test_delivery_state.py
   scripts/test_reporting_contract.py
   scripts/test_delivery_report.py
+  scripts/test_skillopt_policy.py
   scripts/test_skill_contracts.py
   scripts/test_plan_execution.py
   scripts/test_work_item.py

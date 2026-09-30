@@ -1,0 +1,44 @@
+{
+  "skillopt_version": "0.2.0",
+  "skillopt_commit": "79124b37e9a6371e13b753f8bcd7adb1e493ade1",
+  "upstream_summary_version_label": "skillopt-0.1.0",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "training": {
+    "epochs": 1,
+    "steps": 1,
+    "edit_budget": 1,
+    "failure_only": true,
+    "internal_test": false,
+    "independent_heldout_cases": 3
+  },
+  "promotion": "none",
+  "optimizer_patch_count": 0,
+  "target_model_token_usage": "uncovered",
+  "reason": "No failed training cases; no patch; retain existing Skill",
+  "file_fingerprints": {
+    "converge-followup-evaluator-medium-snapshot.json": "d482e3271b6a95607edb5f73d9b4303cf1d9345ae72e00c819abed85c9232dfe",
+    "dependencies.json": "fb280642448f1dfa3d775af7a7dd78d091a097f4441dd6ed1da6c496169e8356",
+    "skillopt-process.json": "cedbfa4bf337add80899aeeea6b3b89934622ab8bf18aa6d8d74ebc7d97bbb2f",
+    "full-gate-passed.txt": "517399179906aecd50c8cf5ad9568f5cf398054db57d4fc0e5d73a4bdc14b802",
+    "heldout-summary.json": "a022492498aadb02bd425d2ded4308891baf81b9521fcb2c93b1bfb82a9ac7f3",
+    "clean-review.json": "0cfc658731f2ca78d8301ed12ca25664e50afab55e5e987f4ef9321a8d19fe36",
+    "candidate-batch.json": "b449a5610c6f45dc3340fbd3453f299da425b7cb34be6430d7894d37748fc203",
+    "new-decision.json": "f68b9c1982ed5398702052e9363c1430997dac29ade30b006adaac4fe7c9b968",
+    "no-progress.json": "60a754879b2ccecd341dc95b57b3a0758f09dd318465ca46fb9193c21e28684f",
+    "converge-followup-final-evaluator-snapshot.json": "8f3a5fe9a5c4e6c211b7a4916642f6ef2c2b736c40f6fc57eebd3057c5d9b895",
+    "skillopt-summary.json": "45641ecc3fb78a64ba75cb6f237098de437aef509feb09bae0605b74c9f40055",
+    "candidate-third.json": "ae3004570f2d1a00f2729160710129378f7fc15b206030b1a29e72a916f0f946",
+    "heldout-process.json": "13d277db762a1016a88d64fc843747e48c2e05887aca420fef557512c227416b",
+    "second-full-gate-failed.txt": "bdf1ed1475534bcaff57a05d2240f91e0c9b4ecc4329ad059652ee2d31014bff",
+    "initial-full-gate-failed.txt": "1a137ee4019270d2ac2a6c4d1f81594fa9280990e5b5a3db27adeccb5a75f592"
+  },
+  "final_full_gate": {
+    "status": "pass",
+    "coverage_percent": 90.16,
+    "statements": 11805,
+    "missing": 1162,
+    "threshold": 90
+  },
+  "additional_deterministic_fix": "Codex final creation confirmation is read after observing child exit"
+}

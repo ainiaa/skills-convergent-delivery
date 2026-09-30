@@ -11,9 +11,9 @@
 | `router` | 当前 controller（串行） | 选择下一动作，不写代码 |
 | `scout` | GPT-6 Luna medium | 收集定点证据，不决定需求 |
 | `specifier` | 当前 controller（串行） | 冻结 TaskSpec 与验收 |
-| `implementer` | GPT-6 Sol high | 在批准范围内测试先行并修改代码 |
+| `implementer` | GPT-6.1 Sol high | 在批准范围内测试先行并修改代码 |
 | `verifier` | 工具 | 运行测试、检查 diff；不由模型自证通过 |
-| `reviewer` | GPT-6 Sol high | 只读检查规格与实现；高风险时使用新上下文 |
+| `reviewer` | GPT-6.1 Sol high | 只读检查规格与实现；高风险时使用新上下文 |
 | `adjudicator` | 当前 controller（串行） | 处理语义冲突、范围升级和高风险取舍 |
 
 只有 `implementer` 可以请求工作区写入。同一工作区一次只有一个 implementer。`verifier` 是工具角色，不配置模型画像；模型可以解释失败，但不能替代其测试和源码证据。
@@ -53,7 +53,7 @@ Router → Scout → Specifier → Implementer → Verifier → Reviewer
 
 对两个及以上已执行的 snapshot 报告，可用同一评测器的 `--compare-report` 生成横向摘要；它拒绝 controller 或题库指纹不同的报告，并汇总 pass/fail、已执行场景数、提前停止原因、耗时和 provider 已返回的整数 usage 字段。比较产物固定标为 `trust_level=diagnostic`，不得用于控制面放行或模型路由；它不推断 token 价格或货币成本：缺少供应商可审计定价/用量时，报告必须保持该项为空而不是估算。
 
-模型档位校准另复用已有的 `scripts/multi_model_repo_eval.py`，不以以上 16 个合成只读场景推断编码质量。先冻结 2–3 个代表性 Git 任务及正常、边界、异常测试；对同一题库分别执行同模式的 `implementer=gpt-6-sol@medium` 与 `@high`（或明确比较 `single`/`multi`），保存两份报告，再用 `--compare-report` 核对相同的题库与评测器指纹、profile 身份、通过率和耗时。内置的两个小题仅用于评测器 smoke，不代表真实项目质量。执行需要显式 `--allow-execute`；模型成本和人工打断次数没有可审计观测时保持 `uncovered`。未获得真实任务对比前，不因 GPT-6 升级而自动下调 Sol high 或提高 Astra 用量。
+模型档位校准另复用已有的 `scripts/multi_model_repo_eval.py`，不以以上 16 个合成只读场景推断编码质量。先冻结 2–3 个代表性 Git 任务及正常、边界、异常测试；对同一题库分别执行同模式的 `implementer=gpt-6.1-sol@medium` 与 `@high`（或明确比较 `single`/`multi`），保存两份报告，再用 `--compare-report` 核对相同的题库与评测器指纹、profile 身份、通过率和耗时。内置的两个小题仅用于评测器 smoke，不代表真实项目质量。执行需要显式 `--allow-execute`；模型成本和人工打断次数没有可审计观测时保持 `uncovered`。未获得真实任务对比前，不因 GPT-6 升级而自动下调 Sol high 或提高 Astra 用量。
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" --workspace "$PWD"
@@ -99,8 +99,8 @@ Desktop controller 若实际暴露 `create_thread`、`wait_threads` 与 `set_thr
   "profiles": {
     "default": {
       "scout": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
-      "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
-      "reviewer": {"model": "gpt-6-sol", "reasoning_effort": "high"}
+      "implementer": {"model": "gpt-6.1-sol", "reasoning_effort": "high"},
+      "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}
     }
   }
 }
@@ -126,7 +126,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve --profile claude-co
 
 ```bash
 python3 "$CONVERGE_SKILL_DIR/scripts/multi_model.py" resolve \
-  --role implementer=gpt-6-sol@max \
+  --role implementer=gpt-6.1-sol@max \
   --role reviewer=gpt-6-astra@high
 ```
 

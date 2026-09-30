@@ -19,7 +19,7 @@ from controller_snapshot import normalize_extensions, snapshot_extensions, valid
 from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 from provider_contract import validate_reference as validate_complete_provider_reference
 from provider_contract import canonical_fingerprint
-from run_contract import action, delivery_action, legacy_action
+from run_contract import action, delivery_action, legacy_action, followup_action
 from runtime_adapter import (
     allows_worker_lifecycle,
     validate_binding as validate_runtime_binding,
@@ -1123,6 +1123,23 @@ def next_runtime_action(state, next_stage):
             "sync-plan", task_id=state["task_key"],
             projection_fingerprint=projection_fingerprint,
         )
+    if state["status"] == "active" and next_stage == "verify-final" \
+            and state["schema_version"] == 10:
+        review = state["execution_control"]["review"]
+        current = review["rounds"][-1] if review["rounds"] else None
+        latest = {request["axis"]: request for request in current["requests"]} if current else {}
+        findings = [record["root_cause"] for request in latest.values()
+                    if request["status"] == "findings"
+                    for record in request.get("finding_records", [])
+                    if record["scope"] in {"current", "task-local"} and record["classification"] == "defect"] \
+            if current is not None and current["source_fingerprint"] == state["source_fingerprint"] else []
+        if state["handoff"]["open_issues"] and not findings:
+            return action("block", task_id=state["task_key"],
+                          reason="unresolved issues require current scope classification before repair")
+        repair = followup_action(task_id=state["task_key"], open_issues=findings,
+                                 repair_budget_remaining=review["repair_budget_remaining"])
+        if repair is not None:
+            return repair
     return delivery_action(next_stage, state["task_key"], state.get("blocked_reason"))
 
 

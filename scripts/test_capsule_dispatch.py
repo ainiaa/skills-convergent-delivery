@@ -255,6 +255,23 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual(["exec", "--json", "-C", str(root.resolve()), "-"], arguments)
         self.assertNotIn("frozen capsule", receipt_text)
 
+    def test_codex_reads_final_confirmation_after_observing_child_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            process = Mock(returncode=0)
+            def finished():
+                (root / "receipts" / "exit-race.jsonl").write_text(
+                    '{"type":"thread.started","thread_id":"confirmed-before-exit"}\n')
+                return 0
+            process.poll.side_effect = finished
+            writer = Mock()
+            writer.is_alive.return_value = False
+            with patch.object(capsule_dispatch.subprocess, "Popen", return_value=process), \
+                    patch.object(capsule_dispatch, "_start_prompt_writer", return_value=(writer, [])):
+                result = capsule_dispatch.dispatch_codex("codex", root, "capsule", root / "receipts", "exit-race", 1)
+        self.assertEqual("delivered", result["status"])
+        self.assertEqual("confirmed-before-exit", result["external_task_id"])
+
     def test_codex_large_capsule_timeout_includes_stdin_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -438,7 +455,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                                 f'touch "{launched}"\n',
             )
             result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 5,
             )
 
             command = capture.read_text(encoding="utf-8")
@@ -475,7 +492,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                                 f'touch "{launched}"\n',
             )
             result = capsule_dispatch.dispatch_claude(
-                claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                claude, root, "frozen capsule", root / "receipts", "attempt-one", 5,
             )
             repeated = capsule_dispatch.dispatch_claude(
                 claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
@@ -556,7 +573,7 @@ class CapsuleDispatchTest(unittest.TestCase):
                 'cat >/dev/null\nprintf \'{"type":"thread.started","thread_id":"thread-retry"}\\n\'\n',
             )
             delivered = capsule_dispatch.dispatch_codex(
-                codex, root, "capsule", root / "receipts", "retry", 1,
+                codex, root, "capsule", root / "receipts", "retry", 5,
             )
             persisted = json.loads((root / "receipts" / "retry.json").read_text(encoding="utf-8"))
 
@@ -707,27 +724,22 @@ class CapsuleDispatchTest(unittest.TestCase):
             root = Path(directory)
             capsule_file = root / "capsule.md"
             capsule_file.write_text("frozen capsule", encoding="utf-8")
-            claude = self.executable(
-                root, "claude", 'if [ "$1" = agents ]; then\n'
-                              '  printf "%s\\n" "[]"\n'
-                              '  exit 0\n'
-                              'fi\n'
-                              'exit 7\n',
-            )
-            agents = Mock(wraps=capsule_dispatch.claude_agents)
-
-            with patch.object(capsule_dispatch, "claude_agents", agents):
+            agents = Mock(return_value=[])
+            with patch.object(capsule_dispatch, "claude_agents", agents), \
+                    patch.object(capsule_dispatch.subprocess, "run", return_value=
+                                 subprocess.CompletedProcess(["claude"], 7)) as launched:
                 result = capsule_dispatch.dispatch_claude(
-                    claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                    "claude", root, "frozen capsule", root / "receipts", "attempt-one", 1,
                 )
                 repeated = capsule_dispatch.dispatch_claude(
-                    claude, root, "frozen capsule", root / "receipts", "attempt-one", 1,
+                    "claude", root, "frozen capsule", root / "receipts", "attempt-one", 1,
                 )
 
         self.assertEqual("failed", result["status"])
         self.assertEqual(result, repeated)
         # A failed receipt means the CLI already ran, so the retry must not relaunch.
         self.assertEqual(1, agents.call_count)
+        launched.assert_called_once()
 
     def test_missing_host_is_reported_as_unavailable_with_a_reusable_receipt(self):
         with tempfile.TemporaryDirectory() as directory:

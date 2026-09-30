@@ -14,6 +14,7 @@ from pathlib import Path
 SCENARIO_IDS = {
     "local-fix", "review-checkpoint-closes-in-scope-finding", "explicit-review-only",
     "authorized-delivery-closes-review-findings",
+    "same-session-review-followup-closes-in-scope",
     "out-of-scope-finding", "known-decision-is-not-reasked", "irreversible-decision",
     "simple-inline", "complex-plan", "cross-service-reference-decision",
     "reference-alignment-gate",
@@ -159,15 +160,16 @@ def validate_catalog(catalog, root):
         raise ValueError("smoke fields are invalid")
     if set(smoke["critical_ids"]) != {
         "local-fix", "review-checkpoint-closes-in-scope-finding",
-        "authorized-delivery-closes-review-findings", "known-decision-is-not-reasked",
+        "authorized-delivery-closes-review-findings",
+        "same-session-review-followup-closes-in-scope", "known-decision-is-not-reasked",
         "cross-service-reference-decision", "verification-environment-block",
         "nonterminal-work-item-verifier-gate",
         "feature-work-item-contract-bound",
         "authorized-plan-tooling-uncovered",
         "reference-alignment-gate",
-    } or len(smoke["critical_ids"]) != 10:
+    } or len(smoke["critical_ids"]) != 11:
         raise ValueError("critical_ids are invalid")
-    if smoke["minimum_fresh_runs"] != 10 or smoke["receipt_schema_version"] != 4 \
+    if smoke["minimum_fresh_runs"] != 11 or smoke["receipt_schema_version"] != 4 \
             or smoke["unavailable_result"] != "uncovered":
         raise ValueError("smoke policy is invalid")
 
@@ -203,15 +205,21 @@ def _validate_scenario(scenario, ids, fixture_path):
     turns = scenario["turns"]
     if not isinstance(turns, list) or not turns:
         raise ValueError("scenario turns are invalid")
-    if scenario_id in {"known-decision-is-not-reasked", "nonterminal-work-item-verifier-gate"} \
+    if scenario_id in {
+            "known-decision-is-not-reasked", "nonterminal-work-item-verifier-gate",
+            "same-session-review-followup-closes-in-scope",
+    } \
             and len(turns) < 2:
         raise ValueError("multi-turn scenario requires at least two turns")
     for turn in turns:
-        if not isinstance(turn, dict) or set(turn) != {"prompt", "authorized_write"}:
+        if not isinstance(turn, dict) or not {"prompt", "authorized_write"} <= set(turn) \
+                or set(turn) - {"prompt", "authorized_write", "review_checkpoint"}:
             raise ValueError("turn fields are invalid")
         _string(turn["prompt"], "turn.prompt")
         if not isinstance(turn["authorized_write"], bool):
             raise ValueError("turn.authorized_write must be boolean")
+        if "review_checkpoint" in turn and not isinstance(turn["review_checkpoint"], bool):
+            raise ValueError("turn.review_checkpoint must be boolean")
     expected = scenario["expected"]
     if not isinstance(expected, dict) or set(expected) != {
             "skill", "action", "writes", "question", "completion", "scope", "failure_policy",
@@ -221,6 +229,9 @@ def _validate_scenario(scenario, ids, fixture_path):
             or expected["question"] not in QUESTIONS or expected["completion"] not in COMPLETIONS \
             or expected["scope"] not in SCOPES or expected["failure_policy"] not in FAILURE_POLICIES:
         raise ValueError("scenario expected values are invalid")
+    if expected["writes"] == "after_review" and not any(
+            turn.get("review_checkpoint") for turn in turns):
+        raise ValueError("after_review requires a review checkpoint turn")
 
 
 def validate_receipt(receipt, catalog):
@@ -277,6 +288,11 @@ def validate_receipt(receipt, catalog):
     expected = scenario["expected"]
     if expected["writes"] in {"required", "after_review"} and not any(item["writes_observed"] for item in observations):
         raise ValueError("receipt requires observed writes")
+    if expected["writes"] == "after_review":
+        review_turns = [index for index, turn in enumerate(scenario["turns"])
+                        if turn.get("review_checkpoint")]
+        if not any(observations[index]["writes_observed"] for index in review_turns):
+            raise ValueError("receipt requires observed writes on a review checkpoint turn")
     if expected["writes"] in {"forbidden", "none"} and any(item["writes_observed"] for item in observations):
         raise ValueError("receipt forbids observed writes")
     if expected["question"] == "none" and sum(item["questions_asked"] for item in observations):
@@ -288,6 +304,16 @@ def validate_receipt(receipt, catalog):
         raise ValueError("receipt completion_claim is invalid")
     if result == "pass" and expected["completion"] == "verified_only" and not observations[-1]["verification_observed"]:
         raise ValueError("receipt requires observed verification")
+    if result == "pass" and expected["completion"] == "verified_only":
+        for index, (turn, observation) in enumerate(zip(scenario["turns"], observations)):
+            if turn.get("review_checkpoint") and (
+                    observation["completion_claim"] != "verified_only"
+                    or not observation["verification_observed"]
+                    or observation["verifier_failures"]
+                    or receipt["behavior_evidence"]["turns"][index]["verification"][-1]["exit_code"] != 0):
+                raise ValueError("receipt review checkpoint requires verified completion without verifier failures")
+        if receipt["behavior_evidence"]["turns"][-1]["verification"][-1]["exit_code"] != 0:
+            raise ValueError("receipt requires successful verification for verified completion")
     failures = [item for observation in observations for item in observation["verifier_failures"]]
     if expected["failure_policy"] == "block_first_failure" and (
             len(failures) != 1 or len(failures) != len(set(failures))):

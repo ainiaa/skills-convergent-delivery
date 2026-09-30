@@ -11,7 +11,7 @@ metadata:
 
 ## 当前能力预检
 
-确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。模型行为评估先运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`：只有 Codex app-server schema 与 Claude Code 会话清单均可用时才返回 `status=ready`。任一宿主不可用、身份漂移或会话状态未知时返回 `uncovered`，绝不伪造成功回执。
+确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。模型行为评估先运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`：只有 Codex app-server schema 与 Claude Code 会话清单均可用时才返回 `status=ready`。此预检只证明适配器可连接，不证明模型调用能成功；真实任务若失败、超时或连接中断仍返回 `uncovered`。任一宿主不可用、身份漂移或会话状态未知时也返回 `uncovered`，绝不伪造成功回执。
 
 要收集宿主证据，必须使用修改前、显式含 `host-eval` 扩展的 Controller Snapshot，并在确定性请求中额外提供 `host`（`codex` 或 `claude`）和预检返回的对应 `host_fingerprint`。每个 control/candidate 场景侧创建独立宿主任务；任务必须终态 `completed` 且不得改动临时工作区，随后才运行冻结 judge 并生成 `host_observed` 回执。超时、消失、非 completed 或工作区改动均为 `uncovered`，不自动重试。私有 `_evaluate_receipts` 仍只用于离线 bookkeeping，输出 `evidence_level=diagnostic`、`release_status=uncovered`。
 
