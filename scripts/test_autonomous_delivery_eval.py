@@ -22,6 +22,25 @@ CATALOG = Path(__file__).resolve().parent.parent / "references/autonomous-delive
 
 
 class AutonomousDeliveryEvalTest(unittest.TestCase):
+    def test_candidate_judge_root_skips_live_graph_caches_and_preserves_frozen_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            workspace = Path(directory) / "candidate"
+            for folder in (root / "scripts", workspace / "scripts"):
+                folder.mkdir(parents=True)
+            (root / "scripts" / "module.py").write_text("OLD = True\n")
+            (workspace / "scripts" / "module.py").write_text("NEW = True\n")
+            (root / "scripts" / "test_module.py").write_text("FROZEN = True\n")
+            (workspace / "scripts" / "test_module.py").write_text("FROZEN = False\n")
+            for cache in (".codegraph", ".code-review-graph"):
+                (root / cache).mkdir()
+                (root / cache / "graph.db-wal").write_text("local transient data")
+            result = candidate_judge_root(root, workspace, Path(directory) / "judge")
+            for cache in (".codegraph", ".code-review-graph"):
+                self.assertFalse((result / cache).exists())
+            self.assertEqual("NEW = True\n", (result / "scripts" / "module.py").read_text())
+            self.assertEqual("FROZEN = True\n", (result / "scripts" / "test_module.py").read_text())
+
     def minimal_catalog(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
         catalog["scenarios"] = catalog["scenarios"][:15]
@@ -175,7 +194,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             candidate = root / "candidate"
             shutil.copytree(
                 CATALOG.parent.parent, candidate,
-                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", ".code-review-graph", "__pycache__"),
             )
             scenario = {
                 "id": "candidate-regression",
@@ -215,7 +234,7 @@ class AutonomousDeliveryEvalTest(unittest.TestCase):
             candidate = root / "candidate"
             shutil.copytree(
                 CATALOG.parent.parent, candidate,
-                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", "__pycache__"),
+                ignore=shutil.ignore_patterns(".git", ".claude", ".codex", ".codegraph", ".code-review-graph", "__pycache__"),
             )
             (candidate / "scripts/test_delivery_next.py").write_text(
                 "raise RuntimeError('candidate test fixture must not run')\n", encoding="utf-8"

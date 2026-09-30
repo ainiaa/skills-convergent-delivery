@@ -11,9 +11,9 @@
 | `router` | 当前 controller（串行） | 选择下一动作，不写代码 |
 | `scout` | GPT-6 Luna medium | 收集定点证据，不决定需求 |
 | `specifier` | 当前 controller（串行） | 冻结 TaskSpec 与验收 |
-| `implementer` | GPT-6 Sol high | 在批准范围内测试先行并修改代码 |
+| `implementer` | GPT-6.1 Sol high | 在批准范围内测试先行并修改代码 |
 | `verifier` | 工具 | 运行测试、检查 diff；不由模型自证通过 |
-| `reviewer` | GPT-6 Sol high | 只读检查规格与实现；高风险时使用新上下文 |
+| `reviewer` | GPT-6.1 Sol high | 只读检查规格与实现；高风险时使用新上下文 |
 | `adjudicator` | 当前 controller（串行） | 处理语义冲突、范围升级和高风险取舍 |
 
 只有 `implementer` 可以请求工作区写入。同一工作区一次只有一个 implementer。`verifier` 是工具角色，不配置模型画像；模型可以解释失败，但不能替代其测试和源码证据。
