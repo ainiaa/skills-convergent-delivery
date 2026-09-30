@@ -20,17 +20,17 @@ DEFAULT_CONFIG = {
     "profiles": {
         "default": {
             "scout": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
-            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
-            "reviewer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
+            "implementer": {"model": "gpt-6.1-sol", "reasoning_effort": "high"},
+            "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "high"},
         },
         "claude-code": {
             "scout": {"model": "haiku", "reasoning_effort": "medium"},
-            "implementer": {"model": "gpt-6-sol", "reasoning_effort": "high"},
+            "implementer": {"model": "gpt-6.1-sol", "reasoning_effort": "high"},
             "reviewer": {"model": "sonnet", "reasoning_effort": "high"},
         },
     },
 }
-OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}
+OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"}
 CLAUDE_ALIASES = {"fable", "haiku", "sonnet", "opus"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CONFIG_FIELDS = {"schema_version", "default_profile", "profiles"}

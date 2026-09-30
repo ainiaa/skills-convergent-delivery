@@ -1,13 +1,14 @@
 # Converge 自进化参考备忘
 
-> 状态：研究保留，当前不启用  
-> 复核日期：2026-08-25
+> 状态：周度证据复核默认关闭；SkillOpt 候选训练仍需明确授权
+>
+> 复核日期：2026-09-29
 
-本文只保存未来可能使用的机制与边界，不属于当前 Converge 运行协议。任何现有 Skill、helper、状态机或 hook 都不得因为本文自动学习、自动修改仓库或扩大写权。
+本文规定 Converge 的可选周度证据复核和 SkillOpt 离线候选流程。周度复核由默认关闭的 Codex heartbeat 触发，只检查持久化缺陷与评估证据、报告候选；不会自动训练或修改 Skill。任何现有 Skill、helper、状态机或 hook 都不得借此自动学习、扩大写权或修改评估规则。
 
 ## 目标与非目标
 
-未来若启用，自进化只解决一个问题：把重复出现、已有客观证据的交付失败，受控地转成更好的 Skill 规则、helper 或 reference，并证明它能迁移到未见场景。
+手动离线优化只解决一个问题：把重复出现、已有客观证据的交付失败，受控地转成更好的 Skill 规则、helper 或 reference，并证明它能迁移到未见场景。
 
 不做以下事情：
 
@@ -29,13 +30,45 @@
 | [Skill SE Kit](https://github.com/d-wwei/skill-se-kit) | governed proposal；`ADD / MERGE / SUPERSEDE / DISCARD`；快照后再变更 | manifest、skill bank、experience、audit、snapshots 五套持久目录 |
 | [OpenAI/DeerFlow skill-creator](https://github.com/bytedance/deer-flow/blob/main/skills/public/skill-creator/SKILL.md) | baseline 对照、多样本、blind comparison、train/held-out 分离、无进展停止 | 浏览器 viewer 与特定 CLI 运行时耦合 |
 | [Darwin Skill](https://github.com/alchaincyf/darwin-skill) | 每轮只验证一个变更假设；同一 judge 成对比较 control/candidate；奇数独立样本多数表决；保留 keep/revert 证据 | 自动 commit/revert、`results.tsv` 第二真源、连续自修改循环和可被措辞游戏的通用九维打分 |
-| [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) | 一个可训练的 Skill 文档作为候选面；严格 held-out gate；只在通过后晋升 | nightly/sleep 自进化和运行时自动优化；当前没有足够已归类轨迹证明其成本收益 |
+| [Anthropic skill-creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) 与 Superpowers `writing-skills` | 用真实行为用例验证 Skill 规则；保留对照与 held-out 评估 | Claude CLI、子代理和 HTML viewer 专属执行器 |
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/tree/main/skills/design-control-loop) | 周期传感、证据判断、低噪声报告与人类把关 | 每轮自动修改并创建 PR 的 actuator |
+| [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) | 显式离线候选优化；将失败分类为 `SKILL_DEFECT` 或 `EXECUTION_LAPSE`；严格 held-out gate | nightly/sleep 会话采集、运行时自动优化和自动晋升；不把 SkillOpt 设为生产依赖 |
 
 安装量只用于发现，不作为采用依据。采用前仍需检查原始 `SKILL.md`、脚本、测试和宿主能力。
 
-## 如果未来实现，最小协议
+## 每周 Skill 改进证据复核（默认关闭）
 
-只允许显式维护任务触发，不设置自动 hook：
+- 全局配置路径为 `~/.convergent-delivery/skill-improvement.toml`，项目配置路径为 `.convergent-delivery/skill-improvement.toml`。项目级显式配置优先；项目配置缺失或未设置 `skill_review.enabled` 时继承全局值；两边都没有显式值时关闭。
+
+  全局启用示例：
+
+  ```toml
+  [skill_review]
+  enabled = true
+  ```
+
+  仅对单个项目关闭时，在项目配置写入 `enabled = false`；该值会覆盖全局 `true`。
+
+- Codex 每周 heartbeat 首先运行 `rtk python3 scripts/skillopt_policy.py`。结果为 `skip` 时不得读取评估或缺陷内容；配置无效时安全停止并报告配置错误。
+- 开启后只检查 `docs/04_testing/defects/`、`references/evaluation-catalog.json`、`references/evaluation-scenarios.md` 与 `evals/` 中的持久化证据。不得挖掘原始对话、日志、转录或环境变量。
+- 有新证据且呈现可复用的 Skill 问题时，只报告问题、证据和候选方向；没有新增或可行动证据时保持安静。同一 heartbeat 线程的上次复核摘要只用于避免重复报告。
+- 周度开关只允许证据复核；不启动 SkillOpt 训练，不编辑 Skill、judge、catalog、eval 或其他仓库文件。真实候选优化仍须用户明确请求并通过下述离线验收。
+
+本次控制面决定：项目级显式值优先，缺失时继承全局显式值；两边都缺失时关闭。项目或当前生效的全局配置畸形时 fail closed。行为测试见 `scripts/test_skillopt_policy.py`；周度边界见 `scripts/test_skill_contracts.py`。
+
+## 手动 SkillOpt 试验
+
+- 本次重复循环归类为 `EXECUTION_LAPSE`：同会话审查后的修复规则早已存在，历史行为仍停在只读报告并等待用户再次催修。修补触发描述和多轮验收属于确定性修复；它本身不代表 SkillOpt 候选已经通过模型评测。
+- 仅用户明确要求时运行一次 SkillOpt 优化；一次只提出一个假设，先冻结 control、judge 和 held-out，再生成候选并按原评估器成对比较。未通过 held-out 时丢弃候选。
+- 只使用已脱敏的场景输入、diff 与结果摘要；不采集原始会话，也不把会话摘录交给外部 backend。需要原始轨迹时先取得明确授权。
+- SkillOpt 的结果只作为候选；必须通过 Converge 自己的行为门禁后再人工采纳。自动追加、自动部署、nightly/sleep 不启用，候选不得自动晋升。
+- 当前宿主 smoke 仍需 fresh-host receipt；若拿不到同会话多轮的 host-observed 证据，模型行为状态保持 `uncovered`，不能用文字规则断言替代。
+
+本次改动尚未执行 SkillOpt 的模型优化训练：现有 host-eval bridge 不能自动在同一宿主线程中回放 control/candidate 的多轮用户消息；SkillOpt 官方新 benchmark 流程需要额外的环境 adapter。已新增的多轮关键场景先锁定为回归门禁，之后可在不改 judge/catalog 的离线试验中评估 SkillOpt 候选。
+
+## 最小协议
+
+仅在用户明确授权启动候选优化时执行以下离线闭环；每周复核不能自动进入此流程：
 
 ```text
 verified defect / repeated correction
@@ -85,14 +118,6 @@ verified defect / repeated correction
 7. dead end 可检索，下一轮不会重复同一实验；
 8. 简单 Converge 任务不增加步骤、文件、worker 或 token。
 
-## 启动条件
+## 试验启用条件
 
-只有同时满足以下条件才重新评估实现：
-
-- evaluation locked surface、worker provenance、held-out 隔离已经稳定；
-- evaluation catalog 有明确维护责任和覆盖检查；
-- 已积累至少三组可归类的重复失败或改进轨迹；
-- 用户明确授权构建受控演进能力；
-- 能证明新增机制比人工 defect → test → fix 流程减少真实成本。
-
-在此之前，继续使用人工授权的 defect-driven hardening；本文不进入 Controller Snapshot，也不被任何 Skill 自动读取。
+用户明确授权后才运行候选优化；control、judge 和 held-out 必须先冻结，worker provenance 可追溯，且需有足够的已归类重复轨迹。任何一项未满足时只完成 defect-driven hardening，模型优化结果保持 `uncovered`。本文不会被普通任务自动读取。

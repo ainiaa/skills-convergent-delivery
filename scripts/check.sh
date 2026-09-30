@@ -141,6 +141,7 @@ TEST_FILES+=(
   scripts/test_delivery_state.py
   scripts/test_reporting_contract.py
   scripts/test_delivery_report.py
+  scripts/test_skillopt_policy.py
   scripts/test_skill_contracts.py
   scripts/test_plan_execution.py
   scripts/test_work_item.py

@@ -53,6 +53,7 @@
 | 脏工作区 | 存在与任务无关的用户 diff | 冻结其指纹；只修改本任务拥有的文件；修复回滚不得影响已有 diff。 |
 | 待确认但验证通过 | 业务场景测试均通过，但有一个导出/兼容性规则需用户决定 | 用户回执标题为“需你确认”，不得写“已完成”；说明当前可用行为、已验证和未验证范围、实际影响及推荐方案。 |
 | 连续复查无新增 | 同一任务再次检查，没有新发现且待决项未变化 | 只报告“无新增问题”和仍待确认项；不得重复完整流程、命令和文件清单。 |
+| 同任务多轮审查闭环 | 原实现已授权；用户在同一会话后续两轮只要求“仔细审查/还有没有其他问题” | 保持根控制器与原授权；同范围 finding 在审查检查点内修复并验证，不停在 findings-only、不重复问是否修复；没有新 finding 时简短结束。 |
 | 意图评审去重 | `pdlc-v1` 已完成同一源码指纹的需求/设计评审 | 不再运行同类 `shared` reviewer；高风险时只补 fresh-context `blind` reviewer。 |
 | 盲审独立性 | reviewer 继承了实现者完整对话或设计理由 | 必须标记 `independent=false`，不得宣称完成独立盲审。 |
 | 审查失效 | reviewer 完成后生产源码变化 | 原结论标记 stale；closure 只复核原 finding，影响面扩大时最多再做一次风险审查。 |
@@ -71,7 +72,7 @@
 | 清场屏障 | 正常、异常、用户中断、no_progress 或验证失败退出 | 执行等价 `finally`，只处理本轮 worker；本轮 active worker 数为 0 后才允许完成。 |
 | 历史孤儿 | UI 显示旧 Working worker，但没有 ref 或当前 API 不可见 | 报告能力边界并建议用户/UI 处理；Skill 不宣称发现、查询或清理成功。 |
 | 独立前向测试 | 一次变更关联多个有限场景 | 一个 evaluator 在隔离临时工作区顺序执行；结束时等待其宿主终态并确认本轮 active worker 数为 0。 |
-| 离线 Skill 优化 | 用户明确授权改善 Converge，且已有重复 defect 证据 | 冻结 control、judge 和 held-out；每轮只改一个假设；奇数 independent paired samples 多数决且 hard acceptance 全过才建议晋升；无改善即停，不自动写 Skill 或 commit。 |
+| 手动 SkillOpt 离线优化 | 用户明确要求改善 Converge，且有重复、已归类的 defect 轨迹 | 优先区分 `SKILL_DEFECT` 与 `EXECUTION_LAPSE`；只用脱敏样例；冻结 control、judge 和 held-out；每轮只改一个假设；奇数 independent paired samples 多数决且 hard acceptance 全过才人工建议晋升；不采集原始会话、不自动写 Skill 或 commit。 |
 | 效率基准 | 比较同一模型/宿主上的 control 与 candidate Skill | 每个固定场景记录激活输入 bytes/token、工具调用、fresh context、用户阻塞轮、完成/逃逸结果；安全与验收通过率不下降才可用更低开销候选替换 control。 |
 | 指标缺失 | 当前宿主没有提供签名 usage、工具调用或用户阻塞计数 | 回执只汇总签名 runner receipt 中明确给出的 `total_tokens`，其余显示 unavailable；不得由日志、等待或估算补造。 |
 | 父 Git 累计可见性 | Codex 单步角标只显示当前动作，工作区含多任务累计 diff | 父控制器直接读取 Git，展示已跟踪、未跟踪、增删行和二进制累计；脏基线注明不能归因于本任务。 |

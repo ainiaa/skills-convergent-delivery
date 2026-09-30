@@ -188,6 +188,41 @@ class InteractionSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "initial diff"):
                 validate_catalog(invalid, temporary_root)
 
+    def test_after_review_write_must_be_observed_on_the_review_checkpoint_turn(self):
+        catalog = copy.deepcopy(self.catalog)
+        scenario = next(item for item in catalog["scenarios"]
+                        if item["id"] == "review-checkpoint-closes-in-scope-finding")
+        scenario["turns"] = [
+            {"prompt": "Continue the authorized implementation.", "authorized_write": True},
+            {"prompt": "Review the same implementation.", "authorized_write": True,
+             "review_checkpoint": True},
+        ]
+        scenario["expected"]["writes"] = "after_review"
+        receipt = {
+            "schema_version": 4,
+            "scenario_id": scenario["id"],
+            "catalog_fingerprint": catalog_fingerprint(catalog),
+            "task_id": "review-task",
+            "baseline_commit": "a" * 40,
+            "workspace_strategy": "current-worktree",
+            "unprompted_task_turns": 0,
+            "successor_task_dispatches": 0,
+            "observations": [
+                {"turn": 1, "writes_observed": True, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [],
+                 "completion_claim": "verified_only"},
+                {"turn": 2, "writes_observed": False, "questions_asked": 0,
+                 "verification_observed": ["pytest"], "verifier_failures": [],
+                 "completion_claim": "verified_only"},
+            ],
+            "result": "pass",
+            "uncovered_reason": None,
+        }
+        receipt["behavior_evidence"] = self._behavior_evidence(receipt)
+
+        with self.assertRaisesRegex(ValueError, "review checkpoint"):
+            validate_receipt(receipt, catalog)
+
     def test_reference_alignment_blocks_writes_until_the_difference_allowlist_is_frozen(self):
         scenario = next(item for item in self.catalog["scenarios"]
                         if item["id"] == "reference-alignment-gate")

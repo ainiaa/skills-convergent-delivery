@@ -560,6 +560,7 @@ class SkillContractTest(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
         protocol = (ROOT / "references/execution-protocol.md").read_text(encoding="utf-8")
+        review = (ROOT / "skills/converge-review/SKILL.md").read_text(encoding="utf-8")
 
         for marker in (
             "同一会话的写入授权持续有效",
@@ -567,13 +568,45 @@ class SkillContractTest(unittest.TestCase):
             "同范围 finding",
             "不重复询问",
             "本轮真实验证",
+            "同一任务后续审查",
+            "还有没有其他问题",
         ):
             self.assertIn(marker, skill)
         self.assertNotIn("历史写入授权不得延续", skill)
+        self.assertIn("没有活动的已授权实现任务", review)
+        self.assertIn("同一任务的后续审查由根控制器接手", review)
         self.assertIn("持续中的写入任务", activation)
         self.assertIn("明确“仅审查”", activation)
         self.assertIn("审查检查点", protocol)
         self.assertIn("in-scope finding", protocol)
+
+    def test_skillopt_is_an_explicit_offline_candidate_tool_not_a_runtime_loop(self):
+        policy = (ROOT / "docs/02_design/architecture/self-improving.md").read_text(
+            encoding="utf-8"
+        )
+        root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+        for marker in (
+            "SkillOpt",
+            "手动离线",
+            "EXECUTION_LAPSE",
+            "先冻结 control、judge 和 held-out",
+            "不得自动晋升",
+            "不采集原始会话",
+            "默认关闭",
+            ".convergent-delivery/skill-improvement.toml",
+            "~/.convergent-delivery/skill-improvement.toml",
+            "项目级显式配置优先",
+            "skill_review.enabled",
+            "每周",
+            "只报告问题、证据和候选方向",
+        ):
+            self.assertIn(marker, policy)
+        self.assertIn("用户明确要求 SkillOpt", root)
+        self.assertIn("self-improving.md", root)
+        self.assertIn("skillopt_policy.py", root)
+        self.assertIn("用户级", root)
+        self.assertIn("scripts/test_skillopt_policy.py", (ROOT / "scripts/check.sh").read_text())
 
     def test_exhausted_review_budget_is_per_run_not_a_same_session_authorization_end(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

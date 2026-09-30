@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Use when implementing, fixing, or refactoring authorized software work (实现/修复/重构/按方案修改/修复已知问题), including same-session in-scope review findings. Multi-model external runners require the explicit converge-multimodel extension; not for standalone read-only review or multi-Batch."
+description: "Use when implementing, fixing, or refactoring authorized software work (实现/修复/重构/按方案修改/修复已知问题), including same-session follow-up reviews of the active task (同一任务后续审查/还有没有其他问题). Multi-model external runners require the explicit converge-multimodel extension; not for standalone read-only review or multi-Batch."
 metadata:
   compatibility: Requires Git and Python 3.11+; native runtime tasks require an indexed CodeGraph CLI and configured coverage; full-closure audits also require CodeGraph. Install the complete Converge Suite. Supports Codex and Claude Code.
 ---
@@ -18,7 +18,7 @@ Converge 始终是 controller，负责同一会话内已授权的软件交付；
 ## 每轮约束
 
 - 同一会话的写入授权持续有效，但仅限同一已冻结事项；交付报告不撤销授权，用户明确“仅审查/不要修改”、停止、取消，或转向范围外的新目标则撤销或结束该授权。`complete` 是上轮证据的终态，不是授权撤销。不得仅凭相同 workspace 或 Hook `session_id` 推定当前话题仍是该事项。
-- 已授权事项中的审查是只读检查点：先确认 finding，再对同范围 finding 直接补红灯、修复、验证和复核，不要求用户再说“继续修复”。交付后或当前复核额度耗尽后发现可复现的不同同范围 Bug，保留旧回执，按 [审查编排](references/review-orchestration.md) 在同一会话开启新的有限修复轮次；同一 finding 无源码或证据进展时阻塞，不能通过重开轮次清零预算。范围外 finding 只记录影响并一次提出所需决定。
+- 已授权事项中的同会话后续审查（如“仔细审查”“还有没有其他问题”）仍由根控制器处理，不切换到独立只读 `converge-review`；它是当前交付检查点：先确认 finding，再对同范围 finding 直接补红灯、修复、验证和复核，不要求用户再说“继续修复”。交付后或当前复核额度耗尽后发现可复现的不同同范围 Bug，保留旧回执，按 [审查编排](references/review-orchestration.md) 在同一会话开启新的有限修复轮次；同一 finding 无源码或证据进展时阻塞，不能通过重开轮次清零预算。范围外 finding 只记录影响并一次提出所需决定。
 - 新会话的“还有问题吗”只授权检查与报告，发现问题后询问是否修复；新会话若已明确要求修复，则直接按新授权执行，不二次确认。身份、事项或范围无法核实时不借用旧授权；Hook 缺失或未信任也不得声称自动续修已生效。
 - 先从当前任务、代码、测试和已决事项取得答案；不重复询问。只在业务规则、公共兼容、权限、发布或不可逆操作需要决定时提问，并给出一个推荐。
 - 每个 finding 必须是修复、阻塞决策或范围外记录之一；不以建议替代同范围闭环。
@@ -53,4 +53,4 @@ Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务�
 
 持久状态使用既有 writer lease，并按 [执行协议](references/execution-protocol.md) 和 [状态](references/state-schema.md) 清场。风险等级对应的复核边界见 [审查编排](references/review-orchestration.md)；Desktop、CLI 与 subagent 的可证明边界见 [宿主能力](references/host-capabilities.md)。没有真实宿主 bridge 时，不把本地 state、capsule、子任务或模型自述称为自动续跑、完成或清场证据。
 
-最终按 [交付回执](references/reporting.md) 只报告当前证据能证明的范围；确定性回归、真实宿主 smoke 和模型成本分别说明。外发另行授权；Suite 行为改动先运行 `converge-eval` 的 deterministic preflight，缺少冻结 control/candidate/judge 时将模型行为报告为 `uncovered`。
+最终按 [交付回执](references/reporting.md) 只报告当前证据能证明的范围；确定性回归、真实宿主 smoke 和模型成本分别说明。外发另行授权；Suite 行为改动先运行 `converge-eval` 的 deterministic preflight，缺少冻结 control/candidate/judge 时将模型行为报告为 `uncovered`。当前仓库的周度 Skill 证据复核只由 Codex heartbeat 触发，先运行 `scripts/skillopt_policy.py`；用户级 `~/.convergent-delivery/skill-improvement.toml` 提供全局默认，项目级 `.convergent-delivery/skill-improvement.toml` 显式值优先；两边均未设置或最终值关闭时立即跳过。开启时只读持久化缺陷和评估证据并报告候选，不采集会话、不训练、不修改 Skill。用户明确要求 SkillOpt 优化 Converge 时，读取 [自进化试验规约](docs/02_design/architecture/self-improving.md)，只运行手动离线候选流程；普通任务不触发 SkillOpt，候选不得自动晋升。

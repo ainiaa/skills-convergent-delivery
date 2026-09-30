@@ -192,6 +192,16 @@
       ],
       "source": "docs/04_testing/defects/B20260906-195330-execution-evidence-five-fixes-defect.md",
       "scenario": "Clean status must not certify stale content hashes, newly committed source files, deleted source or a changing/corrupt SQLite index; a matching index must remain usable."
+    },
+    {
+      "id": "same-task-review-followup-stops-before-repair",
+      "control_surfaces": [
+        "skill.trigger",
+        "review.checkpoint",
+        "evaluation.interaction"
+      ],
+      "source": "docs/04_testing/defects/B20260929-same-task-review-followup-defect.md",
+      "scenario": "During an active same-session implementation, successive review-only follow-ups stay with the root controller, do not ask the user to authorize same-scope repairs again, and cannot pass from writes observed only before the review checkpoint."
     }
   ]
 }

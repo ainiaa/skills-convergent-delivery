@@ -52,10 +52,13 @@ def codex_schema_fingerprint(codex_bin="codex"):
     """Fingerprint exactly the app-server request schema used by this bridge."""
     binary, _binary = _binary_identity(codex_bin)
     with tempfile.TemporaryDirectory() as directory:
-        generated = subprocess.run(
-            [binary, "app-server", "generate-json-schema", "--out", directory],
-            text=True, capture_output=True, check=False,
-        )
+        try:
+            generated = subprocess.run(
+                [binary, "app-server", "generate-json-schema", "--out", directory],
+                text=True, capture_output=True, check=False, timeout=10,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("Codex app-server schema generation timed out") from error
         if generated.returncode:
             raise ValueError(f"Codex app-server schema generation returned status {generated.returncode}")
         files = sorted(Path(directory).rglob("*.json"))
@@ -77,6 +80,7 @@ class _CodexAppServer:
         self.messages = queue.Queue()
         self.request_id = 0
         self.turn_statuses = {}
+        self.stream_closed = False
 
     def __enter__(self):
         binary, _fingerprint = _binary_identity(self.codex_bin)
@@ -97,7 +101,11 @@ class _CodexAppServer:
         if self.process is not None:
             if self.process.poll() is None:
                 self.process.terminate()
-            self.process.wait(timeout=2)
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2)
             self.process = None
 
     def _read(self):
@@ -113,6 +121,9 @@ class _CodexAppServer:
                 self.messages.put(message)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             self.messages.put(error)
+        finally:
+            self.stream_closed = True
+            self.messages.put(ValueError("Codex app-server connection closed"))
 
     def request(self, method, params):
         self.request_id += 1
@@ -233,6 +244,8 @@ def codex_observe(value, started, *, codex_bin="codex", request=None):
             raise ValueError("Codex evaluator connection is unavailable; do not retry the task")
         status = server.turn_statuses.get(started["turn_id"])
         if status is None:
+            if getattr(server, "stream_closed", False):
+                raise ValueError("Codex evaluator connection closed before the turn completed")
             return None
         return _codex_terminal_observation(value, started, status)
     response = request("thread/turns/list", {"threadId": started["task_id"], "limit": 100})
@@ -272,10 +285,14 @@ def _claude_started(package_value, prompt, agents, run, claude_bin):
         raise ValueError("Claude Code agent inventory is invalid")
     prior_ids = {item.get("id") for item in before if isinstance(item, dict) and isinstance(item.get("id"), str)}
     name = f"converge-eval-{_fingerprint(package_value)[:24]}"
-    launched = run(
-        [executable, "--background", "--name", name, _text(prompt, "prompt")], cwd=package_value["workspace"],
-        text=True, capture_output=True, check=False,
-    )
+    try:
+        launched = run(
+            [executable, "--background", "--name", name, _text(prompt, "prompt")],
+            cwd=package_value["workspace"], text=True, capture_output=True,
+            check=False, timeout=30,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("Claude evaluator launch timed out") from error
     if launched.returncode:
         raise ValueError(f"Claude Code returned status {launched.returncode}")
     registered = [
@@ -361,12 +378,32 @@ def wait_terminal(value, started, *, deadline, poll_seconds=0.1, **kwargs):
         raise ValueError("host terminal deadline is invalid")
     if not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool) or poll_seconds <= 0:
         raise ValueError("host poll interval is invalid")
-    while time.monotonic() < deadline:
-        observation = observe(value, started, **kwargs)
-        if observation is not None:
-            return observation
-        time.sleep(min(poll_seconds, max(0, deadline - time.monotonic())))
-    raise ValueError("host task did not become terminal before the deadline")
+    terminal = None
+    try:
+        while time.monotonic() < deadline:
+            terminal = observe(value, started, **kwargs)
+            if terminal is not None:
+                return terminal
+            time.sleep(min(poll_seconds, max(0, deadline - time.monotonic())))
+        raise ValueError("host task did not become terminal before the deadline")
+    finally:
+        if terminal is None:
+            value = _package(value)
+            started = _started(started, value)
+            if value["host"] == "codex":
+                server = _CODEX_SERVERS.pop(started["task_id"], None)
+                if server is not None:
+                    server.close()
+            else:
+                try:
+                    stopped = subprocess.run(
+                        [kwargs.get("claude_bin", "claude"), "stop", started["task_id"]],
+                        text=True, capture_output=True, check=False, timeout=5,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise ValueError("Claude evaluator cleanup failed") from error
+                if stopped.returncode:
+                    raise ValueError("Claude evaluator cleanup failed")
 
 
 def terminal_observation(value, *, task_id, status, host_fingerprint):
