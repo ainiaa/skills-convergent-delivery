@@ -49,6 +49,20 @@ REQUIRED_CONTROL_REFERENCES = (
 
 
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_frozen_controller_can_select_independent_work_without_live_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(__file__).resolve().parents[1]
+            frozen = controller_snapshot.create_snapshot(source, Path(directory) / "control")
+            root = Path(frozen["root"])
+            result = subprocess.run([sys.executable, "-c",
+                "from plan_execution import select_task; "
+                "tasks=[{'task_id':'T1','depends_on':[],'owned_paths':['a']},"
+                "{'task_id':'T2','depends_on':[],'owned_paths':['b']}]; "
+                "assert select_task(tasks, {'T1':'blocked'})['task_id']=='T2'"],
+                cwd=directory, env={**os.environ, "PYTHONPATH": str(root / "scripts")},
+                text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+
     def test_snapshot_validator_rejects_missing_version_and_mutable_frozen_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)

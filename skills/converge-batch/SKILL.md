@@ -38,6 +38,8 @@ metadata:
 
 ## 3. 生成 context capsule
 
+新冻结的依赖计划可使用 Batch state v5：从已批准 Plan 复制 `dependencies={task_id: depends_on}`，并初始化 `local_blocks={}`、`recoveries={}`；仍只保留一个 current_batch，顺序写入。v4 顺序状态不自动迁移。v5 使用冻结依赖、scope 冲突和已验证完成回执派生当前任务；工具局部阻塞后可继续独立项，业务/权限、真实失败、未知派发、清场不明和预算耗尽仍停止整个运行。缺口不得计入完成或满足依赖。详细输入和恢复见 [局部阻塞](references/batch-contract.md#局部阻塞-v5)。
+
 只从已冻结计划复制当前 Batch 必需信息：`planned_task=true`、正确的 `plan_id/task_id`、Provider Binding、全局约束、目标、范围、消费/产出接口、基线、验收和验证方式。不得附带整份会话或无关 Batch 内容。
 
 在当前 Batch 仍为 pending 时，把正式 Batch state 经 stdin 传给 `batch_state.py capsule --input -` 生成执行 capsule：首批 baseline 为计划基线，后续为上一批已验证的 commit。子任务的 Single State、Source Receipt 和验证命令统一使用该执行基线；恢复读取既有 managed state，不重新取 HEAD 或使用计划原始基线。helper 会拒绝检查点不匹配或有未验证改动的工作区；计划内原 capsule 保持不可变。

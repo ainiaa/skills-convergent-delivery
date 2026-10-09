@@ -2,6 +2,7 @@
 """Validate and atomically persist Converge Batch State Schema v4."""
 
 import argparse
+import copy
 import fcntl
 import hashlib
 import json
@@ -23,8 +24,11 @@ from delivery_next import (
     validate_state as validate_delegate_state,
     _path_contains,
 )
-from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source, verification_argv
+from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source, verification_argv, validate_observed_evidence_receipt
+from plan_execution import select_task, ACCEPTANCE_TOOL_FAILURES, require_tool_recovery, require_tool_failure, is_actual_verification_failure, FINAL_TOOLING_BLOCK, tooling_acceptance_recovered
 from task_profile import _canonical_paths
+from runtime_adapter import validate_cleanup_barrier
+from runner_contract import runner_results_complete
 
 
 DEFAULT_STATE_ROOT = Path.home() / ".convergent-delivery" / "batch-state"
@@ -412,11 +416,13 @@ def validate_receipt(receipt, batch, workspace, repo_id, delegate_state_root, pr
 
 def validate_state(state):
     state = require_mapping(state, "state")
-    if not set(state) <= BATCH_STATE_FIELDS:
-        raise ValueError("state fields are invalid")
     schema_version = state.get("schema_version")
-    if schema_version != 4:
-        raise ValueError("schema_version must be 4")
+    dependency_mode = schema_version == 5
+    allowed_fields = BATCH_STATE_FIELDS | ({"dependencies", "local_blocks", "recoveries"} if dependency_mode else set())
+    if not set(state) <= allowed_fields:
+        raise ValueError("state fields are invalid")
+    if schema_version not in {4, 5}:
+        raise ValueError("schema_version must be 4 or 5")
     for field in ("run_id", "writer_id"):
         require_string(state.get(field), field)
     if not isinstance(state.get("revision"), int) or state["revision"] < 0:
@@ -492,7 +498,7 @@ def validate_state(state):
             or recovery_count > 1
         ):
             raise ValueError("recovery_count must be 0 or 1")
-        if recovery_count and not worker_ref:
+        if recovery_count and not worker_ref and not (dependency_mode and task_id in state.get("recoveries", {})):
             raise ValueError("recovery_count requires worker_ref")
         if batch_status in {"dispatching", "running", "validating-receipt", "completed"}:
             require_string(dispatch_id, "dispatch_id")
@@ -526,8 +532,15 @@ def validate_state(state):
         if batch_status == "running" and worker_status != "working" and status not in {"blocked", "stopped"}:
             raise ValueError("running batch requires a working worker")
         if batch_status in {"validating-receipt", "completed"}:
-            completed = [item for item in batches[:index] if item.get("status") == "completed"]
+            completed = [item for item in batches if item.get("status") == "completed"] if dependency_mode else \
+                [item for item in batches[:index] if item.get("status") == "completed"]
             previous_commit = completed[-1]["receipt"]["commit_id"] if completed else None
+            if dependency_mode:
+                previous_commit = receipt.get("parent_commit_id")
+                if previous_commit != batch["capsule"]["baseline"] and not any(
+                    item["task_id"] != task_id and item["receipt"]["commit_id"] == previous_commit for item in completed
+                ):
+                    raise ValueError("receipt parent must be baseline or a completed dependency-run commit")
             validate_receipt(
                 receipt, batch, state["workspace"], state["repo_id"],
                 delegate_state_root, previous_commit,
@@ -535,29 +548,60 @@ def validate_state(state):
         elif receipt is not None:
             raise ValueError("receipt is only allowed after running")
 
+    if dependency_mode:
+        selected = dependency_schedule(state)
+        checkpoint = verified_checkpoint(state)
+        if status == 'active' and not any(batch['status'] in {'dispatching','running','validating-receipt'}
+                                                    for batch in batches):
+            require_checkpoint_workspace(state['workspace'], checkpoint)
+        for batch in batches:
+            if batch['task_id'] in state['recoveries']:
+                proof = state['recoveries'][batch['task_id']]['source']
+                parent = batch['receipt']['parent_commit_id'] if batch['receipt'] is not None else checkpoint
+                if proof['baseline_commit'] != parent or proof['commit_id'] != parent:
+                    raise ValueError('recovery evidence must bind the execution checkpoint source')
+                validate_committed_source(state['workspace'], proof, parent)
+                if batch['status'] == 'pending' and proof != workspace_source(state['workspace'], parent):
+                    raise ValueError('pending recovery requires fresh current source evidence')
+        for block in state["local_blocks"].values():
+            validate_local_block_cleanup(state, block)
+        expected_current = next((batch["batch_id"] for batch in batches
+                                 if batch["task_id"] == selected["task_id"]), None)
+        if state.get("current_batch") != expected_current:
+            raise ValueError("current_batch does not match the dependency scheduler")
+        if status == "active" and selected["status"] == "blocked":
+            raise ValueError("no executable batch remains; plan must be blocked")
     completed_prefix = 0
     for batch in batches:
         if batch["status"] == "completed":
             completed_prefix += 1
         else:
             break
-    if any(batch["status"] == "completed" for batch in batches[completed_prefix:]):
+    if not dependency_mode and any(batch["status"] == "completed" for batch in batches[completed_prefix:]):
         raise ValueError("batches must complete in order")
-    if any(batch["status"] == "blocked" for batch in batches) and status != "blocked":
+    if not dependency_mode and any(batch["status"] == "blocked" for batch in batches) and status != "blocked":
         raise ValueError("a blocked batch requires a blocked plan")
     expected_current = batches[completed_prefix]["batch_id"] if completed_prefix < len(batches) else None
-    if state.get("current_batch") != expected_current:
+    if not dependency_mode and state.get("current_batch") != expected_current:
         raise ValueError("current_batch does not match the first incomplete batch")
-    if completed_prefix < len(batches) and any(
+    if not dependency_mode and completed_prefix < len(batches) and any(
         batch["status"] != "pending" for batch in batches[completed_prefix + 1 :]
     ):
         raise ValueError("only the current batch may leave pending")
 
     validate_evidence(state.get("final_acceptance"), "final_acceptance")
+    if dependency_mode and any(entry['result'] == 'pass' for entry in state['final_acceptance']) \
+            and any(batch['status'] != 'completed' for batch in batches):
+        raise ValueError('all batches must complete before final tooling recovery')
     if status == "complete":
-        if completed_prefix != len(batches):
+        if any(batch["status"] != "completed" for batch in batches):
             raise ValueError("all batches must be completed")
         last = batches[-1]
+        if dependency_mode:
+            head = git_output(state["workspace"], "rev-parse", "HEAD")
+            if head != checkpoint:
+                raise ValueError('completed workspace drifted from the verified checkpoint tip')
+            last = next((batch for batch in batches if batch["receipt"]["commit_id"] == head), last)
         current_source = workspace_source(state["workspace"], last["capsule"]["baseline"])
         validate_committed_source(
             state['workspace'], current_source,
@@ -574,7 +618,122 @@ def validate_state(state):
         raise ValueError("blocked_reason is only valid for blocked status")
 
 
+def validate_local_block_cleanup(state, block):
+    old, evidence = block["attempt"], block["evidence"]
+    source = evidence['source']
+    checkpoints = {batch['capsule']['baseline'] for batch in state['batches']}
+    checkpoints.update(batch['receipt']['commit_id'] for batch in state['batches']
+                       if batch['status'] == 'completed')
+    if source['baseline_commit'] != source['commit_id'] or source['changed_paths'] \
+            or source['commit_id'] not in checkpoints:
+        raise ValueError('local block must bind a clean verified historical checkpoint')
+    validate_committed_source(state['workspace'], source, source['commit_id'])
+    task_id = old["task_id"]
+    if old["worker_ref"] is not None:
+        managed = delegate_state_path(state["delegate_state_root"], state["repo_id"],
+                                      task_id, old["delegate_run_id"])
+        child = json.loads(managed.read_text(encoding="utf-8"))
+        if child.get("run_id") != old["delegate_run_id"] or child.get("task_key") != task_id \
+                or child.get("workspace") != state["workspace"] or child.get("repo_id") != state["repo_id"] \
+                or validate_delegate_state(child, SimpleNamespace(), check_workspace=False) != "blocked":
+            raise ValueError("local block requires the exact managed delegate's blocked cleanup state")
+        if child.get('blocked_code') != 'environment' or child.get('blocked_reason') != state['local_blocks'][task_id]['reason'] \
+                or child.get('source_receipt') != evidence['source']:
+            raise ValueError('local block must match the managed delegate tooling cause and execution source')
+        workers = child.get("workers", [])
+        if any(worker["status"] not in TERMINAL_WORKER_STATUSES for worker in workers):
+            raise ValueError("local block requires terminal delegate worker cleanup")
+        tree = child.get("worker_tree_receipt")
+        if workers or tree is not None:
+            validate_cleanup_barrier(tree, child["revision"], {worker["ref"] for worker in workers})
+        launches = child["ledger"].get("runner_launches", [])
+        if launches and not runner_results_complete(launches, child["ledger"].get("runner_results", [])):
+            raise ValueError("local block requires confirmed delegate runner cleanup")
+
+
+def dependency_schedule(state):
+    """Derive ready work and blocker propagation from the one managed Batch state."""
+    batches = state["batches"]
+    dependencies = require_mapping(state.get("dependencies"), "dependencies")
+    blocks = require_mapping(state.get("local_blocks"), "local_blocks")
+    recoveries = require_mapping(state.get("recoveries"), "recoveries")
+    ids = {batch["task_id"] for batch in batches}
+    if set(dependencies) != ids or set(blocks) - ids or set(recoveries) - set(blocks):
+        raise ValueError("dependency and blocker identities must match frozen tasks")
+    tasks, statuses = [], {}
+    for batch in batches:
+        task_id = batch["task_id"]
+        tasks.append({"task_id": task_id, "depends_on": dependencies[task_id],
+                      "owned_paths": batch["capsule"]["scope"]})
+        status = batch["status"]
+        statuses[task_id] = status if status in {"pending", "completed", "blocked"} else "running"
+        if task_id in blocks:
+            block = blocks[task_id]
+            if not isinstance(block, dict) or set(block) != {"reason", "evidence", "attempt"} \
+                    or block["reason"] not in ACCEPTANCE_TOOL_FAILURES \
+                    or status != "blocked" and task_id not in recoveries:
+                raise ValueError("local block must identify a tooling gap on a blocked task")
+            require_tool_failure(block['reason'], block['evidence'])
+            if block["evidence"]["exit_code"] == 0:
+                raise ValueError("local block requires observed unavailable or timed-out evidence")
+            attempt = block["attempt"]
+            if not isinstance(attempt, dict) or set(attempt) != BATCH_FIELDS \
+                    or attempt["task_id"] != task_id or attempt["status"] != "blocked" \
+                    or attempt["capsule"] != batch["capsule"]:
+                raise ValueError("local block must preserve its original attempt")
+            if attempt["dispatch_id"] is not None and attempt["worker_ref"] is None \
+                    or attempt["worker_ref"] is not None and attempt["worker_status"] not in TERMINAL_WORKER_STATUSES:
+                raise ValueError("local block cannot bypass uncertain dispatch or worker cleanup")
+            if task_id not in recoveries and attempt != batch:
+                raise ValueError("local blocker attempt must match the blocked batch")
+            if task_id in recoveries:
+                proof = recoveries[task_id]
+                validate_observed_evidence_receipt(proof)
+                if proof["exit_code"] != 0 or proof["argv"] != block["evidence"]["argv"] \
+                        or batch["recovery_count"] != 1:
+                    raise ValueError("recovery requires the same tool's observed pass and consumed budget")
+                if status == "blocked" and state["status"] not in {"blocked", "stopped"}:
+                    raise ValueError("recovered task failed again; recovery budget exhausted")
+        elif status == "blocked" and state["status"] not in {"blocked", "stopped"}:
+            raise ValueError("a non-tooling blocked batch requires a blocked plan")
+    return select_task(tasks, statuses)
+
+
+def verified_checkpoint(state):
+    """Derive the single checkpoint tip from verified receipts, independent of frozen task order."""
+    baselines = {batch["capsule"]["baseline"] for batch in state["batches"]}
+    if len(baselines) != 1:
+        raise ValueError("dependency-aware capsules require one frozen baseline")
+    remaining = [batch for batch in state['batches'] if batch['status'] == 'completed']
+    tasks = [{'task_id':batch['task_id'], 'depends_on':state['dependencies'][batch['task_id']],
+              'owned_paths':batch['capsule']['scope']} for batch in state['batches']]
+    cursor, completed = next(iter(baselines)), {}
+    while remaining:
+        ready = []
+        for batch in remaining:
+            if batch['receipt']['parent_commit_id'] != cursor:
+                continue
+            try:
+                select_task(tasks, {**completed, batch['task_id']:'running'})
+            except ValueError:
+                continue
+            ready.append(batch)
+        if not ready:
+            raise ValueError('completed receipts must form one dependency-valid checkpoint chain')
+        selected = min(ready, key=lambda batch: batch['receipt']['commit_id'] != cursor)
+        cursor = selected['receipt']['commit_id']
+        completed[selected['task_id']] = 'completed'
+        remaining.remove(selected)
+    return cursor
+
+
 def validate_transition(previous, candidate, *, takeover=False):
+    if previous['schema_version'] == 5 and previous['status'] == 'blocked' \
+            and previous['blocked_reason'] == FINAL_TOOLING_BLOCK and candidate['status'] == 'complete' \
+            and all(batch['status'] == 'completed' for batch in previous['batches']) \
+            and tooling_acceptance_recovered(previous['final_acceptance'], [], candidate['final_acceptance'],
+                workspace_source(previous['workspace'], previous['batches'][0]['capsule']['baseline'])):
+        previous = {**previous, 'status':'active', 'blocked_reason':None}
     if candidate["schema_version"] != previous["schema_version"]:
         raise ValueError("invalid schema transition")
     for field in ("run_id", "writer_id", "repo_id", "workspace", "plan", "delegate_state_root"):
@@ -586,7 +745,40 @@ def validate_transition(previous, candidate, *, takeover=False):
             raise ValueError(f"{field} is immutable")
     if candidate["revision"] != previous["revision"] + 1:
         raise ValueError("candidate revision must be the next revision")
-    if previous["status"] in {"complete", "blocked", "stopped"}:
+    recovery_added = set()
+    if candidate["schema_version"] == 5:
+        if candidate["dependencies"] != previous["dependencies"]:
+            raise ValueError("dependencies are immutable")
+        for task_id, block in previous["local_blocks"].items():
+            if candidate["local_blocks"].get(task_id) != block:
+                raise ValueError("local blocker history is immutable")
+        for task_id, proof in previous["recoveries"].items():
+            if candidate["recoveries"].get(task_id) != proof:
+                raise ValueError("recovery history is immutable")
+        recovery_added = set(candidate["recoveries"]) - set(previous["recoveries"])
+        if len(recovery_added) > 1:
+            raise ValueError("only one recovery may be recorded per revision")
+        for task_id in recovery_added:
+            expected = recover_local_block(previous, task_id, candidate["recoveries"][task_id])
+            if candidate != expected:
+                raise ValueError("recovery may only reset its blocked task and derived plan state")
+            old = next(batch for batch in previous["batches"] if batch["task_id"] == task_id)
+            require_tool_recovery(previous["local_blocks"][task_id], candidate["recoveries"][task_id],
+                                  workspace_source(candidate["workspace"], verified_checkpoint(previous)))
+            if git_output(candidate["workspace"], "status", "--porcelain", "--untracked-files=all"):
+                raise ValueError("recovery requires fresh observed evidence and a clean workspace")
+        added = set(candidate["local_blocks"]) - set(previous["local_blocks"])
+        if len(added) > 1:
+            raise ValueError("only one local block may be recorded per revision")
+        for task_id in added:
+            old = next(batch for batch in previous["batches"] if batch["task_id"] == task_id)
+            if old["batch_id"] != previous["current_batch"] or old["status"] == "dispatching":
+                raise ValueError("only the confirmed current task may be locally blocked")
+            evidence = candidate["local_blocks"][task_id]["evidence"]
+            if evidence["source"] != workspace_source(candidate["workspace"], verified_checkpoint(previous)) \
+                    or git_output(candidate["workspace"], "status", "--porcelain", "--untracked-files=all"):
+                raise ValueError("local block requires fresh evidence and a clean workspace boundary")
+    if previous["status"] in {"complete", "blocked", "stopped"} and not recovery_added:
         expected = dict(previous)
         expected["revision"] = candidate["revision"]
         if previous["status"] in {"blocked", "stopped"}:
@@ -599,13 +791,16 @@ def validate_transition(previous, candidate, *, takeover=False):
         if candidate != expected:
             raise ValueError("terminal plan state is immutable")
         return
-    if candidate["status"] not in PLAN_TRANSITIONS[previous["status"]]:
+    if not recovery_added and candidate["status"] not in PLAN_TRANSITIONS[previous["status"]]:
         raise ValueError("invalid plan transition")
     if len(candidate["batches"]) != len(previous["batches"]):
         raise ValueError("batch list is immutable")
 
     changed = 0
     for old, new in zip(previous["batches"], candidate["batches"]):
+        if old["task_id"] in recovery_added:
+            changed += 1
+            continue
         if old["status"] in {"completed", "blocked"} and new != old:
             raise ValueError("terminal batch is immutable")
         if (
@@ -644,6 +839,8 @@ def validate_transition(previous, candidate, *, takeover=False):
             if new["batch_id"] != previous["current_batch"]:
                 raise ValueError("only the current batch can be dispatched")
         if old["receipt"] is None and new["receipt"] is not None:
+            if candidate["schema_version"] == 5 and new["receipt"]["parent_commit_id"] != verified_checkpoint(previous):
+                raise ValueError("new receipt must extend the verified checkpoint")
             commit_id = git_output(
                 candidate["workspace"],
                 "rev-parse",
@@ -663,6 +860,28 @@ def validate_transition(previous, candidate, *, takeover=False):
     if any(old.get("result") == "pass" and new != old
            for old, new in zip(previous["final_acceptance"], candidate["final_acceptance"])):
         raise ValueError("passing final acceptance is immutable")
+    if candidate['schema_version'] == 5:
+        for old, new in zip(previous['final_acceptance'], candidate['final_acceptance']):
+            observation = old['evidence']
+            if isinstance(observation, dict) and observation['exit_code'] != 0 \
+                    and not is_actual_verification_failure(observation) and new != old:
+                if new['result'] == 'pass' and any(batch['status'] != 'completed' for batch in candidate['batches']):
+                    raise ValueError('all batches must complete before final tooling recovery')
+                reason = ACCEPTANCE_TOOL_FAILURES[0 if observation['tooling_failure'] == 'timed_out' else 1]
+                try:
+                    require_tool_recovery({'reason':reason, 'evidence':observation}, new['evidence'],
+                        workspace_source(candidate['workspace'], observation['source']['baseline_commit']))
+                    if new['result'] != 'pass' or new['freshness'] != 'fresh':
+                        raise ValueError('final acceptance is not passing')
+                except (ValueError, TypeError, KeyError) as error:
+                    raise ValueError('final tooling history may only resolve with a fresh same-tool pass') from error
+            elif isinstance(observation, dict) and observation['exit_code'] != 0 and new != old:
+                source = workspace_source(candidate['workspace'], observation['source']['baseline_commit'])
+                proof = new['evidence']
+                if new['result'] not in {'unknown', 'pass'} or new['freshness'] != 'fresh' \
+                        or new['source_fingerprint'] != source['source_fingerprint'] \
+                        or not valid_evidence_receipts([proof], source) or proof['argv'] != observation['argv']:
+                    raise ValueError('actual final failure requires a fresh current same-command pass')
 
 
 def write_state(
@@ -674,8 +893,8 @@ def write_state(
     ttl_seconds=DEFAULT_SCHEDULER_LEASE_TTL_SECONDS,
 ):
     validate_state(candidate)
-    if candidate["schema_version"] != 4:
-        raise ValueError("new writes require schema_version 4")
+    if candidate["schema_version"] not in {4, 5}:
+        raise ValueError("new writes require schema_version 4 or 5")
     path = state_path(
         root,
         candidate["repo_id"],
@@ -732,18 +951,86 @@ def execution_capsule(state):
     batch = state['batches'][index]
     if batch['status'] != 'pending':
         raise ValueError('execution capsule requires a pending batch; resume existing delegates from managed state')
-    baseline = state['batches'][index - 1]['receipt']['commit_id'] if index else batch['capsule']['baseline']
-    if git_output(state['workspace'], 'rev-parse', 'HEAD') != baseline:
-        raise ValueError('execution workspace does not match the previous checkpoint')
-    source = workspace_source(state['workspace'], baseline)
-    if source['changed_paths']:
-        raise ValueError('execution workspace has unverified changes since the checkpoint')
+    if state['schema_version'] == 5:
+        baseline = verified_checkpoint(state)
+    else:
+        baseline = state['batches'][index - 1]['receipt']['commit_id'] if index else batch['capsule']['baseline']
+    require_checkpoint_workspace(state['workspace'], baseline)
     return {**batch['capsule'], 'baseline': baseline}
+
+
+def require_checkpoint_workspace(workspace, baseline):
+    if git_output(workspace, 'rev-parse', 'HEAD') != baseline:
+        raise ValueError('execution workspace does not match the previous checkpoint')
+    source = workspace_source(workspace, baseline)
+    if source['changed_paths']:
+        raise ValueError('execution workspace has unverified changes since the checkpoint; clean workspace required')
+
+
+def record_local_block(state, task_id, reason, evidence, *, worker_status=None):
+    """Record one confirmed gap and derive the next task; persistence remains under the CAS writer."""
+    validate_state(state)
+    if state["schema_version"] != 5 or state["status"] != "active":
+        raise ValueError("local block requires an active dependency-aware plan")
+    candidate = copy.deepcopy(state)
+    batch = next((batch for batch in candidate["batches"] if batch["task_id"] == task_id), None)
+    if batch is None or batch["batch_id"] != state["current_batch"] or task_id in state["local_blocks"]:
+        raise ValueError("only the current unblocked task may be locally blocked")
+    if batch["worker_ref"] is not None:
+        if worker_status not in TERMINAL_WORKER_STATUSES:
+            raise ValueError("local block requires observed terminal worker status")
+        batch["worker_status"] = worker_status
+    elif worker_status is not None:
+        raise ValueError("worker status requires an existing worker")
+    batch["status"] = "blocked"
+    candidate["local_blocks"][task_id] = {"reason": reason, "evidence": evidence, "attempt": copy.deepcopy(batch)}
+    selected = dependency_schedule(candidate)
+    candidate["current_batch"] = next((item["batch_id"] for item in candidate["batches"]
+                                       if item["task_id"] == selected["task_id"]), None)
+    if selected["status"] == "blocked":
+        candidate.update(status="blocked", blocked_reason=
+                         f"local blockers: {selected['blocked']}; waiting: {selected['waiting']}")
+    candidate["revision"] += 1
+    return candidate
+
+
+def recover_local_block(state, task_id, evidence):
+    """Permit one new attempt after fresh same-tool evidence; do not replay an uncertain launch."""
+    validate_state(state)
+    if state["schema_version"] != 5 or state["status"] not in {"active", "blocked"} \
+            or task_id not in state["local_blocks"] or task_id in state["recoveries"]:
+        raise ValueError("local recovery is unavailable or already consumed")
+    if any(batch["status"] in {"dispatching", "running", "validating-receipt"} for batch in state["batches"]):
+        raise ValueError("finish current worker cleanup before local recovery")
+    selected = dependency_schedule(state)
+    if state["status"] == "blocked" and state["blocked_reason"] != \
+            f"local blockers: {selected['blocked']}; waiting: {selected['waiting']}":
+        raise ValueError("global block cannot be recovered as a tooling gap")
+    validate_observed_evidence_receipt(evidence)
+    old_block = state["local_blocks"][task_id]
+    batch = next(batch for batch in state["batches"] if batch["task_id"] == task_id)
+    if batch["status"] != "blocked" or batch["recovery_count"] != 0 \
+            or evidence["exit_code"] != 0 or evidence["argv"] != old_block["evidence"]["argv"]:
+        raise ValueError("recovery requires unused budget and the same tool's observed pass")
+    candidate = copy.deepcopy(state)
+    batch = next(batch for batch in candidate["batches"] if batch["task_id"] == task_id)
+    batch.update(status="pending", recovery_count=1, dispatch_id=None, worker_ref=None, worker_role=None,
+                 worker_owner_run_id=None, worker_status=None, delegate_run_id=None, receipt=None)
+    candidate["recoveries"][task_id] = evidence
+    candidate.update(status="active", blocked_reason=None, revision=state["revision"] + 1)
+    selected = dependency_schedule(candidate)
+    if task_id in selected["waiting"]:
+        raise ValueError("recovery cannot consume budget before task dependencies are satisfied")
+    if selected['task_id'] != task_id:
+        raise ValueError('recovery can only consume budget for the selected task')
+    candidate["current_batch"] = next((item["batch_id"] for item in candidate["batches"]
+                                       if item["task_id"] == selected["task_id"]), None)
+    return candidate
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("path", "write", "capsule"))
+    parser.add_argument("command", choices=("path", "write", "capsule", "block-local", "recover-local"))
     parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--input")
     parser.add_argument("--repo")
@@ -768,6 +1055,16 @@ def main():
         if arguments.expected_revision is None or not arguments.run_id or not arguments.writer_id:
             raise ValueError("write requires --expected-revision, --run-id, and --writer-id")
         candidate = json.load(sys.stdin)
+        if arguments.command == "block-local":
+            if not isinstance(candidate, dict) or not {"state", "task_id", "reason", "evidence"} <= set(candidate) \
+                    or set(candidate) - {"state", "task_id", "reason", "evidence", "worker_status"}:
+                raise ValueError("local block input fields are invalid")
+            candidate = record_local_block(candidate["state"], candidate["task_id"],
+                                           candidate["reason"], candidate["evidence"], worker_status=candidate.get("worker_status"))
+        elif arguments.command == "recover-local":
+            if not isinstance(candidate, dict) or set(candidate) != {"state", "task_id", "evidence"}:
+                raise ValueError("local recovery input fields are invalid")
+            candidate = recover_local_block(candidate["state"], candidate["task_id"], candidate["evidence"])
         if candidate.get("run_id") != arguments.run_id or candidate.get("writer_id") != arguments.writer_id:
             raise ValueError("candidate owner does not match")
         path = write_state(

@@ -292,7 +292,7 @@ def _terminate_process(process):
     process.kill()
 
 
-def _run_command(workspace, argv, timeout_seconds, env=None):
+def _run_command(workspace, argv, timeout_seconds, env=None, observation=None):
     process = None
     process_group_terminated = False
     try:
@@ -313,9 +313,13 @@ def _run_command(workspace, argv, timeout_seconds, env=None):
                     "evidence command output could not be drained after termination"
                 ) from error
             exit_code = 124
+            if observation is not None:
+                observation['tooling_failure'] = 'timed_out'
             stderr = stderr or b'verification timed out'
     except FileNotFoundError as error:
         exit_code, stdout, stderr = 127, b"", str(error).encode("utf-8")
+        if observation is not None:
+            observation['tooling_failure'] = 'unavailable'
     finally:
         if process is not None:
             try:
@@ -592,7 +596,8 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=DEFAULT_TIMEO
         except (OSError, ValueError, ImportError) as error:
             exit_code, stdout, stderr = 2, b'', str(error).encode()
     else:
-        exit_code, stdout, stderr = _run_command(workspace, argv, timeout_seconds)
+        observation = {}
+        exit_code, stdout, stderr = _run_command(workspace, argv, timeout_seconds, None, observation)
     remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
     graph_check = graph_check_result(workspace, argv, remaining) if exit_code == 0 else None
     source_after = workspace_source(workspace, baseline_commit)
@@ -611,6 +616,8 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=DEFAULT_TIMEO
     }
     if graph_check is not None:
         receipt["graph_check"] = graph_check
+    if _mutmut_selector(argv) is None and observation:
+        receipt.update(observation)
     test_check = test_execution_result(argv, stdout, stderr)
     if test_check is not None:
         receipt['test_check'] = test_check
@@ -630,7 +637,7 @@ def validate_observed_evidence_receipt(item):
         "receipt_fingerprint",
     }
     if not isinstance(item, dict) or not fields <= set(item) \
-            or set(item) - fields - {'jacoco_check', 'graph_check', 'test_check', 'mutation_check'} \
+            or set(item) - fields - {'jacoco_check', 'graph_check', 'test_check', 'mutation_check', 'tooling_failure'} \
             or item.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError("Evidence Receipt fields are invalid")
     if not isinstance(item.get("argv"), list) or not item["argv"] \
@@ -651,6 +658,9 @@ def validate_observed_evidence_receipt(item):
     if item["runner_fingerprint"] != _runner_fingerprint() \
             or item.get("evidence_level") != "observed":
         raise ValueError("Evidence Receipt provenance is invalid")
+    if 'tooling_failure' in item and (item['tooling_failure'] not in {'timed_out', 'unavailable'} \
+            or item['exit_code'] != {'timed_out': 124, 'unavailable': 127}.get(item['tooling_failure'])):
+        raise ValueError('Evidence Receipt tooling observation is invalid')
     if 'test_check' in item:
         check = item['test_check']
         from native_tdd_policy import coverage_runner

@@ -90,3 +90,26 @@ blocked/stopped 后仅允许将已登记的 working worker 状态更新为 compl
 最终 `final_acceptance` 的 criterion 列表从初始化起固定，不能添加、删除、替换、重排或重复。只有 evidence/result/freshness/source_fingerprint 可以在未通过时补充；各项可以在不同 revision 依次通过，已经通过的单项仍不可改写。
 
 计划 complete 时，每项 `final_acceptance[].evidence` 必须是 `evidence_contract.py run` 真实执行生成的 observed Evidence Receipt 对象，退出码为 0，回执来源和 fingerprint 有效，且 source 精确等于当前工作区相对最后 Batch baseline 的 Source Receipt；外层 source_fingerprint 也必须一致。文本、缺失、失败、篡改或旧源码回执均不能放行。最终源码仍必须对应最后 Batch 的已验证提交；各 Batch receipt 内的 evidence 摘要继续由正式 delegate state 和提交链复核，不能替代最终检查。
+# 局部阻塞 v5
+
+v5 保留 v4 字段及 Receipt v4，新增且必需 `dependencies`、`local_blocks`、`recoveries`。依赖从冻结 Plan v6 复制；每个 task_id 都必须有条目。依赖图不可循环，scope 重叠保守按冻结顺序串行。只能一个 batch 离开 pending 执行；已完成回执沿真实 checkpoint 链核对，完成顺序可不同于任务列表顺序。
+
+工具缺失/超时必须有公共 runner 实际产生的 failure Evidence Receipt。原始错误、精确分类和原始尝试保存到 local_blocks，不以人工填写摘要替代证据。通过 `batch_state.py block-local --input - --state-root <root> --expected-revision <rev> --run-id <run> --writer-id <writer>`，输入：
+
+```json
+{"state": "<原样读取的当前 state 对象>", "task_id": "T1", "reason": "native acceptance tool timed out", "evidence": "<observed failure Evidence Receipt 对象>"}
+```
+
+已有 worker 时还要提供宿主 query 得到的 `worker_status=completed|interrupted|blocked`；writer 核对精确 managed delegate 已 blocked，保留其原尝试身份。未知派发、working worker、未确认子 run 清场、脏工作区和过期 evidence 均拒绝局部继续。无 worker 的 pending 事项可在预检工具失败后局部阻塞。该命令只改变一个 batch，以既有 CAS/lease 原子更新 revision/current_batch，依赖受阻项保持 pending，独立项继续。所有剩余项不可推进时，写 blocked 并聚合原因。
+
+v5 执行 capsule 以唯一已验证 checkpoint tip 为基线，不以相邻列表项为基线；父控制器不得把一个仍 blocked 的事项变成 completed。子任务的业务授权、清场、验证和外发门禁保持原规则。
+
+历史局部阻塞的 Source Receipt 必须绑定原尝试的清洁已验证 checkpoint，并与该 Git tree 一致。重新读取时仍核对精确 managed delegate 的身份、工具原因、同一历史源码、终结 worker、宿主清场和 runner 结果；不要求历史源码等于后续独立实现的工作区。当前 workspace/checkpoint 漂移继续由执行、状态更新和完成门禁检查。
+
+仅有新的同工具 observed pass、同一当前源码和清洁 checkpoint 时允许一次新尝试；记录原阻塞、原 dispatch/worker 身份与预算。使用 `batch_state.py recover-local`，沿用上述 owner/revision 参数，输入 `{"state":<当前对象>,"task_id":"T1","evidence":<新 observed pass receipt>}`。它只恢复该项为 pending，清空新尝试的外部身份并消费 recovery_count=1，恢复回执保存在 recoveries；旧尝试保存在不可改写的 local_blocks.attempt 中。不重放旧 uncertain dispatch，不在其他 worker 运行时恢复，不绕过全局 block 或用户 stopped，不为等待依赖的事项提前消费恢复预算。恢复后调度器必须选中该事项，否则先执行当前独立事项，再取得新恢复证据；不得提前记录一个会被后续独立提交失效的恢复回执。重试再次失败必须全局 blocked，不能清零预算。
+
+v5 所有 Batch 完成后才可记录最终验收 pass，状态导入也核对这一边界；工具恢复探测不能提前锁定最终验收。最终验收的工具故障回执不能改回未运行占位，也不能用另一份失败回执重开尝试；只允许同一工具在当前源码上的 fresh pass 解除，随后沿用已通过项不可改写的规则。若最终工具缺口已落盘为 blocked，v5 仅允许原因精确匹配 helper 的最终工具阻塞、全部 Batch 已完成且全部冻结验收有同工具当前 pass 时直接 complete；不重启 active、不改任务、预算、历史或派发身份，仍运行原有完成与 checkpoint 校验。
+
+`batch_next` 始终只返回一个动作；全部任务完成后只请求 final-acceptance 验证，最终 complete 仍由状态验证器核对全部完成回执与当前源码的最终验收。报告从 local_blocks、recoveries 和派生 waiting 生成；历史已恢复 blocker 不能当作当前阻塞，也不能被删除。本文规则优先于后文 v4 的“完成前缀/上一批/blocked batch 必须 blocked plan”约束；那些约束继续适用于 v4。
+
+真实最终验证失败同样不能改回未运行占位、无关通过、另一份失败或过期证据；源码变化也不自动解除。解除必须是同命令在当前源码上的 observed pass，外层 fingerprint 和 freshness 也一致。所有 Batch 完成前，这份恢复证据的验收结果保持 unknown，仅解除真实失败门禁；完成后才可按正常最终验收记录 pass。已落盘的全局 blocked/stopped 仍不得恢复业务执行。

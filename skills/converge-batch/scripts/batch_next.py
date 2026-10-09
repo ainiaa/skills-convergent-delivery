@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from batch_state import validate_state
+from batch_state import validate_state, dependency_schedule
 
 ROOT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if str(ROOT_SCRIPTS) not in sys.path:
@@ -24,6 +24,27 @@ def next_action(state):
                       reason=state["blocked_reason"] if status == "blocked" else "plan is stopped")
     if status == "complete":
         return action("complete", task_id=state["plan"]["plan_id"])
+
+    if state.get("schema_version") == 5:
+        from plan_execution import is_actual_verification_failure
+        final_tooling_gap = False
+        for entry in state['final_acceptance']:
+            observation = entry['evidence']
+            if isinstance(observation, dict):
+                failure = is_actual_verification_failure(observation)
+                final_tooling_gap |= not failure and observation['exit_code'] != 0
+                if failure:
+                    return action('block', task_id=state['plan']['plan_id'],
+                                  reason='actual final verification failure requires resolution')
+        selected = dependency_schedule(state)
+        if selected["status"] == "verify":
+            if final_tooling_gap:
+                return action('block', task_id=state['plan']['plan_id'],
+                              reason='final acceptance tooling remains uncovered; no independent task remains')
+            return action("verify", task_id=state["plan"]["plan_id"], target="final-acceptance")
+        if selected["status"] == "blocked":
+            return action("block", task_id=state["plan"]["plan_id"],
+                          reason=f"local blockers: {selected['blocked']}; waiting: {selected['waiting']}")
 
     current = state["current_batch"]
     if current is None:
