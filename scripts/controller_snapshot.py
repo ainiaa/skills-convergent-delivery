@@ -19,6 +19,7 @@ EXTENDED_CONTROLLER_FILES = (
     "references/execution-control.md",
     "references/execution-protocol.md",
     "scripts/delivery_engine.py",
+    "scripts/plan_execution.py",
     "scripts/tdd_impact_guard.py",
     "scripts/native_tdd_policy.py",
     "scripts/delivery_lease.py",
@@ -112,6 +113,7 @@ CORE_CONTROLLER_FILES = (
     "references/execution-control.md",
     "references/execution-protocol.md",
     "scripts/delivery_engine.py",
+    "scripts/plan_execution.py",
     "scripts/tdd_impact_guard.py",
     "scripts/native_tdd_policy.py",
     "scripts/delivery_lease.py",
@@ -239,8 +241,8 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18))
-PROTOCOL_VERSION = 19
+LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18, 19))
+PROTOCOL_VERSION = 20
 
 
 def provider_files(root):

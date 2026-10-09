@@ -444,18 +444,175 @@ def audit(envelope, workspace):
     ]
     cursor = baseline_source
 
+    if set(results) - {task["task_id"] for task in plan["tasks"]}:
+        raise ValueError("task_results contains unknown tasks")
+    # Reconstruct the whole directed source trail, including no-ops and boundary revisits.
+    from collections import deque
+    remaining = []
+    preflight_history = set()
+    for task in plan['tasks']:
+        result = results.get(task['task_id'])
+        prior = result.get('prior_attempt') if isinstance(result, dict) else None
+        if isinstance(result, dict) and result.get('recovery_evidence') is not None and prior is None:
+            raise ValueError('recovery requires preserved original attempt history')
+        if prior is not None:
+            if not isinstance(prior, dict) or prior.get('status') not in {'PARTIAL', 'NOT_DONE'} \
+                    or 'prior_attempt' in prior or 'recovery_evidence' in prior \
+                    or prior.get('blocker') != result.get('blocker'):
+                raise ValueError('recovery must preserve exactly one original blocked attempt')
+            from plan_execution import require_tool_recovery
+            recovery_source = result.get('source_before') if result.get('status') == 'DONE' else source
+            require_tool_recovery(prior['blocker'], result.get('recovery_evidence'), recovery_source)
+            if 'source_after' in prior and prior['source_after'] != prior['blocker']['evidence']['source']:
+                raise ValueError('historical tooling failure must match its source boundary')
+            if 'source_before' not in prior and 'source_after' not in prior:
+                boundary = prior['blocker']['evidence']['source']
+                prior = {**prior, 'source_before':boundary, 'source_after':boundary}
+                preflight_history.add(task['task_id'])
+            remaining.append((task, prior, True))
+        remaining.append((task, result, False))
+    adjacency, edge_ids, noops, chain_valid = {}, set(), set(), True
+    for index, (_task, result, _historical) in enumerate(remaining):
+        if not isinstance(result, dict):
+            continue
+        before, after = result.get('source_before'), result.get('source_after')
+        if isinstance(before, dict) and isinstance(after, dict):
+            validate_source_receipt(before)
+            validate_source_receipt(after)
+            if before == after:
+                noops.add(index)
+            else:
+                edge_ids.add(index)
+                adjacency.setdefault(before['source_fingerprint'], []).append(index)
+        elif result.get('status') == 'DONE' or 'source_before' in result or 'source_after' in result:
+            chain_valid = False
+    dependency_order = []
+    while len(dependency_order) < len(plan['tasks']):
+        dependency_order.extend(task['task_id'] for task in plan['tasks']
+                                if task['task_id'] not in dependency_order
+                                and set(task['depends_on']) <= set(dependency_order))
+    rank = {task_id: index for index, task_id in enumerate(dependency_order)}
+    adjacency = {node: deque(sorted(edges, key=lambda index: rank[remaining[index][0]['task_id']]))
+                 for node, edges in adjacency.items()}
+    stack, trail, consumed = [(baseline_source['source_fingerprint'], None)], [], set()
+    while stack:
+        node, incoming = stack[-1]
+        if adjacency.get(node):
+            index = adjacency[node].popleft()
+            consumed.add(index)
+            stack.append((remaining[index][1]['source_after']['source_fingerprint'], index))
+        else:
+            stack.pop()
+            if incoming is not None:
+                trail.append(incoming)
+    chain_valid = chain_valid and consumed == edge_ids
+    from plan_execution import select_task
+    history_indices = {task['task_id']:index for index, (task, _, historical) in enumerate(remaining) if historical}
+    ordered, reconstructed_done, emitted = [], {}, set()
+    def insert_noops(boundary):
+        while True:
+            eligible = []
+            for index in noops - consumed:
+                task, result, historical = remaining[index]
+                if result['source_before'] != boundary:
+                    continue
+                prior = history_indices.get(task['task_id'])
+                if not historical and prior in edge_ids | noops and prior not in emitted:
+                    continue
+                try:
+                    if not historical or task['task_id'] not in preflight_history:
+                        select_task(plan['tasks'], {**reconstructed_done, task['task_id']:'running'})
+                except ValueError:
+                    continue
+                eligible.append(index)
+            if not eligible:
+                return
+            index = min(eligible, key=lambda item: (rank[remaining[item][0]['task_id']], item))
+            task, result, historical = remaining[index]
+            consumed.add(index)
+            emitted.add(index)
+            ordered.append(remaining[index])
+            if not historical and result['status'] == 'DONE':
+                reconstructed_done[task['task_id']] = 'completed'
+    for index in reversed(trail):
+        task, result, historical = remaining[index]
+        insert_noops(result['source_before'])
+        ordered.append(remaining[index])
+        emitted.add(index)
+        if not historical and result['status'] == 'DONE':
+            reconstructed_done[task['task_id']] = 'completed'
+    insert_noops(remaining[trail[0]][1]['source_after'] if trail else baseline_source)
+    chain_valid = chain_valid and noops <= consumed
+    ordered.extend(entry for index, entry in enumerate(remaining) if index not in consumed)
+
+    # Repeated boundaries can have several physical trails; try a finite dependency-respecting route.
+    provisional, order_valid = {}, True
+    for task, result, historical in ordered:
+        if not isinstance(result, dict) or not isinstance(result.get('source_before'), dict) \
+                or not isinstance(result.get('source_after'), dict):
+            continue
+        try:
+            if not historical or task['task_id'] not in preflight_history:
+                select_task(plan['tasks'], {**provisional, task['task_id']:'running'})
+        except ValueError:
+            order_valid = False
+            break
+        if not historical and result['status'] == 'DONE':
+            provisional[task['task_id']] = 'completed'
+    if not order_valid or not chain_valid:
+        indices = edge_ids | noops
+        budget = [max(64, len(indices) * 8)]
+        def search(boundary, route, done):
+            budget[0] -= 1
+            if budget[0] < 0:
+                return None
+            if len(route) == len(indices):
+                return route if boundary == source else None
+            for index in sorted(indices - set(route), key=lambda item: (rank[remaining[item][0]['task_id']], item)):
+                task, result, historical = remaining[index]
+                if result['source_before'] != boundary:
+                    continue
+                prior = history_indices.get(task['task_id'])
+                if not historical and prior in indices and prior not in route:
+                    continue
+                try:
+                    if not historical or task['task_id'] not in preflight_history:
+                        select_task(plan['tasks'], {**done, task['task_id']:'running'})
+                except ValueError:
+                    continue
+                updated = {**done, task['task_id']:'completed'} if not historical and result['status'] == 'DONE' else done
+                found = search(result['source_after'], [*route,index], updated)
+                if found is not None:
+                    return found
+                if budget[0] <= 0:
+                    return None
+            return None
+        route = search(baseline_source, [], {})
+        if route is not None:
+            ordered = [remaining[index] for index in route]
+            ordered.extend(entry for index, entry in enumerate(remaining) if index not in indices)
+            chain_valid = all(not isinstance(result, dict) or result.get('status') != 'DONE'
+                              or index in indices for index, (_, result, _) in enumerate(remaining))
+
     statuses = {}
+    task_order_valid = True
+    history_seen = {task_id for task_id, index in history_indices.items() if index not in edge_ids | noops}
     task_scope_drift = {}
-    for task in plan["tasks"]:
+    source_boundaries = [baseline_source]
+    for task, result, historical in ordered:
         task_id = task["task_id"]
-        result = results.get(task_id)
         if result is None:
             statuses[task_id] = "NOT_DONE"
             continue
         if not isinstance(result, dict) or result.get("status") not in AUDIT_STATUSES:
             raise ValueError(f"task_results.{task_id} is invalid")
         status = result["status"]
-        if status == "DONE":
+        if historical:
+            history_seen.add(task_id)
+        elif task_id in history_indices and task_id not in history_seen:
+            task_order_valid = False
+            status = 'PARTIAL'
+        if status == "DONE" or "source_before" in result or "source_after" in result:
             before = result.get("source_before")
             after = result.get("source_after")
             if isinstance(before, dict):
@@ -467,20 +624,40 @@ def audit(envelope, workspace):
                 path for path in delta
                 if not any(path_contains(owner, path) for owner in task["owned_paths"])
             ]
-            task_scope_drift[task_id] = drift
+            task_scope_drift[task_id] = sorted(set(task_scope_drift.get(task_id, []) + drift))
             if before != cursor or not isinstance(after, dict) or drift:
+                chain_valid = False
                 status = "PARTIAL"
                 evidence_source = source
             else:
                 cursor = after
+                source_boundaries.append(after)
                 evidence_source = after
-            if result.get("fresh_pass") is not True \
+            from plan_execution import select_task
+            try:
+                if not historical or task_id not in preflight_history:
+                    select_task(plan['tasks'], {**{key: 'completed' for key, value in statuses.items() if value == 'DONE'},
+                                               task_id: 'running'})
+            except ValueError:
+                task_order_valid = False
+                status = 'PARTIAL'
+            if status == "DONE" and (result.get("fresh_pass") is not True \
                     or not valid_evidence_receipts(result.get("evidence"), evidence_source) \
                     or not {tuple(verification_argv(command)) for command in task["verification"]}.issubset(
                         {tuple(item["argv"]) for item in result["evidence"]}
-                    ):
+                    )):
                 status = "PARTIAL"
-        statuses[task_id] = status
+        if not historical:
+            statuses[task_id] = status
+
+    for _ in plan["tasks"]:
+        downgraded = False
+        for task in plan["tasks"]:
+            if statuses[task["task_id"]] == "DONE" and any(statuses[dep] != "DONE" for dep in task["depends_on"]):
+                statuses[task["task_id"]] = "PARTIAL"
+                downgraded = True
+        if not downgraded:
+            break
 
     final_entries = envelope.get("final_acceptance")
     if not isinstance(final_entries, list):
@@ -518,7 +695,7 @@ def audit(envelope, workspace):
     scope_drift = [
         path for path in changed_paths if not any(path_contains(owner, path) for owner in owned_paths)
     ]
-    source_chain_complete = cursor == source
+    source_chain_complete = chain_valid and cursor == source
     return {
         "complete": (
             all(status == "DONE" for status in statuses.values())
@@ -526,6 +703,7 @@ def audit(envelope, workspace):
             and final_acceptance_pass
             and closure_complete
             and source_chain_complete
+            and task_order_valid
         ),
         "final_acceptance": final_acceptance_pass,
         "closure_complete": closure_complete,
@@ -533,8 +711,10 @@ def audit(envelope, workspace):
         "closure_scope_drift": matrix_scope_drift,
         "scope_drift": scope_drift,
         "task_scope_drift": task_scope_drift,
+        "source_boundaries": source_boundaries,
         "source": source,
         "source_chain_complete": source_chain_complete,
+        "task_order_valid": task_order_valid,
         "tasks": statuses,
     }
 

@@ -1,0 +1,284 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-local-blocking-20261008",
+  "requirement_fingerprint": "a7d0f3111b91d978f5d31f5101646ce6ed8e35106fd07fbc9154292ca48f1cd9",
+  "planner": {
+    "name": "native-plan-v1",
+    "source_path": null,
+    "source_fingerprint": null
+  },
+  "context": "short",
+  "baseline": {
+    "commit": "ed26cc3fd49541cd8d01fc5300f91c9deeba8ede",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "ed26cc3fd49541cd8d01fc5300f91c9deeba8ede",
+      "commit_id": "ed26cc3fd49541cd8d01fc5300f91c9deeba8ede",
+      "tree_hash": "5bbdfa5e5e53ee3b97228bfe357816603b183b22",
+      "diff_fingerprint": "f743190710a2b7b9208d59a92e504d96f516f3e39285aecfd7e9a97da2a0ab86",
+      "changed_paths": [
+        "CHANGELOG.md",
+        "SKILL.md",
+        "docs/04_testing/defects/B20261008-acceptance-tool-stops-implementation.md",
+        "references/execution-protocol.md",
+        "references/tdd-providers.md",
+        "scripts/plan_execution.py",
+        "scripts/test_plan_execution.py"
+      ],
+      "changed_entries": [
+        {
+          "path": "CHANGELOG.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7f69d828877d2b7d9488bcc2eaa3a3fe4aa0d3d31213222df7bccc70af3a6c05"
+        },
+        {
+          "path": "SKILL.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "3f10158ecc215dfbbd18a4aea11696aea8413bab5687f6b3849970a161828018"
+        },
+        {
+          "path": "docs/04_testing/defects/B20261008-acceptance-tool-stops-implementation.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7bb72daaa18ee2b9556051f6c3d4b3cee43fdacde4462545923ff6249cc626f0"
+        },
+        {
+          "path": "references/execution-protocol.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "75e3d35fa88cffabda31cd7239ba1bd41624e1d5ebfab3979288466f63fe9db8"
+        },
+        {
+          "path": "references/tdd-providers.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "4ca6c1fd003da7df98710fd11d6b55d71effabf090e0d9e4f22d78496d0c369b"
+        },
+        {
+          "path": "scripts/plan_execution.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "bff62234630e91db89cb528b906054213252b7977abcf463199c3451e517a615"
+        },
+        {
+          "path": "scripts/test_plan_execution.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "81519d009d096dbd6359d6eb51b750087026417aaeda88c0cafbc0c11fe43a1e"
+        }
+      ],
+      "source_fingerprint": "83d05eeb770e5d2ccde78a0b1d4206555e978110f75c54bc9c8d5ec33527284a"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "确定性选择可执行独立任务并聚合局部阻塞"
+      ],
+      "goal": "确定性选择可执行独立任务并聚合局部阻塞",
+      "owned_paths": [
+        "scripts/plan_execution.py",
+        "scripts/test_plan_execution.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "补充行为红灯",
+        "实现最小改动",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "确定性选择可执行独立任务并聚合局部阻塞"
+      ],
+      "verification": [
+        "python3 scripts/test_plan_execution.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "task_kind": "feature",
+            "contract": {
+              "entrypoint": "references/execution-protocol.md",
+              "closure": [],
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "relative_path": "references/execution-protocol.md",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "fingerprint": "75e3d35fa88cffabda31cd7239ba1bd41624e1d5ebfab3979288466f63fe9db8"
+              }
+            ],
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery"
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "60f556d1ee3420e8f1b371f96dc5a64f4886dc142ce05d0a137da65f75347c97"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "受管多任务状态允许局部阻塞而保留全局安全门禁"
+      ],
+      "goal": "受管多任务状态允许局部阻塞而保留全局安全门禁",
+      "owned_paths": [
+        "skills/converge-batch/scripts",
+        "scripts/controller_snapshot.py",
+        "scripts/test_controller_snapshot.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "补充行为红灯",
+        "实现最小改动",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "受管多任务状态允许局部阻塞而保留全局安全门禁"
+      ],
+      "verification": [
+        "python3 skills/converge-batch/scripts/test_batch_state.py"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "task_kind": "feature",
+            "contract": {
+              "entrypoint": "references/execution-protocol.md",
+              "closure": [],
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "relative_path": "references/execution-protocol.md",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "fingerprint": "75e3d35fa88cffabda31cd7239ba1bd41624e1d5ebfab3979288466f63fe9db8"
+              }
+            ],
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery"
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "60f556d1ee3420e8f1b371f96dc5a64f4886dc142ce05d0a137da65f75347c97"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "普通计划入口和规则保持调度、验收与恢复一致"
+      ],
+      "goal": "普通计划入口和规则保持调度、验收与恢复一致",
+      "owned_paths": [
+        "skills/converge-plan",
+        "SKILL.md",
+        "references",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/02_design/architecture/F20261008-local-blocking.md",
+        "scripts/evidence_contract.py",
+        "scripts/test_evidence_contract.py"
+      ],
+      "depends_on": [
+        "T1",
+        "T2"
+      ],
+      "steps": [
+        "补充行为红灯",
+        "实现最小改动",
+        "运行定向验证"
+      ],
+      "acceptance": [
+        "普通计划入口和规则保持调度、验收与恢复一致"
+      ],
+      "verification": [
+        "bash scripts/check.sh --full"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "selection": "explicit",
+        "reason": "native engine was selected",
+        "task_kind": "feature",
+        "binding": {
+          "controller": "converge",
+          "workflow_provider": {
+            "id": "native-v1",
+            "version": "1",
+            "role": "workflow",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "task_kind": "feature",
+            "contract": {
+              "entrypoint": "references/execution-protocol.md",
+              "closure": [],
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "sources": [
+              {
+                "kind": "entrypoint",
+                "relative_path": "references/execution-protocol.md",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "fingerprint": "75e3d35fa88cffabda31cd7239ba1bd41624e1d5ebfab3979288466f63fe9db8"
+              }
+            ],
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery"
+          },
+          "stage_providers": {}
+        },
+        "binding_fingerprint": "60f556d1ee3420e8f1b371f96dc5a64f4886dc142ce05d0a137da65f75347c97"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "依赖项不得越过未完成前置，独立项继续；安全停止生效；缺口不允许完成",
+    "全量生产 Python 覆盖率 >=90%"
+  ],
+  "decisions": []
+}

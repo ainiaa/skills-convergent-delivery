@@ -199,6 +199,513 @@ def register_worker(state, index, worker_ref):
 
 
 class BatchStateTest(unittest.TestCase):
+    def dependency_state(self):
+        state = candidate(self.workspace)
+        state.update(schema_version=5, dependencies={"T1": [], "T2": []}, local_blocks={}, recoveries={})
+        state["batches"][0]["capsule"]["scope"] = ["a"]
+        state["batches"][1]["capsule"]["scope"] = ["b"]
+        return state
+
+    def local_block(self, state):
+        state["batches"][0]["status"] = "blocked"
+        state["local_blocks"]["T1"] = {
+            "reason": "native acceptance tool timed out",
+            "evidence": run_evidence(self.workspace, self.commit_id,
+                                     [sys.executable, "-c", "import time; time.sleep(5)"], .05),
+            "attempt": copy.deepcopy(state["batches"][0]),
+        }
+        state["current_batch"] = "B2"
+
+    def test_dependency_scheduler_persists_local_block_and_continues_independent_batch(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        state["revision"] = 1
+        self.local_block(state)
+        path = self.write(state, 0)
+        resumed = json.loads(path.read_text())
+        payload = batch_state.execution_capsule(resumed)
+        self.assertEqual("T2", payload["task_id"])
+        self.assertEqual(self.commit_id, payload["baseline"])
+        result = subprocess.run([sys.executable, str(MODULE_PATH.with_name("batch_next.py")), "--input", "-"],
+                                input=json.dumps(resumed), capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual({"action": "dispatch", "task_id": "T2"}, json.loads(result.stdout))
+        failed=run_evidence(self.workspace,self.commit_id,[sys.executable,'-c','raise SystemExit(1)'])
+        resumed['final_acceptance']=[{'criterion':'requested behavior','result':'fail','freshness':'fresh',
+            'source_fingerprint':failed['source']['source_fingerprint'],'evidence':failed}]
+        result=subprocess.run([sys.executable,str(MODULE_PATH.with_name('batch_next.py')),'--input','-'],
+            input=json.dumps(resumed),capture_output=True,text=True)
+        decision=json.loads(result.stdout)
+        self.assertEqual('block',decision['action']);self.assertIn('final verification failure',decision['reason'])
+        resumed['final_acceptance'][0].update(result='unknown',freshness='unavailable',evidence='not yet run')
+        result=subprocess.run([sys.executable,str(MODULE_PATH.with_name('batch_next.py')),'--input','-'],
+            input=json.dumps(resumed),capture_output=True,text=True)
+        self.assertEqual(0,result.returncode,result.stderr)
+        self.assertEqual('dispatch',json.loads(result.stdout)['action'])
+        resumed['final_acceptance'][0]['evidence']=resumed['local_blocks']['T1']['evidence']
+        result=subprocess.run([sys.executable,str(MODULE_PATH.with_name('batch_next.py')),'--input','-'],
+            input=json.dumps(resumed),capture_output=True,text=True)
+        self.assertEqual('dispatch',json.loads(result.stdout)['action'])
+        state["revision"] = 2
+        state["batches"][1].update(status="dispatching", dispatch_id="dispatch-B2")
+        self.write(state, 1)
+
+    def test_dependency_scheduler_aggregates_blocked_dependencies_without_completion(self):
+        state = self.dependency_state()
+        state["dependencies"]["T2"] = ["T1"]
+        self.write(state, -1)
+        state["revision"] = 1
+        self.local_block(state)
+        state["current_batch"] = None
+        state["status"] = "blocked"
+        state["blocked_reason"] = "T1 tooling unavailable; T2 depends on T1"
+        path = self.write(state, 0)
+        self.assertEqual("blocked", json.loads(path.read_text())["status"])
+        state["revision"] = 2
+        state.update(status="complete", blocked_reason=None)
+        with self.assertRaises(ValueError):
+            self.write(state, 1)
+
+    def test_local_block_cannot_hide_unsafe_failure_or_change_frozen_dependencies(self):
+        for reason in ("permission denied", "acceptance test failed", "unknown tool error"):
+            with self.subTest(reason=reason):
+                state = self.dependency_state()
+                self.local_block(state)
+                state["local_blocks"]["T1"]["reason"] = reason
+                with self.assertRaises(ValueError):
+                    batch_state.validate_state(state)
+        state = self.dependency_state()
+        self.write(state, -1)
+        state["revision"] = 1
+        state["dependencies"]["T2"] = ["T1"]
+        with self.assertRaises(ValueError):
+            self.write(state, 0)
+
+    def test_local_block_cannot_skip_uncertain_dispatch_or_live_worker(self):
+        state = self.dependency_state()
+        self.local_block(state)
+        state["batches"][0].update(dispatch_id="dispatch-B1")
+        with self.assertRaises(ValueError):
+            batch_state.validate_state(state)
+
+    def test_dependency_state_rejects_checkpoint_drift_before_local_block_or_dispatch(self):
+        state=self.dependency_state()
+        (self.workspace/'unrelated.py').write_text('drift = True')
+        subprocess.run(['git','-C',str(self.workspace),'add','unrelated.py'],check=True)
+        subprocess.run(['git','-C',str(self.workspace),'commit','-qm','unrelated drift'],check=True)
+        failure=run_evidence(self.workspace,self.commit_id,[sys.executable,'-c','import time; time.sleep(.02)'],.001)
+        with self.assertRaisesRegex(ValueError,'checkpoint'):
+            blocked=batch_state.record_local_block(state,'T1','native acceptance tool timed out',failure)
+            batch_state.validate_state(blocked)
+        state['status']='paused'
+        batch_state.validate_state(state)
+
+    def test_local_block_rejects_dirty_workspace_and_stale_or_rewritten_evidence(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        state["revision"] = 1
+        self.local_block(state)
+        (self.workspace / "unverified.py").write_text("unverified = True\n")
+        with self.assertRaisesRegex(ValueError, "fresh evidence|clean workspace"):
+            self.write(state, 0)
+        (self.workspace / "unverified.py").unlink()
+        path = self.write(state, 0)
+        state["revision"] = 2
+        state["local_blocks"]["T1"]["reason"] = "native acceptance tool is unavailable"
+        with self.assertRaisesRegex(ValueError, "history is immutable|observed tooling"):
+            self.write(state, 1)
+        self.assertEqual("native acceptance tool timed out", json.loads(path.read_text())["local_blocks"]["T1"]["reason"])
+
+    def test_public_local_block_command_atomically_selects_the_next_task(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        evidence = run_evidence(self.workspace, self.commit_id, [sys.executable, "-c", "import time; time.sleep(5)"], .05)
+        payload = {"state": state, "task_id": "T1", "reason": "native acceptance tool timed out", "evidence": evidence}
+        argv = [sys.executable, str(MODULE_PATH), "block-local", "--input", "-", "--state-root", str(self.root),
+                "--expected-revision", "0", "--run-id", state["run_id"], "--writer-id", state["writer_id"]]
+        result = subprocess.run(argv, input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        saved = json.loads(Path(json.loads(result.stdout)["path"]).read_text())
+        self.assertEqual("active", saved["status"])
+        self.assertEqual("B2", saved["current_batch"])
+        self.assertEqual(1, saved["revision"])
+        stale = subprocess.run(argv, input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(2, stale.returncode)
+
+    def test_local_block_requires_delegate_cleanup_before_independent_dispatch(self):
+        from test_delivery_next import runtime_binding, cleanup_receipt
+        from types import SimpleNamespace
+        state = self.dependency_state()
+        state['batches'][0].update(status='running', dispatch_id='dispatch-B1')
+        register_worker(state, 0, 'thread-1')
+        self.write(state, -1)
+        receipt('B1', 'dispatch-B1', self.commit_id, self.tree_hash,
+                self.workspace, self.commit_id)
+        path = delegate_state_path(state['delegate_state_root'], state['repo_id'], 'T1', 'delegate-B1')
+        child = json.loads(path.read_text())
+        child.update(status='blocked', blocked_code='environment',
+                     blocked_reason='native acceptance tool timed out', runtime_binding=runtime_binding())
+        child['worker_tree_receipt'] = cleanup_receipt(
+            child['runtime_binding'], child['revision'], [], [], ['orphan-writer'], '2026-10-08T00:00:00Z')
+        self.assertEqual('blocked', batch_state.validate_delegate_state(child, SimpleNamespace(), check_workspace=True))
+        path.write_text(json.dumps(child))
+        failed = run_evidence(self.workspace, self.commit_id, [sys.executable, '-c', 'import time; time.sleep(5)'], .05)
+        blocked = batch_state.record_local_block(state, 'T1', 'native acceptance tool timed out',
+                                                failed, worker_status='blocked')
+        with self.assertRaisesRegex(ValueError, 'cleanup'):
+            self.write(blocked, 0)
+        child['worker_tree_receipt']['unexpected_refs'] = []
+        child['blocked_code'] = 'budget_exhausted'
+        path.write_text(json.dumps(child))
+        with self.assertRaisesRegex(ValueError, 'tooling cause'):
+            self.write(blocked, 0)
+        child['blocked_code'] = 'environment'
+        path.write_text(json.dumps(child))
+        saved = json.loads(self.write(blocked, 0).read_text())
+        self.assertEqual('B2', saved['current_batch'])
+        child.update(status='active',blocked_code=None,blocked_reason=None)
+        path.write_text(json.dumps(child))
+        with self.assertRaisesRegex(ValueError,'managed delegate'):
+            batch_state.validate_state(saved)
+
+    def test_blocked_delegate_history_survives_independent_source_changing_completion(self):
+        from test_delivery_next import runtime_binding, cleanup_receipt
+        state = self.dependency_state()
+        state['batches'][0].update(status='running', dispatch_id='dispatch-B1')
+        register_worker(state, 0, 'thread-1')
+        self.write(state, -1)
+        receipt('B1', 'dispatch-B1', self.commit_id, self.tree_hash, self.workspace, self.commit_id)
+        path = delegate_state_path(state['delegate_state_root'], state['repo_id'], 'T1', 'delegate-B1')
+        child = json.loads(path.read_text())
+        child.update(status='blocked', blocked_code='environment',
+                     blocked_reason='native acceptance tool timed out', runtime_binding=runtime_binding())
+        child['worker_tree_receipt'] = cleanup_receipt(
+            child['runtime_binding'], child['revision'], [], [], [], '2026-10-08T00:00:00Z')
+        path.write_text(json.dumps(child))
+        argv = [sys.executable, '-c', 'import time; time.sleep(.02)']
+        failed = run_evidence(self.workspace, self.commit_id, argv, .001)
+        state = batch_state.record_local_block(state, 'T1', 'native acceptance tool timed out',
+                                               failed, worker_status='blocked')
+        self.write(state, 0)
+        original = copy.deepcopy(state['local_blocks']['T1'])
+        state['revision'] += 1
+        state['batches'][1].update(status='dispatching', dispatch_id='dispatch-B2')
+        self.write(state, state['revision'] - 1)
+        state['revision'] += 1
+        state['batches'][1]['status'] = 'running'
+        register_worker(state, 1, 'thread-2')
+        self.write(state, state['revision'] - 1)
+        (self.workspace / 'b').write_text('independent implementation\n')
+        subprocess.run(['git', '-C', str(self.workspace), 'add', 'b'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'independent implementation'], check=True)
+        checkpoint = batch_state.git_output(self.workspace, 'rev-parse', 'HEAD')
+        state['revision'] += 1
+        second = state['batches'][1]
+        second.update(status='validating-receipt', worker_status='completed')
+        second['receipt'] = receipt('B2', 'dispatch-B2', checkpoint,
+            batch_state.git_output(self.workspace, 'rev-parse', 'HEAD^{tree}'), self.workspace, self.commit_id)
+        second_path = delegate_state_path(state['delegate_state_root'], state['repo_id'], 'T2', 'delegate-B2')
+        second_child = json.loads(second_path.read_text())
+        second_child['execution_control']['routing'] = routing(allowed_paths=['b'])
+        second_path.write_text(json.dumps(second_child))
+        self.write(state, state['revision'] - 1)
+        state['revision'] += 1
+        second['status'] = 'completed'
+        state.update(status='blocked', blocked_reason="local blockers: ['T1']; waiting: []", current_batch=None)
+        saved = json.loads(self.write(state, state['revision'] - 1).read_text())
+        self.assertEqual(original, saved['local_blocks']['T1'])
+        self.assertEqual(checkpoint, batch_state.verified_checkpoint(saved))
+        recovered = batch_state.recover_local_block(saved, 'T1', run_evidence(self.workspace, checkpoint, argv))
+        self.write(recovered, saved['revision'])
+        self.assertEqual('B1', recovered['current_batch'])
+        self.assertEqual(original, recovered['local_blocks']['T1'])
+        self.assertEqual(checkpoint, batch_state.execution_capsule(recovered)['baseline'])
+        child['blocked_reason'] = 'different failure'
+        path.write_text(json.dumps(child))
+        with self.assertRaisesRegex(ValueError, 'tooling cause'):
+            batch_state.validate_state(recovered)
+
+    def test_actual_final_failure_cannot_be_erased_without_current_same_command_pass(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        marker = Path(self.temporary.name) / 'verification-recovered'
+        argv = [sys.executable, '-c', f'from pathlib import Path; raise SystemExit(0 if Path({str(marker)!r}).exists() else 1)']
+        failed = run_evidence(self.workspace, self.commit_id, argv)
+        entry = state['final_acceptance'][0]
+        entry.update(result='fail', freshness='fresh', evidence=failed,
+                     source_fingerprint=failed['source']['source_fingerprint'])
+        state['revision'] = 1
+        self.write(state, 0)
+        for replacement in ('not yet run', run_evidence(self.workspace, self.commit_id, [sys.executable, '-c', 'pass']),
+                            run_evidence(self.workspace, self.commit_id, argv)):
+            erased = copy.deepcopy(state)
+            erased['revision'] += 1
+            erased['final_acceptance'][0].update(result='unknown', freshness='unavailable', evidence=replacement)
+            with self.assertRaisesRegex(ValueError, 'actual final failure'):
+                self.write(erased, 1)
+        marker.touch()
+        passed = run_evidence(self.workspace, self.commit_id, argv)
+        recovered = copy.deepcopy(state)
+        recovered['revision'] += 1
+        recovered['final_acceptance'][0].update(result='unknown', freshness='fresh', evidence=passed,
+            source_fingerprint=passed['source']['source_fingerprint'])
+        stale = copy.deepcopy(recovered)
+        stale['final_acceptance'][0]['freshness'] = 'stale'
+        with self.assertRaisesRegex(ValueError, 'actual final failure'):
+            self.write(stale, 1)
+        saved = json.loads(self.write(recovered, 1).read_text())
+        result = subprocess.run([sys.executable, str(MODULE_PATH.with_name('batch_next.py')), '--input', '-'],
+            input=json.dumps(saved), capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual({'action': 'dispatch', 'task_id': 'T1'}, json.loads(result.stdout))
+        self.assertEqual('unknown', saved['final_acceptance'][0]['result'])
+
+    def test_source_changes_do_not_clear_an_unresolved_actual_final_failure(self):
+        state = self.dependency_state()
+        state['batches'][0].update(status='running', dispatch_id='dispatch-B1')
+        register_worker(state, 0, 'thread-1')
+        failed = run_evidence(self.workspace, self.commit_id, [sys.executable, '-c', 'raise SystemExit(1)'])
+        state['final_acceptance'][0].update(result='fail', freshness='fresh', evidence=failed,
+            source_fingerprint=failed['source']['source_fingerprint'])
+        self.write(state, -1)
+        (self.workspace / 'a').write_text('new implementation after failure')
+        result = subprocess.run([sys.executable, str(MODULE_PATH.with_name('batch_next.py')), '--input', '-'],
+            input=json.dumps(state), capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual('block', decision['action'])
+        self.assertIn('actual final verification failure', decision['reason'])
+
+    def test_historical_local_block_rejects_unverified_or_dirty_source_boundaries(self):
+        state = self.dependency_state()
+        self.local_block(state)
+        block = copy.deepcopy(state['local_blocks']['T1'])
+        (self.workspace / 'b').write_text('unverified changes')
+        block['evidence'] = run_evidence(self.workspace, self.commit_id, ['missing-converge-tool'])
+        with self.assertRaisesRegex(ValueError, 'historical checkpoint'):
+            batch_state.validate_local_block_cleanup(state, block)
+        subprocess.run(['git', '-C', str(self.workspace), 'add', 'b'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'unverified checkpoint'], check=True)
+        checkpoint = batch_state.git_output(self.workspace, 'rev-parse', 'HEAD')
+        block['evidence'] = run_evidence(self.workspace, checkpoint, ['missing-converge-tool'])
+        with self.assertRaisesRegex(ValueError, 'historical checkpoint'):
+            batch_state.validate_local_block_cleanup(state, block)
+
+    def test_later_tool_failure_uses_the_delegates_execution_checkpoint(self):
+        state = self.dependency_state()
+        historical_tool_gap=run_evidence(self.workspace,self.commit_id,['missing-converge-final-acceptance-tool'])
+        third = copy.deepcopy(state['batches'][1])
+        third.update(batch_id='B3',task_id='T3',capsule=capsule('B3',baseline=self.commit_id))
+        third['capsule']['scope']=['c'];state['batches'].append(third);state['dependencies']['T3']=[]
+        (self.workspace/'a').write_text('first checkpoint')
+        subprocess.run(['git','-C',str(self.workspace),'add','a'],check=True)
+        subprocess.run(['git','-C',str(self.workspace),'commit','-qm','first checkpoint'],check=True)
+        checkpoint=batch_state.git_output(self.workspace,'rev-parse','HEAD')
+        tree=batch_state.git_output(self.workspace,'rev-parse','HEAD^{tree}')
+        first=state['batches'][0]
+        first.update(status='completed',dispatch_id='dispatch-B1')
+        register_worker(state,0,'worker-1');first['worker_status']='completed'
+        first['receipt']=receipt('B1','dispatch-B1',checkpoint,tree,self.workspace,self.commit_id)
+        path=delegate_state_path(state['delegate_state_root'],state['repo_id'],'T1','delegate-B1')
+        child=json.loads(path.read_text());child['execution_control']['routing']=routing(allowed_paths=['a'])
+        path.write_text(json.dumps(child))
+        state['current_batch']='B2';self.write(state,-1)
+        self.assertEqual(checkpoint,batch_state.execution_capsule(state)['baseline'])
+        no_change=copy.deepcopy(state)
+        second=no_change['batches'][1]
+        second.update(status='completed',dispatch_id='dispatch-B2')
+        register_worker(no_change,1,'worker-2');second['worker_status']='completed'
+        second['receipt']=receipt('B2','dispatch-B2',checkpoint,tree,self.workspace,checkpoint)
+        path=delegate_state_path(state['delegate_state_root'],state['repo_id'],'T2','delegate-B2')
+        child=json.loads(path.read_text());child['execution_control']['routing']=routing(allowed_paths=['b'])
+        path.write_text(json.dumps(child));no_change['current_batch']='B3'
+        batch_state.validate_state(no_change)
+        self.assertEqual(checkpoint,batch_state.execution_capsule(no_change)['baseline'])
+        wrong_order=copy.deepcopy(no_change)
+        wrong_order['dependencies']['T1']=['T2']
+        with self.assertRaisesRegex(ValueError,'checkpoint chain|dependency'):
+            batch_state.validate_state(wrong_order)
+        no_change['dependencies']['T2']=['T1']
+        batch_state.validate_state(no_change)
+        all_done=copy.deepcopy(no_change);all_done['batches'].pop();all_done['dependencies'].pop('T3');all_done['current_batch']=None
+        gap=run_evidence(self.workspace,self.commit_id,['missing-converge-final-acceptance-tool'])
+        all_done['final_acceptance'][0].update(result='unknown',freshness='unavailable',evidence=gap,
+            source_fingerprint=gap['source']['source_fingerprint'])
+        result=subprocess.run([sys.executable,str(MODULE_PATH.with_name('batch_next.py')),'--input','-'],
+            input=json.dumps(all_done),capture_output=True,text=True)
+        decision=json.loads(result.stdout)
+        self.assertEqual('block',decision['action']);self.assertIn('tooling',decision['reason'])
+        all_done['final_acceptance'][0]['evidence']=historical_tool_gap
+        result=subprocess.run([sys.executable,str(MODULE_PATH.with_name('batch_next.py')),'--input','-'],
+            input=json.dumps(all_done),capture_output=True,text=True)
+        decision=json.loads(result.stdout)
+        self.assertEqual('block',decision['action']);self.assertIn('tooling',decision['reason'])
+        failed=run_evidence(self.workspace,checkpoint,[sys.executable,'-c','import time; time.sleep(.02)'],.001)
+        blocked=batch_state.record_local_block(state,'T2','native acceptance tool timed out',failed)
+        saved=json.loads(self.write(blocked,0).read_text())
+        self.assertEqual('B3',saved['current_batch'])
+        self.assertEqual(checkpoint,batch_state.execution_capsule(saved)['baseline'])
+        recovered=batch_state.recover_local_block(saved,'T2',run_evidence(self.workspace,checkpoint,failed['argv']))
+        (self.workspace/'c').write_text('independent after recovery')
+        subprocess.run(['git','-C',str(self.workspace),'add','c'],check=True)
+        subprocess.run(['git','-C',str(self.workspace),'commit','-qm','independent checkpoint'],check=True)
+        later=batch_state.git_output(self.workspace,'rev-parse','HEAD')
+        third=recovered['batches'][2];third.update(status='completed',dispatch_id='dispatch-B3')
+        register_worker(recovered,2,'worker-3');third['worker_status']='completed'
+        third['receipt']=receipt('B3','dispatch-B3',later,batch_state.git_output(self.workspace,'rev-parse','HEAD^{tree}'),
+            self.workspace,checkpoint)
+        path=delegate_state_path(recovered['delegate_state_root'],recovered['repo_id'],'T3','delegate-B3')
+        child=json.loads(path.read_text());child['execution_control']['routing']=routing(allowed_paths=['c']);path.write_text(json.dumps(child))
+        with self.assertRaisesRegex(ValueError,'recovery.*source|fresh'):
+            batch_state.validate_state(recovered)
+        completed=copy.deepcopy(recovered)
+        completed['recoveries']['T2']=run_evidence(self.workspace,later,failed['argv'])
+        second=completed['batches'][1];second.update(status='completed',dispatch_id='dispatch-B2')
+        register_worker(completed,1,'worker-2');second['worker_status']='completed'
+        second['receipt']=receipt('B2','dispatch-B2',later,batch_state.git_output(self.workspace,'rev-parse','HEAD^{tree}'),
+            self.workspace,later)
+        path=delegate_state_path(completed['delegate_state_root'],completed['repo_id'],'T2','delegate-B2')
+        child=json.loads(path.read_text());child['execution_control']['routing']=routing(allowed_paths=['b']);path.write_text(json.dumps(child))
+        completed.update(status='complete',current_batch=None)
+        proof=run_evidence(self.workspace,self.commit_id,[sys.executable,'-c','pass'])
+        completed['final_acceptance'][0].update(result='pass',freshness='fresh',evidence=proof,source_fingerprint=proof['source']['source_fingerprint'])
+        batch_state.validate_state(completed)
+        subprocess.run(['git','-C',str(self.workspace),'checkout','--detach','-q',checkpoint],check=True)
+        proof=run_evidence(self.workspace,self.commit_id,[sys.executable,'-c','pass'])
+        completed['final_acceptance'][0].update(evidence=proof,source_fingerprint=proof['source']['source_fingerprint'])
+        with self.assertRaisesRegex(ValueError,'checkpoint|workspace drift'):
+            batch_state.validate_state(completed)
+
+    def test_final_tooling_history_cannot_be_erased_or_retried_as_unknown(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        marker = self.root / 'tool-ready'
+        argv = [sys.executable, '-c', f'from pathlib import Path; import time; print(time.monotonic(), flush=True); time.sleep(0 if Path({str(marker)!r}).exists() else 5)']
+        failed = run_evidence(self.workspace, self.commit_id, argv, 1)
+        state['revision'] = 1
+        state['final_acceptance'][0].update(result='unknown', freshness='unavailable', evidence=failed,
+            source_fingerprint=failed['source']['source_fingerprint'])
+        self.write(state, 0)
+        for evidence in ('not yet run', run_evidence(self.workspace, self.commit_id, argv, 1)):
+            candidate = copy.deepcopy(state)
+            candidate['revision'] = 2
+            candidate['final_acceptance'][0]['evidence'] = evidence
+            with self.subTest(evidence=type(evidence).__name__), self.assertRaisesRegex(ValueError, 'final tooling history'):
+                self.write(candidate, 1)
+        marker.touch()
+        passed = run_evidence(self.workspace, self.commit_id, argv)
+        early = copy.deepcopy(state)
+        early['revision'] = 2
+        early['final_acceptance'][0].update(result='pass', freshness='fresh', evidence=passed,
+            source_fingerprint=passed['source']['source_fingerprint'])
+        with self.assertRaisesRegex(ValueError, 'all batches must complete before final tooling recovery'):
+            batch_state.validate_state(early)
+        with self.assertRaisesRegex(ValueError, 'all batches must complete before final tooling recovery'):
+            self.write(early, 1)
+        for index, batch in enumerate(state['batches']):
+            batch.update(status='dispatching', dispatch_id=f"dispatch-{batch['batch_id']}")
+            state['revision'] += 1; self.write(state, state['revision'] - 1)
+            batch['status'] = 'running'; register_worker(state, index, f'worker-{index}')
+            state['revision'] += 1; self.write(state, state['revision'] - 1)
+            batch.update(status='validating-receipt', worker_status='completed')
+            batch['receipt'] = receipt(batch['batch_id'], batch['dispatch_id'], self.commit_id,
+                batch_state.git_output(self.workspace, 'rev-parse', 'HEAD^{tree}'), self.workspace, self.commit_id)
+            path = delegate_state_path(state['delegate_state_root'], state['repo_id'], batch['task_id'], batch['delegate_run_id'])
+            child = json.loads(path.read_text())
+            child['execution_control']['routing'] = routing(allowed_paths=batch['capsule']['scope'])
+            path.write_text(json.dumps(child))
+            state['revision'] += 1; self.write(state, state['revision'] - 1)
+            batch['status'] = 'completed'
+            state['current_batch'] = state['batches'][index + 1]['batch_id'] if index + 1 < len(state['batches']) else None
+            state['revision'] += 1; self.write(state, state['revision'] - 1)
+        passed = run_evidence(self.workspace, self.commit_id, argv)
+        state['revision'] += 1
+        state.update(status='blocked',blocked_reason='final acceptance tooling remains uncovered; no independent task remains')
+        self.write(state, state['revision'] - 1)
+        blocked=copy.deepcopy(state)
+        state.update(status='complete',blocked_reason=None)
+        state['revision'] += 1
+        state['final_acceptance'][0].update(result='pass', freshness='fresh', evidence=passed,
+            source_fingerprint=passed['source']['source_fingerprint'])
+        self.write(state, state['revision'] - 1)
+        unsafe=copy.deepcopy(blocked);unsafe['blocked_reason']='user stopped execution'
+        with self.assertRaises(ValueError):
+            batch_state.validate_transition(unsafe,state)
+
+    def test_new_observed_tool_pass_allows_one_recovery_without_erasing_block_history(self):
+        state = self.dependency_state()
+        state["dependencies"]["T2"] = ["T1"]
+        self.write(state, -1)
+        marker = self.root / "tool-ready"
+        argv = [sys.executable, "-c", f"from pathlib import Path; import time; time.sleep(0 if Path({str(marker)!r}).exists() else 5)"]
+        failed = run_evidence(self.workspace, self.commit_id, argv, .05)
+        from copy import deepcopy
+        blocked = batch_state.record_local_block(state, "T1", "native acceptance tool timed out", failed)
+        self.write(blocked, 0)
+        old_block = deepcopy(blocked["local_blocks"]["T1"])
+        marker.touch()
+        observed = run_evidence(self.workspace, self.commit_id, argv)
+        recovered = batch_state.recover_local_block(blocked, "T1", observed)
+        path = self.write(recovered, 1)
+        saved = json.loads(path.read_text())
+        self.assertEqual("active", saved["status"])
+        self.assertEqual("B1", saved["current_batch"])
+        self.assertEqual(old_block, saved["local_blocks"]["T1"])
+        self.assertEqual(1, saved["batches"][0]["recovery_count"])
+        with self.assertRaises(ValueError):
+            batch_state.recover_local_block(saved, "T1", observed)
+
+    def test_recovery_does_not_consume_budget_before_the_task_is_selected(self):
+        state = self.dependency_state()
+        first = copy.deepcopy(state['batches'][0])
+        first.update(batch_id='B0', task_id='T0', capsule=capsule('B0', baseline=self.commit_id))
+        first['capsule']['scope'] = ['c']
+        state['batches'].insert(0, first)
+        state['dependencies']['T0'] = ['T2']
+        marker = self.root / 'tool-ready'
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        argv = [sys.executable, '-c', f'from pathlib import Path; import time; time.sleep(0 if Path({str(marker)!r}).exists() else 5)']
+        failed = run_evidence(self.workspace, self.commit_id, argv, .05)
+        blocked = batch_state.record_local_block(state, 'T1', 'native acceptance tool timed out', failed)
+        (self.workspace / 'b').write_text('independent checkpoint')
+        subprocess.run(['git', '-C', str(self.workspace), 'add', 'b'], check=True)
+        subprocess.run(['git', '-C', str(self.workspace), 'commit', '-qm', 'independent checkpoint'], check=True)
+        checkpoint = batch_state.git_output(self.workspace, 'rev-parse', 'HEAD')
+        second = blocked['batches'][2]
+        second.update(status='completed', dispatch_id='dispatch-B2')
+        register_worker(blocked, 2, 'worker-2')
+        second['worker_status'] = 'completed'
+        second['receipt'] = receipt('B2', 'dispatch-B2', checkpoint,
+            batch_state.git_output(self.workspace, 'rev-parse', 'HEAD^{tree}'), self.workspace, self.commit_id)
+        path = delegate_state_path(blocked['delegate_state_root'], blocked['repo_id'], 'T2', 'delegate-B2')
+        child = json.loads(path.read_text())
+        child['execution_control']['routing'] = routing(allowed_paths=['b'])
+        path.write_text(json.dumps(child))
+        blocked['current_batch'] = 'B0'
+        batch_state.validate_state(blocked)
+        marker.touch()
+        observed = run_evidence(self.workspace, checkpoint, argv)
+        before = copy.deepcopy(blocked)
+        with self.assertRaisesRegex(ValueError, 'selected task'):
+            batch_state.recover_local_block(blocked, 'T1', observed)
+        self.assertEqual(before, blocked)
+        self.assertEqual(0, blocked['batches'][1]['recovery_count'])
+        self.assertEqual('T0', batch_state.execution_capsule(blocked)['task_id'])
+
+    def test_recovery_rejects_failure_unrelated_pass_and_stale_evidence(self):
+        state = self.dependency_state()
+        self.write(state, -1)
+        failed = run_evidence(self.workspace, self.commit_id, [sys.executable, "-c", "import time; time.sleep(5)"], .05)
+        blocked = batch_state.record_local_block(state, "T1", "native acceptance tool timed out", failed)
+        self.write(blocked, 0)
+        unrelated = run_evidence(self.workspace, self.commit_id, [sys.executable, "-c", "pass"])
+        for proof in (failed, unrelated):
+            with self.subTest(proof=proof["exit_code"]), self.assertRaises(ValueError):
+                batch_state.recover_local_block(blocked, "T1", proof)
+        register_worker(state, 0, "thread-1")
+        with self.assertRaises(ValueError):
+            batch_state.validate_state(state)
+
     def test_batch_state_helpers_reject_invalid_identity_evidence_and_capsules(self):
         for helper, value in (
             (batch_state.require_mapping, []), (batch_state.require_list, {}),

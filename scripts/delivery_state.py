@@ -256,6 +256,16 @@ def validate_action_attempt_transition(previous, candidate):
 
 
 def validate_transition(previous, candidate):
+    from plan_execution import FINAL_TOOLING_BLOCK, tooling_acceptance_recovered
+    if previous['status'] == 'blocked' and candidate['status'] == 'complete' \
+            and previous.get('blocked_code') == 'environment' \
+            and previous.get('blocked_reason') == FINAL_TOOLING_BLOCK \
+            and previous.get('source_receipt') == candidate.get('source_receipt') \
+            and previous['source_fingerprint'] == candidate['source_fingerprint'] \
+            and tooling_acceptance_recovered(previous['ledger']['acceptance'],
+                [item['acceptance'] for item in previous['ledger'].get('acceptance_history', [])],
+                candidate['ledger']['acceptance'], previous['source_receipt']):
+        previous = {**previous, 'status':'active', 'blocked_code':None, 'blocked_reason':None}
     arming = previous["schema_version"] == 10 and candidate["schema_version"] == 11
     for field in IMMUTABLE_FIELDS:
         if arming and field == "schema_version":

@@ -219,6 +219,42 @@ def final_evidence(source):
 
 
 class PlanCheckTest(unittest.TestCase):
+    def test_audit_follows_observed_source_chain_after_independent_tasks_run_out_of_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            def git(*args):
+                subprocess.run(["git", "-C", directory, *args], check=True, capture_output=True)
+            git("init", "-q")
+            git("config", "user.email", "test@example.com")
+            git("config", "user.name", "Test")
+            (workspace / "a").write_text("before")
+            (workspace / "b").write_text("before")
+            git("add", ".")
+            git("commit", "-qm", "baseline")
+            baseline = evidence_contract.workspace_source(workspace, "HEAD")
+            t1, t2 = task("T1", ["a"], depends_on=["T2"]), task("T2", ["b"])
+            command = shlex.join([sys.executable, "-c", "pass"])
+            t1["verification"] = t2["verification"] = [command]
+            frozen = plan([t1, t2])
+            frozen.pop("closure_matrix")
+            frozen["baseline"] = {"commit": baseline["commit_id"], "source": baseline}
+            cursor, results = baseline, {}
+            for tid, path in (("T2", "b"), ("T1", "a")):
+                (workspace / path).write_text("after")
+                proof = evidence_contract.run_evidence(workspace, "HEAD", [sys.executable, "-c", "pass"])
+                results[tid] = {"status": "DONE", "fresh_pass": True, "source_before": cursor,
+                                "source_after": proof["source"], "evidence": [proof]}
+                cursor = proof["source"]
+            proof = evidence_contract.run_evidence(workspace, "HEAD", [sys.executable, "-c", "pass"])
+            envelope = {"plan": frozen, "task_results": results, "final_acceptance": [{
+                "criterion": "all checks pass", "result": "pass", "freshness": "fresh", "evidence": proof}]}
+            self.assertTrue(plan_check.audit(envelope, workspace)["complete"])
+            results["T2"]["status"] = "PARTIAL"
+            output = plan_check.audit(envelope, workspace)
+            self.assertFalse(output["complete"])
+            self.assertTrue(output["source_chain_complete"])
+            self.assertEqual("PARTIAL", output["tasks"]["T1"])
+
     def test_plan_cannot_accept_a_self_attested_graph_hash(self):
         value = plan([task('T1', ['src'])])
         receipt = value['closure_matrix']['graph_receipt']

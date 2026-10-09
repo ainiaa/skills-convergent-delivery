@@ -18,6 +18,18 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 `block` 始终停止业务，不转回 `sync-plan`。运行时没有终态原生同步动作：控制器在终态报告前读取阻塞投影，并以文字报告阻塞原因，不等待、写入确认、重试或恢复执行。若宿主在同一控制器中实际提供原生计划工具，只有取得该次调用回执后才能额外声明已展示；没有工具或回执时，该原生展示保持未覆盖。阻塞投影将当前项设为 pending，保留冻结步骤名称和已完成项；只支持 pending/in_progress/completed 的宿主也不会继续显示当前项正在执行。
 
+### 局部阻塞与独立事项
+
+多任务控制器先冻结 Plan v6 的 `depends_on`、`owned_paths` 和独立验证命令；不按文件不同就推断业务独立。单任务 `block` 仍停止该 run；父控制器只在确认它已停止、清场和源码边界安全后选择其他事项。用户停止、权限/业务决定、真实验证失败、未知派发结果、清场不明或预算耗尽始终阻塞整个运行。工具缺失/超时只能分类为该项的局部证据缺口，不满足它的依赖，也不放行最终 complete。
+
+普通同会话计划每次推进前，把既有 `{plan, task_results, final_acceptance}` 审计 envelope 经 stdin 交给 `python3 scripts/plan_execution.py --input - --workspace <workspace> --implementation-authorized`。它先调用完成审计核对源码链、范围与每条冻结验证命令，只有 audited DONE 才满足依赖。工具阻塞记录为 `task_results.<id>={status:PARTIAL, blocker:{reason:<精确工具分类>, evidence:<observed failure receipt>}}`；若该项已产生源码改动，还须保留真实 `source_before/source_after`，审计会核对部分改动的范围和源码链。分类仅为 `native acceptance tool is unavailable` 或 `native acceptance tool timed out`。无关任务按冻结顺序推进；直接/间接依赖和重叠路径任务等待。结果中的 `progress.blocked/waiting/blocker_reasons` 是用户进度来源，不另建可写真相。
+
+普通计划 envelope 必须提供 `runtime_state_path`，指向现有受管 Single State；计划 ID 与该 run 的 task_key 一致。入口核对当前源码、规范状态路径和实际 writer 租约，再核对 worker、runner 与未结束 action attempt。缺少状态、全局 blocked、未知派发或清场未完成时停止，不用验收工具回执推断整个任务已停止。局部阻塞记在 task_results，父 run 保持 active；普通实现动作结束后持久化实际 outcome 与失败回执指纹，结果或失败证据丢失时停止；已有动作记录还按实际顺序核对依赖，不能靠重排源码轨迹掩盖倒序执行；恢复执行使用现有 autonomy action attempts，在执行前持久化 helper 返回的 implementation-recovery intent，提交后的相同任务恢复动作不可重放，缺少持久化动作记录能力时保持阻塞；完整重建包括修改后回退、无改动回执和恢复前尝试的源码边界链，所有提供的边界必须接入从基线到当前源码的链。源码链中的尝试必须满足当时已完成的显式依赖与共享范围顺序；任务其它证据或当前源码的最终验收证据中存在真实失败时仍全局停止。最终验收工具故障必须先把 observed 回执持久化到现有 ledger.acceptance；更新由原 acceptance_history 留存，输入清空或源码变化不能解除历史工具缺口。只有同一工具在当前源码上的真实通过证据才能解除该缺口。已确认的最终工具阻塞只有在全部任务完成、全部冻结验收有当前通过证据且旧故障 argv 全部匹配时，才可从 blocked 直接进入正常 complete 校验；不恢复 active 或业务写入。普通父状态还须为 environment 分类，源码保持不变，完成、预算、清场与验收历史门禁继续执行。
+
+有新鲜同工具 observed pass 时，保留旧 blocker，将原 PARTIAL/NOT_DONE 结果整体保存为 `prior_attempt`（最多一个），以 `status=NOT_DONE` 和 `recovery_evidence=<新 receipt>` 开启该项的一次新尝试；通过证据必须匹配原工具 argv 和当前源码。尝试结束后立即记录 DONE 或 PARTIAL，不能维持 NOT_DONE 重放动作；再次 PARTIAL 返回全局预算阻塞。DONE 保留历史 blocker/recovery_evidence，恢复证据绑定该次实现的 source_before，完成证据仍绑定 source_after。局部原因必须由 Evidence runner 的 `tooling_failure=timed_out/unavailable` 观测支持，非零退出码或失败测试不能代替。原尝试的源码边界继续参加审计，新尝试单独记录 source_before/source_after。没有新证据不改状态、不重试；正在执行的任务先完成或安全停止，不能再次调用计划入口制造第二个 writer。
+
+受管多任务使用 Batch state v5 的同一选择器，记录/恢复通过 `block-local` / `recover-local` 写入命令；不能改写子 run 的 block 来继续旧动作。已有 v4 继续顺序模式，若要启用依赖调度须在没有活动或不确定派发时显式重新冻结新 v5 run，保留旧状态。普通单任务无需创建 Batch 状态。无可推进项时返回一次聚合 block，说明卡住项、依赖等待项和所需最小恢复条件；剩余项都阻塞绝不等于完成。所有完成结果仍须通过全计划 audit 与新鲜最终验收。
+
 ### 分步可见交付
 
 用户明确要求逐步或分步执行时，控制器先核对当前可调用工具（如 `update_plan`，以实际工具名为准），不能按宿主名称猜测、把“没有调用”当成“没有工具”，或沿用旧会话的能力结论。原生计划面板、计划文件和 commentary 文字汇报是三种不同产物。

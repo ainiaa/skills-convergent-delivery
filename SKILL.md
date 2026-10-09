@@ -24,6 +24,7 @@ Converge 始终是 controller，负责同一会话内已授权的软件交付；
 - 每个 finding 必须是修复、阻塞决策或范围外记录之一；不以建议替代同范围闭环。
 - 已进入 Single State 的后续复核必须经过 `delivery_next.py` 的共享下一动作入口；当前源码的结构化范围内 defect 返回 `review-repair`，预算耗尽或问题未分类则返回 `block`。修复沿用既有 writer、repair fingerprint 和预算消费规则，不直接把有 finding 的状态推进到完成。普通聊天的 Skill 引导不能声称已经硬拦截提问或结束；只有实际执行门禁的运行器才属于受控路径。
 - 模型自述不放行。没有本轮真实验证的验收不得称完成；命令不可用、超时或权限不足为 `uncovered`，不得放松检查取得通过。
+- 原生验收工具不可用或超时只影响对应验收结论，不撤销已有实现授权。范围和验收已冻结、后续源码工作可用现有测试独立验证时，继续该工作并保留工具缺口；不得因此结束整段实现或重复请求授权。无法独立验证、真实测试失败、权限/业务决定或已有受管状态 `block` 时仍停止；缺口未补齐不得宣称 complete。下一动作使用 [TDD 前置条件](references/tdd-providers.md#tddimpact-trace-v5) 中的既有 helper。
 - 用户明确指定为实现依据的引用（包括 `codex://`）是需求真源，不是背景提示。首次业务写入前必须通过当前宿主实际读取，并据此冻结范围与验收；不得未读参考就猜测实现，或用另一套行为替代。若引用未规定内部细节，沿用项目既有模式作最小选择；若其对完成需求必需但不可访问则阻塞。普通背景链接不构成门禁；持久化任务记录精确 reference 与读取结果，`inline` 任务在交付中说明已读取。
 - 用户将具体项目、目录、分支或实现明确指定为唯一基准，并要求“对齐、保持一致、迁移”或“按其修改”时，按 [参考基准对齐](references/reference-alignment.md) 执行。它不是普通参考：首次业务写入前必须冻结相关文件的差异清单；参考基准变更即使仍在同一项目，也必须作废旧清单并重新比较。
 - 首次终态回复前，一个用户任务必须在当前 task 内完成有限的构建、全范围复审、修复批和最终复核；若合法的同范围修复仍能继续，不得提前给出最终回执。安装 autonomy 后，Codex 的明确快捷指令“继续修复”/“继续修复已知问题”/`continue repair` 会在 `UserPromptSubmit` 受限地 arm 当前 workspace 的 repair gate，随后 Stop Hook 以原生 `decision:block` 在同一 task 交付一次冻结动作，绝不创建 successor task。该快捷门禁只是执行辅助；普通 task 不依赖它来完成首次闭环，也不以无用户消息重新开启已完成事项。
@@ -43,6 +44,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_engine.py" select --mode <auto|pdl
 Provider 选择冻结为 `native-v1` 或 `pdlc-v1`；native-v1 在首次业务写入前执行 `tdd_impact_guard.py preflight`，最终使用其 `rerun` 绑定当前源码。没有 CodeGraph、coverage 或可执行检查时保持 `uncovered`，不安装、不建索引、不降门槛。修改 Converge Suite 时更新本仓 `CHANGELOG.md` 的 `Unreleased`；目标项目的写入任务按其约定更新 changelog。
 
 ## 路由与终态
+
+已授权多事项采用 [局部阻塞与独立事项](references/execution-control.md#局部阻塞与独立事项)：冻结依赖和独立验证，工具缺口只阻塞该项及其依赖，共享 helper 继续独立事项；无可推进项再聚合报告。单任务 block 与用户停止、权限、真实失败、清场和有限预算门禁仍有效，恢复必须有新鲜同工具通过证据，不重试碰运气，也不将局部交付称为 complete。
 
 `planned_task=true` 只执行冻结 capsule。复杂、未知或长任务先用 `converge-plan`；同仓库并发写入先通过 [执行拓扑](references/execution-topology.md)，否则顺序执行；只有明确跨会话 checkpoint 才用 `converge-batch`。全量收口必须显式选择并使用 Plan matrix，不能由关键词推断。
 
