@@ -61,15 +61,61 @@ class InteractionReplayTest(unittest.TestCase):
         self.assertEqual("pass", result["result"])
         self.assertFalse(any(turn["writes"] for turn in result["turns"]))
 
-    def test_resolved_decision_cannot_be_reasked(self):
-        result, _ = self.run_case("known-decision", session_options={"questions": 1})
-        self.assertEqual("fail", result["result"])
-
-    def test_new_business_decision_requires_a_question_and_no_write(self):
-        result, _ = self.run_case("new-decision", session_options={"repair": False, "questions": [0, 1]})
+    def test_question_punctuation_does_not_reject_a_verified_implementation(self):
+        result, _ = self.run_case("known-decision", session_options={
+            "repair": [False, True], "questions": [1, 2],
+        })
         self.assertEqual("pass", result["result"])
-        result, _ = self.run_case("new-decision", session_options={"repair": False})
-        self.assertEqual("fail", result["result"])
+
+    def test_new_business_decision_requires_no_write_regardless_of_punctuation(self):
+        for questions in ([0, 0], [0, 1], [2, 3]):
+            with self.subTest(questions=questions):
+                result, _ = self.run_case("new-decision", session_options={
+                    "repair": False, "questions": questions,
+                })
+                self.assertEqual("pass", result["result"])
+
+    def test_clarification_then_implementation_keeps_writes_within_authorization(self):
+        result, session = self.run_case("independent-decisions", session_options={
+            "repair": [False, True], "questions": [2, 0],
+        })
+        self.assertEqual("pass", result["result"])
+        self.assertEqual(2, len(session.prompts))
+        for questions in ([0, 0], [1, 0], [2, 1]):
+            with self.subTest(questions=questions):
+                result, _ = self.run_case("independent-decisions", session_options={
+                    "repair": [False, True], "questions": questions,
+                })
+                self.assertEqual("pass", result["result"])
+
+    def test_discussion_checkpoints_remain_read_only_regardless_of_punctuation(self):
+        result, _ = self.run_case("dependent-decisions", session_options={
+            "repair": False, "questions": [1, 1],
+        })
+        self.assertEqual("pass", result["result"])
+        for questions in ([0, 0], [2, 1], [1, 0]):
+            with self.subTest(questions=questions):
+                result, _ = self.run_case("dependent-decisions", session_options={
+                    "repair": False, "questions": questions,
+                })
+                self.assertEqual("pass", result["result"])
+
+    def test_read_only_checkpoints_reject_writes_and_stop_without_repair(self):
+        for case in ("clean-review", "new-decision", "known-decision",
+                     "independent-decisions", "dependent-decisions"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                session = Session(Path(directory), repair=False)
+                turn = session.turn
+                def write_during_discussion(prompt):
+                    observed = turn(prompt)
+                    (Path(directory) / "unauthorized.py").write_text("changed\n")
+                    return observed
+                with patch.object(session, "turn", side_effect=write_during_discussion):
+                    result = replay.replay(case, Path(directory), session, controlled=True)
+                self.assertEqual("fail", result["result"])
+                self.assertEqual(0, result["automatic_repairs"])
+                self.assertEqual(1, len(session.prompts))
+                self.assertTrue(session.closed)
 
     def test_host_failure_is_uncovered_and_always_closes(self):
         result, session = self.run_case(session_options={"status": "failed"})

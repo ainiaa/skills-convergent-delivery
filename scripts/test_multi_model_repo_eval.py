@@ -4,9 +4,11 @@
 import copy
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from multi_model import resolve
 from multi_model_repo_eval import (
@@ -30,6 +32,30 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
         self.assertEqual(2, len(tasks))
         self.assertEqual({"normalize-slug", "positive-total"}, {task["task_id"] for task in tasks})
 
+    def test_missing_verifier_is_uncovered_instead_of_an_exception_or_pass(self):
+        result = _verify(self.workspace, [str(self.workspace / "missing-verifier")])
+        self.assertEqual("uncovered", result["status"])
+        self.assertIsNone(result["exit_code"])
+        with patch("multi_model_repo_eval.subprocess.run", return_value=subprocess.CompletedProcess([], 77)):
+            self.assertEqual("uncovered", _verify(self.workspace, ["verify"])["status"])
+
+    def test_verifier_binary_output_cannot_abort_the_task_result(self):
+        for code, expected in ((0, "passed"), (1, "failed")):
+            with self.subTest(exit_code=code):
+                result = _verify(self.workspace, [sys.executable, "-c",
+                    f"import os; os.write(1, b'\\xff'); os.write(2, b'\\xfe'); raise SystemExit({code})"])
+                self.assertEqual(expected, result["status"])
+                self.assertEqual(code, result["exit_code"])
+
+    def test_verifier_timeouts_keep_their_classification(self):
+        for effect in (subprocess.CompletedProcess([], 124), subprocess.TimeoutExpired("verify", 60)):
+            with self.subTest(effect=effect):
+                options = {"side_effect": effect} if isinstance(effect, Exception) else {"return_value": effect}
+                with patch("multi_model_repo_eval.subprocess.run", **options):
+                    result = _verify(self.workspace, ["verify"])
+                self.assertEqual("timed_out", result["status"])
+                self.assertEqual(124, result["exit_code"])
+
     def test_task_and_profile_contracts_reject_invalid_boundaries(self):
         tasks = load_tasks()
         invalid_cases = (
@@ -37,6 +63,7 @@ class MultiModelRepositoryEvalTest(unittest.TestCase):
             [{"task_id": "only"}],
             [{**tasks[0], "files": {"../escape.py": "bad"}}, tasks[1]],
             [{**tasks[0], "verify_argv": [1]}, tasks[1]],
+            [{**tasks[0], "verify_argv": ["python3", "bad\0argument"]}, tasks[1]],
         )
         for invalid in invalid_cases:
             with self.subTest(tasks=invalid), self.assertRaises(ValueError):

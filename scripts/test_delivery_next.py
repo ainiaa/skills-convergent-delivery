@@ -415,7 +415,7 @@ def desktop_binding():
 def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
                             integration_budget=0, integration_status=None,
                             integration_reviewer="reviewer-a", reviewer_ref="reviewer-a",
-                            full_closure=False):
+                            full_closure=False, integration_phase="initial", prior_findings=()):
     payload = upgrade_state(state(
         status="complete", current_stage="verify-final", revision=3,
         runtime_binding=runtime_binding(),
@@ -449,6 +449,7 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
     if integration_status is not None:
         requests.append({
             **base, "axis": "integration", "status": integration_status,
+            "phase": integration_phase,
             "reviewer_ref": integration_reviewer, "mode": "blind", "independent": True,
         })
     if full_closure:
@@ -488,7 +489,7 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
             "acceptance": ["Requested behavior"],
             "allowed_scope": payload["execution_control"]["routing"]["allowed_paths"],
             "baseline_commit": payload["baseline"]["commit"], "source_fingerprint": source,
-            "prior_findings": [],
+            "prior_findings": list(prior_findings) if record["axis"] == "integration" else [],
         }
         record["request_fingerprint"] = runner_fingerprint(request)
         reviewer_ref = record["reviewer_ref"]
@@ -529,7 +530,158 @@ def reviewed_complete_state(*, reviewer_registered=False, quality_mode="blind",
     return payload
 
 
+def integration_observation(classification):
+    from runner_lifecycle import _review_contract
+
+    payload = reviewed_complete_state(integration_status="pass")
+    launch = payload["ledger"]["runner_launches"][-1]
+    _, normalize_result, _ = _review_contract()
+    record = normalize_result({
+        "protocol_version": 3, "axis": "integration", "phase": "initial",
+        "mode": "blind", "independent": True, "status": "pass",
+        "source_fingerprint": payload["source_fingerprint"],
+        "findings": [{
+            "fingerprint": "d" * 64, "evidence": "src/task_a.py:10 accepts invalid input",
+            "impact": "task A can return an incorrect result",
+            "root_cause": "task A omitted boundary validation", "scope": "task-local",
+            "classification": classification,
+        }],
+    }, launch["profile"]["worker_id"], launch["configuration"]["review_request"])
+    payload["execution_control"]["review"]["rounds"][-1]["requests"][-1] = record
+    results = payload["ledger"]["runner_results"]
+    results[-1] = bind_role_result(launch, results[-1], review_result(launch, record))
+    return payload
+
+
 class DeliveryNextTest(unittest.TestCase):
+    def test_integration_local_defect_routes_to_repair_even_when_the_axis_passes(self):
+        payload = integration_observation("defect")
+        payload.update(status="active", current_stage="verify-final")
+
+        result = self.current(payload, output_format="json")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("review-repair", json.loads(result.stdout)["phase"])
+        payload["execution_control"]["review"]["repair_budget_remaining"] = 0
+        self.assertEqual("block", delivery_next.next_runtime_action(payload, "verify-final")["action"])
+
+    def test_integration_local_defect_cannot_complete_with_an_empty_handoff(self):
+        payload = integration_observation("defect")
+
+        self.assertEqual([], payload["handoff"]["open_issues"])
+        with self.assertRaisesRegex(ValueError, "unresolved scoped defects"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_current_integration_observation_requires_structured_classification(self):
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                payload = integration_observation("defect")
+                record = payload["execution_control"]["review"]["rounds"][-1]["requests"][-1]
+                record["finding_records"] = None
+                if missing:
+                    del record["finding_records"]
+                with self.assertRaisesRegex(ValueError, "current review findings require finding_records"):
+                    validate_execution_control(
+                        payload["execution_control"], payload["source_fingerprint"], payload["task_key"],
+                    )
+
+    def test_empty_integration_observation_can_omit_structured_records(self):
+        payload = integration_observation("suggestion")
+        payload["status"] = "active"
+        record = payload["execution_control"]["review"]["rounds"][-1]["requests"][-1]
+        record.update(finding_fingerprints=[], finding_records=None)
+
+        validate_execution_control(payload["execution_control"], payload["source_fingerprint"], payload["task_key"])
+        self.assertEqual("verify-final", delivery_next.next_runtime_action(payload, "verify-final")["phase"])
+        review = payload["execution_control"]["review"]
+        delivery_next.validate_review_gate(
+            routing(),
+            {**review, "rounds": [{"requests": [{**record, "axis": "spec"}]}]},
+            payload["task_key"], payload["baseline"]["commit"], payload["source_fingerprint"],
+            payload["ledger"]["acceptance"], [], [], True,
+        )
+
+    def test_integration_local_suggestion_does_not_add_a_repair(self):
+        payload = integration_observation("suggestion")
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+        payload["status"] = "active"
+        self.assertEqual("verify-final", delivery_next.next_runtime_action(payload, "verify-final")["phase"])
+
+    def test_current_integration_pass_does_not_reopen_historical_local_defects(self):
+        previous = integration_observation("defect")["execution_control"]["review"]["rounds"][0]
+        previous["source_fingerprint"] = "f" * 64
+        for request in previous["requests"]:
+            request["source_fingerprint"] = "f" * 64
+        payload = reviewed_complete_state(integration_status="pass")
+        payload["execution_control"]["review"]["rounds"].insert(0, previous)
+
+        self.assertEqual("complete", validate_state(payload, SimpleNamespace()))
+        payload["status"] = "active"
+        self.assertEqual("verify-final", delivery_next.next_runtime_action(payload, "verify-final")["phase"])
+
+    def test_historical_integration_cannot_complete_a_new_source_without_a_current_review(self):
+        payload = reviewed_complete_state(integration_status="pass")
+        review = payload["execution_control"]["review"]
+        previous = copy.deepcopy(review["rounds"][0])
+        previous["source_fingerprint"] = "f" * 64
+        for request in previous["requests"]:
+            request["source_fingerprint"] = "f" * 64
+        review["rounds"].insert(0, previous)
+        review["rounds"][-1]["requests"].pop()
+
+        with self.assertRaisesRegex(ValueError, "integration review requires a current pass"):
+            validate_state(payload, SimpleNamespace())
+
+    def test_integration_local_defect_can_repair_re_review_and_complete_on_new_source(self):
+        previous = integration_observation("defect")
+        previous["status"] = "active"
+        previous["ledger"]["tdd_trace_candidate"] = previous["ledger"].pop("tdd_trace")
+        self.assertEqual("verify-final", validate_state(previous, SimpleNamespace()))
+        self.assertEqual("review-repair", delivery_next.next_runtime_action(previous, "verify-final")["phase"])
+        changed = WORKSPACE / "repair_case.py"
+        try:
+            changed.write_text("# boundary validation repaired\n", encoding="utf-8")
+            source = workspace_source(WORKSPACE, HEAD)
+            evidence = run_evidence(WORKSPACE, HEAD, [sys.executable, "-c", "pass"])
+            with patch.dict(globals(), SOURCE=source, EVIDENCE=evidence):
+                verified = reviewed_complete_state(
+                    integration_status="pass", integration_phase="re_review", prior_findings=["d" * 64],
+                )
+            verified["revision"] = previous["revision"] + 2
+            verified["baseline"] = copy.deepcopy(previous["baseline"])
+            review = verified["execution_control"]["review"]
+            review.update(repair_budget_remaining=0, re_review_budget_remaining=0)
+            review["rounds"] = copy.deepcopy(previous["execution_control"]["review"]["rounds"]) + review["rounds"]
+            verified["ledger"]["repair_fingerprints"] = ["repair-1"]
+            verified["ledger"]["acceptance_history"] = [{
+                "revision": previous["revision"], "acceptance": previous["ledger"]["acceptance"][0],
+            }]
+            for field in ("runner_launches", "runner_results"):
+                verified["ledger"][field] = previous["ledger"][field] + verified["ledger"][field]
+            repaired = copy.deepcopy(verified)
+            repaired.update(status="active", revision=previous["revision"] + 1)
+            repaired_review = repaired["execution_control"]["review"]
+            repaired_review["re_review_budget_remaining"] = 1
+            repaired_review["rounds"][-1]["requests"].pop()
+            for field in ("runner_launches", "runner_results"):
+                repaired["ledger"][field].pop()
+            repaired["ledger"]["tdd_trace_candidate"] = repaired["ledger"].pop("tdd_trace")
+
+            validate_transition(previous, repaired)
+            self.assertEqual("verify-final", validate_state(repaired, SimpleNamespace()))
+            premature = copy.deepcopy(repaired)
+            premature["status"] = "complete"
+            premature["ledger"]["tdd_trace"] = premature["ledger"].pop("tdd_trace_candidate")
+            with self.assertRaisesRegex(ValueError, "integration review requires a current pass"):
+                validate_state(premature, SimpleNamespace())
+            validate_transition(repaired, verified)
+            self.assertEqual("complete", validate_state(verified, SimpleNamespace()))
+            self.assertEqual(2, len(review["rounds"]))
+            self.assertEqual(0, review["integration_budget_remaining"])
+        finally:
+            changed.unlink(missing_ok=True)
+
     def test_final_verification_routes_unresolved_findings_to_bounded_repair(self):
         payload = reviewed_complete_state()
         payload.update(status="active", current_stage="verify-final")
@@ -2112,6 +2264,57 @@ class DeliveryNextTest(unittest.TestCase):
 
         self.assertEqual("blocked\n", result.stdout)
         self.assertNotEqual(0, result.returncode)
+
+    def test_git_discovery_failure_keeps_the_parsed_task_identity(self):
+        payload = state()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            path.write_text(json.dumps(payload))
+            with patch.object(sys, "argv", ["delivery-next", "--state", str(path),
+                              "--run-id", payload["run_id"], "--writer-id", payload["writer_id"],
+                              "--revision", str(payload["revision"])]), \
+                    patch("delivery_state.project_lease_root", side_effect=ValueError("Git storage discovery timed out")), \
+                    patch("builtins.print") as printed:
+                self.assertEqual(2, delivery_next.main())
+            result = json.loads(printed.call_args_list[0].args[0])
+        self.assertEqual("block", result["action"])
+        self.assertEqual(payload["task_key"], result["task_id"])
+
+    def test_malformed_state_blocks_before_default_lease_discovery(self):
+        missing_workspace = state()
+        missing_workspace.pop("workspace")
+        payloads = [[], missing_workspace, state(workspace=None)]
+        for control in (None, [], "invalid"):
+            payloads.append(state(schema_version=11, execution_control=control))
+        for schema in ([], {}, None, True, "11"):
+            payloads.append(state(schema_version=schema))
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.json"
+                path.write_text(json.dumps(payload))
+                with patch.object(sys, "argv", ["delivery-next", "--state", str(path),
+                                  "--run-id", "run-123", "--writer-id", "writer-123",
+                                  "--revision", "0"]), \
+                        patch("delivery_state.project_lease_root") as discover_root, \
+                        patch("builtins.print") as printed:
+                    self.assertEqual(2, delivery_next.main())
+                discover_root.assert_not_called()
+                self.assertEqual("block", json.loads(printed.call_args_list[0].args[0])["action"])
+
+    def test_malformed_snapshot_paths_emit_a_structured_block(self):
+        for field in ("root", "control_root", "source_root"):
+            with self.subTest(field=field):
+                payload = state()
+                payload["controller"]["snapshot"] = {
+                    "root": "/frozen/controller", "control_root": "/frozen", "source_root": "/source",
+                    "package_version": "0.8.0", "protocol_version": 20,
+                    "protocol_fingerprint": "a" * 64, "extensions": [], "files": [],
+                }
+                payload["controller"]["snapshot"][field] = None
+                result = self.current(payload, acquire=False, output_format="json")
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertEqual("block", json.loads(result.stdout)["action"])
+                self.assertEqual(payload["task_key"], json.loads(result.stdout)["task_id"])
 
     def test_mismatched_run_id_emits_blocked(self):
         result = self.current(run_id="other-run")

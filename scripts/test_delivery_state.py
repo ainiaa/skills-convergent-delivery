@@ -677,6 +677,8 @@ class DeliveryStateTest(unittest.TestCase):
             self.acquire(root)
             self.assertEqual(0, self.write(root, state_home, state(), -1).returncode)
             environment = self.environment(state_home)
+            before = {str(path): path.read_bytes() for base in (root, state_home)
+                      for path in base.rglob("*") if path.is_file()}
 
             listed = subprocess.run(
                 [sys.executable, str(STATE_SCRIPT), "list", "--state-root",
@@ -693,6 +695,135 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertEqual("run-1", json.loads(listed.stdout)["states"][0]["run_id"])
             self.assertEqual(0, diagnosed.returncode, diagnosed.stderr)
             self.assertEqual("valid", json.loads(diagnosed.stdout)["states"][0]["health"])
+            recovery = json.loads(diagnosed.stdout)["states"][0]["recovery"]
+            self.assertEqual("inspect-next", recovery["action"])
+            self.assertEqual("not_checked", recovery["lease_status"])
+            self.assertEqual("not_revalidated", recovery["verification_status"])
+            self.assertEqual(before, {str(path): path.read_bytes() for base in (root, state_home)
+                                     for path in base.rglob("*") if path.is_file()})
+
+    def test_recovery_projection_never_grants_resume_or_reopens_a_terminal_run(self):
+        payload = state()
+        path = Path("/managed/state.json")
+        active = delivery_state_module.recovery_diagnostic(payload, path)
+        command = active["next_command"]
+        self.assertEqual(["--run-id", "run-1", "--writer-id", "writer-1", "--revision", "0"], command[-6:])
+        self.assertIn(str(path), command)
+        self.assertEqual([], active["active_worker_refs"])
+        self.assertEqual("diagnostic", active["evidence_level"])
+        for status, expected in (("blocked", "resolve-blocker"), ("complete", "none")):
+            with self.subTest(status=status):
+                payload.update(status=status, blocked_reason="business decision required")
+                result = delivery_state_module.recovery_diagnostic(payload, path)
+                self.assertEqual(expected, result["action"])
+                self.assertIsNone(result["next_command"])
+        invalid = delivery_state_module.recovery_diagnostic({}, path, error="invalid state")
+        self.assertEqual("repair-state", invalid["action"])
+        self.assertEqual("invalid state", invalid["reason"])
+        self.assertIsNone(invalid["next_command"])
+
+    def test_recovery_inspection_uses_the_runs_frozen_controller(self):
+        payload = state()
+        payload["controller"]["snapshot"] = {"root": "/frozen/controller"}
+        result = delivery_state_module.recovery_diagnostic(payload, Path("/managed/state.json"))
+        self.assertEqual("/frozen/controller/scripts/controller_snapshot.py", result["next_command"][1])
+        self.assertIn("--descriptor", result["next_command"])
+        self.assertIn("scripts/delivery_next.py", result["next_command"])
+
+    def test_recovery_keeps_pending_terminal_host_sync_on_the_shared_action_path(self):
+        payload = state()
+        payload["status"] = "complete"
+        payload["host_sync"]["mode"] = "native"
+        pending = next_runtime_action(payload, "complete")
+        self.assertEqual("sync-plan", pending["action"])
+        result = delivery_state_module.recovery_diagnostic(payload, Path("/managed/state.json"))
+        self.assertEqual("inspect-next", result["action"])
+        self.assertIsNotNone(result["next_command"])
+        payload["host_sync"]["acknowledged_fingerprint"] = pending["projection_fingerprint"]
+        self.assertEqual("none", delivery_state_module.recovery_diagnostic(
+            payload, Path("/managed/state.json"),
+        )["action"])
+
+    def test_doctor_reports_malformed_snapshot_or_control_without_crashing_or_writing(self):
+        payload = state()
+        payload["controller"]["snapshot"] = {
+            "root": None, "control_root": "/control", "source_root": "/source",
+            "package_version": "0.8.0", "protocol_version": 20,
+            "protocol_fingerprint": "a" * 64, "extensions": [], "files": [],
+        }
+        payloads = [payload]
+        for control in (None, [], "invalid"):
+            corrupted = state()
+            corrupted.update(schema_version=11, execution_control=control)
+            payloads.append(corrupted)
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.json"
+                path.write_text(json.dumps(payload))
+                before = path.read_bytes()
+                with patch("delivery_state.workspace_state_roots", return_value=[Path(directory)]):
+                    result = discover(payload["workspace"], diagnose=True)
+                self.assertEqual(before, path.read_bytes())
+            self.assertEqual(1, len(result["states"]))
+            self.assertEqual("blocked", result["states"][0]["health"])
+            self.assertEqual("repair-state", result["states"][0]["recovery"]["action"])
+            self.assertIsNone(result["states"][0]["recovery"]["next_command"])
+
+    def test_storage_discovery_timeout_blocks_instead_of_hiding_managed_state(self):
+        for discover_root in (
+            lambda: delivery_state_module.project_storage_root("/workspace"),
+            lambda: workspace_state_roots("/states", "/workspace"),
+        ):
+            with patch("delivery_state.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 5)), \
+                    self.assertRaisesRegex(ValueError, "discovery timed out"):
+                discover_root()
+
+    def test_doctor_commands_execute_through_local_and_frozen_gates_without_writes(self):
+        from controller_snapshot import create_snapshot
+        from test_delivery_next import state as observed_state
+
+        for frozen in (False, True):
+            with self.subTest(frozen=frozen), tempfile.TemporaryDirectory() as directory:
+                payload = observed_state(current_stage="scope")
+                workspace = payload["workspace"]
+                payload["repo_id"] = str(Path(workspace) / ".git")
+                if frozen:
+                    snapshot = create_snapshot(Path(__file__).resolve().parents[1], Path(directory) / "control")
+                    payload["controller"] = {
+                        **{key: snapshot[key] for key in ("package_version", "protocol_version", "protocol_fingerprint")},
+                        "snapshot": snapshot,
+                    }
+                lease_root = project_lease_root(workspace)
+                path = delivery_state_module.state_path(project_state_root(workspace), payload["repo_id"],
+                                                        payload["task_key"], payload["run_id"])
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(payload))
+                ownership = ["--root", str(lease_root), "--repo", payload["repo_id"],
+                             "--workspace", workspace, "--task-key", payload["task_key"],
+                             "--run-id", payload["run_id"], "--writer-id", payload["writer_id"]]
+                acquired = subprocess.run([sys.executable, str(LEASE_SCRIPT), "acquire", *ownership],
+                                          text=True, capture_output=True, check=False)
+                self.assertEqual(0, acquired.returncode, acquired.stderr)
+                try:
+                    before = {str(item): item.read_bytes() for item in [path, *lease_root.rglob("*.json")]}
+                    diagnosed = discover(workspace, diagnose=True)
+                    summary = next(item for item in diagnosed["states"] if item["path"] == str(path))
+                    self.assertEqual("valid", summary["health"], summary)
+                    command = summary["recovery"]["next_command"]
+                    result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=30)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual("execute-inline", json.loads(result.stdout)["action"])
+                    stale = subprocess.run([*command[:-1], str(payload["revision"] + 1)],
+                                           text=True, capture_output=True, check=False, timeout=30)
+                    self.assertEqual(2, stale.returncode)
+                    self.assertEqual("block", json.loads(stale.stdout)["action"])
+                    self.assertEqual(before, {str(item): item.read_bytes()
+                                             for item in [path, *lease_root.rglob("*.json")]})
+                finally:
+                    path.unlink(missing_ok=True)
+                    released = subprocess.run([sys.executable, str(LEASE_SCRIPT), "release", *ownership],
+                                              text=True, capture_output=True, check=False)
+                    self.assertEqual(0, released.returncode, released.stdout + released.stderr)
 
     def test_doctor_reports_unreadable_managed_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1656,6 +1787,51 @@ class DeliveryStateTest(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "integration_budget"):
             validate_transition(integration_previous, integration_without_budget)
+
+    def test_integration_recheck_consumes_only_the_re_review_budget(self):
+        for phase in ("re_review", "closure"):
+            with self.subTest(phase=phase):
+                previous = upgrade_state(state())
+                review = previous["execution_control"]["review"]
+                record = {
+                    "axis": "integration", "phase": "initial", "source_fingerprint": "a" * 64,
+                    "status": "pass", "reviewer_ref": "reviewer-1", "mode": "blind",
+                    "independent": True, "finding_fingerprints": ["b" * 64],
+                }
+                review["rounds"][0]["requests"].append(record)
+                review["integration_budget_remaining"] = 0
+
+                repaired = copy.deepcopy(previous)
+                repaired["revision"] += 1
+                repaired["source_fingerprint"] = "c" * 64
+                repaired["ledger"]["repair_fingerprints"].append("repair-1")
+                repaired_review = repaired["execution_control"]["review"]
+                repaired_review["repair_budget_remaining"] = 0
+                repaired_review["rounds"].append({"source_fingerprint": "c" * 64, "requests": []})
+                validate_transition(previous, repaired)
+
+                verified = copy.deepcopy(repaired)
+                verified["revision"] += 1
+                verified_review = verified["execution_control"]["review"]
+                verified_review["re_review_budget_remaining"] = 0
+                verified_review["rounds"][-1]["requests"].append({
+                    **record, "phase": phase, "source_fingerprint": "c" * 64,
+                    "finding_fingerprints": [],
+                })
+                validate_transition(repaired, verified)
+                self.assertEqual(0, verified_review["integration_budget_remaining"])
+
+                extra = copy.deepcopy(verified)
+                extra["revision"] += 1
+                extra["execution_control"]["review"]["rounds"][-1]["requests"].append({
+                    **record, "phase": phase, "source_fingerprint": "c" * 64,
+                    "finding_fingerprints": [],
+                })
+                with self.assertRaisesRegex(ValueError, "re_review_budget"):
+                    validate_transition(verified, extra)
+                extra["execution_control"]["review"]["rounds"][-1]["requests"][-1]["phase"] = "initial"
+                with self.assertRaisesRegex(ValueError, "integration_budget"):
+                    validate_transition(verified, extra)
 
     def test_full_closure_initial_preserves_budget_for_one_final_review(self):
         previous = state()

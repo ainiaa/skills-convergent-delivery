@@ -195,6 +195,8 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
   --writer-id <writer> --revision <revision>
 ```
 
+`doctor` 的每条结果附带只读 `recovery` 投影：`inspect-next` 给出绑定原 run/writer/revision 的 `next_command` argv；冻结 controller 的 run 使用该快照的 trusted runner。该命令只检查当前证据与 lease，并不恢复或派发动作。`resolve-blocker` 要求先处理原阻塞原因，`repair-state` 要求核实损坏或不兼容状态；完成且共享下一动作确认无需宿主计划同步时返回 `none`。这三种 action 没有可执行恢复命令；完成但待同步的状态仍提供检查入口，不复活业务。`lease_status=not_checked`、`verification_status=not_revalidated` 和 `evidence_level=diagnostic` 明确诊断不能证明 owner 存活或验收仍新鲜；`active_worker_refs` 仅来自已校验的登记表，不是宿主 tree 观察。不得据此抢占 lease、重置预算或重新开启终态。
+
 不得把 `/tmp` 文件、调用者指定的任意路径或自然语言回执当作状态真源。workspace 只有在同 owner 的有效 lease move 后才能改变；revision、worker 身份和终态均不可回退。
 
 普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。

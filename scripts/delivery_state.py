@@ -25,7 +25,7 @@ from delivery_lease import (
     same_owner,
 )
 from datetime import timedelta
-from delivery_next import WORKER_TERMINAL_STATUSES, upgrade_state, validate_state, validate_host_sync
+from delivery_next import WORKER_TERMINAL_STATUSES, next_runtime_action, upgrade_state, validate_state, validate_host_sync
 from delivery_progress import plan_projection_fingerprint
 from runner_contract import LOCAL_PROCESS_RUNNERS, role_results_complete, runner_results_complete, validate_launch
 
@@ -64,6 +64,8 @@ def project_storage_root(workspace):
             ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
             text=True, capture_output=True, check=False, timeout=5,
         )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("Git storage discovery timed out; managed state location is unknown") from error
     except OSError:
         return workspace / ".convergent-delivery"
     if result.returncode or not result.stdout.strip():
@@ -99,6 +101,8 @@ def workspace_state_roots(root, workspace):
             ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
             text=True, capture_output=True, check=False, timeout=5,
         )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("Git state discovery timed out; managed state location is unknown") from error
     except OSError:
         return (root,)
     if result.returncode:
@@ -425,7 +429,8 @@ def validate_transition(previous, candidate):
         initial_closure = next((item for item in rechecks if item["phase"] == "closure"), None)
         if initial_closure is not None:
             rechecks.remove(initial_closure)
-    integrations = [request for request in added_requests if request["axis"] == "integration"]
+    integrations = [request for request in added_requests
+                    if request["axis"] == "integration" and request["phase"] == "initial"]
     if len(rechecks) > 1 or len(integrations) > 1:
         raise ValueError("review transition may consume each finite budget only once")
     repair_steps = len(candidate["ledger"]["repair_fingerprints"]) - len(
@@ -738,6 +743,38 @@ def append_runner(arguments, field):
     print(json.dumps({"status": "written", "revision": revision}))
 
 
+def recovery_diagnostic(state, path, *, error=None):
+    """Project a safe inspection step; this is never a lease or verification receipt."""
+    result = {
+        "evidence_level": "diagnostic", "lease_status": "not_checked",
+        "verification_status": "not_revalidated", "active_worker_refs": [],
+        "action": "repair-state", "reason": error, "next_command": None,
+    }
+    if error is not None:
+        return result
+    result["active_worker_refs"] = [
+        worker["ref"] for worker in state["workers"]
+        if worker["status"] not in WORKER_TERMINAL_STATUSES
+    ]
+    if state["status"] == "blocked":
+        result.update(action="resolve-blocker", reason=state.get("blocked_reason"))
+    elif state["status"] == "complete" and next_runtime_action(state, "complete")["action"] == "complete":
+        result.update(action="none", reason="terminal run; do not resume")
+    else:
+        script = Path(__file__).with_name("delivery_next.py")
+        prefix = [sys.executable, str(script)]
+        snapshot = state["controller"].get("snapshot")
+        if snapshot is not None:
+            prefix = [sys.executable, str(Path(snapshot["root"]) / "scripts/controller_snapshot.py"),
+                      "run", "--descriptor", str(path), "--script", "scripts/delivery_next.py", "--"]
+        result.update(
+            action="inspect-next", reason="validate current evidence and active lease before continuing",
+            next_command=[*prefix, "--state", str(path), "--run-id", state["run_id"],
+                          "--writer-id", state["writer_id"], "--revision", str(state["revision"])],
+        )
+    return result
+
+
 def discover(workspace, diagnose=False, state_root=None):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
@@ -767,8 +804,9 @@ def discover(workspace, diagnose=False, state_root=None):
                         state, SimpleNamespace(strict_evidence=False)
                     )
                     summary["health"] = "valid"
-                except (KeyError, OSError, ValueError) as error:
+                except (KeyError, OSError, TypeError, ValueError) as error:
                     summary.update(health="blocked", reason=str(error))
+                summary["recovery"] = recovery_diagnostic(state, path, error=summary.get("reason"))
             states.append(summary)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             if diagnose:
@@ -776,6 +814,7 @@ def discover(workspace, diagnose=False, state_root=None):
                     "path": str(path), "run_id": None, "task_key": None, "status": "unknown",
                     "revision": None, "workspace": None, "health": "blocked",
                     "reason": f"unreadable managed state: {error}",
+                    "recovery": recovery_diagnostic({}, path, error=f"unreadable managed state: {error}"),
                 })
             continue
     return {"workspace": workspace, "states": states}

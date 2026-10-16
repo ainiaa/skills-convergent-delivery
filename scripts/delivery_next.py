@@ -142,14 +142,15 @@ def normalize_open_issues(value):
 def upgrade_state(value):
     if not isinstance(value, dict):
         raise ValueError("state must be an object")
-    if value.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
+    if type(value.get("schema_version")) is not int or value["schema_version"] not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError("schema_version must be 10 or 11")
     if "engine" in value:
         raise ValueError("legacy engine state is unsupported")
     if not set(value) <= STATE_FIELDS:
         raise ValueError("state fields are invalid")
+    control = require_mapping(value.get("execution_control"), "execution_control")
     if value.get("schema_version") == 11 and isinstance(
-            value.get("execution_control", {}).get("autonomy"), dict) and any(
+            control.get("autonomy"), dict) and any(
                 field not in value["execution_control"]["autonomy"]
                 for field in ("runtime", "action_attempts")
             ):
@@ -443,8 +444,8 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
                 raise ValueError("review finding_fingerprints are invalid")
             if request["status"] == "findings" and not findings:
                 raise ValueError("review findings require finding fingerprints")
-            if request["status"] == "findings" and round_source == source_fingerprint \
-                    and "finding_records" not in request:
+            if findings and round_source == source_fingerprint \
+                    and request.get("finding_records") is None:
                 raise ValueError("current review findings require finding_records")
             if request["status"] == "blocked":
                 require_string(request.get("blocked_reason"), "review blocked_reason")
@@ -527,10 +528,15 @@ def validate_review_gate(routing, review, task_key, baseline_commit, source_fing
             raise ValueError("high review requires independent blind spec and quality passes")
     if review["integration_budget_remaining"]:
         raise ValueError("integration review is still required")
-    if "integration" in latest:
+    if routing["integration_required"] or "integration" in latest:
         required_axes.append("integration")
-        if latest["integration"]["status"] != "pass":
+        if latest.get("integration", {}).get("status") != "pass":
             raise ValueError("integration review requires a current pass")
+    if any(
+        record["scope"] in {"current", "task-local"} and record["classification"] == "defect"
+        for request in latest.values() for record in (request.get("finding_records") or [])
+    ):
+        raise ValueError("review has unresolved scoped defects")
     required_requests = [latest[axis] for axis in required_axes]
     if routing["full_closure_required"]:
         closure_requests = [
@@ -1129,8 +1135,8 @@ def next_runtime_action(state, next_stage):
         current = review["rounds"][-1] if review["rounds"] else None
         latest = {request["axis"]: request for request in current["requests"]} if current else {}
         findings = [record["root_cause"] for request in latest.values()
-                    if request["status"] == "findings"
-                    for record in request.get("finding_records", [])
+                    if request["status"] in {"pass", "findings"}
+                    for record in (request.get("finding_records") or [])
                     if record["scope"] in {"current", "task-local"} and record["classification"] == "defect"] \
             if current is not None and current["source_fingerprint"] == state["source_fingerprint"] else []
         if state["handoff"]["open_issues"] and not findings:
@@ -1163,12 +1169,13 @@ def main():
         if not arguments.run_id or not arguments.writer_id or arguments.revision is None:
             raise ValueError("--run-id, --writer-id, and --revision are required")
         raw_state = json.loads(Path(arguments.state).read_text(encoding="utf-8"))
-        if arguments.lease_root is None:
-            from delivery_state import project_lease_root
-            arguments.lease_root = str(project_lease_root(raw_state["workspace"]))
-        arguments.strict_evidence = raw_state.get("schema_version") in SUPPORTED_SCHEMA_VERSIONS
         state = raw_state
         state = upgrade_state(raw_state)
+        if arguments.lease_root is None:
+            from delivery_state import project_lease_root
+            workspace = require_string(state.get("workspace"), "workspace")
+            arguments.lease_root = str(project_lease_root(workspace))
+        arguments.strict_evidence = raw_state.get("schema_version") in SUPPORTED_SCHEMA_VERSIONS
         next_stage = validate_state(state, arguments)
         validate_active_lease(state, arguments)
         result = next_runtime_action(state, next_stage)

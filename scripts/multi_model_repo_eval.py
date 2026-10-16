@@ -53,7 +53,7 @@ def validate_tasks(tasks):
         owned = task["owned_paths"]
         if len(set(owned)) != len(owned) or any(_path(path) != path or path not in files for path in owned):
             raise ValueError("repository evaluation owned paths are invalid")
-        if any(not isinstance(argument, str) or not argument or len(argument) > 200
+        if any(not isinstance(argument, str) or not argument or "\0" in argument or len(argument) > 200
                for argument in task["verify_argv"]):
             raise ValueError("repository evaluation verifier is invalid")
         seen.add(task["task_id"])
@@ -138,10 +138,13 @@ def _changed_paths(workspace, baseline_commit):
 def _verify(workspace, argv):
     started = time.monotonic_ns()
     try:
-        result = subprocess.run(argv, cwd=workspace, text=True, capture_output=True, check=False, timeout=60)
-        status, code = ("passed", result.returncode) if result.returncode == 0 else ("failed", result.returncode)
+        result = subprocess.run(argv, cwd=workspace, capture_output=True, check=False, timeout=60)
+        code = result.returncode
+        status = {0: "passed", 77: "uncovered", 124: "timed_out"}.get(code, "failed")
     except subprocess.TimeoutExpired:
         status, code = "timed_out", 124
+    except OSError:
+        status, code = "uncovered", None
     return {
         "status": status, "exit_code": code,
         "duration_ms": max(0, (time.monotonic_ns() - started) // 1_000_000),
