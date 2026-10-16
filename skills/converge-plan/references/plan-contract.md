@@ -71,7 +71,7 @@ wave 标识理论上可并行的候选；当前共享工作区仍顺序执行，
 
 ## 4. 决策记录
 
-Plan v6 的 `decisions` 只接受字段精确的已决记录：`id/status/question/resolution/source`，其中 `status` 必须为 `resolved`，`source` 只能是 `user|code|docs|reversible-default`。可逆技术选择和有明确默认的局部选择自动记录；业务规则、公共契约、权限、发布或不可逆选择在计划开始前阻塞，一次只询问最高优先级的一项，并给出推荐、原因和影响。未决问题不能写成普通字符串或伪装成已决记录，`plan_check.py validate` 会以 `decision_required` 拒绝进入执行。
+Plan v6 的 `decisions` 只接受字段精确的已决记录：`id/status/question/resolution/source`，其中 `status` 必须为 `resolved`，`source` 只能是 `user|code|docs|reversible-default`。可逆技术选择和有明确默认的局部选择自动记录；未决业务规则、公共契约、权限、发布或不可逆选择按 [决策门禁](../../../references/execution-control.md#3-决策门禁) 阻塞相关计划执行。只问验收必需的未决事项，合并独立问题，后置依赖问题；每项给出推荐、原因和影响。未决问题不能写成普通字符串或伪装成已决记录，`plan_check.py validate` 会以 `decision_required` 拒绝进入执行。
 
 ## 5. 完成审计
 

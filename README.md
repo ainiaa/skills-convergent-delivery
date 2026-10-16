@@ -2,7 +2,7 @@
 
 面向 Codex 与 Claude Code 的软件交付 Skill：将复杂需求拆成有限任务，要求新鲜验证与明确交付边界。
 
-当前发布版本：[0.8.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
+当前发布版本：[0.9.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
 
 多事项执行支持[局部阻塞与独立事项](references/execution-control.md#局部阻塞与独立事项)：验收工具缺失或超时后，保留缺口并继续有独立验证的无关任务；依赖项等待。安全停止和最终验收不放宽，恢复须有新鲜同工具通过证据且最多一次。受管依赖计划使用 Batch v5，既有 v4 保持顺序语义。
 
@@ -11,8 +11,8 @@
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.8.0/install.sh -o converge-install.sh
-   bash converge-install.sh --release 0.8.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.9.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.9.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。
@@ -102,7 +102,16 @@ Codex 使用 `$skill-name`，Claude Code 使用 `/skill-name`；两者都可使�
 
 native 运行时任务需要可执行的 CodeGraph CLI、目标仓库已有 `.codegraph/` 索引和项目 coverage 配置；执行前运行 `tdd_impact_guard.py preflight --workspace <项目路径>`（脚本位于已安装 Converge 的 `scripts/`）。缺口在写入前报告，安装器不会自动建索引或增加 coverage 依赖。PDLC 使用自身验证配置。
 
-正式 `converge-eval` 当前缺少 evaluator lifecycle bridge，预检会返回 `uncovered`。离线回归和统计测试可运行，但不能声明 locked differential 或真实宿主验收已通过；详见 [Eval 当前能力](skills/converge-eval/SKILL.md)。
+评测能力按实际证据区分，详见 [Eval 当前能力](skills/converge-eval/SKILL.md)：
+
+| 能力 | 当前边界 |
+| --- | --- |
+| 确定性回归 | `--preflight --deterministic` 检查本地进程能力；冻结 control/candidate/judge 的实际运行才构成差分证据 |
+| 宿主桥接 | 已有 Codex/Claude 适配器；预检 ready 只证明连接条件，真实 completed、身份、清场及 judge 均需另验 |
+| 交互行为 | `interaction_replay.py` 检查同事项复审、讨论阶段无写入、授权后修复与有限停止；问号数仅作观测，fake session 单测不证明澄清语义 |
+| 成本与收益 | 没有同宿主/模型/任务的真实对照与可审计 usage 时保持 `uncovered`，不从覆盖率或预检推算 |
+
+任务恢复可运行 `scripts/delivery_state.py doctor`；其 `recovery` 仅从现有状态派生只读检查指引，不能作为新鲜验收或自动接管授权。用法见 [使用指南](docs/usage-guide.md)。
 
 最终报告只说明结果、关键改动、验证覆盖与待处理项，并展示工作区累计的 Git 真值；Codex 单步角标不代表任务累计规模。不会把“未发现任何问题”当作全仓库保证。
 

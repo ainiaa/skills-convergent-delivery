@@ -21,6 +21,10 @@ Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读
 
 仅当计划包含多个任务或跨服务契约，并且全部任务结论均为新鲜 pass 后，发起一次 integration 初审。integration 只审查跨任务风险：接口组合、数据映射、共享状态、迁移/执行顺序和端到端路径；task-local finding 不计入 integration 结论。integration 有跨任务 defect 时使用同一固定 repair/re-review 预算，但不得重新开启 initial review。
 
+integration 随 pass 保存的 task-local defect 仍须在本次交付关闭：共享下一动作入口读取当前源码最新各轴的结构化 finding，按现有 repair/re-review 预算修复；完成门禁独立拒绝残留 defect，即使 handoff.open_issues 被留空。建议不触发修复；新源码的最新通过记录可关闭旧问题，历史记录不被删除，也不因旧 finding 重开已关闭问题。
+
+首次 integration 的 initial 请求只消费一次 integration 预算；修复后的 integration re_review/closure 仅消费现有 re-review 预算，不重复扣 initial 预算，也不能借 initial 请求重开审查。冻结画像要求 integration 时，complete 必须具有当前源码最后一轮的 integration pass；历史通过和已消耗的 initial 预算不能替代修复后复核。
+
 只接受 Protocol v3。旧 Protocol v1/v2 不转换、不用于推进状态；历史记录可供人工理解，但不能据此跳过 v3 门禁。
 
 ## 本轮机制取舍
@@ -34,3 +38,5 @@ Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读
 | 本机 `skill-creator`、[Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 先让已知问题穿过完成门禁，再补失败回归和单轮交互场景 | 不增设另一套可写问题台账；现有 `handoff.open_issues` 已是待处理真源 | `test_complete_rejects_known_open_issues_even_when_acceptance_passes`、`authorized-delivery-closes-review-findings` |
 | [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 最终声明绑定当前源码的通过证据，且已记录问题不能被 `attention` 包装为完成 | 不承诺未知 Bug 为零；测试与审查只能证明其覆盖的范围 | `test_complete_with_known_open_issues_cannot_render_as_attention` |
 | [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md)、本机 PDLC `loop-next` | 复用现有状态、单步决定和 `blocked` 停止条件 | 不引入定时控制器、额外 Hook 状态或无限修复循环；普通开发是一次已授权任务，不是持续巡检 | `test_structured_open_issues_preserve_the_exact_item_count`、现有 review 预算回归 |
+| PDLC v1.7.17 `batch-review`（来源提交 `ef05bf2`；机制引入于 `f8d1aa2`） | 采用阶段性问题必须在最终交付闭环的原则；复用 Review v3 finding_records、最新轴结论与完成门禁 | 不增加 batch-review Markdown 台账或固定每 2～3 项的额外评审：现有任务级与集成审查已覆盖分层，第二台账会增加同步、恢复和简单任务成本 | `test_integration_local_defect_routes_to_repair_even_when_the_axis_passes`、`test_integration_local_defect_cannot_complete_with_an_empty_handoff`、`test_current_integration_pass_does_not_reopen_historical_local_defects` |
+| [Superpowers writing-plans](https://github.com/obra/superpowers/blob/main/skills/writing-plans/SKILL.md)、[multi-agent-patterns](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) | 按独立可验收结果划定任务，只有明确上下文隔离收益才委派；参考发现先核对 Skills.sh Agent workflows/榜单，再读原始机制 | 不照搬逐阶段 fresh agent 或新增批次角色；当前缺陷由共享 helper 漏读既有记录造成，增加代理不能修复；不把安装量作为行为证据 | `test_integration_local_suggestion_does_not_add_a_repair`、`test_inline_route_rejects_low_risk_reviewer_and_host_only_roles` |

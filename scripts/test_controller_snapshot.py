@@ -49,6 +49,26 @@ REQUIRED_CONTROL_REFERENCES = (
 
 
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_malformed_collection_elements_and_protocol_are_validation_errors(self):
+        for value in ([{}], [[]], [None], [1]):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    controller_snapshot.normalize_extensions(value)
+                for protocol in (controller_snapshot.PROTOCOL_VERSION, 17):
+                    with self.assertRaises(ValueError):
+                        controller_snapshot.snapshot_extensions({"protocol_version": protocol, "extensions": value})
+                self.assertFalse(controller_snapshot.frozen_files_are_valid(value))
+        with self.assertRaises(ValueError):
+            controller_snapshot.snapshot_extensions({"profile": {}})
+        descriptor = {
+            "root": "/control/frozen", "control_root": "/control", "source_root": "/source",
+            "package_version": "0.8.0", "protocol_fingerprint": "a" * 64,
+            "extensions": [], "files": [],
+        }
+        for protocol in ([], {}, None, True, "18"):
+            with self.subTest(protocol=protocol), self.assertRaises(ValueError):
+                controller_snapshot.validate_snapshot({**descriptor, "protocol_version": protocol})
+
     def test_frozen_controller_can_select_independent_work_without_live_suite(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(__file__).resolve().parents[1]

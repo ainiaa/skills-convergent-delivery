@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 import os
+import signal
 import time
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -527,20 +528,99 @@ else: print('explore succeeded')
         self.assertEqual(124, receipt["exit_code"])
 
     def test_timeout_cleans_up_descendants_before_returning(self):
-        child = "import time;from pathlib import Path;time.sleep(.7);Path('late.txt').write_text('late')"
+        child = (
+            "import time;from pathlib import Path;print('started',flush=True);Path('ready').touch()\n"
+            "while not Path('release').exists(): time.sleep(.01)\n"
+            "Path('late.txt').write_text('late')"
+        )
         parent = (
-            "import subprocess,sys,time;"
-            f"subprocess.Popen([sys.executable,'-c',{child!r}]);"
-            "print('started',flush=True);time.sleep(5)"
+            "import subprocess,sys;"
+            f"subprocess.Popen([sys.executable,'-c',{child!r}]).wait()"
         )
-        receipt = evidence_contract.run_evidence(
-            self.workspace, self.baseline, [sys.executable, '-c', parent], timeout_seconds=.3,
+        argv = [sys.executable, '-c', parent]
+        popen = subprocess.Popen
+        process = popen(argv, cwd=self.workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        start_new_session=True)
+        try:
+            def launch(command, *args, **kwargs):
+                if command == argv:
+                    self.assertEqual((), args)
+                    self.assertEqual({
+                        'cwd': self.workspace.resolve(), 'stdout': subprocess.PIPE,
+                        'stderr': subprocess.PIPE, 'start_new_session': True, 'env': None,
+                    }, kwargs)
+                    return process
+                return popen(command, *args, **kwargs)
+            deadline = time.monotonic() + 5
+            while not (self.workspace / 'ready').exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue((self.workspace / 'ready').exists(), 'child did not become ready')
+            # Keep the real timeout and pipe drain; only process startup precedes the deadline.
+            with patch.object(evidence_contract.subprocess, 'Popen', side_effect=launch):
+                receipt = evidence_contract.run_evidence(
+                    self.workspace, self.baseline, argv, timeout_seconds=.3,
+                )
+            self.assertEqual(124, receipt['exit_code'])
+            import hashlib
+            self.assertEqual(hashlib.sha256(b'started\n').hexdigest(), receipt['stdout_fingerprint'])
+            self.assertIsNotNone(process.poll(), 'runner left its parent process alive')
+            (self.workspace / 'release').touch()
+            self.assertFalse((self.workspace / 'late.txt').exists())
+        finally:
+            # Fixture cleanup must survive a regression in the cleanup under test.
+            try:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            finally:
+                try:
+                    process.wait(timeout=1)
+                finally:
+                    try:
+                        process.stdout.close()
+                    finally:
+                        process.stderr.close()
+
+    def test_timeout_fixture_cleanup_attempts_every_step_with_a_bounded_wait(self):
+        cases = (
+            ('normal', None), ('missing', ProcessLookupError('group gone')),
+            ('signal', OSError('signal failed')), ('wait', subprocess.TimeoutExpired('fixture', 1)),
+            ('stdout', OSError('stdout close failed')), ('stderr', OSError('stderr close failed')),
         )
-        self.assertEqual(124, receipt['exit_code'])
-        import hashlib
-        self.assertEqual(hashlib.sha256(b'started\n').hexdigest(), receipt['stdout_fingerprint'])
-        time.sleep(.8)
-        self.assertFalse((self.workspace / 'late.txt').exists())
+        (self.workspace / 'ready').touch()
+        for stage, error in cases:
+            process = Mock(pid=12345)
+            primary = RuntimeError('verification failed')
+            with self.subTest(stage=stage), \
+                    patch.object(subprocess, 'Popen', return_value=process), \
+                    patch.object(evidence_contract, 'run_evidence', side_effect=primary), \
+                    patch.object(evidence_contract, '_terminate_process', side_effect=AssertionError('tested cleanup called')) as tested_cleanup, \
+                    patch.object(os, 'killpg') as kill_group:
+                targets = {
+                    'missing': kill_group, 'signal': kill_group, 'wait': process.wait,
+                    'stdout': process.stdout.close, 'stderr': process.stderr.close,
+                }
+                if error is not None:
+                    targets[stage].side_effect = error
+                expected = primary if stage in {'normal', 'missing'} else error
+                with self.assertRaises(type(expected)) as raised:
+                    self.test_timeout_cleans_up_descendants_before_returning()
+                self.assertIs(expected, raised.exception)
+                if expected is not primary:
+                    self.assertIs(primary, raised.exception.__context__)
+                tested_cleanup.assert_not_called()
+                kill_group.assert_called_once_with(process.pid, signal.SIGKILL)
+                process.wait.assert_called_once_with(timeout=1)
+                process.stdout.close.assert_called_once()
+                process.stderr.close.assert_called_once()
+
+    def test_timeout_fixture_rejects_parent_only_cleanup_and_kills_the_remaining_group(self):
+        with patch.object(evidence_contract, '_terminate_process', side_effect=lambda process: process.kill()), \
+                patch.object(os, 'killpg', wraps=os.killpg) as fallback:
+            with self.assertRaisesRegex(evidence_contract.EvidenceCleanupError, 'output could not be drained'):
+                self.test_timeout_cleans_up_descendants_before_returning()
+            fallback.assert_called_once()
 
     def test_timeout_terminates_the_process_group_once(self):
         process = Mock()

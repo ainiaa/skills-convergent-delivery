@@ -24,6 +24,14 @@ CASES = {
     "new-decision": ["既有 None 与字符串行为已经正确。仅审查，不修改。",
                      "现在还要支持数字输入，但数字转字符串还是拒绝尚未决定。给出推荐并询问，不要修改。"],
     "no-progress": ["修复 None 返回空字符串并保持 strip/lower 行为，补测试并验证。"],
+    "independent-decisions": [
+        "先讨论，不写文件。None 返回值是空字符串还是报错、字符串是否保留首尾空白，是两个互不依赖的业务选择；都未决定。请同轮给出推荐并询问。",
+        "两项已决定：None 返回空字符串，字符串保留现有 strip/lower。不增加依赖，按决定实现并验证。",
+    ],
+    "dependent-decisions": [
+        "只讨论，不写文件。先决定是否支持数字；只有支持数字才需要决定小数格式。请先问当前可决定的问题，给推荐，后置依赖问题。",
+        "决定支持数字。小数的展示格式仍需我决定；请给推荐并询问，继续不写文件。",
+    ],
 }
 GOOD = 'def normalize_status(value):\n    return "" if value is None else value.strip().lower()\n'
 BROKEN = 'def normalize_status(value):\n    return value.strip().lower()\n'
@@ -89,19 +97,20 @@ def replay(case, workspace, session, *, controlled=False, capture_synthetic=Fals
                           "writes": before != after, "source_before": before, "source_after": after,
                           "verification": verification}
                 result["turns"].append(record)
-                if case == "new-decision" or case == "known-decision" and index == 0:
-                    allowed = not record["writes"] and (observed["questions"] > 0 if
-                              case == "new-decision" and index == 1 else observed["questions"] == 0)
-                    if not allowed:
-                        result["result"] = "fail"
+                discussion = case in {"new-decision", "dependent-decisions"} or \
+                    case in {"known-decision", "independent-decisions"} and index == 0
+                if (discussion or case == "clean-review") and record["writes"]:
+                    result["result"] = "fail"
+                    return result
+                if discussion:
                     break
-                failed = verification["exit_code"] != 0 or observed["questions"] != 0
+                failed = verification["exit_code"] != 0
                 if not failed:
                     break
                 if not controlled:
                     result["result"] = "fail"
                     return result
-                next_action = followup_action(task_id=task_id, open_issues=["frozen verification or unnecessary question"],
+                next_action = followup_action(task_id=task_id, open_issues=["frozen verification failed"],
                                               repair_budget_remaining=remaining)
                 if next_action["action"] == "block":
                     result.update(result="blocked", reason=next_action["reason"])

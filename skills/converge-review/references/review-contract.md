@@ -56,7 +56,7 @@
 
 ## Axes and bounded re-review
 
-`spec` 对照冻结 requirement/spec 与验收项；`quality` 只能在同任务 spec 通过后检查正确性、安全、性能和可维护性；`integration` 只能在全部任务双轴通过后检查跨任务风险。integration 中仅影响单任务的 finding 标为 `task-local`，可随 `pass` 保存但不得影响该轴结论；其他 finding 必须返回 `findings`。每个请求只含一个 axis，各轴结果不得合并或抵消。
+`spec` 对照冻结 requirement/spec 与验收项；`quality` 只能在同任务 spec 通过后检查正确性、安全、性能和可维护性；`integration` 只能在全部任务双轴通过后检查跨任务风险。integration 中仅影响单任务的 finding 标为 `task-local`，可随 `pass` 保存但不得影响该轴结论；其他 finding 必须返回 `findings`。`task-local` 的 `defect` 仍是整体交付的待修问题：控制器从当前源码最新各轴记录选择原有有限修复动作，未关闭时不得 complete；`suggestion` 不触发修复。当前源码的非空 finding 必须保留结构化记录，不能只存指纹而丢失分类。每个请求只含一个 axis，各轴结果不得合并或抵消。
 
 quality 与 integration 初审必须使用 `blind`、`independent=true` 和全新上下文；这里的全新上下文指 reviewer 独立于实现者、未继承实现理由或完整实现会话，而不是为 spec 与 quality 各派一个 reviewer。spec 可用 `shared`，但 reviewer 只能收到冻结需求/设计，不接收实现理由；同一个 fresh reviewer 可按顺序接收 spec 和 quality 的单轴请求，quality 输入仍不得包含实现理由。编排器只接受同名 frozen external runner profile 所产出的已完成可用 role result；它是外部证据身份，绝不能伪称 host worker。源码变化后旧结果立即 stale。
 

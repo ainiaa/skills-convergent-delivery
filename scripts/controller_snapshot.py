@@ -257,7 +257,8 @@ def normalize_extensions(extensions=()):
     if not isinstance(extensions, (list, tuple)):
         raise ValueError("controller extensions are invalid")
     requested = tuple(extensions)
-    if len(requested) != len(set(requested)) or any(name not in EXTENSIONS for name in requested):
+    if any(not isinstance(name, str) for name in requested) \
+            or len(requested) != len(set(requested)) or any(name not in EXTENSIONS for name in requested):
         raise ValueError("controller extensions are invalid")
     enabled = set(requested)
     pending = list(requested)
@@ -277,14 +278,14 @@ def snapshot_extensions(value):
     if "extensions" in value:
         if value.get("protocol_version") != PROTOCOL_VERSION:
             extensions = value["extensions"]
-            if not isinstance(extensions, list) or len(extensions) != len(set(extensions)) \
-                    or not all(isinstance(name, str) and name for name in extensions):
+            if not isinstance(extensions, list) or not all(isinstance(name, str) and name for name in extensions) \
+                    or len(extensions) != len(set(extensions)):
                 raise ValueError("controller extensions are invalid")
             return tuple(extensions)
         return normalize_extensions(value["extensions"])
     try:
         return LEGACY_PROFILE_EXTENSIONS[value.get("profile", "extended")]
-    except KeyError as error:
+    except (KeyError, TypeError) as error:
         raise ValueError("controller snapshot descriptor is invalid") from error
 
 
@@ -383,10 +384,10 @@ def remove_tree(path):
 
 
 def frozen_files_are_valid(files):
-    return isinstance(files, list) and files and len(files) == len(set(files)) and all(
+    return isinstance(files, list) and files and all(
         isinstance(relative, str) and relative and not Path(relative).is_absolute()
         and ".." not in Path(relative).parts for relative in files
-    ) and {"scripts/controller_snapshot.py", "scripts/delivery_lease.py"} <= set(files)
+    ) and len(files) == len(set(files)) and {"scripts/controller_snapshot.py", "scripts/delivery_lease.py"} <= set(files)
 
 
 def validate_snapshot(value, *, allow_legacy_release=False):
@@ -402,11 +403,16 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     )
     if not valid_shape:
         raise ValueError("controller snapshot descriptor is invalid")
-    root = Path(value["root"])
-    control_root = Path(value["control_root"])
-    source_root = Path(value["source_root"])
+    try:
+        root = Path(value["root"])
+        control_root = Path(value["control_root"])
+        source_root = Path(value["source_root"])
+    except TypeError as error:
+        raise ValueError("controller snapshot paths are invalid") from error
     files = value["files"]
     protocol_version = value.get("protocol_version")
+    if type(protocol_version) is not int:
+        raise ValueError("controller snapshot protocol is invalid")
     if protocol_version == PROTOCOL_VERSION:
         if fields != current_fields:
             raise ValueError("controller snapshot protocol changed")
