@@ -22,12 +22,19 @@ native 运行时任务（含第三方 TDD stage）第一次业务写入前执行
 
 运行时功能、修复和重构在最终验证前都生成一次 trace，并以 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" validate --input -` 校验；它不运行命令。普通、Hook 和 service native run 在执行期间保存 `ledger.tdd_trace_candidate`，不提前固化正式 Trace；后续源码变化时可保留历史候选供诊断和恢复，但最终必须补齐当前源码回执。最终验收前必须对当前源码候选执行 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" rerun --input - --workspace <workspace> --baseline <commit>`；每条冻结命令默认最多运行 600 秒，可用 `--timeout-seconds <0..3600>` 调整；超时生成非零 observed receipt 并阻止完成。native 在同一 complete revision 中将 stdout 的刷新 trace 首次写入 `ledger.tdd_trace` 并删除候选；正式 Trace 不可替换。PDLC 留在自身交付记录。rerun 只执行已冻结的最终绿灯、coverage、mutation 与 CodeGraph argv，不改 state；native workflow 追加 `--native-coverage`，此时 coverage 的 argv 与阈值还必须精确匹配同一 workspace 的 `native_tdd_policy.py resolve` 结果；native complete 入口独立执行相同的策略校验，缺失配置或不匹配的命令不能通过状态门禁。PDLC 使用自身 coverage 门槛，不能被 native 策略覆盖。若命令生成未忽略的工作区文件并改变 Source Receipt，会阻塞并要求先清理或忽略该工件。native-v1 complete 门禁再次校验正式 Trace 与最终 Source Receipt、冻结风险和全部当前验收项一致。PDLC workflow 不使用 native completion gate；但 native workflow 即使委托第三方 TDD stage provider，仍必须满足该 gate。Trace 的 `source` 是最终源码的 Source Receipt，`graph` 为 `{"status":"covered","receipt":<codegraph observed receipt>,"impacts_fingerprint":<sha256>,"query":<derived query>}`，或 CodeGraph 不可用时的 `{"status":"uncovered","reason":<non-empty>}`；后者使 trace 返回 `uncovered`，不能使 native 状态完成。
 
-- `acceptance[]`：每个 `criterion` 至少一个测试，且 criterion 集合必须等于 state 当前验收项；测试含唯一 `id`、`selector`、`kind`（`unit|integration|e2e|contract`）、覆盖的 `scenarios`、红/绿回执和 `mutation`。`selector` 由同一 runner selector 校验绑定到实际 argv：Maven/mvnw 使用 `-Dtest=<selector>`，pytest（含普通 `.py` 文件参数）、Gradle、Vitest/Jest 使用各自选择语法；unittest 使用明确点分路径，未知 runner 不作为测试证据。红灯为 `{"receipt": <observed receipt>, "failure_class":"missing_behavior|assertion"}`，必须真实以 failed > 0、errors = 0 的断言结果结束且 source 不同于最终版本；编译、环境、Mock 等失败类型一律拒绝。GREEN 还必须包含 runner 从本次结果提取的 `test_check`，要求 passed > 0，failed/errors/xfailed/xpassed 均为 0；零测试、全部跳过、预期失败或只有收集不能通过。无风险绿灯为两个最终源码回执；任一冻结风险为三个，后两次是稳定性 rerun。`mutation` 是 `null` 或 `{"tool":<argv[0] basename>,"receipt":<final passing observed receipt>}`。mutation 必须含公共 runner 观察到的 `mutation_check`；普通 echo、仅生成变异、查询旧结果或未知工具不能通过。支持范围见下文。这绑定源码版本顺序，不伪造墙钟时间。不得填普通 command/exit-code 声明。
+- `acceptance[]`：每个 `criterion` 至少一个测试，且 criterion 集合必须等于 state 当前验收项；测试含唯一 `id`、`selector`、`kind`（`unit|integration|e2e|contract`）、覆盖的 `scenarios`、红/绿回执和 `mutation`。`selector` 由同一 runner selector 校验绑定到实际 argv：Maven/mvnw 使用 `-Dtest=<selector>`，pytest（含普通 `.py` 文件参数）、Gradle、Vitest/Jest 使用各自选择语法；unittest 使用明确点分路径；Node 使用单个测试文件或唯一 `--test-name-pattern`，Cargo 使用 `cargo test <filter>` 或 `cargo llvm-cov test <filter>`。选项值不能充当 selector，未知 runner 不作为测试证据。红灯为 `{"receipt": <observed receipt>, "failure_class":"missing_behavior|assertion"}`，必须真实以 failed > 0、errors = 0 的断言结果结束（退出码 1，Cargo 测试还允许 101）且 source 不同于最终版本；编译、环境、Mock 等失败类型一律拒绝。GREEN 还必须包含 runner 从本次结果提取的 `test_check`，要求 passed > 0，failed/errors/xfailed/xpassed 均为 0；零测试、全部跳过、预期失败或只有收集不能通过。无风险绿灯为两个最终源码回执；任一冻结风险为三个，后两次是稳定性 rerun。`mutation` 是 `null` 或 `{"tool":<argv[0] basename>,"receipt":<final passing observed receipt>}`。mutation 必须含公共 runner 观察到的 `mutation_check`；普通 echo、仅生成变异、查询旧结果或未知工具不能通过。支持范围见下文。这绑定源码版本顺序，不伪造墙钟时间。不得填普通 command/exit-code 声明。
 - 所有 trace 合计覆盖 `normal`、`boundary`、`error`。冻结风险会增加必测场景：权限/并发/幂等；事务；SQL、Mapper 与迁移的 integration；公共 API、跨服务与发布契约的 contract；安全与敏感数据；金额或支付还必须有 `property` 场景；time、timezone、irreversible 分别要求 time、timezone、recovery integration。契约、事务和数据访问还要求对应 `kind`。
 - `impacts[]`：每条影响链含唯一 `id`、`relation`（`entrypoint|caller|shared-effect|external-contract`）和引用的测试 id。至少一条为改动入口；契约风险另须 `external-contract`。`graph.status=covered` 时查询由完整 impacts 确定生成，CodeGraph receipt 必须执行该精确查询并绑定 impacts 指纹和当前源码；每个入口的所有结构化直接调用方都必须作为 `caller` 声明；否则图谱范围为 `uncovered`。调用方或共享副作用未能验证时如实标为 `uncovered`，不得以局部绿灯宣称关联功能未受影响。
 - `coverage`：`{"status":"covered","threshold":1..100,"receipt":<final passing observed receipt>}`，或 `{"status":"uncovered","reason":<non-empty>}`。后者使 trace 不能 native complete。公共 Evidence 命令在独立进程组运行，超时及退出时清理该组；清理等待有界，不能确认时不签发回执。此边界不覆盖主动脱离进程组的进程或外部服务。公共 Evidence Receipt 比较命令执行前后 Source Receipt；源码改变（含删除、生成未忽略文件）时拒绝签发，须在最终源码重新验证。Evidence Receipt 和 trace 均有有界 argv、字符串与总大小；命令行不得携带 token、password、secret、key 或 Authorization/Bearer 凭据，改用进程环境或项目的受控凭据配置。回执防止误写和事后不一致，但不提供同一工作区用户对抗篡改的密码学证明。
 
-测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。金额、支付、权限、安全、事务、并发、幂等、SQL/Mapper/迁移及契约风险的匹配测试必须为 integration/contract，并带 mutation receipt。原生 `native-v1` 先执行 `native_tdd_policy.py resolve --workspace <workspace>`：安全可拆分的 `docs/00_standards/test-commands.yml` coverage 命令返回为 argv 并优先执行；pytest 与 Vitest 可识别显式或由 `quality-targets.yml` 注入的阈值，默认 >=85%；Maven 只接受同一调用内包含 `test`、`verify`、`package` 或 `install` 生命周期目标和 JaCoCo check 的命令，Gradle 只接受运行 JaCoCo verification task 且 POM/Gradle 配置最低阈值不低于解析目标的命令；Rust 的 `--fail-under` 和 .NET 的 `/p:Threshold=<n>` 只在已知 coverage runner 中可识别，不能证明的命令保持 `uncovered`。PDLC 保持其已配置的门槛；第三方 stage Provider 在 native workflow 中同样必须产出能通过 native trace 的 coverage 证据。
+测试应通过公共 seam 验证一个可观察行为；mock 仅用于外部系统边界。金额、支付、权限、安全、事务、并发、幂等、SQL/Mapper/迁移及契约风险的匹配测试必须为 integration/contract，并带 mutation receipt。原生 `native-v1` 先执行 `native_tdd_policy.py resolve --workspace <workspace>`：安全可拆分的 `docs/00_standards/test-commands.yml` coverage 命令返回为 argv 并优先执行；pytest、Vitest、Node 内置测试覆盖率与 `cargo llvm-cov` 可识别显式或由 `quality-targets.yml` 注入的行阈值，默认 >=85%；Maven 只接受同一调用内包含 `test`、`verify`、`package` 或 `install` 生命周期目标和 JaCoCo check 的命令，Gradle 只接受运行 JaCoCo verification task 且 POM/Gradle 配置最低阈值不低于解析目标的命令；Rust tarpaulin 的 `--fail-under`、llvm-cov 的 `--fail-under-lines`、Node 的 `--test-coverage-lines` 和 .NET 的 `/p:Threshold=<n>` 只在已知 coverage runner 中可识别，不能证明的命令保持 `uncovered`。PDLC 保持其已配置的门槛；第三方 stage Provider 在 native workflow 中同样必须产出能通过 native trace 的 coverage 证据。
+
+## Node 与 Rust 原生适配边界
+
+- Node 覆盖率命令须同时启用 `--test --experimental-test-coverage`；缺行门槛时在文件参数之前注入 `--test-coverage-lines=<n>`，不改写显式的分支或函数门槛。TAP/spec 汇总保留取消、todo 与全部计数；Cargo 累加所有 binary/doc-test 的 libtest 汇总。零测试、仅忽略、失败或预期失败不构成 GREEN，新适配的覆盖率回执也必须证明非空 passing tests。
+- `cargo llvm-cov` 默认或 `test` 子命令必须当次运行测试并报告；report/show-env/clean/run/nextest、`--no-run`、`--no-clean`、`--no-report` 和 `--ignore-run-fail` 不作为本适配器的新鲜覆盖率。需要与当前 rustc 匹配的 LLVM 工具；可使用该工具链的 `llvm-tools-preview`，安装仍需用户授权。
+- 配置只证明该命令声明的采集范围。Node 对已加载模块的覆盖率不证明未加载文件或通过字符串转译执行的 TSX 已覆盖；未配置项目 coverage 时仍为 `uncovered`。Node mutation 仍未适配，高风险 trace 缺少可验证 mutation 证据时继续阻止 complete。Rust 的有限适配见下文。
+- 本适配器回归：`python3 -m unittest discover -s scripts -p test_native_adaptation.py -v`。全量生产 Python 覆盖率连同此回归运行：`python3 -m pytest scripts/test_coverage_gate.py scripts/test_native_adaptation.py scripts/test_rust_mutation.py --cov --cov-fail-under=90`，沿用本仓完整统计范围与门槛。
 
 ## 委托契约
 
@@ -61,7 +68,7 @@ Gradle 将 counter、value、minimum 绑定同一个 `limit { ... }`，只接受
 
 `quality-targets.yml` 的 coverage/coverage_min/line_coverage 目标仅接受一个 1..100 十进制整数字面量，可带配对单/双引号及由空白分隔的行尾注释。不展开复杂 YAML；已识别目标的缺值、非法值或重复声明（含不同别名）返回 `uncovered`、`argv=null`、`threshold=null`，不能回退或用 argv 掩盖错误。目标未声明时才使用既有默认规则；有效显式 argv 阈值的优先级不变。
 
-阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。暂不支持带 `--` 参数分隔符的 coverage 命令。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。
+阈值参数必须是 runner 对应的一个完整参数，且为 1..100 的整数；重复（含同值）、缺值或非整数返回 `uncovered`，不得追加参数掩盖错误。仅 `cargo llvm-cov` 允许末尾 `-- --test-threads=<正整数>`；门槛只从分隔符前读取或注入。其他带分隔符的 coverage 命令保持未覆盖。pytest 按参数顺序处理 `--cov-reset`，最后必须仍启用采集，且不能仅收集测试；Vitest 必须显式启用 coverage，只有 thresholds 配置不构成采集证明。Batch 复核历史 delegate 时从已绑定提交读取同一组 coverage 配置；普通 native 完成与 rerun 仍使用当前工作区。
 
 JaCoCo 的命令退出 0 还不构成 coverage 证据。公共 Evidence runner 仅从本次 stdout 中对应 verification/check 的任务块提取可选 `jacoco_check={"checks":<1..128>,"classes":<positive int>}`，并纳入既有 receipt fingerprint；每个检查块必须显示加载 execution data 和分析非空类集合，Maven 还须出现检查全部通过的结果。stdout 或 stderr 出现阈值违规时不签发检查摘要，即使构建配置把失败降为警告且退出 0。Trace 与 native 门禁共同要求此结果；SKIPPED、UP-TO-DATE、FROM-CACHE、缺数据、零类、仅 report 和缺少可识别输出均不能通过。不读取历史报告文件补证据，也不把类数量解释成覆盖率百分比；阈值仍由冻结命令和项目配置校验。Gradle 冻结命令使用 `--info --console=plain --no-parallel`，需要重新执行时加入 `--rerun-tasks`；Maven 使用标准 INFO 输出。静默、定制或交错输出需要先恢复可核对的日志再重跑，不能手填此字段。非 JaCoCo 的原有 runner 契约保持不变。
 
@@ -91,6 +98,22 @@ TDD、Plan 和 closure gate 共用 `require_graph_execution`。Plan/closure 查�
 status 中无 pending changes 不证明索引内容新鲜。公共 runner 只读已有 `.codegraph/codegraph.db` 的 files 表，逐个核对路径、content_hash 和无解析错误；哈希必须等于当前文件字节的 SHA-256。CodeGraph 1.0.1 / extraction-v24 已知源码后缀对应的 Git tracked/untracked 文件必须包含在索引中，包含已提交的新增文件；索引排除了这些源码时保持 uncovered，不把缺失调用方视为不存在。索引内容核对不保证静态分析能发现所有动态关系。
 
 查询前后状态、文件内容清单及数据库/WAL 摘要必须一致；Plan/closure 的 CLI files 清单还须与数据库清单一致。无数据库、未知表结构、畸形或不匹配哈希、源文件删除、解析错误、查询期间重建均不能签发 graph_check。index_fingerprint 绑定状态与上述内容快照，不新增持久状态，不自动 sync/index。读取有界：最多 4096 个索引文件、单源码文件 1 MiB、数据库/WAL 各 64 MiB，并沿用图查询总预算；超出范围保持 uncovered。未来 CodeGraph 改变文件格式或支持新的源码类型时，需要验证适配再扩展后缀清单。旧图回执因 runner 指纹变化必须重新执行。
+
+### Rust mutation 的有限适配
+
+固定 `cargo-mutants 27.1.0`，仅识别以下 argv 形状；`<manifest>` 必须位于当前 workspace 内，`<output>` 为绝对路径，`<selector>` 为一个 Rust libtest filter：
+
+```text
+cargo mutants --manifest-path <manifest> --no-config --baseline run --no-shuffle --all-logs --caught --jobs 1 --timeout 180 --re <frozen-regex> --output <output> --cargo-arg=--locked --cargo-arg=--offline -- --lib <selector> -- --test-threads=2
+```
+
+公共 Evidence runner 实际核对工具版本后执行命令。cargo-mutants 默认在一次性副本中变异；不允许 `--in-place`、隐藏配置、历史迭代、跳过基线或只枚举。回执从当次完整日志提取一个非空通过基线、每个匹配冻结 regex 的唯一变异及其 libtest 失败，并核对最终 generated/caught 计数。存活、超时、无法编译、零测试、选择器漂移、变异身份不符或缺失日志均不能通过；不读取旧结果补证据。采集和整个进程组的超时清理复用公共 runner。
+
+`<frozen-regex>` 仅表示带行列号的完整名称有限集合：`^name$` 或 `^(?:name|name)$`，名称按字面量转义；结果按解码后的完整身份集合核对，不在观察器中执行任意用户 regex。可在 `--re` 参数后增加 `--in-diff <relative-file.diff>`；diff 必须位于同一 workspace，所有必需身份仍须实际出现并全部 caught。27.1.0 的 struct-field deletion 名称过滤有已知缺陷，可用该原生行过滤保持冻结范围；未过滤运行的额外存活项仍使该次结果失败，不从旧报告筛掉它们补成通过。见[原生变更记录](https://mutants.rs/changelog.html)。
+
+采用 cargo-mutants 原生 `--re`、一次性副本及 `--all-logs --caught`，避免另造 Rust 变异引擎；不采用 `--iterate` 或跳过 baseline，因为旧结果不能绑定当前源码。按 Skills.sh 的 evaluation-harness 分类核对原生工具文档后，保留本仓既有 observed receipt 与冻结判定器，不增加控制状态或新代理角色。行为回归在 `scripts/test_rust_mutation.py`；fixture 验证解析边界，真实 cargo 执行另外保留原始日志与源码回执。
+
+参考：[cargo-mutants 原始项目](https://github.com/sourcefrog/cargo-mutants)、[原生过滤语义](https://mutants.rs/filter_mutants.html)。
 
 ### Python mutation 与本仓 coverage
 

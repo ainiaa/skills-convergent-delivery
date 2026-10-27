@@ -36,6 +36,15 @@ def profile(**overrides):
 
 
 class CodexExecRunnerTest(unittest.TestCase):
+    def test_started_and_updated_messages_are_not_completed_results(self):
+        import json
+        from codex_exec_runner import _response_from_jsonl
+        for event_type in ('item.started', 'item.updated', 'turn.failed', None):
+            with self.subTest(event_type=event_type):
+                self.assertIsNone(_response_from_jsonl(json.dumps({
+                    'type': event_type, 'item': {'type': 'agent_message', 'text': 'unfinished'},
+                }).encode()))
+
     def test_writer_accepts_isolated_worktree_with_trailing_space_in_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -103,10 +112,11 @@ class CodexExecRunnerTest(unittest.TestCase):
                 command_for_launch(changed, "probe")
 
         self.assertEqual("answer", _response_from_jsonl(
-            b'{"item":{"type":"agent_message","text":[{"text":"answer"},{}]}}\n'
+            b'{"type":"item.completed","item":{"type":"agent_message","text":[{"text":"answer"},{}]}}\n'
             b'not json\n{"item":{"type":"tool_call","text":"ignored"}}\n'
         ))
-        self.assertIsNone(_response_from_jsonl(b'{"item":{"type":"agent_message","text":4}}\n'))
+        with self.assertRaises(ValueError):
+            _response_from_jsonl(b'{"type":"item.completed","item":{"type":"agent_message","text":4}}\n')
         process = mock.Mock(pid=None)
         _terminate_process(process)
         process.kill.assert_called_once_with()
@@ -125,7 +135,7 @@ class CodexExecRunnerTest(unittest.TestCase):
         for module, worker_profile, binary_option, output in (
             (__import__("codex_exec_runner"), profile(
                 permissions={"workspace": "read", "shell": True, "network": "egress"},
-            ), "codex_bin", b'{"item":{"type":"agent_message","text":"partial"}}\n'),
+            ), "codex_bin", b'{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n'),
             (claude_exec_runner, claude_profile(), "claude_bin", b'{"result":"partial"}'),
         ):
             for fault in ("stdout-empty", "stdout-partial", "stderr-empty", "stderr-partial", "progress"):
@@ -203,6 +213,56 @@ class CodexExecRunnerTest(unittest.TestCase):
                                 os.killpg(process.pid, signal.SIGKILL)
                             except ProcessLookupError:
                                 pass
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin zombie process group semantics")
+    def test_zombie_only_group_is_already_cleaned(self):
+        from codex_exec_runner import _terminate_process
+
+        pid = os.fork()
+        if pid == 0:
+            os.setsid()
+            os._exit(0)
+        try:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                state = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "stat="],
+                    capture_output=True, text=True, check=True,
+                ).stdout.strip()
+                if state.startswith("Z"):
+                    break
+                time.sleep(0.01)
+            self.assertTrue(state.startswith("Z"), state)
+            _terminate_process(mock.Mock(pid=pid))
+        finally:
+            os.waitpid(pid, 0)
+
+    def test_denied_group_cleanup_requires_an_observed_empty_or_zombie_group(self):
+        from codex_exec_runner import _terminate_process
+        import errno
+
+        for output, allowed in (("", True), ("123 123 Z\n124 123 Z+\n", True),
+                                ("123 123 S\n", False), ("124 123 Z\n125 123 R\n", False),
+                                ("invalid observation\n", False), ("123 123 Zgarbage\n", False)):
+            with self.subTest(output=output), \
+                    mock.patch("codex_exec_runner.os.killpg", side_effect=PermissionError(errno.EPERM, "denied")), \
+                    mock.patch("codex_exec_runner.subprocess.run", return_value=mock.Mock(
+                        returncode=0, stdout=output)):
+                if allowed:
+                    _terminate_process(mock.Mock(pid=123))
+                else:
+                    with self.assertRaises(PermissionError):
+                        _terminate_process(mock.Mock(pid=123))
+        for failure in (OSError("ps unavailable"), subprocess.TimeoutExpired("ps", 2)):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch("codex_exec_runner.os.killpg", side_effect=PermissionError(errno.EPERM, "denied")), \
+                    mock.patch("codex_exec_runner.subprocess.run", side_effect=failure):
+                with self.assertRaises(PermissionError):
+                    _terminate_process(mock.Mock(pid=123))
+        with mock.patch("codex_exec_runner.os.killpg", side_effect=PermissionError(errno.EPERM, "denied")), \
+                mock.patch("codex_exec_runner.subprocess.run", return_value=mock.Mock(returncode=1, stdout="")):
+            with self.assertRaises(PermissionError):
+                _terminate_process(mock.Mock(pid=123))
 
     def test_group_cleanup_failure_never_reports_completion(self):
         for timed_out in (False, True):
@@ -337,7 +397,7 @@ class CodexExecRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "worktree"):
             command_for_launch(launch, "Fix the isolated task")
 
-    def test_marks_output_that_exceeds_the_frozen_budget_as_non_completed(self):
+    def test_output_over_preview_budget_does_not_abort_process(self):
         class Process:
             stdin = io.BytesIO()
             stdout = io.BytesIO(b"too large")
@@ -361,8 +421,8 @@ class CodexExecRunnerTest(unittest.TestCase):
         )
 
         receipt, content = execution
-        self.assertEqual("output_exceeded", receipt["status"])
-        self.assertEqual(125, receipt["exit_code"])
+        self.assertEqual("completed", receipt["status"])
+        self.assertEqual(0, receipt["exit_code"])
         self.assertEqual("gpt-5.6-terra", receipt["requested_model"])
         self.assertEqual("high", receipt["requested_reasoning_effort"])
         self.assertEqual(2, receipt["schema_version"])

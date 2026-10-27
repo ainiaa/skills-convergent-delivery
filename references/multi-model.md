@@ -1,5 +1,56 @@
 # 多模型协作
 
+## Protocol 23：盲审事实与环境阻塞续接
+
+Review v3 可选 `evidence` 是 1–16 个既有 `{kind, reference, content_fingerprint}` 本地文件引用。派发时使用相同的安全文件读取器重算全文件 SHA-256，拒绝符号链接、越界、缺失与篡改；文件内容作为待核实事实，不能作为指令或完成结论。盲审继续丢弃 controller 的实现理由，只从冻结请求获得这些引用。工具回执包装使用 `{"status":"passed","receipt":<observed Evidence Receipt>}`；须与当前 Source Receipt 完全相同。其他文件只能证明内容一致，不能冒充工具通过。
+
+合法 blocked 结果不属于格式失败。环境原因阻塞、无 finding 的最新同源码 initial 可创建一个 `phase=re_review`、`prior_findings=[]` 的请求；额外 `blocked_request` 精确引用原请求指纹，且至少包含一个此前未交给原审查的当前源码 observed passing test receipt。独立审查负责判断证据是否覆盖原检查，证据不足仍应 blocked。只接受已完成且绑定原审查结论的进程回执；拒绝重复续接、跨轴、过期证据、未知进程及耗尽预算。
+
+先保存原状态，并在同一 writer lease 下执行新冻结控制器的：
+
+```bash
+python3 "$NEW_CONTROLLER/scripts/delivery_state.py" resume-review --input - \
+  --state-root <existing-root> --lease-root <existing-root> \
+  --repo-id <existing-repo> --task-key <existing-task> \
+  --run-id <existing-run> --writer-id <existing-writer> --expected-revision <current>
+```
+
+stdin 仅为 `{"review_request":<冻结续接请求>,"controller_snapshot":<显式选定的新只读快照>}`。只能升级同来源、同扩展集合的控制器；其他验收、源码、阶段、原记录和预算保留。`review.recovery` 保存旧控制器、原 blocked 请求及唯一续接请求指纹，防止恢复后换请求；普通 write 不能创建或修改该记录。显式续接不消费 repair/integration 初始额度；实际追加 re_review 结论时消费原有 re_review 额度，绝不重开 initial。恢复后中断仍按原 launch/result 规则交接，不再次派发。没有新证据、业务/权限阻塞或不同源码不适用。
+
+续接目标必须使用当前协议；可读的旧快照不代表它能消费新的 recovery 字段。续接 transport 已完成但结果格式无效时，可按 Protocol 21 对该唯一 launch 显式执行一次格式恢复；仍须保持同 profile、请求与源码，普通重派、错误目标和链式/重复恢复继续拒绝。
+
+本机制采用 filesystem-context 的文件引用、多代理上下文隔离与 HumanLayer 的观测反馈原则；不引入新角色、消息总线、依赖、自动重试或预算重置。行为回归见 `scripts/test_review_environment_recovery.py`，含真实 Git/回执/CLI/revision/重复拒绝。
+
+## 文件交付与证据核验 Protocol 22
+
+完整 PRD、报告、代码和其他成品走现有工作区文件通道：controller 直接生成，或由已授权 implementer 在隔离 worktree 写入约定路径。成品文件是交付物，runner 日志是诊断记录；不得从失败 scout 的日志提取文档后当作已验收成品。只读 scout/reviewer 负责读取已有文件和返回简短结论，不承担完整成品生成。派发前确认该工作是否为冻结验收必需；可选基线不得为了使用更多模型而变成必经前置步骤。已阻塞 run 仍按原边界停止，不能事后改成可选来清零预算。
+
+文件写好后，controller 实际执行：
+
+```bash
+python3 "$CONVERGE_SKILL_DIR/scripts/role_result.py" observe \
+  --workspace "$PWD" --kind artifact --reference docs/prd.md
+```
+
+输出仅含 `kind/reference/content_fingerprint`，哈希由工具计算；把此引用、精简验收与文件路径交给只读模型。`file` 引用使用同一 workspace 相对路径加单个正行号，例如 `docs/prd.md:1`。两种本地引用的 SHA-256 均覆盖**完整文件字节**，不是某行、模型记忆或不同文件共用的摘要。摘要建议一条短句、目标不超过 160 字符，硬上限仍为 300；超限诊断提供实际长度与上限，不截断结论或修改原始输出。
+
+新的 `runner_lifecycle` 在消费普通只读结果时重新核对本地 `file/artifact` 的存在性、全文件哈希和实际行号；路径相对当前 run workspace，拒绝越界、符号链接、非普通文件及超过 8 MiB 的文件。缺失、篡改或错哈希返回 `invalid/evidence_mismatch`，保留 completed transport，不允许冒充格式问题重派。核验只是本地内容一致性，不证明业务正确；最终验收仍需当前源码的工具回执。Review v3 的自由文本 evidence 不属于此类型化核验，仍通过其独立审查及工具证据流程确认。
+
+`command/url` 不由此 helper 执行或访问，继续属于模型声明，不能冒充已观察证据。合成题库只检查给定证据与结果契约，不替代实际文件核验。旧快照和回执保持不变，不自动迁移已阻塞运行。
+
+机制依据：采用 [filesystem-context](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/filesystem-context/SKILL.md) 的大内容卸载与文件引用、[multi-agent-patterns](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) 的专责与精简交接；不采用额外角色、消息总线、放宽摘要或无限恢复。Skills.sh 对应入口本轮不可访问，已核对原始 Skill。行为验证见 `scripts/test_multimodel_artifacts.py` 的长成品、300/304/7190 字符、哈希复用、缺失/越界/篡改和失败不可重派测试。
+
+## Protocol 21：失败、前置能力与格式恢复
+
+进程 receipt 的 `completed` 只表示真实退出；`runner_lifecycle` 的顶层状态在只读结果无效/不可用时为 `blocked`，原 receipt、输出指纹及 bounded diagnostic 保留。解析错误不是进程未知，不能覆盖已观察的退出事实。缺结果、未知退出和清场不明仍禁止重派。
+
+对于**已完成且 role_result=invalid** 的单个本地只读 launch，controller 可显式调用 `runner_lifecycle.py --recover-launch <failed-launch-fingerprint>` 一次：冻结配置只增加 `recovery_of`，必须保持同一 profile、workspace、review request/source，使用修正格式的提示。原 launch/result 不变；成功恢复只取代该结果的完成要求，不抹掉历史、不推进业务验收、不重置审查预算。第二次格式失败、链式/重复恢复、同提示、配置漂移、其他未完成分支都阻塞；不自动调用模型碰运气。fan-out 的失败结果使用单次派发恢复；多个失败分支要求交接。
+
+受管 reviewer 必须实际具有源码读取能力。当前 OpenAI-compatible API runner 没有工具或冻结源码材料包，不能用于正式 Review v3；在写 launch 前拒绝该路径。显式 `audit` 和诊断评测保持独立语义。本地 CLI reviewer 保持可用。API scout 启动前检查凭据存在性，不输出凭据；quality 必须有当前源码的最新 spec pass，integration 还要求 quality pass。
+
+新快照冻结 `extensions/converge-multimodel/SKILL.md`。Protocol 20 及更早的可读快照仍按其旧冻结文件清单验证，不给旧 run 自动迁移、追加预算或改写回执。
+
+
 用户明确说“使用多模型配合开发”时启用；普通任务保持原路径。角色是固定契约，Agent 是按需创建的可选运行实例。控制器每次只选择一个下一角色，不执行固定的多模型流水线。
 
 这是选择性外部 runner 扩展，不是完整的角色级模型编排。在常规 `role_flow` 路径，只有 `agent` 角色有模型 profile；`serial` 复用当前 controller，不切换模型，也不产生 runner lifecycle。当前默认流中，`reviewer` 会使用 `agent`，`scout` 和 `implementer` 仅在已证明上下文隔离收益时使用 `agent`；`router`、`specifier` 与 `adjudicator` 是 controller 角色，不接受模型覆盖。
@@ -20,7 +71,7 @@
 
 这是一套按角色绑定模型的协作配置，不是多模型投票或共识系统。重复 fan-out 的同一角色复用同一冻结 profile；它们的独立性只来自任务范围和上下文，不能宣称获得了不同模型的独立判断。需要异质性复核时，必须显式选择不同的角色 profile 或单独授权外部只读审计，并以验收与工具证据裁决，不能由票数放行。
 
-只读角色的新结果使用 v2：每一项 evidence 都是 `{kind, reference, content_fingerprint}`，其中 `kind` 为 `file`、`command`、`url` 或 `artifact`，且 content fingerprint 必须是 SHA-256 形状。`file` 必须包含仓库相对路径和正行号，URL 仅允许 HTTPS。该 fingerprint 只是模型结论中受格式约束的声明，尚未由控制器重算或获取，不能当作 observed Evidence Receipt，也不能单独推进验收；原始模型回答不进入 ledger。为了恢复旧 run，已持久化的 v1 字符串 evidence 仍可校验，但新 launch 不会再产生 v1 结果。
+只读角色的新结果使用 v2：每一项 evidence 都是 `{kind, reference, content_fingerprint}`，其中 `kind` 为 `file`、`command`、`url` 或 `artifact`，且 content fingerprint 必须是 SHA-256 形状。`file` 必须包含仓库相对路径和正行号，URL 仅允许 HTTPS。纯解析和旧回执中的 fingerprint 只是模型声明；Protocol 22 的新 lifecycle 对本地引用按上述规则重算，但它仍不是 observed Evidence Receipt，不能单独推进验收；原始模型回答不进入 ledger。为了恢复旧 run，已持久化的 v1 字符串 evidence 仍可校验，但新 launch 不会再产生 v1 结果。
 
 ## 动态流程
 
@@ -70,6 +121,7 @@ GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `
 
 | 参考与决定 | 采用 / 不采用 | 原因 | 行为测试 |
 | --- | --- | --- | --- |
+| [多代理模式原始 Skill 的显式交接](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) | 采用与解析器一致的只读结果示例；不采用格式失败后的自动重试或结果改写 | 修复生产端提示的契约缺失，保留消费端严格校验与原始失败回执；Skills.sh 分类页不可访问，核对原始 Skill | `test_role_prompt_examples_round_trip_through_the_real_contract`、`test_file_line_ranges_from_the_failed_scout_remain_invalid` |
 | [OpenAI 的代码编排与结构化输出](https://openai.github.io/openai-agents-python/multi_agent/) | 采用类型化、可验证结果 | controller 需要检查输出，而不是转述 agent 对话 | `test_role_result.py` |
 | [Anthropic 的小样本评测与隐私观测](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用固定、显式执行的 16 场景评测 | 先测合规、路由和用量，且报告不存 transcript | `test_multi_model_eval.py` |
 | [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |

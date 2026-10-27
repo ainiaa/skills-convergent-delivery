@@ -20,6 +20,7 @@ SPEC = importlib.util.spec_from_file_location("controller_snapshot", MODULE_PATH
 controller_snapshot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(controller_snapshot)
 REQUIRED_CONTROL_REFERENCES = (
+    "extensions/converge-multimodel/SKILL.md",
     "evals/evals.json",
     "references/activation.md",
     "references/evaluation-scenarios.md",
@@ -49,6 +50,39 @@ REQUIRED_CONTROL_REFERENCES = (
 
 
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_protocol_21_and_22_snapshots_remain_readable_without_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for version in (21,22):
+                with self.subTest(version=version),mock.patch.object(controller_snapshot, 'PROTOCOL_VERSION', version):
+                    frozen = controller_snapshot.create_snapshot(ROOT, Path(directory) / 'control', ('multimodel',))
+                self.assertEqual(frozen, controller_snapshot.validate_snapshot(frozen))
+
+    def test_protocol_18_and_19_profile_descriptors_remain_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for version in (18,19):
+                with mock.patch.object(controller_snapshot,'PROTOCOL_VERSION',version):
+                    frozen=controller_snapshot.create_snapshot(ROOT,Path(directory)/'control',())
+                legacy={key:value for key,value in frozen.items() if key!='extensions'}
+                legacy['profile']='core'
+                self.assertEqual(legacy,controller_snapshot.validate_snapshot(legacy))
+
+    def test_multimodel_snapshot_freezes_the_extension_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frozen = controller_snapshot.create_snapshot(ROOT, Path(directory) / 'control', ('multimodel',))
+            relative = 'extensions/converge-multimodel/SKILL.md'
+            self.assertIn(relative, frozen['files'])
+            self.assertEqual((ROOT / relative).read_bytes(), (Path(frozen['root']) / relative).read_bytes())
+
+    def test_protocol_20_snapshot_without_extension_entry_remains_readable(self):
+        registry = dict(controller_snapshot.EXTENSIONS)
+        scripts, resources = registry['multimodel']
+        registry['multimodel'] = (scripts, tuple(p for p in resources if not p.startswith('extensions/')))
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(controller_snapshot, 'PROTOCOL_VERSION', 20), \
+                    mock.patch.object(controller_snapshot, 'EXTENSIONS', registry):
+                old = controller_snapshot.create_snapshot(ROOT, Path(directory) / 'control', ('multimodel',))
+            self.assertEqual(old, controller_snapshot.validate_snapshot(old))
+
     def test_malformed_collection_elements_and_protocol_are_validation_errors(self):
         for value in ([{}], [[]], [None], [1]):
             with self.subTest(value=value):

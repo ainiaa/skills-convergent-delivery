@@ -124,7 +124,7 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
     workspace = Path(workspace).expanduser().resolve()
     baseline = _git(workspace, "rev-parse", "HEAD")
     source = workspace_source(workspace, baseline)
-    profile = _task_profile(task_profile, scope, source["changed_paths"], risk_flags)
+    profile = _task_profile(task_profile, scope, [], risk_flags)
     task_key = _task_key(workspace, baseline, scope, acceptance, requirements)
     routing = freeze_routing(
         profile, scope, request_text=request_text, full_closure_required=full_closure_required,
@@ -144,7 +144,8 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
         "repo_id": _git(workspace, "rev-parse", "--path-format=absolute", "--git-common-dir"),
         "task_key": task_key, "writer_id": writer_id, "revision": 0,
         "workspace": str(workspace),
-        "baseline": {"commit": baseline, "diff_fingerprint": source["diff_fingerprint"]},
+        "baseline": {"commit": baseline, "diff_fingerprint": source["diff_fingerprint"],
+                     "source": copy.deepcopy(source)},
         "scope_fingerprint": hashlib.sha256(
             json.dumps({"requirements": requirements, "scope": scope, "acceptance": acceptance},
                        ensure_ascii=False, sort_keys=True).encode()

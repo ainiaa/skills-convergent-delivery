@@ -36,6 +36,7 @@ EXTENDED_CONTROLLER_FILES = (
     "scripts/runner_lifecycle.py",
     "scripts/runner_contract.py",
     "scripts/codex_exec_runner.py",
+    "scripts/runner_output.py",
     "scripts/claude_exec_runner.py",
     "scripts/openai_compatible_runner.py",
     "scripts/desktop_task_bridge.py",
@@ -127,6 +128,7 @@ CORE_CONTROLLER_FILES = (
     "scripts/runner_registry.py",
     "scripts/reference_receipt.py",
     "scripts/runner_contract.py",
+    "scripts/runner_output.py",
     "scripts/role_result.py",
     "scripts/provider_contract.py",
     "scripts/run_contract.py",
@@ -217,6 +219,7 @@ HOST_EVALUATION_FILES = (
 )
 EXTENSIONS = {
     "multimodel": (MULTIMODEL_CONTROLLER_FILES, (
+        "extensions/converge-multimodel/SKILL.md",
         "references/worker-runners.md", "references/multi-model.md",
         "references/multi-model-evaluation.json",
         "references/multi-model-repository-evaluation.json",
@@ -241,8 +244,8 @@ TRUSTED_RUN_SCRIPTS = frozenset((
     "skills/converge-batch/scripts/batch_state.py",
     "skills/converge-eval/scripts/eval_contract.py",
 ))
-LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18, 19))
-PROTOCOL_VERSION = 20
+LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18, 19, 20, 21, 22))
+PROTOCOL_VERSION = 23
 
 
 def provider_files(root):
@@ -418,8 +421,9 @@ def validate_snapshot(value, *, allow_legacy_release=False):
             raise ValueError("controller snapshot protocol changed")
         valid_files = files == list(snapshot_files(root, snapshot_extensions(value)))
     elif protocol_version in LEGACY_PROTOCOL_VERSIONS:
-        expected_fields = current_fields if protocol_version == 17 else legacy_fields
-        if fields != expected_fields and not allow_legacy_release:
+        expected_fields = current_fields if protocol_version in {17, 18, 19, 20, 21, 22} else legacy_fields
+        compatible_profile = protocol_version in {18, 19} and fields == legacy_fields
+        if fields != expected_fields and not compatible_profile and not allow_legacy_release:
             raise ValueError("controller snapshot protocol changed")
         snapshot_extensions(value)
         valid_files = frozen_files_are_valid(files)

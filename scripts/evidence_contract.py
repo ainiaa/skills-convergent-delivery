@@ -50,10 +50,10 @@ def workspace_source(workspace, baseline_commit="HEAD"):
     commit_id = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
     tree_hash = _git(root, "rev-parse", "HEAD^{tree}").decode().strip()
     tracked_diff = _git(
-        root, "diff", "--no-ext-diff", "--no-textconv", "--binary", baseline, "--"
+        root, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", baseline, "--"
     )
     tracked_paths = _git(
-        root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", baseline, "--"
+        root, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", baseline, "--"
     ).split(b"\0")
     untracked_paths = [
         path
@@ -106,6 +106,13 @@ def workspace_source(workspace, baseline_commit="HEAD"):
         json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return source
+
+
+def source_delta(before, after):
+    """Paths whose content, kind or permissions changed since a frozen source receipt."""
+    old = {entry["path"]: entry for entry in before.get("changed_entries", [])}
+    new = {entry["path"]: entry for entry in after.get("changed_entries", [])}
+    return sorted(path for path in old.keys() | new.keys() if old.get(path) != new.get(path))
 
 
 def verification_argv(command):
@@ -165,6 +172,13 @@ def jacoco_check_result(argv, stdout, stderr=b""):
 
 
 def require_jacoco_execution(receipt):
+    argv = receipt['argv']
+    runner = Path(argv[0]).name.lower()
+    if runner == 'node' or (runner == 'cargo' and len(argv) > 1 and argv[1] in {'test', 'llvm-cov'}):
+        check = receipt.get('test_check')
+        if not check or check['passed'] <= 0 or any(
+                check[key] for key in ('failed', 'errors', 'xfailed', 'xpassed')):
+            raise ValueError('native coverage must prove nonempty passing tests')
     if Path(receipt["argv"][0]).name.lower() in {"gradle", "gradlew", "mvn", "mvnw"} \
             and not receipt.get("jacoco_check"):
         raise ValueError("coverage requires an executed nonempty JaCoCo check; use Gradle --info --console=plain")
@@ -205,6 +219,29 @@ def test_execution_result(argv, stdout, stderr):
                     row[key] = row.get(key, 0) + int(count)
                 if row:
                     rows.append(row)
+    elif runner == 'node' and '--test' in argv:
+        summary = re.sub(r'^[ \t]*(?:#|ℹ)[ \t]+', '', output, flags=re.M)
+        summaries = re.findall(
+            r'^tests (\d+)\n(?:suites \d+\n)?pass (\d+)\nfail (\d+)\n'
+            r'cancelled (\d+)\nskipped (\d+)\ntodo (\d+)\s*$', summary, re.M)
+        if len(summaries) != len(re.findall(r'^tests \d+$', summary, re.M)):
+            return None
+        for total, passed, failed, errors, skipped, xfailed in summaries:
+            total, passed, failed, errors, skipped, xfailed = map(
+                int, (total, passed, failed, errors, skipped, xfailed))
+            if total != passed + failed + errors + skipped + xfailed:
+                return None
+            rows.append(dict(passed=passed, failed=failed, errors=errors, skipped=skipped, xfailed=xfailed))
+    elif runner == 'cargo' and len(argv) > 1 and argv[1] in {'test', 'llvm-cov'}:
+        summaries = re.findall(
+            r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; '
+            r'\d+ measured; \d+ filtered out; finished in [^\n]+$', output, re.M)
+        if len(summaries) != len(re.findall(r'^test result:', output, re.M)):
+            return None
+        for status, passed, failed, ignored in summaries:
+            if status == 'FAILED' and int(failed) == 0:
+                return None
+            rows.append(dict(passed=int(passed), failed=int(failed), skipped=int(ignored)))
     elif runner in {'mvn', 'mvnw'}:
         summaries = re.findall(r'Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)', output)
         if summaries:
@@ -246,6 +283,101 @@ def _mutmut_selector(argv):
     return None
 
 
+def _cargo_mutants_selector(argv):
+    if len(argv) == 27 and argv[16] == '--in-diff':
+        scope = Path(argv[17])
+        if scope.is_absolute() or '..' in scope.parts or '\\' in argv[17] or scope.suffix != '.diff':
+            return None
+        argv = [*argv[:16], *argv[18:]]
+    if (len(argv) != 25 or Path(argv[0]).name != 'cargo' or argv[1:3] != ['mutants', '--manifest-path']
+            or argv[4:15] != ['--no-config', '--baseline', 'run', '--no-shuffle', '--all-logs',
+                              '--caught', '--jobs', '1', '--timeout', '180', '--re']
+            or argv[16] != '--output'
+            or argv[18:22] != ['--cargo-arg=--locked', '--cargo-arg=--offline', '--', '--lib']
+            or argv[23:] != ['--', '--test-threads=2']):
+        return None
+    manifest = Path(argv[3])
+    if (manifest.is_absolute() or '..' in manifest.parts or '\\' in argv[3]
+            or manifest.name != 'Cargo.toml' or not Path(argv[17]).is_absolute()
+            or not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9:]*', argv[22])):
+        return None
+    return argv[22]
+
+
+def _cargo_mutants_identities(pattern):
+    if pattern.startswith('^(?:') and pattern.endswith(')$'):
+        body = pattern[4:-2]
+    elif pattern.startswith('^') and pattern.endswith('$'):
+        body = pattern[1:-1]
+    else:
+        return set()
+    names, escaped = [''], False
+    for character in body:
+        if escaped:
+            names[-1] += character
+            escaped = False
+        elif character == '\\':
+            escaped = True
+        elif character == '|':
+            names.append('')
+        else:
+            names[-1] += character
+    if escaped or not 1 <= len(names) <= 64 or len(set(names)) != len(names) or any(
+            len(name) > 1024 or not re.fullmatch(r'[^:\n]+\.rs:[1-9]\d*:[1-9]\d*: [^\n]+', name)
+            for name in names):
+        return set()
+    return set(names)
+
+
+def _cargo_mutants_result(argv, stdout):
+    selector = _cargo_mutants_selector(argv)
+    if selector is None:
+        return None
+    required = _cargo_mutants_identities(argv[15])
+    if not required:
+        return None
+    output = re.sub(r'\x1b\[[0-9;]*m', '', stdout.decode('utf-8', 'replace'))
+    found = re.findall(r'^Found (\d+) mutants? to test$', output, re.M)
+    totals = re.findall(r'^(\d+) mutants? tested in [^\n]+: (\d+) caught$', output, re.M)
+    if len(found) != 1 or len(totals) != 1 or int(found[0]) <= 0 \
+            or totals[0] != (found[0], found[0]) or output.count('\n*** baseline\n') != 1:
+        return None
+    baseline, *mutants = re.split(r'(?m)^\*\*\* (?=[^\n]+\.rs:\d+:\d+: )',
+                                  output.split('\n*** baseline\n', 1)[1])
+    if len(mutants) != int(found[0]) or len(mutants) != len(required):
+        return None
+    identities = set()
+    tests = 0
+    for index, log in enumerate([baseline, *mutants]):
+        commands = []
+        for line in log.splitlines():
+            if line.startswith('*** '):
+                try:
+                    command = shlex.split(line[4:])
+                except ValueError:
+                    return None
+                if len(command) > 1 and Path(command[0]).name == 'cargo' and command[1] == 'test' \
+                        and '--no-run' not in command:
+                    commands.append(command)
+        if len(commands) != 1 or commands[0][-4:] != ['--lib', selector, '--', '--test-threads=2']:
+            return None
+        check = test_execution_result(['cargo', 'test'], log.encode(), b'')
+        phases = re.findall(r'^\*\*\* result: (.+)$', log, re.M)
+        if not check or any(check[key] for key in ('errors', 'xfailed', 'xpassed')):
+            return None
+        if index == 0:
+            if check['passed'] <= 0 or check['failed'] or not phases or set(phases) != {'Success'}:
+                return None
+            tests = check['passed']
+        else:
+            identity = log.splitlines()[0]
+            if identity not in required or identity in identities or check['failed'] <= 0 or not phases \
+                    or phases[-1] != 'Failure(101)' or any(p != 'Success' for p in phases[:-1]):
+                return None
+            identities.add(identity)
+    return {'selector': selector, 'generated': len(mutants), 'killed': len(mutants), 'tests': tests}
+
+
 def mutation_execution_result(argv, stdout):
     """Observe a scoped PIT or isolated, pinned mutmut campaign."""
     if _mutmut_selector(argv) is not None:
@@ -259,6 +391,8 @@ def mutation_execution_result(argv, stdout):
                 and result['generated'] == result['killed']):
             return result
         return None
+    if _cargo_mutants_selector(argv) is not None:
+        return _cargo_mutants_result(argv, stdout)
     selector = _pit_selector(argv)
     if selector is None:
         return None
@@ -583,6 +717,15 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=DEFAULT_TIMEO
         raise ValueError(f"evidence timeout must be in 0..{MAX_TIMEOUT_SECONDS} seconds")
     source_before = workspace_source(workspace, baseline_commit)
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+    if _cargo_mutants_selector(argv) is not None:
+        inputs = [argv[3], *([argv[17]] if len(argv) == 27 else [])]
+        if any(not (workspace / name).resolve().is_relative_to(workspace)
+               or not (workspace / name).is_file() for name in inputs):
+            raise ValueError('Rust mutation inputs must be inside the workspace')
+        code, version, _ = _run_command(workspace, [argv[0], 'mutants', '--version'],
+                                        max(0, deadline - time.monotonic()))
+        if code != 0 or version.strip() != b'cargo-mutants 27.1.0':
+            raise ValueError('Rust mutation evidence requires cargo-mutants 27.1.0')
     if _mutmut_selector(argv) is not None:
         # Keep the actual campaign in the controller-owned process group cleanup path.
         # A nested helper process could be killed before cleaning its separate group.
@@ -669,14 +812,14 @@ def validate_observed_evidence_receipt(item):
                 or check['executed'] <= 0 \
                 or check['executed'] != sum(check[key] for key in TEST_OUTCOMES if key != 'skipped') \
                 or coverage_runner(item['argv']) not in {'unittest', 'pytest', 'py.test', 'mvn', 'mvnw',
-                                                        'gradle', 'gradlew', 'vitest', 'jest'}:
+                                                        'gradle', 'gradlew', 'vitest', 'jest', 'node', 'cargo'}:
             raise ValueError('Evidence Receipt executed test result is invalid')
     if 'mutation_check' in item:
         check = item['mutation_check']
         if not isinstance(check, dict) or set(check) != {'selector', 'generated', 'killed', 'tests'} \
                 or any(type(check[key]) is not int or check[key] <= 0 for key in ('generated', 'killed', 'tests')) \
                 or check['generated'] != check['killed'] or not isinstance(check['selector'], str) \
-                or not check['selector'] or (_pit_selector(item['argv']) or _mutmut_selector(item['argv'])) != check['selector'] or item['exit_code'] != 0:
+                or not check['selector'] or (_pit_selector(item['argv']) or _mutmut_selector(item['argv']) or _cargo_mutants_selector(item['argv'])) != check['selector'] or item['exit_code'] != 0:
             raise ValueError('Evidence Receipt mutation result is invalid')
     if "jacoco_check" in item:
         check = item["jacoco_check"]

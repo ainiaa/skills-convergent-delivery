@@ -1131,6 +1131,29 @@ class DeliveryStateTest(unittest.TestCase):
             self.assertNotEqual(0, rejected.returncode)
             self.assertIn("workspace", rejected.stderr)
 
+    def test_format_recovery_appends_history_through_the_formal_state_cli(self):
+        from runner_contract import role_results_complete
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_home = Path(directory) / 'leases', Path(directory) / 'home'
+            self.acquire(root)
+            initial = state()
+            self.assertEqual(0, self.write(root, state_home, initial, -1).returncode)
+            launch = self.local_launch(initial['workspace'])
+            self.assertEqual(0, self.append_runner(root, state_home, 'append-runner-launch', launch, 0).returncode)
+            failed = bind_role_result(launch, self.local_result(launch, with_role_result=False),
+                                      result_from_output(launch, {'status': 'available', 'content': 'bad JSON'}))
+            self.assertEqual(0, self.append_runner(root, state_home, 'append-runner-result', failed, 1).returncode)
+            recovery = freeze_launch(launch['profile'], 'Correct the JSON format', {
+                **launch['configuration'], 'recovery_of': launch['launch_fingerprint'],
+            })
+            recorded = self.append_runner(root, state_home, 'append-runner-launch', recovery, 2)
+            self.assertEqual(0, recorded.returncode, recorded.stderr)
+            result = self.append_runner(root, state_home, 'append-runner-result', self.local_result(recovery), 3)
+            self.assertEqual(0, result.returncode, result.stderr)
+            stored = json.loads(self.state_path(state_home).read_text())['ledger']
+            self.assertEqual(failed, stored['runner_results'][0])
+            self.assertTrue(role_results_complete(stored['runner_launches'], stored['runner_results']))
+
     def test_single_implementer_launch_is_allowed_but_write_fanout_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"

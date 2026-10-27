@@ -1,0 +1,608 @@
+{
+  "schema_version": 6,
+  "plan_id": "plan-20261021-multimodel-review-fixes",
+  "requirement_fingerprint": "6bbb9473cc05f54707e3e65c113324377595e55a1f6616e56ec6f70f10ac49f1",
+  "planner": {
+    "name": "superpowers-writing-plans-v1",
+    "source_path": "/Users/liuwenyuan/.agents/skills/writing-plans/SKILL.md",
+    "source_fingerprint": "4fd4627d2c02367879c0307d7249270bed633317ff9be82e926a6d57bf5d331b"
+  },
+  "context": "long",
+  "baseline": {
+    "commit": "aaf63bd478f4ac786a64dc630e6b651221d1a2c8",
+    "source": {
+      "schema_version": 2,
+      "baseline_commit": "aaf63bd478f4ac786a64dc630e6b651221d1a2c8",
+      "commit_id": "aaf63bd478f4ac786a64dc630e6b651221d1a2c8",
+      "tree_hash": "b41b90c4c8cb8ceaff96f5758f6ba626927606b0",
+      "diff_fingerprint": "206b91629804af7a5523e9f048aac87dd0d781292580a471b3549a65d1c499b1",
+      "changed_paths": [
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.76f282b3b6d47816cf8cb145e4adaf3e7835f7e02f8cef5be9c4706f77703e6a.json.lock",
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.9b7e47f412e0dfd8eef7419dbd070854a5df1e6cdf4b45a827f258671f24c1b2.json.lock",
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.b59970968cfe10f7dea1500d46fbc2eca2ae69be59446d2a03abb0b1585d2e95.json.lock",
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e0a42b54f4c32cea0fb09018f76bee6b7bdaa9840f52f4379f0f90458f6ae67f.json.lock",
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e0c872406a54f987c0427931cf6aca1338b6be6740f57b69bee771f42e6dc07d.json.lock",
+        "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e372add49af748099232227668e216242ea171e639becb96721126a1cb18c70e.json.lock",
+        "CHANGELOG.md",
+        "references/execution-protocol.md",
+        "references/multi-model.md",
+        "references/state-schema.md",
+        "references/tdd-providers.md",
+        "references/worker-runners.md",
+        "scripts/autonomy_begin.py",
+        "scripts/check.sh",
+        "scripts/claude_exec_runner.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/controller_snapshot.py",
+        "scripts/delivery_next.py",
+        "scripts/evidence_contract.py",
+        "scripts/native_tdd_policy.py",
+        "scripts/openai_compatible_runner.py",
+        "scripts/role_result.py",
+        "scripts/runner_contract.py",
+        "scripts/runner_launch.py",
+        "scripts/runner_output.py",
+        "scripts/tdd_impact_guard.py",
+        "scripts/test_claude_exec_runner.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_native_adaptation.py",
+        "scripts/test_openai_compatible_runner.py",
+        "scripts/test_role_result.py",
+        "scripts/test_runner_launch.py",
+        "scripts/test_runner_output.py",
+        "scripts/test_rust_mutation.py",
+        "scripts/test_worker_profile.py",
+        "scripts/worker_profile.py",
+        "skills/converge-plan/scripts/plan_check.py",
+        "workspaces/.8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1.json.lock"
+      ],
+      "changed_entries": [
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.76f282b3b6d47816cf8cb145e4adaf3e7835f7e02f8cef5be9c4706f77703e6a.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.9b7e47f412e0dfd8eef7419dbd070854a5df1e6cdf4b45a827f258671f24c1b2.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.b59970968cfe10f7dea1500d46fbc2eca2ae69be59446d2a03abb0b1585d2e95.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e0a42b54f4c32cea0fb09018f76bee6b7bdaa9840f52f4379f0f90458f6ae67f.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e0c872406a54f987c0427931cf6aca1338b6be6740f57b69bee771f42e6dc07d.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1/tasks/.e372add49af748099232227668e216242ea171e639becb96721126a1cb18c70e.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "f1d0faad27064355ea0ca2e69b50d29bad6553000caef82baa45a56a05870c7b"
+        },
+        {
+          "path": "references/execution-protocol.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "48aed34b355935525fd4e19416ebb63e5ff09c5ab74c4c63b3b9d317b1802037"
+        },
+        {
+          "path": "references/multi-model.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "79874d5f4b75589613ea903cacfff4b35f32be6eef7df8d58a6c425f56473165"
+        },
+        {
+          "path": "references/state-schema.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "97b0f0709cd3ed1589a4f88950b5d30d5715c3537ef24f14a9bd1b5b199dd58c"
+        },
+        {
+          "path": "references/tdd-providers.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "4fbae4cd65699a15c90b9474f4ad141787716b1ad8644b8bc0def0b3f4c2b6ab"
+        },
+        {
+          "path": "references/worker-runners.md",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "dcf8c8bedfb798fa34cb021bc641fab23b145843d903e5e9bfc43c1a1e8f65fd"
+        },
+        {
+          "path": "scripts/autonomy_begin.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "4da34e27bab43ee8d7c9b0010667fe38d2a81828cd298dbe00141ef52ba43f3c"
+        },
+        {
+          "path": "scripts/check.sh",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "6a50e35c0dedae7a7010adc5b97af208ff09369667609a014d07a5096f7fbc67"
+        },
+        {
+          "path": "scripts/claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "74a8eb071a9346313265b3732b717eb255d2af44e1ad49550a7dc364c0714bb0"
+        },
+        {
+          "path": "scripts/codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "544fd47ccee3a3c2706ea9c42bc4f54994d7df224e5085b7c6a06439522549e8"
+        },
+        {
+          "path": "scripts/controller_snapshot.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "074ddac4e510477d540f91bd77a3603c7d37478fc9769cb9a98b827ab1753168"
+        },
+        {
+          "path": "scripts/delivery_next.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "c43b76e269d7009c91ca620f8de8a42497e4aa0df7b1651032bac85aeae3621a"
+        },
+        {
+          "path": "scripts/evidence_contract.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "86ff883f6f4d62bd12d075d0453cb8f7e0e00375ab33e0f39c18aa598941d1ba"
+        },
+        {
+          "path": "scripts/native_tdd_policy.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "20be782f329bb4f5e78a123323e1068ff4256b36b9c720b11ac069f7336ea0e5"
+        },
+        {
+          "path": "scripts/openai_compatible_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "02688f8fbbb9a771433e2c1f1ef411b287bfcc30bf6bf74eed61c44109ea9f50"
+        },
+        {
+          "path": "scripts/role_result.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "8523f892ed66df67ac632edb5bee248653809e73f74f187a646f712ba52aa8d4"
+        },
+        {
+          "path": "scripts/runner_contract.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "48fecef16666735714ed82b194d4c9f8ea26aaee723cbc3449b35cee5302a86f"
+        },
+        {
+          "path": "scripts/runner_launch.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "dc3767d2edfe3389c6c5b01e26f766d281c2ad794c41a4505b69a50888130c4d"
+        },
+        {
+          "path": "scripts/runner_output.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "81c37f35d4b857d91bfe1d5d2478901a19a756c4a3955ac12f9666acb96542b1"
+        },
+        {
+          "path": "scripts/tdd_impact_guard.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "ce69485b9d438d53561a7ff95acd9e2d2dc7a49dfff50e875243a828c349ce4f"
+        },
+        {
+          "path": "scripts/test_claude_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "0f4f48d471438940a59b9ba5efed09b9a8f0440273df0771b301dd4f1008f5f5"
+        },
+        {
+          "path": "scripts/test_codex_exec_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "18cdfb47535f8bf375b35aacbe5ed8f814419bc1450f29b30c41493dad62a365"
+        },
+        {
+          "path": "scripts/test_native_adaptation.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "b0065713ed6f18a81990683ef0eff653a3ac40745113b8ebe3d51a27245493fa"
+        },
+        {
+          "path": "scripts/test_openai_compatible_runner.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "4d5e44f7102dafe1a758e97f66ea6b33d214b858bea7b8ad813cd4bcec5d18c1"
+        },
+        {
+          "path": "scripts/test_role_result.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "a1545b1144e43cdd91bf94fe335aa6808e09e03a39ebf5c0d1c39db9de6d8732"
+        },
+        {
+          "path": "scripts/test_runner_launch.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "2601d31dad3202a9f0793cfe3f7f8fee77ca7d2a122f3ed7a3999d99842be5ab"
+        },
+        {
+          "path": "scripts/test_runner_output.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "b6475ce7559e05729c1eb87a0de72d62230accb5f0846fc6e83703344aeb81b3"
+        },
+        {
+          "path": "scripts/test_rust_mutation.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "dd794dc4bc4210684e964effad523c79a62576e0c6026e791a64ad3cbb388a79"
+        },
+        {
+          "path": "scripts/test_worker_profile.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "fe6bbd3bd38d5a4b6381bad0b09e1ba7e4640eb382ba1d30cd36f7dec883d9b3"
+        },
+        {
+          "path": "scripts/worker_profile.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "b0a3392b62671a9159824aa3e8a2b5a98cd8bd0500f82c32059a2867efa7df8b"
+        },
+        {
+          "path": "skills/converge-plan/scripts/plan_check.py",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "7e057ee7e63ab8ed344412533cd61c56a28a8e86d5a20dcc731068ad85209f7a"
+        },
+        {
+          "path": "workspaces/.8bea1f01e83ec51b6f343388fc98e30ddc09e5dea473119a7a4a812087b2aab1.json.lock",
+          "kind": "file",
+          "mode": "100644",
+          "content_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "source_fingerprint": "81211f7d890a4ddd39021390dc6fed7f2bfca29dae33d7a631ab5e036384d7e6"
+    }
+  },
+  "checkpoint": "same_session",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "结果校验失败保留进程事实并可显式进行一次格式恢复"
+      ],
+      "goal": "结果校验失败保留进程事实并可显式进行一次格式恢复",
+      "owned_paths": [
+        "scripts/role_result.py",
+        "scripts/runner_contract.py",
+        "scripts/runner_lifecycle.py",
+        "scripts/runner_launch.py",
+        "scripts/codex_exec_runner.py",
+        "scripts/claude_exec_runner.py",
+        "scripts/delivery_state.py",
+        "scripts/test_role_result.py",
+        "scripts/test_runner_contract.py",
+        "scripts/test_runner_lifecycle.py",
+        "scripts/test_runner_launch.py",
+        "scripts/test_delivery_state.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_claude_exec_runner.py",
+        "scripts/test_multimodel_recovery.py",
+        "skills/converge-review/scripts/review_contract.py"
+      ],
+      "depends_on": [],
+      "steps": [
+        "补充可执行失败回归",
+        "实施最小修复",
+        "运行冻结验证命令"
+      ],
+      "acceptance": [
+        "结果校验失败保留进程事实并可显式进行一次格式恢复"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_role_result test_runner_contract test_runner_lifecycle test_runner_launch test_delivery_state test_multimodel_recovery"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "48aed34b355935525fd4e19416ebb63e5ff09c5ab74c4c63b3b9d317b1802037",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "3e1a94e90f66ef2997bab11d054c3d69aca3345cfb4b309b88d00b41bf398589",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T2",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "派发前拒绝缺少能力、凭据或前置审查的请求"
+      ],
+      "goal": "派发前拒绝缺少能力、凭据或前置审查的请求",
+      "owned_paths": [
+        "scripts/runner_lifecycle.py",
+        "scripts/openai_compatible_runner.py",
+        "scripts/test_runner_lifecycle.py",
+        "scripts/test_openai_compatible_runner.py"
+      ],
+      "depends_on": [
+        "T1"
+      ],
+      "steps": [
+        "补充可执行失败回归",
+        "实施最小修复",
+        "运行冻结验证命令"
+      ],
+      "acceptance": [
+        "派发前拒绝缺少能力、凭据或前置审查的请求"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_runner_lifecycle test_openai_compatible_runner"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "48aed34b355935525fd4e19416ebb63e5ff09c5ab74c4c63b3b9d317b1802037",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "3e1a94e90f66ef2997bab11d054c3d69aca3345cfb4b309b88d00b41bf398589",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T3",
+      "task_kind": "vertical_slice",
+      "outcomes": [
+        "只从已完成消息提取结果且恢复使用完整冻结扩展"
+      ],
+      "goal": "只从已完成消息提取结果且恢复使用完整冻结扩展",
+      "owned_paths": [
+        "scripts/codex_exec_runner.py",
+        "scripts/controller_snapshot.py",
+        "scripts/test_codex_exec_runner.py",
+        "scripts/test_runner_output.py",
+        "scripts/test_controller_snapshot.py"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "steps": [
+        "补充可执行失败回归",
+        "实施最小修复",
+        "运行冻结验证命令"
+      ],
+      "acceptance": [
+        "只从已完成消息提取结果且恢复使用完整冻结扩展"
+      ],
+      "verification": [
+        "PYTHONPATH=scripts python3 -m unittest test_codex_exec_runner test_runner_output test_controller_snapshot"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "48aed34b355935525fd4e19416ebb63e5ff09c5ab74c4c63b3b9d317b1802037",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "3e1a94e90f66ef2997bab11d054c3d69aca3345cfb4b309b88d00b41bf398589",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    },
+    {
+      "task_id": "T4",
+      "task_kind": "integration",
+      "outcomes": [
+        "修复边界与协议一致且全量检查及90%覆盖率通过"
+      ],
+      "goal": "修复边界与协议一致且全量检查及90%覆盖率通过",
+      "owned_paths": [
+        "CHANGELOG.md",
+        "references/multi-model.md",
+        "references/worker-runners.md",
+        "references/review-orchestration.md",
+        "extensions/converge-multimodel/SKILL.md",
+        "docs/06_tasks/F20261021-multimodel-review-fixes-plan.md",
+        "docs/06_tasks/F20261021-multimodel-review-fixes-plan.json",
+        "scripts/test_multimodel_recovery.py",
+        "scripts/check.sh"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "steps": [
+        "补充可执行失败回归",
+        "实施最小修复",
+        "运行冻结验证命令"
+      ],
+      "acceptance": [
+        "修复边界与协议一致且全量检查及90%覆盖率通过"
+      ],
+      "verification": [
+        "python3 -m pytest scripts/test_coverage_gate.py --cov --cov-fail-under=90"
+      ],
+      "execution": "current",
+      "status": "pending",
+      "provider_run": {
+        "scope": "task",
+        "recursive_planning": false
+      },
+      "provider_binding": {
+        "binding": {
+          "controller": "converge",
+          "stage_providers": {},
+          "workflow_provider": {
+            "contract": {
+              "closure": [],
+              "entrypoint": "references/execution-protocol.md",
+              "preserve_external_behavior": false
+            },
+            "contract_fingerprint": "2fb1c069b1686ca2b67c505882e2ae27a404663386e5e72df4b2f65a6ec62822",
+            "id": "native-v1",
+            "manifest": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/providers/native-v1.json",
+            "manifest_fingerprint": "da79b6af45fa1e1a94b5ce9b4b0cf84d5f43a798e57f5e1c50b510f6b7e954ee",
+            "role": "workflow",
+            "source_root": "/Users/liuwenyuan/www/tools/skills-convergent-delivery",
+            "sources": [
+              {
+                "fingerprint": "48aed34b355935525fd4e19416ebb63e5ff09c5ab74c4c63b3b9d317b1802037",
+                "kind": "entrypoint",
+                "path": "/Users/liuwenyuan/www/tools/skills-convergent-delivery/references/execution-protocol.md",
+                "relative_path": "references/execution-protocol.md"
+              }
+            ],
+            "task_kind": "fix",
+            "version": "1"
+          }
+        },
+        "binding_fingerprint": "3e1a94e90f66ef2997bab11d054c3d69aca3345cfb4b309b88d00b41bf398589",
+        "reason": "native engine was selected",
+        "selection": "explicit",
+        "task_kind": "fix"
+      }
+    }
+  ],
+  "final_acceptance": [
+    "结果校验失败保留进程事实并可显式进行一次格式恢复",
+    "派发前拒绝缺少能力、凭据或前置审查的请求",
+    "只从已完成消息提取结果且恢复使用完整冻结扩展",
+    "修复边界与协议一致且全量检查及90%覆盖率通过"
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "resolved",
+      "question": "当前不可证明能力的 API reviewer 如何处理",
+      "resolution": "受管 blind review 在派发前拒绝无源码工具的 API runner；保留显式诊断接口，不新增上下文上传或扩大外发范围。",
+      "source": "reversible-default"
+    },
+    {
+      "id": "D2",
+      "status": "resolved",
+      "question": "格式失败是否可重试",
+      "resolution": "保留原始 receipt，仅允许已完成且结果格式无效的同角色同请求一次显式恢复，绑定失败 launch；未知退出、无新提示和再次失败仍停止。",
+      "source": "reversible-default"
+    },
+    {
+      "id": "D3",
+      "status": "resolved",
+      "question": "已有变更和旧产品 run 如何处理",
+      "resolution": "复用当前工作区，保留既有脏文件；不重写旧 run、不放宽预算、不修产品仓库缺陷、不提交推送。预检缺口转计划待处理规则，不自动安装或配置目标项目。",
+      "source": "code"
+    }
+  ]
+}

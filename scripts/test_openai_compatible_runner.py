@@ -125,25 +125,54 @@ class OpenAICompatibleRunnerTest(unittest.TestCase):
         self.assertEqual("[]", content)
         self.assertNotIn("[]", receipt)
 
-    def test_rejects_a_response_that_exceeds_the_frozen_output_budget(self):
+    def test_large_response_is_preserved_independently_of_preview_budget(self):
+        import json
+        import shutil
+        from pathlib import Path
+        text = 'valid result 中文' * 20000
         class Response:
-            def __enter__(self):
-                return self
+            def __init__(self):
+                self.body = io.BytesIO(json.dumps({'id':'large','model':'glm-5.2','choices':[{'message':{'content':text}}]}).encode())
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, size=-1): return self.body.read(size)
+        small = profile(budget={"max_turns":1,"timeout_seconds":120,"max_output_chars":64})
+        with patch.dict('os.environ', {'GLM_API_KEY':'test-key'}):
+            receipt, content = execute_request(plan_request(small, 'Review', base_url='https://open.bigmodel.cn/api/paas/v4', api_key_env='GLM_API_KEY', effort_binding={'field':'thinking.type','value':'enabled'}), 'Review', allow_network=True, capture_content=True, opener=lambda request, timeout: Response())
+        self.assertEqual('completed', receipt['status'])
+        self.assertEqual(text, content)
+        self.addCleanup(shutil.rmtree, receipt['output_log']['directory'])
+        self.assertEqual(text, Path(receipt['output_log']['result_path']).read_text())
 
-            def __exit__(self, *_):
-                return False
+    def test_streaming_http_read_still_stops_at_the_time_budget(self):
+        import shutil
+        class Response:
+            def __init__(self): self.body = io.BytesIO(b'x'*30000)
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, size=-1): return self.body.read(size)
+        small = profile(budget={'max_turns':1,'timeout_seconds':1,'max_output_chars':8})
+        launch = plan_request(small, 'Review', base_url='https://open.bigmodel.cn/api/paas/v4', api_key_env='GLM_API_KEY', effort_binding={'field':'thinking.type','value':'enabled'})
+        with patch.dict('os.environ', {'GLM_API_KEY':'test-key'}), patch('time.monotonic', side_effect=range(100)):
+            receipt = execute_request(launch, 'Review', allow_network=True, opener=lambda request, timeout:Response())
+        self.addCleanup(shutil.rmtree, receipt['output_log']['directory'])
+        self.assertEqual('unknown', receipt['status'])
+        self.assertEqual('TimeoutError', receipt['error_type'])
 
-            def read(self, _size=-1):
-                return b"{}"
-
-        small = profile(budget={"max_turns": 1, "timeout_seconds": 120, "max_output_chars": 1})
-        with patch.dict("os.environ", {"GLM_API_KEY": "test-key"}):
-            receipt = execute_request(
-                plan_request(small, "Review", base_url="https://open.bigmodel.cn/api/paas/v4", api_key_env="GLM_API_KEY",
-                             effort_binding={"field": "thinking.type", "value": "enabled"}),
-                "Review", allow_network=True, opener=lambda request, timeout: Response(),
-            )
-        self.assertEqual("unknown", receipt["status"])
+    def test_invalid_unicode_final_response_has_a_receipt_instead_of_crashing(self):
+        import json
+        import shutil
+        class Response:
+            def __init__(self): self.body=io.BytesIO(json.dumps({'id':'unicode','model':'glm-5.2','choices':[{'message':{'content':chr(0xd800)}}]}).encode())
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, size=-1): return self.body.read(size)
+        launch=plan_request(profile(), 'Review', base_url='https://open.bigmodel.cn/api/paas/v4', api_key_env='GLM_API_KEY', effort_binding={'field':'thinking.type','value':'enabled'})
+        with patch.dict('os.environ', {'GLM_API_KEY':'test-key'}):
+            receipt=execute_request(launch, 'Review', allow_network=True, capture_content=True, opener=lambda request, timeout:Response())
+        self.addCleanup(shutil.rmtree, receipt['output_log']['directory'])
+        self.assertEqual('unknown', receipt['status'])
+        self.assertEqual('UnicodeEncodeError', receipt['error_type'])
 
     def test_rejects_an_empty_response_id_before_issuing_a_completed_receipt(self):
         class Response:

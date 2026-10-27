@@ -2,6 +2,8 @@
 """Execute one frozen request to an approved OpenAI-compatible provider."""
 
 import json
+import time
+from runner_output import OutputLog
 import os
 import re
 import urllib.error
@@ -110,19 +112,27 @@ def plan_request(profile, prompt, *, base_url, api_key_env, effort_binding=None,
     return freeze_launch(profile, prompt, configuration)
 
 
-def _response_bytes(response, limit):
-    chunks = []
-    size = 0
-    while True:
-        chunk = response.read(min(8192, limit - size + 1))
-        if not chunk:
-            return b"".join(chunks)
-        if not isinstance(chunk, bytes):
-            raise ValueError("external-model response is not bytes")
-        size += len(chunk)
-        if size > limit:
-            raise ValueError("external-model response exceeds the frozen output budget")
-        chunks.append(chunk)
+def _response_bytes(response, limit, output=None, deadline=None):
+    log = output if output is not None else OutputLog(limit)
+    try:
+        while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("external-model response deadline reached")
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            if not isinstance(chunk, bytes):
+                raise ValueError("external-model response is not bytes")
+            log.feed("stdout", chunk)
+        for name in list(log.files):
+            log._close(name)
+        if log.errors:
+            raise OSError("external-model response log is incomplete")
+        # This body is the final API result, not accumulated execution/tool logs.
+        return b"".join(log.chunks("stdout"))
+    finally:
+        if output is None:
+            log.finish()
 
 
 def _http_status_error(response, limit):
@@ -142,7 +152,7 @@ def _error_type(error):
     return type(error).__name__
 
 
-def _failure(launch, status, error_type):
+def _failure(launch, status, error_type, output_log=None):
     value = {
         "schema_version": 2,
         "runner_id": "openai-compatible-v1",
@@ -154,6 +164,8 @@ def _failure(launch, status, error_type):
             "usage": {"status": "unavailable", "value": None},
         },
     }
+    if output_log is not None:
+        value["output_log"] = output_log
     return {**value, "receipt_fingerprint": fingerprint(value)}
 
 
@@ -165,7 +177,22 @@ def _response_content(payload):
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
         raise ValueError("external-model response content is invalid")
+    content.encode("utf-8")
     return content
+
+
+def preflight_request(launch, prompt):
+    """Reject a known pre-launch configuration gap before recording an external effect."""
+    launch = validate_launch(launch, prompt)
+    if launch["runner_id"] != "openai-compatible-v1":
+        raise ValueError("launch does not select the OpenAI-compatible runner")
+    configuration = launch["configuration"]
+    _validate_approved_endpoint(launch["profile"], configuration["url"])
+    _validate_provider_configuration(
+        launch["profile"], configuration["api_key_env"], configuration["effort_binding"],
+    )
+    if not os.environ.get(configuration["api_key_env"]):
+        raise ValueError("external runner credential is missing; no request was sent")
 
 
 def execute_request(launch, prompt, *, allow_network=False, opener=None, capture_content=False):
@@ -205,13 +232,15 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
         configuration["url"], data=json.dumps(body).encode("utf-8"), method="POST",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
     )
+    output = OutputLog(launch["profile"]["budget"]["max_output_chars"])
+    deadline = time.monotonic() + launch["profile"]["budget"]["timeout_seconds"]
     try:
         open_request = opener or _open_without_redirect
         with open_request(request, timeout=launch["profile"]["budget"]["timeout_seconds"]) as response:
             status = getattr(response, "status", None)
             if isinstance(status, int) and not 200 <= status < 300:
                 raise _http_status_error(response, launch["profile"]["budget"]["max_output_chars"])
-            raw = _response_bytes(response, launch["profile"]["budget"]["max_output_chars"])
+            raw = _response_bytes(response, launch["profile"]["budget"]["max_output_chars"], output, deadline)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("id"), str) \
                 or not payload["id"].strip() \
@@ -221,11 +250,12 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
         if usage is not None and not isinstance(usage, dict):
             raise ValueError("external-model response usage is invalid")
         content = _response_content(payload) if capture_content else None
-    except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        response_fingerprint = fingerprint(payload)
+    except (OSError, urllib.error.HTTPError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         # On Python 3.14 an unclosed HTTPError wraps a temporary file and warns at GC.
         if isinstance(error, urllib.error.HTTPError):
             error.close()
-        return _failure(launch, "unknown", _error_type(error))
+        return _failure(launch, "unknown", _error_type(error), output.finish())
     value = {
         "schema_version": 2,
         "runner_id": "openai-compatible-v1",
@@ -234,7 +264,7 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
         "response_id": payload["id"],
         "response_model": payload["model"],
         "usage": usage,
-        "response_fingerprint": fingerprint(payload),
+        "response_fingerprint": response_fingerprint,
         "attestation": {
             "model": {"status": "observed", "observed": payload["model"]},
             "usage": {
@@ -243,5 +273,7 @@ def execute_request(launch, prompt, *, allow_network=False, opener=None, capture
             },
         },
     }
+    output.response = content
+    value["output_log"] = output.finish()
     receipt = {**value, "receipt_fingerprint": fingerprint(value)}
     return (receipt, content) if capture_content else receipt

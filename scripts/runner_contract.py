@@ -57,6 +57,12 @@ def validate_launch(value, prompt=None):
     if not isinstance(value["configuration"], dict) or value["status"] != "planned" \
             or value["evidence_source"] != "runner":
         raise ValueError("runner launch contents are invalid")
+    recovery = value["configuration"].get("recovery_of")
+    if "recovery_of" in value["configuration"] and (
+        not _sha256(recovery) or value["runner_id"] not in LOCAL_PROCESS_RUNNERS
+        or not _requires_role_result(value)
+    ):
+        raise ValueError("format recovery requires a local read-only launch and a SHA-256 target")
     if not _sha256(value["prompt_fingerprint"]):
         raise ValueError("runner launch prompt fingerprint is invalid")
     if prompt is not None:
@@ -184,6 +190,10 @@ def runner_results_complete(launches, results):
         role_result = result.get("role_result")
         if role_result is not None:
             required |= {"role_result"}
+        if "output_log" in result:
+            from runner_output import validate_output_log
+            validate_output_log(result["output_log"])
+            required |= {"output_log"}
         schema_version = result.get("schema_version")
         if schema_version == 2:
             required |= {"attestation"}
@@ -254,13 +264,39 @@ def bind_role_result(launch, receipt, role_result):
 
 def role_results_complete(launches, results):
     """Whether every completed read-only launch has a valid, bound result contract."""
-    if not runner_results_complete(launches, results):
+    complete = runner_results_complete(launches, results)
+    for position, launch in enumerate(launches):
+        validate_recovery_launch(launch, launches[:position], results)
+    if not complete:
         return False
     results_by_launch = {result["launch_fingerprint"]: result for result in results}
+    recovered = {launch["configuration"]["recovery_of"] for launch in launches
+                 if "recovery_of" in launch["configuration"]}
     for launch in launches:
         launch = validate_launch(launch)
-        if _requires_role_result(launch):
+        if _requires_role_result(launch) and launch["launch_fingerprint"] not in recovered:
             role_result = results_by_launch[launch["launch_fingerprint"]].get("role_result")
             if not isinstance(role_result, dict) or role_result.get("status") != "available":
                 return False
     return True
+
+
+def validate_recovery_launch(launch, launches, results):
+    """Permit one explicit format correction without replacing the failed receipt."""
+    target = launch["configuration"].get("recovery_of")
+    if target is None:
+        return
+    validate_launch(launch)
+    previous = next((item for item in launches if item["launch_fingerprint"] == target), None)
+    result = next((item for item in results if item["launch_fingerprint"] == target), None)
+    if previous is None or result is None or result.get("status") != "completed" \
+            or result.get("role_result", {}).get("status") != "invalid" \
+            or result.get("role_result", {}).get("reason") not in {"invalid_json", "invalid_contract"} \
+            or "recovery_of" in previous["configuration"] \
+            or any(item["configuration"].get("recovery_of") == target for item in launches):
+        raise ValueError("format recovery requires one completed invalid result with no previous recovery")
+    if launch["profile_fingerprint"] != previous["profile_fingerprint"] \
+            or {key: value for key, value in launch["configuration"].items() if key != "recovery_of"} \
+            != previous["configuration"] \
+            or launch["prompt_fingerprint"] == previous["prompt_fingerprint"]:
+        raise ValueError("format recovery must preserve profile and request and change the format prompt")

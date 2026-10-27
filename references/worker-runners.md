@@ -26,7 +26,7 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 }
 ```
 
-`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是统一的 controller 规划预算：Claude CLI 以 `--max-turns` 强制它，当前 Codex CLI 不支持该参数，因而 Codex 只强制 timeout 与输出字节上限。`max_output_chars` 兼容既有 Profile v1 名称，但 adapter 按 UTF-8 输出字节上限执行；不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
+`requested` 是用户/控制器请求；`effective` 是 controller 根据已知 provider capability 解析后冻结的值。OpenAI-compatible runner 还要求一份显式 `effort_binding={"field":"<provider wire field>","value":"<provider value>"}`，例如 `thinking.type=enabled`；没有该映射绝不发送猜测的 `reasoning_effort` 字段。不可在执行中静默替换。`max_turns` 是统一的 controller 规划预算：Claude CLI 以 `--max-turns` 强制它，当前 Codex CLI 不支持该参数，因而 Codex 强制 timeout。`max_output_chars` 兼容既有 Profile v1 名称，现表示每个输出流的内存预览字节数，不限制累计输出，也不因超过该值终止任务；不把不受 CLI/API 支持的输出/轮次限制伪称为 provider 已强制执行。
 
 - 七个固定角色为 `router`、`scout`、`specifier`、`implementer`、`verifier`、`reviewer` 与 `adjudicator`。只有 `implementer` 可使用独立 worktree 写入；其他角色的 `shell=false` 表示没有可写工作区的 shell 能力。Codex 的 read-only sandbox 仍可执行只读命令，Claude 则只启用 `Read,Grep,Glob`，不能把二者误称成同一种“完全没有 shell”。
 - `codex-exec-v1` 与 `claude-code-v1` 都是本地进程 runner，分别只接受 OpenAI 与 Anthropic 的 effective provider，且 requested/effective 的 model 与 effort 必须完全相同。计划冻结 CLI 绝对路径及内容指纹，执行前再次验证；prompt 仅经标准输入传递，不进入命令参数。Codex 读取用户的 `$CODEX_HOME/config.toml`，并冻结其内容指纹；计划后该文件变化会在启动前阻断，而冻结的 `--model`、reasoning effort 与 sandbox 参数仍优先。Claude 显式传入 `--bare --strict-mcp-config --model --effort --max-turns`、冻结工具与 permission mode。Claude 这是一层 CLI permission 边界，不是 OS sandbox。
@@ -36,9 +36,26 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 ## 真实执行与密钥
 
-stdout/stderr 读取或进度回调异常必须传回共享执行函数，终止并回收本次进程，返回 `unknown` 和异常类型，且不交付已读取的部分回答。读取线程结束本身不能证明流已完整读取；输出超限时清理失败也不得伪装成成功。
+stdout/stderr 读取或进度回调异常必须传回共享执行函数，终止并回收本次进程，返回 `unknown` 和异常类型，且不交付已读取的部分回答。读取线程结束本身不能证明流已完整读取；真实读流故障或清场失败不得伪装成成功。日志落盘错误则继续排空管道并单独标为 partial，不因展示预算而中断工作。
 
-三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：它从 managed state 取得唯一 workspace，先以 `append-runner-launch` 持久化 launch，再执行，最后以 `append-runner-result` 持久化 receipt。runner 对当前 controller 额外返回 `output={status,content?}`：`content` 只在完成且成功提取最终模型文本时存在，受冻结输出预算限制，绝不写入 ledger；`unavailable` 不是可用协作结论。两个本地 runner 的 prompt 写入与 stdout/stderr drain 并发启动，随后立即进入冻结 timeout；子进程不读 stdin 时也会 kill/reap 并写入终态 receipt。输出上限是本地读取到超限后终止的保守边界，不宣称能限制远端在 pipe 中已经写出的字节。receipt 本身只含 exit code、stdout/stderr 摘要、requested model/effort 和有限 timeout/output budget；requested 字段只证明命令请求，并非远端模型观察。写权限只能指向独立 Git worktree，父 controller 仍要审查 diff 和运行独立验证。
+三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：先持久化 launch，再执行，最后持久化 receipt。最终模型文本在成功提取后返回 controller，正文不写入 ledger；`unavailable` 不是有效审查结论。Codex/Claude 持续读取 stdout/stderr，增量计算完整摘要，超过预览大小仅淘汰旧内存片段。日志以 1 MiB 分段写入本机临时私有目录（目录 0700、文件 0600），最终文本另存 result.txt；Runner Receipt v2 的可选 output_log 仅保存目录、字节数、分段数、截断/缺口状态和结果路径，不内嵌日志、prompt 或密钥。旧 receipt 和 output_exceeded 失败记录仍可读取，不改写历史。
+
+Claude 使用官方 stream-json + verbose，将执行日志和最终 result 事件分开。单条 JSONL 事件超过 8 MiB 时仍完整落盘、继续排空；该条不在内存解码，并清除旧结果候选，后续正常最终事件可恢复结果。JSON 数值/递归资源异常和非法 Unicode 同样只使该条不可用，不中止任务、不在 finish 重试坏记录。若最终事件本身过大，正文为 unavailable，须从日志按需读取，不能把旧回答或截断的 JSON 当成有效审查结果。这是单次读取边界，不是任务累计输出或进程终止上限。HTTP response 同样先流式落盘，不用预览预算拒绝正常响应；完整最终 API JSON 仍需要解析内存，该内存与最终响应大小有关。
+
+超时仍独立生效。CLI 用户取消仍清理并回收本次进程组。磁盘满、拒绝写入等不会因日志大小杀任务：output_log.status=partial 并记录异常类型/errno，不能宣称日志完整；若 HTTP 最终响应无法可靠还原则返回 unknown。日志可能包含代码或模型输出，保留在本机临时目录，不上传；操作系统可能清理临时文件，长期证据需由 controller 归档。此补丁不自动清理旧回执，也不新增全局后台任务。
+
+requested 字段只证明本地命令请求，并非远端模型观察。写权限仍只允许独立 Git worktree；父 controller 负责 diff 和独立验证。
+
+核心冻结包包含共享日志模块，保证不启用多模型扩展的回执读取路径也能验证 output_log。
+
+### 机制参考与回归
+
+| 参考 | 采用 | 不采用 / 原因 | 行为验证 |
+|---|---|---|---|
+| [Filesystem Context](https://raw.githubusercontent.com/muratcankoylan/Agent-Skills-for-Context-Engineering/main/skills/filesystem-context/SKILL.md)；Skills.sh 对应条目检索不可访问 | 大输出文件化，返回紧凑引用，按需读取 | 不新增记忆服务、代理拓扑或自动删除策略；此次只修输出传输 | test_runner_output.py 大输出、分段、权限、有限预览 |
+| [Python subprocess](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.communicate) | 并发排空两条管道，超时/取消独立清场 | 不用 communicate 累积全部执行日志 | 实际子进程大输出、真实超时、取消、既有孤儿进程组回归 |
+| [Claude headless](https://code.claude.com/docs/en/headless) | 官方 stream-json 和最终 result 提取 | 不以提示约束模型必须预估全部日志大小 | Claude 命令断言及大 stderr 后最终结果回归 |
+
 
 `openai_compatible_runner.execute_request(..., allow_network=True)` 才会发送 HTTPS 请求。它只从冻结的 `api_key_env` 环境变量读取 key；profile、计划和 receipt 都不保存 key 或 prompt。返回的 `model` 必须精确等于 frozen effective model，否则 adapter 阻断，避免 provider alias/回退被误当成功。Runner Receipt v2 的 `attestation.model` 明确区分：本地 CLI 只有 `requested`，HTTPS provider 返回并匹配模型时才是 `observed`，未知或失败时为 `unavailable`；`attestation.usage` 只复制可验证的 provider usage，绝不估算 token 或成本。
 
@@ -63,3 +80,17 @@ reviewer 执行某个冻结 Review v3 请求时，controller 必须以单任务 
 所有 runner 都以相同的低层 `output` 语义把响应文本即时返回给当前调用者；它不是 receipt、持久状态或通过依据。`runner_lifecycle.py` 不向 controller 暴露该原文：只读 scout/reviewer 必须经 `role_result.py` 转为与 launch 绑定的受限 JSON 结论，其他角色或不合规输出只返回明确状态。正式 runner receipt 始终只保留回执和指纹，不存 prompt、密钥、原文或审计 transcript。见 [多模型协作](multi-model.md)。
 
 当 controller 证明多个只读任务独立时，可使用 `role_fanout.py` 以最多三个 frozen launch 做 fan-out/fan-in。它仍复用同一 `runner_launches/runner_results` ledger：launch 组必须先原子写入，之后才能启动任何 runner；fan-in 只稳定汇总每项带指纹的 `role_result`，不形成消息总线、共享任务队列或第二状态机。
+
+
+## 运行前提与结果分类
+
+完成消息无有效文本时会清除此前回答；工具事件不替代结果。前置审查不能只看 state 中的 pass：还须核对已完成且指纹有效的 runner receipt、同一规范化 review record 与冻结请求，quality 沿用通过 spec 的 reviewer 身份。
+
+受管 Review v3 只接受实际能读取源码的本地 CLI；无工具/源码包的 OpenAI-compatible runner 仅用于显式诊断。API scout 的已知凭据缺失在 launch 落盘前拒绝，不能写成未知外部副作用。Codex 输出仅从 `item.completed` 提取，started/updated 及无事件类型的片段不作完成结果。
+
+解析失败保留真实 transport receipt 与输出指纹，顶层明确 blocked；有字段错误时返回受限 diagnostic，不保存原始回答。一次显式格式恢复的边界见 [Protocol 21](multi-model.md#protocol-21失败前置能力与格式恢复)，它不改变 timeout、审查预算或 unknown 清场限制。
+
+
+## 成品文件与本地证据
+
+完整成品由 controller 或获准写入的 implementer 保存到约定 workspace 文件；scout/reviewer 不在摘要内生成文档。工具 `role_result.py observe` 产生实际文件引用，新 lifecycle 在普通类型化结果消费时重新核验完整字节 SHA-256 和引用行号。证据错误单列为 `evidence_mismatch`，不进入格式恢复；command/url 与 Review v3 自由文本仍遵守原有未观察证据边界。详见 [Protocol 22](multi-model.md#文件交付与证据核验-protocol-22)。

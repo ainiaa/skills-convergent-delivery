@@ -65,9 +65,13 @@ def explicit_threshold(argv):
     option = {
         'pytest': '--cov-fail-under', 'py.test': '--cov-fail-under',
         'coverage': '--fail-under', 'coverage.py': '--fail-under',
-        'cargo': '--fail-under', 'cargo-tarpaulin': '--fail-under', 'grcov': '--fail-under',
+        'cargo': '--fail-under-lines' if len(argv) > 1 and argv[1] == 'llvm-cov' else '--fail-under',
+        'cargo-tarpaulin': '--fail-under', 'grcov': '--fail-under',
+        'node': '--test-coverage-lines',
         'vitest': '--coverage.thresholds.lines', 'dotnet': '/p:threshold',
     }.get(runner)
+    if runner == 'cargo' and argv[1:2] == ['llvm-cov'] and '--' in argv:
+        argv = argv[:argv.index('--')]
     values = []
     for index, argument in enumerate(argv):
         argument = argument.casefold() if runner == 'dotnet' else argument
@@ -84,6 +88,11 @@ def explicit_threshold(argv):
 
 def adapt_coverage_argv(argv, threshold_value):
     runners = {coverage_runner(argv)}
+    if 'node' in runners:
+        return [argv[0], f'--test-coverage-lines={threshold_value}', *argv[1:]]
+    if 'cargo' in runners and len(argv) > 1 and argv[1] == 'llvm-cov':
+        end = argv.index('--') if '--' in argv else len(argv)
+        return [*argv[:end], f'--fail-under-lines={threshold_value}', *argv[end:]]
     coverage_enabled = any(argument == "--cov" or argument.startswith("--cov=") for argument in argv)
     if {"pytest", "py.test"} & runners and coverage_enabled:
         return [*argv, f"--cov-fail-under={threshold_value}"]
@@ -109,12 +118,48 @@ def coverage_runner(argv):
 def collection_disabled(argv):
     runner = coverage_runner(argv)
     lowered = [item.casefold() for item in argv]
+    if runner == 'cargo' and argv[1:2] == ['llvm-cov'] and '--' in argv:
+        end = argv.index('--')
+        if len(argv) != end + 2 or not re.fullmatch(r'--test-threads=[1-9][0-9]*', argv[-1]):
+            return True
+        argv = argv[:end]
     if any(item in argv for item in ('--', '--help', '-h', '--version')):
         return True
     if runner in {'coverage', 'coverage.py', 'grcov'}:
         return True  # Reports consume prior artifacts; native evidence requires collection in this invocation.
     if runner == 'cargo':
+        if len(argv) > 1 and argv[1] == 'llvm-cov':
+            if any(item.split('=', 1)[0] in {
+                    '--no-run', '--no-clean', '--no-report', '--ignore-run-fail', '--fail-under', '-V'
+            } for item in argv):
+                return True
+            values = {'--manifest-path', '--package', '-p', '--test', '--bin', '--example',
+                      '--bench', '--target', '--target-dir', '--features', '-F', '--profile',
+                      '--jobs', '-j', '--fail-under-lines', '--fail-under-functions',
+                      '--fail-under-regions', '--fail-under-file-lines', '--output-path',
+                      '--output-dir', '--ignore-filename-regex', '--exclude',
+                      '--exclude-from-test', '--exclude-from-report', '--dep-coverage',
+                      '--color', '--failure-mode', '--fail-uncovered-lines',
+                      '--fail-uncovered-regions', '--fail-uncovered-functions', '-Z'}
+            cursor, test_mode = 2, False
+            while cursor < len(argv):
+                item = argv[cursor]
+                if item in values:
+                    cursor += 1
+                    if cursor >= len(argv):
+                        return True
+                elif not item.startswith('-') and not test_mode:
+                    if item != 'test':
+                        return True
+                    test_mode = True
+                cursor += 1
+            return False
         return len(argv) < 2 or argv[1] != 'tarpaulin' or '--no-run' in argv
+    if runner == 'node':
+        return not {'--test', '--experimental-test-coverage'} <= set(argv) or any(
+            item.split('=', 1)[0] in {'--no-test', '--no-experimental-test-coverage',
+                                    '--eval', '-e', '--print', '-p', '--check', '-c', '-v'}
+            for item in argv)
     if runner == 'cargo-tarpaulin':
         return '--no-run' in argv
     if runner in {'pytest', 'py.test'}:

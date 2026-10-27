@@ -64,7 +64,7 @@ def validate_worker_profile(value):
     }:
         raise ValueError("worker profile budget fields are invalid")
     limits = {
-        "max_turns": (1, 8), "timeout_seconds": (1, 3600), "max_output_chars": (1, 200000)
+        "max_turns": (1, 8), "timeout_seconds": (1, 3600), "max_output_chars": (1, 1024 * 1024)
     }
     for field, (minimum, maximum) in limits.items():
         item = budget[field]

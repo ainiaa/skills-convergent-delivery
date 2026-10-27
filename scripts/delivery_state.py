@@ -399,6 +399,8 @@ def validate_transition(previous, candidate):
     ):
         if new_review[field] > old_review[field] or old_review[field] - new_review[field] > 1:
             raise ValueError("review budget cannot increase or skip")
+    if old_review.get("recovery") != new_review.get("recovery"):
+        raise ValueError("review recovery is immutable outside explicit resume-review")
     old_rounds = old_review["rounds"]
     new_rounds = new_review["rounds"]
     if len(new_rounds) < len(old_rounds) or len(new_rounds) > len(old_rounds) + 1:
@@ -607,6 +609,75 @@ def write(arguments):
     print(json.dumps({"status": "written", "revision": candidate["revision"]}))
 
 
+def resume_review_candidate(state, request, controller):
+    """Construct the only supported explicit environment-review recovery transition."""
+    from controller_snapshot import PROTOCOL_VERSION, validate_snapshot, snapshot_extensions
+    from runner_lifecycle import review_request_binding
+    from evidence_contract import workspace_source
+
+    if state.get("status") != "blocked" or state.get("blocked_code") != "environment" \
+            or any(worker.get("status") not in WORKER_TERMINAL_STATUSES for worker in state.get("workers", [])):
+        raise ValueError("review resume requires an environment-blocked run with terminal workers")
+    if "blocked_request" not in request:
+        raise ValueError("review resume requires a bound blocked review request")
+    if workspace_source(state["workspace"], state["baseline"]["commit"]) != state["source_receipt"]:
+        raise ValueError("review resume cannot change the frozen source")
+    old = validate_snapshot(state["controller"]["snapshot"])
+    new = validate_snapshot(controller["snapshot"])
+    if snapshot_extensions(old) != snapshot_extensions(new) \
+            or old.get("source_root") != new.get("source_root") \
+            or new.get("protocol_version") != PROTOCOL_VERSION:
+        raise ValueError("review resume requires a current-protocol controller with the same origin and extensions")
+    original = next((launch for launch in state["ledger"].get("runner_launches", [])
+                     if launch["configuration"].get("review_request_fingerprint") == request["blocked_request"]), None)
+    if original is None:
+        raise ValueError("review resume has no original reviewer launch")
+    request, request_fingerprint = review_request_binding(state, {"profile": original["profile"]}, request)
+    candidate = copy.deepcopy(state)
+    candidate["execution_control"]["review"]["recovery"] = {
+        "request_fingerprint": request_fingerprint, "blocked_request": request["blocked_request"],
+        "previous_controller": copy.deepcopy(state["controller"]),
+    }
+    candidate.update(status="active", blocked_code=None, blocked_reason=None,
+                     controller=controller, revision=state["revision"] + 1)
+    validate_candidate(candidate, SimpleNamespace(run_id=state["run_id"], writer_id=state["writer_id"],
+                       repo_id=state["repo_id"], task_key=state["task_key"], strict_evidence=True))
+    return candidate
+
+
+def resume_review(arguments):
+    """Explicit locked upgrade; generic state writes still cannot replace a controller."""
+    from delivery_engine import controller_identity
+    if arguments.input != "-":
+        raise ValueError("resume-review only accepts --input -")
+    payload = json.load(sys.stdin)
+    if not isinstance(payload, dict) or set(payload) != {"review_request", "controller_snapshot"}:
+        raise ValueError("resume-review requires review_request and controller_snapshot")
+    path = state_path(managed_state_root(arguments), arguments.repo_id, arguments.task_key, arguments.run_id)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    with active_lease(stored, managed_lease_root(arguments, stored["workspace"]),
+                      arguments.run_id, arguments.writer_id) as (paths, records):
+        with lock_record(path):
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            arguments.strict_evidence = True
+            validate_candidate(stored, arguments)
+            if stored["revision"] != arguments.expected_revision:
+                raise ValueError("expected revision does not match current state")
+            controller = controller_identity(snapshot=payload["controller_snapshot"])
+            candidate = resume_review_candidate(stored, payload["review_request"], controller)
+            write_private(path, candidate)
+            try:
+                renew_locked_leases(paths)
+            except Exception:
+                write_private(path, stored)
+                for lease, record in records.items():
+                    replace_record(lease, record)
+                raise
+    print(json.dumps({"status": "resumed", "revision": candidate["revision"],
+                      "previous_controller": stored["controller"],
+                      "review_request_fingerprint": candidate["execution_control"]["review"]["recovery"]["request_fingerprint"]}))
+
+
 def _validate_runner_record(current, field, record):
     ledger = current["ledger"]
     launches = ledger.get("runner_launches", [])
@@ -616,8 +687,16 @@ def _validate_runner_record(current, field, record):
         completed = {result.get("launch_fingerprint") for result in results}
         if any(item["launch_fingerprint"] not in completed for item in launches):
             raise ValueError("runner launch outcome is unknown; do not dispatch again")
+        from runner_contract import validate_recovery_launch
+        validate_recovery_launch(launch, launches, results)
+        recovery = launch["configuration"].get("recovery_of")
         if launches and not role_results_complete(launches, results):
-            raise ValueError("runner structured role result is missing; hand off instead of dispatching again")
+            if recovery is None:
+                raise ValueError("runner structured role result is missing; hand off instead of dispatching again")
+            other_launches = [item for item in launches if item["launch_fingerprint"] != recovery]
+            other_results = [item for item in results if item["launch_fingerprint"] != recovery]
+            if other_launches and not role_results_complete(other_launches, other_results):
+                raise ValueError("format recovery cannot bypass another incomplete launch")
         if launch["launch_fingerprint"] in {item["launch_fingerprint"] for item in launches}:
             raise ValueError("runner launch is duplicated")
         if launch["runner_id"] in LOCAL_PROCESS_RUNNERS:
@@ -823,7 +902,7 @@ def discover(workspace, diagnose=False, state_root=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=(
-        "path", "write", "append-runner-launch", "append-runner-launches", "append-runner-result", "list", "doctor",
+        "path", "write", "append-runner-launch", "append-runner-launches", "append-runner-result", "list", "doctor", "resume-review",
     ))
     parser.add_argument("--input")
     parser.add_argument("--lease-root")
@@ -864,7 +943,9 @@ def main():
             )
         if arguments.expected_revision is None:
             raise ValueError("write requires --expected-revision")
-        if arguments.command == "write":
+        if arguments.command == "resume-review":
+            resume_review(arguments)
+        elif arguments.command == "write":
             write(arguments)
         else:
             append_runner(

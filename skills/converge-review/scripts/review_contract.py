@@ -61,7 +61,8 @@ def _strings(value, name, *, non_empty=False, limit=32):
 
 
 def normalize_request(value):
-    if not isinstance(value, dict) or set(value) != REQUEST_FIELDS:
+    if not isinstance(value, dict) or not REQUEST_FIELDS <= set(value) \
+            or set(value) - REQUEST_FIELDS - {"evidence", "blocked_request"}:
         raise ValueError("review request fields are invalid")
     if value.get("protocol_version") != 3 or value.get("axis") not in AXES \
             or value.get("phase") not in PHASES or value.get("mode") not in {"shared", "blind"}:
@@ -83,7 +84,23 @@ def normalize_request(value):
         character not in "0123456789abcdef" for character in request["baseline_commit"]
     ):
         raise ValueError("request.baseline_commit must be a full Git object id")
-    if request["phase"] == "re_review" and not request["prior_findings"]:
+    if "evidence" in request:
+        evidence = request["evidence"]
+        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
+            raise ValueError("request.evidence must contain 1 to 16 local references")
+        for item in evidence:
+            if not isinstance(item, dict) or set(item) != {"kind", "reference", "content_fingerprint"} \
+                    or not isinstance(item["kind"], str) or item["kind"] not in {"file", "artifact"}:
+                raise ValueError("request.evidence requires local file references")
+            _string(item["reference"], "request.evidence.reference")
+            _sha256(item["content_fingerprint"], "request.evidence.content_fingerprint")
+        if len({item["content_fingerprint"] for item in evidence}) != len(evidence):
+            raise ValueError("request.evidence must be unique")
+    if "blocked_request" in request:
+        _sha256(request["blocked_request"], "request.blocked_request")
+        if request["phase"] != "re_review" or request["prior_findings"] or not request.get("evidence"):
+            raise ValueError("blocked review recovery requires re_review, evidence and no findings")
+    if request["phase"] == "re_review" and not request["prior_findings"] and "blocked_request" not in request:
         raise ValueError("re_review requires prior_findings")
     if any(
         len(item) != 64 or any(character not in "0123456789abcdef" for character in item)
@@ -110,7 +127,9 @@ def normalize_result(value, reviewer_ref, request):
     request = normalize_request(request)
     axis = value.get("axis")
     phase = value.get("phase")
-    if axis not in AXES or phase not in PHASES:
+    if not isinstance(axis, str) or axis not in AXES:
+        raise ValueError("review axis is invalid")
+    if not isinstance(phase, str) or phase not in PHASES:
         raise ValueError("review axis or phase is invalid")
     source = _sha256(value.get("source_fingerprint"), "source_fingerprint")
     independent = value.get("independent")
@@ -118,7 +137,7 @@ def normalize_result(value, reviewer_ref, request):
         raise ValueError("independent must be boolean")
 
     mode = value.get("mode")
-    if mode not in {"shared", "blind"}:
+    if not isinstance(mode, str) or mode not in {"shared", "blind"}:
         raise ValueError("review mode is invalid")
     status = value.get("status")
     if any(value.get(field) != request[field] for field in ("axis", "phase", "source_fingerprint")) \
@@ -127,7 +146,7 @@ def normalize_result(value, reviewer_ref, request):
     if phase == "initial" and axis in {"quality", "integration"} \
             and (mode != "blind" or not independent):
         raise ValueError(f"initial {axis} review must be independent blind")
-    if status not in STATUSES:
+    if not isinstance(status, str) or status not in STATUSES:
         raise ValueError("review status is invalid")
 
     findings = value.get("findings", [])

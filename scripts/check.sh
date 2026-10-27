@@ -156,11 +156,16 @@ TEST_FILES+=(
   scripts/test_runner_contract.py
   scripts/test_role_result.py
   scripts/test_role_fanout.py
-  scripts/test_codex_exec_runner.py
+  scripts/test_codex_exec_runner.py scripts/test_runner_output.py
   scripts/test_claude_exec_runner.py
   scripts/test_reference_receipt.py
   scripts/test_runner_launch.py
   scripts/test_runner_lifecycle.py
+  scripts/test_multimodel_recovery.py
+  scripts/test_review_environment_recovery.py
+  scripts/test_multimodel_artifacts.py
+  scripts/test_native_adaptation.py
+  scripts/test_rust_mutation.py
 )
 if [[ $FULL_AUTONOMOUS_EVAL == true ]]; then
   TEST_FILES+=(

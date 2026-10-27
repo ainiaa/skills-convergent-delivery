@@ -40,6 +40,19 @@ class WorkerProfileTest(unittest.TestCase):
         value = profile()
         self.assertEqual(value, validate_worker_profile(value))
 
+    def test_accepts_authorized_output_budget_and_rejects_excess(self):
+        for size in (200000, 256 * 1024, 1024 * 1024):
+            value = profile(budget={"max_turns": 1, "timeout_seconds": 600, "max_output_chars": size})
+            try:
+                observed = validate_worker_profile(value)
+            except ValueError as error:
+                self.fail(f"Authorized output budget {size} was rejected: {error}")
+            self.assertEqual(value, observed)
+        for size in (1024 * 1024 + 1, 0, True):
+            with self.subTest(size=size):
+                with self.assertRaisesRegex(ValueError, "max_output_chars"):
+                    validate_worker_profile(profile(budget={"max_turns": 1, "timeout_seconds": 600, "max_output_chars": size}))
+
     def test_rejects_unbounded_budget_or_worker_chosen_effective_values(self):
         unbounded = profile(budget={"max_turns": 0, "timeout_seconds": 120, "max_output_chars": 12000})
         with self.assertRaisesRegex(ValueError, "max_turns"):
