@@ -18,6 +18,15 @@ independent-review benefit. Freeze and run only that `agent` dispatch through
 the runner lifecycle. Do not create a runner merely to make every role use a
 different model.
 
+The controller or an authorized writable implementer creates complete documents
+and other deliverables in agreed workspace files. Scout/reviewer inspect existing
+files and return short observations; never ask them to put an entire deliverable
+inside `finding.summary`. Before dispatch, observe the file using
+`role_result.py observe` as described in [file delivery](../../references/multi-model.md#文件交付与证据核验-protocol-22).
+Pass that reference and observed hash to the reader. Optional baseline generation
+is not a prerequisite unless frozen acceptance actually requires it; decide this
+before launch, without bypassing an already blocked run.
+
 Read-only is a workspace boundary, not a universal side-effect boundary. The
 Codex runner inherits the user's MCP configuration and the full host process
 environment, including credentials such as API keys, proxy settings, and host
@@ -71,3 +80,19 @@ string, and it leaves tasks unarchived when the status is non-terminal,
 missing, or the task reference differs. This is a host-controller protocol,
 not an automatic continuation mechanism; a real smoke requires an explicitly
 requested Desktop task.
+
+
+## Managed review and format failures
+
+Managed Review v3 requires local source-reading tools. The current API-only
+runner is diagnostic and must be rejected before a managed reviewer launch;
+a workspace=read label alone does not supply source access. Check credentials
+and current-source prerequisite review passes before persisting a launch.
+
+A completed process with an invalid conclusion is blocked, not a successful
+review or an unknown process. Preserve its original receipt. Protocol 21
+permits exactly one explicit local format correction bound by recovery_of;
+use the single-dispatch lifecycle and a corrected format prompt. Never retry
+unknown exits, chain recoveries, reset review budgets, or turn a recovered
+model conclusion directly into verified acceptance. See the bounded recovery
+contract in the multi-model reference.

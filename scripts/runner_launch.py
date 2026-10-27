@@ -37,17 +37,34 @@ def _profile(dispatch):
 
 def prompt_for_dispatch(dispatch, prompt, review_request=None):
     """Apply the read-only result contract after validating the frozen dispatch."""
-    role = _profile(dispatch)["role"]
-    return prompt_for_review(prompt, review_request) if role == "reviewer" and review_request is not None \
+    profile = _profile(dispatch)
+    role = profile["role"]
+    result = prompt_for_review(prompt, review_request) if role == "reviewer" and review_request is not None \
         else prompt_for_role(role, prompt)
+    if role == "reviewer":
+        cap = profile["budget"]["max_output_chars"]
+        result = (f"Output preview budget: {cap} bytes per stream. "
+                  "This only bounds the controller's in-memory log preview and does not terminate your task. "
+                  "Execution logs are spooled to private files; finish the complete scoped review and return "
+                  "the exact result JSON. Prefer targeted source slices to keep context useful.\n\n" + result)
+    return result
 
 
 def plan_dispatch_launch(dispatch, prompt, *, workspace, codex_bin="codex", claude_bin="claude",
                          review_request_fingerprint=None, review_request=None,
                          implementation_reference_receipt=None, alignment_target=None,
-                         alignment_decisions=None):
+                         alignment_decisions=None, recovery_of=None):
     """Turn exactly one frozen external-runner dispatch into a prompt-free launch receipt."""
     profile = _profile(dispatch)
+    if recovery_of is not None:
+        from runner_contract import freeze_launch
+        launch = plan_dispatch_launch(
+            dispatch, prompt, workspace=workspace, codex_bin=codex_bin, claude_bin=claude_bin,
+            review_request_fingerprint=review_request_fingerprint, review_request=review_request,
+            implementation_reference_receipt=implementation_reference_receipt,
+            alignment_target=alignment_target, alignment_decisions=alignment_decisions,
+        )
+        return freeze_launch(profile, prompt, {**launch["configuration"], "recovery_of": recovery_of})
     receipt_fingerprint = (
         require_implementer_receipt(implementation_reference_receipt)
         if profile["role"] == "implementer" else None

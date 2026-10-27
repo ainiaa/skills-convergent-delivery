@@ -13,7 +13,7 @@
   "writer_id": "writer-<id>",
   "revision": 0,
   "workspace": "/absolute/worktree",
-  "baseline": {"commit": "<commit>", "diff_fingerprint": "<hash>"},
+  "baseline": {"commit": "<commit>", "diff_fingerprint": "<hash>", "source": {"schema_version": 2, "baseline_commit": "<commit>", "source_fingerprint": "<run-start fingerprint>", "changed_entries": []}},
   "scope_fingerprint": "<hash>",
   "source_fingerprint": "<current Source Receipt fingerprint>",
   "source_receipt": {"schema_version": 2, "baseline_commit": "<commit>", "changed_entries": [], "source_fingerprint": "<same fingerprint>"},
@@ -56,6 +56,8 @@
 `handoff.open_issues` 的新写入格式是字符串数组，一项对应一个尚待处理问题。`complete` 必须为空；已知同范围缺陷不能被“验收通过”或报告中的 `attention` 掩盖，无法关闭时应保留在 `blocked` 状态。范围外观察不作为已授权任务的待修问题，不得靠它扩大写入范围。旧 v5/v6/v7 字符串在读取时迁移：`none`、`0`、`No remaining scoped findings` 等明确无问题文本转为空数组，其他文本转为单元素数组；不再猜测自由文本中包含几项。
 
 无 worker 的旧 v5-v9 状态可保守迁移为 v10：旧 `engine` 转成等价 Provider Binding，Review v2 转成不可变历史轮次，缺失的宿主计划和 Source Receipt 明确记为不可用，不能据此伪造事实。任何旧状态只要已有 worker 就必须人工恢复，不能补写或猜测其 task、宿主终态和清场事实。迁移不得推进阶段、修改 baseline/scope/ledger 或替换 Provider；新状态不得再写 `engine`。
+
+新建状态把完整的任务起点 Source Receipt v2 冻结在 `baseline.source`，与当前 `source_receipt` 深拷贝隔离；起点的 commit/diff 必须匹配 baseline，整个 baseline 仍不可变。范围和路径风险只比较起点与当前 receipt 的 entries 增量（内容、类型、权限及消失的路径），任务前未变的脏文件不触发本次漂移，也不自动提高初始风险；显式语义风险与 scope 推导风险保留。Git diff 禁用 rename 折叠，保证重命名两端均可追踪。没有 `baseline.source` 的旧状态继续严格校验相对 Git 基线的全部脏路径，不自动迁移或补猜起点。含 rename 的旧回执摘要可能与新采集规则不同；既有 run 继续使用其冻结控制器，不改写起点绕过 freshness。当前 receipt 仍必须逐字匹配真实 workspace。
 
 `source_receipt` 使用 Source Receipt v2，绑定当前 Git baseline、HEAD/tree、diff、路径类型、执行权限与内容摘要；存在时必须与 `source_fingerprint` 完全一致。Routing Receipt v3 由 `task_profile.freeze_routing` 唯一生成：它冻结原始请求摘要与 `full_closure_required`，完成时 helper 重算 route/review tier/integration requirement/profile fingerprint，逐项检查真实 changed paths 位于 `allowed_paths`，并阻止路径暴露出画像未声明的 SQL、迁移、权限、安全、公共 API 等风险。全量路由在同一 `execution_control` 内必须另有 `closure` gate：它冻结完整 Plan v6，要求 Plan requirement 与 routing 精确匹配、Plan baseline 的 commit/diff identity 与 state baseline 匹配、每个 Plan task 的 Provider Binding 与 state Binding 精确相同，所有 Plan task 与 closure matrix 均不得超出 frozen routing scope；gate 还保存 Plan audit envelope，complete 时 helper 在当前 workspace 重新运行 audit，要求每条 task source chain 的末端等于真实 workspace Source Receipt，结果覆盖 state acceptance、对当前 Source Receipt 完整通过。定向图谱回执必须携带当前 Source Receipt 的 observed `codegraph` Evidence Receipt，并以冻结 `allowed_paths`、matrix chains 与 scope fingerprint 确定性生成查询，再将 stdout fingerprint 绑定为图谱输出；它还绑定 Closure Review v3 request。只有 gate=`pass`、当前源码的独立 blind closure review 通过且所有验收证据新鲜时才可 complete。closure 最多两条历史记录，第二条只能在首次 finding 后通过；预算耗尽的 finding 必须 blocked/uncovered。旧 Routing v1/v2 只读兼容，不能写入新 complete。`delivery_state.py doctor` 对不可解析和非对象 managed JSON 都返回 `health=blocked`，不会静默跳过磁盘损坏。
 
@@ -202,3 +204,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
 普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。
 
 Hook runtime 可额外冻结非空 `session_id`；Codex 新建 Prompt Hook 门禁要求该 ID，缺失时不 arm。Codex Stop 只有在宿主输入同一 ID 时才续跑，其他会话不得接管，身份缺失记为未覆盖。此 ID 不证明事项身份或跨宿主恢复时稳定；完成记录保持终态，后续同会话同事项的 Bug 必须开启新 run，不复活旧状态。缺少新进展的 blocked 事项不得靠新 run 重置预算。
+
+## Protocol 23 显式审查恢复
+
+`execution_control.review.recovery` 是可选、不可变的恢复记录：`request_fingerprint`、`blocked_request`、`previous_controller`。仅 `delivery_state.py resume-review` 在同源码 environment blocked、终态 worker、已完成原审查、新 observed passing test evidence 和剩余复核预算均成立时添加。它保留旧快照，不更改验收/阶段/账本/预算，只将 status 恢复 active 并显式采用兼容新快照；常规 write 继续禁止修改控制器及恢复记录。后续实际 re_review 按原预算消费，不能再次 initial。

@@ -14,7 +14,7 @@ from multi_model import resolve
 from reference_receipt import freeze_receipt
 from role_dispatch import plan_dispatch
 from runner_contract import fingerprint
-from runner_launch import _output, _profile, command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
+from runner_launch import prompt_for_dispatch, _output, _profile, command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch
 
 
 RUNNER_LAUNCH = Path(__file__).with_name("runner_launch.py")
@@ -52,6 +52,24 @@ class RunnerLaunchTest(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_review_prompt_exposes_frozen_budget_even_when_blind(self):
+        for cap in (24000, 256 * 1024, 1024 * 1024):
+            profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
+            profile = profiles["roles"]["reviewer"]
+            profile["budget"]["max_output_chars"] = cap
+            profile["profile_fingerprint"] = fingerprint({k: v for k, v in profile.items() if k != "profile_fingerprint"})
+            dispatch = plan_dispatch(profiles, state(evidence="sufficient", implementation="complete", verification="passed", review="pending"))
+            frozen = json.dumps(dispatch, sort_keys=True)
+            for mode in ("shared", "blind"):
+                request = {**review_request(), "mode": mode}
+                text = prompt_for_dispatch(dispatch, "PRIVATE IMPLEMENTATION NOTES", request)
+                self.assertIn(f"Output preview budget: {cap} bytes", text)
+                self.assertNotIn("Tool/source reading budget:", text)
+                self.assertNotIn("one total output budget", text)
+                self.assertIn("does not terminate", text)
+                self.assertEqual(mode == "shared", "PRIVATE IMPLEMENTATION NOTES" in text)
+            self.assertEqual(frozen, json.dumps(dispatch, sort_keys=True))
 
     def test_dispatch_launches_codex_with_the_frozen_profile(self):
         profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")

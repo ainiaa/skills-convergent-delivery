@@ -102,6 +102,67 @@ def runner_selector_matches(argv, selector):
     )):
         return False
     runner = coverage_runner(argv)
+    if runner == 'node':
+        if '--test' not in argv:
+            return False
+        values = {'--test-name-pattern', '--test-reporter', '--test-reporter-destination',
+                  '--test-concurrency', '--test-timeout', '--test-coverage-lines',
+                  '--test-coverage-functions', '--test-coverage-branches',
+                  '--test-coverage-include', '--test-coverage-exclude'}
+        paths, patterns = [], []
+        cursor = 1
+        while cursor < len(argv):
+            item = argv[cursor]
+            option, _, value = item.partition('=')
+            if option in values:
+                if '=' not in item:
+                    cursor += 1
+                    if cursor >= len(argv):
+                        return False
+                    value = argv[cursor]
+                if option == '--test-name-pattern':
+                    patterns.append(value)
+            elif item in {'--test', '--experimental-test-coverage'}:
+                pass
+            elif item.startswith('-'):
+                return False
+            else:
+                paths.append(item)
+            cursor += 1
+        return (patterns == [selector] if patterns else paths == [selector]
+                and bool(re.fullmatch(r'.+\.(?:[cm]?[jt]s|[jt]sx)', selector)))
+    if runner == 'cargo':
+        if len(argv) < 3 or argv[1] not in {'test', 'llvm-cov'}:
+            return False
+        if argv[1] == 'llvm-cov' and argv[2] != 'test':
+            return False
+        values = {'--manifest-path', '--package', '-p', '--test', '--bin', '--example',
+                  '--bench', '--target', '--target-dir', '--features', '-F', '--profile',
+                  '--jobs', '-j', '--fail-under-lines'}
+        flags = {'--lib', '--tests', '--bins', '--all-targets', '--workspace', '--all-features',
+                 '--no-default-features', '--release', '--locked', '--offline', '--frozen',
+                 '--quiet', '-q', '--verbose', '-v'}
+        filters = []
+        cursor = 3 if argv[1] == 'llvm-cov' else 2
+        while cursor < len(argv):
+            item = argv[cursor]
+            if item == '--':
+                return filters == [selector] and all(
+                    flag in {'--exact', '--nocapture', '--show-output'} for flag in argv[cursor + 1:])
+            option = item.split('=', 1)[0]
+            if option in values:
+                if '=' not in item:
+                    cursor += 1
+                    if cursor >= len(argv):
+                        return False
+            elif item in flags:
+                pass
+            elif item.startswith('-'):
+                return False
+            else:
+                filters.append(item)
+            cursor += 1
+        return filters == [selector] and not selector.startswith('-')
     if runner in {"mvn", "mvnw"}:
         return [item for item in argv if item.startswith("-Dtest=")] == [f"-Dtest={selector}"] and any(item in argv for item in ("test", "package", "verify", "install"))
     if selector not in argv:
@@ -160,7 +221,8 @@ def red_receipt(value, source, selector):
         raise ValueError("red receipt fields are invalid")
     observed = observed_receipt(value["receipt"], "red receipt", source, selector, passing=False)
     outcomes = observed.get("test_check")
-    if observed["exit_code"] != 1 or not outcomes \
+    allowed_exit_codes = {1, 101} if Path(observed['argv'][0]).name.lower() == 'cargo' else {1}
+    if observed["exit_code"] not in allowed_exit_codes or not outcomes \
             or outcomes["failed"] <= 0 or outcomes["errors"] != 0 \
             or any(outcomes[key] for key in ("xfailed", "xpassed")) \
             or not isinstance(value.get("failure_class"), str) \

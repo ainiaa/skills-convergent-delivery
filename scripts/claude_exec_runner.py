@@ -68,7 +68,7 @@ def command_for_launch(launch, prompt):
                 "claude_bin", "binary_fingerprint", "permission_mode", "tools", "workspace",
                 "review_request_fingerprint", "review_request",
                 "implementation_reference_receipt_fingerprint",
-                "alignment_launch_binding_fingerprint",
+                "alignment_launch_binding_fingerprint", "recovery_of",
             } \
             or not isinstance(configuration["claude_bin"], str) or not configuration["claude_bin"] \
             or not isinstance(configuration["binary_fingerprint"], str) \
@@ -104,13 +104,26 @@ def command_for_launch(launch, prompt):
     effective = profile["effective"]
     return [
         configuration["claude_bin"], "--bare", "--strict-mcp-config", "--print", "--input-format", "text",
-        "--output-format", "json",
+        "--output-format", "stream-json", "--verbose",
         "--no-session-persistence",
         "--model", effective["model"], "--effort", effective["reasoning_effort"],
         "--max-turns", str(profile["budget"]["max_turns"]), "--tools", configuration["tools"],
         "--disallowedTools", "Agent,Task,TeamCreate",
         "--permission-mode", configuration["permission_mode"],
     ]
+
+
+def _response_from_jsonl(raw):
+    try:
+        response = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(response, dict) or response.get("type") not in (None, "result"):
+        return None
+    content = response.get("result")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("completed Claude result has no valid text")
+    return content
 
 
 def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subprocess.Popen,
@@ -121,7 +134,7 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     command = command_for_launch(launch, prompt)
     status, exit_code, error_type, digests, captured = _execute_process(
         command, launch["configuration"]["workspace"], prompt, launch["profile"]["budget"],
-        process_factory, on_progress,
+        process_factory, on_progress, _response_from_jsonl,
     )
     value = {
         "schema_version": 2,
@@ -140,14 +153,11 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     }
     if status == "unknown":
         value["error_type"] = error_type
+    if "output_log" in captured:
+        value["output_log"] = captured["output_log"]
     receipt = {**value, "receipt_fingerprint": fingerprint(value)}
     if not capture_content:
         return receipt
     if receipt["status"] != "completed":
         return receipt, None
-    try:
-        response = json.loads(bytes(captured["stdout"]).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        response = None
-    content = response.get("result") if isinstance(response, dict) else None
-    return receipt, content if isinstance(content, str) and content.strip() else None
+    return receipt, captured.get("response")

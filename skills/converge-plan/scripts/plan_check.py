@@ -12,7 +12,7 @@ SUITE_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 if not SUITE_SCRIPTS.is_dir():
     SUITE_SCRIPTS = Path(__file__).resolve().parents[1].parent / "converge" / "scripts"
 sys.path.insert(0, str(SUITE_SCRIPTS))
-from evidence_contract import validate_source_receipt, valid_evidence_receipts, workspace_source, verification_argv
+from evidence_contract import source_delta, validate_source_receipt, valid_evidence_receipts, workspace_source, verification_argv
 from delivery_next import (
     GRAPH_RECEIPT_TOOLS,
     validate_provider_binding as validate_complete_provider_binding,
@@ -417,16 +417,6 @@ def validate_plan(plan):
         "commit_authorization_required": checkpoint == "cross_session",
         "waves": waves,
     }
-
-
-def source_entries(source):
-    return {entry["path"]: entry for entry in source.get("changed_entries", [])}
-
-
-def source_delta(before, after):
-    old = source_entries(before)
-    new = source_entries(after)
-    return sorted(path for path in old.keys() | new.keys() if old.get(path) != new.get(path))
 
 
 def audit(envelope, workspace):

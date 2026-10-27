@@ -29,6 +29,34 @@ def profile(**overrides):
 
 
 class ClaudeExecRunnerTest(unittest.TestCase):
+    def test_tool_event_result_is_not_a_final_claude_answer(self):
+        from claude_exec_runner import _response_from_jsonl
+        self.assertIsNone(_response_from_jsonl(b'{"type":"tool_result","result":"not a final answer"}'))
+        self.assertEqual('answer', _response_from_jsonl(b'{"type":"result","result":"answer"}'))
+
+    def test_large_logs_and_final_json_do_not_share_a_lifetime_budget(self):
+        import json
+        import shutil
+        text = '完整最终结论' * 10000
+        class Process:
+            stdin = io.BytesIO()
+            stdout = io.BytesIO(json.dumps({'type':'result','result':text}).encode())
+            stderr = io.BytesIO(b'warning\n' * 100000)
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+        small = profile(budget={'max_turns':1,'timeout_seconds':30,'max_output_chars':64})
+        launch = plan_launch(small, 'probe', workspace='/tmp')
+        receipt, content = execute_launch(launch, 'probe', allow_execute=True, capture_content=True, process_factory=lambda *_args, **_kwargs:Process())
+        self.addCleanup(shutil.rmtree, receipt['output_log']['directory'])
+        self.assertEqual('completed', receipt['status'])
+        self.assertEqual(text, content)
+        self.assertTrue(receipt['output_log']['streams']['stderr']['preview_truncated'])
+
+    def test_uses_jsonl_events_to_extract_result_after_large_logs(self):
+        command = command_for_launch(plan_launch(profile(), 'probe', workspace='/tmp'), 'probe')
+        self.assertEqual('stream-json', command[command.index('--output-format') + 1])
+        self.assertIn('--verbose', command)
+
     def test_leaf_commands_only_expose_read_only_tools(self):
         launch = plan_launch(profile(), "probe", workspace="/tmp", claude_bin=sys.executable)
         command = command_for_launch(launch, "probe")

@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Execute one frozen, ephemeral Codex CLI launch."""
 
+import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
+
+from runner_output import OutputLog
 
 from runner_contract import (
     alignment_launch_binding, fingerprint, freeze_launch, implementation_reference_binding,
@@ -98,7 +102,7 @@ def command_for_launch(launch, prompt):
                 "codex_bin", "binary_fingerprint", "sandbox", "workspace", "user_config_fingerprint",
                 "review_request_fingerprint", "review_request",
                 "implementation_reference_receipt_fingerprint",
-                "alignment_launch_binding_fingerprint",
+                "alignment_launch_binding_fingerprint", "recovery_of",
             } \
             or configuration["sandbox"] not in {"read-only", "workspace-write"} \
             or not isinstance(configuration["codex_bin"], str) \
@@ -151,14 +155,12 @@ def command_for_launch(launch, prompt):
     ]
 
 
-def _capture_bounded(process, limit, on_progress=None):
-    """Drain both pipes while retaining digests and bounded stdout for this invocation."""
-    lock = threading.Lock()
-    total = [0]
-    exceeded = threading.Event()
+def _capture_bounded(process, limit, on_progress=None, parser=None):
+    """Drain both pipes continuously; only the in-memory preview has a byte budget."""
     errors = []
     digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    output = OutputLog(limit, parser)
+    captured = output.preview
 
     def drain(name, stream):
         try:
@@ -167,32 +169,21 @@ def _capture_bounded(process, limit, on_progress=None):
                 if not chunk:
                     return
                 digests[name].update(chunk)
+                output.feed(name, chunk)
                 if on_progress is not None:
                     on_progress({"stream": name, "bytes": len(chunk)})
-                with lock:
-                    total[0] += len(chunk)
-                    over_limit = total[0] > limit
-                    if not over_limit:
-                        captured[name].extend(chunk)
-                if over_limit:
-                    exceeded.set()
-                    _terminate_process(process)
-                    return
         except Exception as error:
-            # Thread exceptions must reach the receipt; also unblock process.wait().
             errors.append(error)
             try:
                 _terminate_process(process)
             except OSError as cleanup_error:
                 errors.append(cleanup_error)
 
-    threads = [
-        threading.Thread(target=drain, args=(name, getattr(process, name)), daemon=True)
-        for name in digests
-    ]
+    threads = [threading.Thread(target=drain, args=(name, getattr(process, name)), daemon=True)
+               for name in digests]
     for thread in threads:
         thread.start()
-    return threads, exceeded, digests, captured, errors
+    return threads, digests, captured, errors, output
 
 
 def _terminate_process(process):
@@ -203,6 +194,26 @@ def _terminate_process(process):
             os.killpg(pid, signal.SIGKILL)
             return
         except ProcessLookupError:
+            return
+        except PermissionError as error:
+            if error.errno != errno.EPERM:
+                raise
+            # Darwin rejects signals to zombie-only groups; inspect before accepting cleanup.
+            try:
+                observed = subprocess.run(
+                    ["ps", "-axo", "pid=,pgid=,stat="],
+                    capture_output=True, text=True, timeout=2, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                raise error
+            if observed.returncode:
+                raise error
+            for line in observed.stdout.splitlines():
+                fields = line.split()
+                if len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit():
+                    raise error
+                if int(fields[1]) == pid and not re.fullmatch(r"Z[+<>AELNSXsl]*", fields[2]):
+                    raise error
             return
     process.kill()
 
@@ -242,12 +253,15 @@ def _response_from_jsonl(stdout):
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(event, dict) or event.get("type") != "item.completed":
+            continue
         item = event.get("item") if isinstance(event, dict) else None
         if not isinstance(item, dict) or item.get("type") not in {"agent_message", "assistant_message"}:
             continue
         content = _text_content(item.get("text", item.get("content")))
-        if isinstance(content, str) and content.strip():
-            response = content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("completed assistant message has no valid text")
+        response = content
     return response
 
 
@@ -257,20 +271,22 @@ def _join_io(threads, deadline):
     return not any(thread.is_alive() for thread in threads)
 
 
-def _execute_process(command, workspace, prompt, budget, process_factory, on_progress):
+def _execute_process(command, workspace, prompt, budget, process_factory, on_progress,
+                     parser=_response_from_jsonl):
     threads = []
     digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     process = None
     error_type = None
+    output = None
     deadline = time.monotonic() + budget["timeout_seconds"]
     try:
         process = process_factory(
             command, cwd=workspace, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
-        threads, exceeded, digests, captured, read_errors = _capture_bounded(
-            process, budget["max_output_chars"], on_progress
+        threads, digests, captured, read_errors, output = _capture_bounded(
+            process, budget["max_output_chars"], on_progress, parser
         )
         writer, write_errors = _start_prompt_writer(process, prompt)
         threads.append(writer)
@@ -280,13 +296,22 @@ def _execute_process(command, workspace, prompt, budget, process_factory, on_pro
         if read_errors:
             _terminate_process(process)
             status, exit_code, error_type = "unknown", 127, type(read_errors[0]).__name__
-        elif exceeded.is_set():
-            status, exit_code = "output_exceeded", 125
         elif write_errors:
             raise write_errors[0]
         else:
             _terminate_process(process)
             status = "completed" if exit_code == 0 else "failed"
+    except (KeyboardInterrupt, SystemExit):
+        if process is not None:
+            _terminate_process(process)
+            cleanup_deadline = time.monotonic() + 1
+            try:
+                process.wait(timeout=max(0, cleanup_deadline - time.monotonic()))
+            finally:
+                _join_io(threads, cleanup_deadline)
+        if output is not None:
+            output.finish()
+        raise
     except (subprocess.TimeoutExpired, OSError) as error:
         status, exit_code = ("timed_out", 124) if isinstance(error, subprocess.TimeoutExpired) else ("unknown", 127)
         error_type = type(error).__name__
@@ -306,6 +331,9 @@ def _execute_process(command, workspace, prompt, budget, process_factory, on_pro
         if process is not None and not any(thread.is_alive() for thread in threads):
             for name in ("stdin", "stdout", "stderr"):
                 getattr(process, name).close()
+    if output is not None:
+        captured["output_log"] = output.finish()
+        captured["response"] = output.response
     return status, exit_code, error_type, digests, captured
 
 
@@ -336,8 +364,10 @@ def execute_launch(launch, prompt, *, allow_execute=False, process_factory=subpr
     }
     if status == "unknown":
         value["error_type"] = error_type
+    if "output_log" in captured:
+        value["output_log"] = captured["output_log"]
     receipt = {**value, "receipt_fingerprint": fingerprint(value)}
     if capture_content:
-        content = _response_from_jsonl(bytes(captured["stdout"])) if status == "completed" else None
+        content = captured.get("response") if status == "completed" else None
         return receipt, content
     return receipt

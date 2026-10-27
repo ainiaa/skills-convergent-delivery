@@ -130,6 +130,37 @@ class RoleResultTest(unittest.TestCase):
         self.assertIn('"content_fingerprint"', prompt)
         self.assertIn("Return only JSON", prompt)
 
+    def test_role_prompt_examples_round_trip_through_the_real_contract(self):
+        for role in ("scout", "reviewer"):
+            prompt = prompt_for_role(role, "Inspect the changed files.")
+            examples = [json.loads(line.removeprefix("Result example: "))
+                        for line in prompt.splitlines() if line.startswith("Result example: ")]
+            self.assertEqual(2, len(examples), "Show both empty and evidence-bearing results")
+            self.assertEqual({0, 1}, {len(value["findings"]) for value in examples})
+            for example in examples:
+                result = result_from_output(self.launch(role), {
+                    "status": "available", "content": json.dumps(example),
+                })
+                self.assertEqual("available", result["status"])
+                self.assertEqual(result, validate_role_result(result, self.launch(role)))
+            self.assertIn("single positive line", prompt)
+            self.assertIn("no ranges", prompt)
+            self.assertIn("64 lowercase hexadecimal", prompt)
+
+    def test_file_line_ranges_from_the_failed_scout_remain_invalid(self):
+        for reference in ("install.sh:23-25", "scripts/test_install.py:23-30,52-63,76-98"):
+            with self.subTest(reference=reference):
+                result = result_from_output(self.launch(), {
+                    "status": "available", "content": json.dumps({
+                        "findings": [{"summary": "Observed changed code", "evidence": [{
+                            "kind": "file", "reference": reference,
+                            "content_fingerprint": "a" * 64,
+                        }]}], "next_action": "verify",
+                    }),
+                })
+                self.assertEqual(("invalid", "invalid_contract"),
+                                 (result["status"], result["reason"]))
+
     def test_evidence_contract_accepts_safe_kinds_and_rejects_unsafe_locations(self):
         fingerprint_value = "a" * 64
         for kind, reference in (
@@ -158,6 +189,28 @@ class RoleResultTest(unittest.TestCase):
         self.assertIn("shared prompt", shared)
         with self.assertRaisesRegex(ValueError, "prompt"):
             prompt_for_review("", {})
+
+    def test_review_prompt_examples_round_trip_through_the_real_contract(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "skills/converge-review/scripts/review_contract.py"
+        spec = importlib.util.spec_from_file_location("prompt_review_contract", path)
+        contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(contract)
+        for mode, axis in (("shared", "spec"), ("blind", "quality")):
+            request = {"protocol_version": 3, "task_id": "fixture", "axis": axis,
+                       "phase": "initial", "mode": mode, "acceptance": ["behavior"],
+                       "allowed_scope": ["src"], "baseline_commit": "a" * 40,
+                       "source_fingerprint": "b" * 64, "prior_findings": []}
+            prompt = prompt_for_review("private implementation notes", request)
+            examples = [json.loads(line.removeprefix("Result example: "))
+                        for line in prompt.splitlines() if line.startswith("Result example: ")]
+            self.assertEqual(3, len(examples), "The reviewer needs exact pass/findings/blocked examples")
+            self.assertEqual({"pass", "findings", "blocked"}, {v["status"] for v in examples})
+            for example in examples:
+                record = contract.normalize_result(example, "reviewer-1", request)
+                self.assertEqual(example["status"], record["status"])
+            if mode == "blind":
+                self.assertNotIn("private implementation notes", prompt)
 
     def test_result_contract_rejects_bad_findings_and_only_reviewers_bind_review_records(self):
         launch = self.launch()

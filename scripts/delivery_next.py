@@ -26,7 +26,7 @@ from runtime_adapter import (
     validate_cleanup_barrier,
 )
 from delivery_progress import plan_projection_fingerprint
-from evidence_contract import valid_evidence_receipts, validate_source_receipt, workspace_source
+from evidence_contract import source_delta, valid_evidence_receipts, validate_source_receipt, workspace_source
 from runner_contract import fingerprint as runner_fingerprint, role_results_complete, runner_results_complete
 from task_profile import infer_path_risks, validate_frozen_routing
 from worker_profile import ROLES as PROFILE_WORKER_ROLES
@@ -385,7 +385,7 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
         )
 
     review = require_mapping(value["review"], "execution_control.review")
-    if set(review) != {
+    if set(review) - {"recovery"} != {
         "protocol_version", "repair_budget_remaining", "re_review_budget_remaining",
         "integration_budget_remaining", "rounds",
     } or review["protocol_version"] != 3:
@@ -395,6 +395,16 @@ def validate_execution_control(value, source_fingerprint, task_key=None, schema_
     ):
         if review[field] not in {0, 1}:
             raise ValueError(f"review {field} must be 0 or 1")
+    if "recovery" in review:
+        recovery = require_mapping(review["recovery"], "review.recovery")
+        if set(recovery) != {"request_fingerprint", "blocked_request", "previous_controller"}:
+            raise ValueError("review recovery fields are invalid")
+        require_sha256(recovery["request_fingerprint"], "recovery request fingerprint")
+        require_sha256(recovery["blocked_request"], "recovery blocked request")
+        previous = require_mapping(recovery["previous_controller"], "recovery previous controller")
+        frozen = validate_snapshot(previous.get("snapshot"))
+        if any(previous.get(key) != frozen[key] for key in ("protocol_version", "protocol_fingerprint", "package_version")):
+            raise ValueError("review recovery previous controller changed")
     rounds = review["rounds"]
     if not isinstance(rounds, list):
         raise ValueError("review rounds must be a list")
@@ -485,7 +495,7 @@ def _external_request_matches_state(launch, review_record, *, task_key, baseline
     }
     return (
         isinstance(request, dict)
-        and set(request) == expected_fields
+        and set(request) - {"evidence", "blocked_request"} == expected_fields
         and request["protocol_version"] == 3
         and request["task_id"] == task_key
         and request["axis"] == review_record["axis"]
@@ -658,10 +668,17 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
     if not Path(workspace).is_absolute():
         raise ValueError("workspace must be absolute")
     baseline = require_mapping(state.get("baseline"), "baseline")
-    if set(baseline) != BASELINE_FIELDS:
+    if set(baseline) not in (BASELINE_FIELDS, BASELINE_FIELDS | {"source"}):
         raise ValueError("baseline fields are invalid")
     require_string(baseline.get("commit"), "baseline.commit")
     require_string(baseline.get("diff_fingerprint"), "baseline.diff_fingerprint")
+    start_source = baseline.get("source")
+    if "source" in baseline:
+        validate_source_receipt(start_source)
+        if start_source["baseline_commit"] != baseline["commit"] \
+                or start_source["commit_id"] != baseline["commit"] \
+                or start_source["diff_fingerprint"] != baseline["diff_fingerprint"]:
+            raise ValueError("baseline source does not match the frozen baseline")
     scope_fingerprint = require_string(state.get("scope_fingerprint"), "scope_fingerprint")
     source_fingerprint = require_sha256(
         state.get("source_fingerprint"), "source_fingerprint", optional=True
@@ -690,7 +707,8 @@ def validate_state(state, arguments, *, check_workspace=True, coverage_revision=
     if source_receipt is not None and routing["schema_version"] == 3:
         allowed_paths = routing["allowed_paths"]
         # Each run, including a Batch delegate, freezes its own execution baseline.
-        changed_paths = source_receipt["changed_paths"]
+        changed_paths = (source_delta(start_source, source_receipt) if start_source is not None
+                         else source_receipt["changed_paths"])
         drift = [
             path for path in changed_paths
             if not any(_path_contains(owner, path) for owner in allowed_paths)

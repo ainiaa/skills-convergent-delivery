@@ -3,6 +3,7 @@
 
 import argparse
 import importlib.util
+import hashlib
 import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -11,12 +12,13 @@ from types import SimpleNamespace
 
 import delivery_state
 from controller_snapshot import snapshot_extensions
-from delivery_next import upgrade_state
-from role_result import result_from_output, review_result
+from delivery_next import _external_request_matches_state, upgrade_state
+from role_result import invalid_result, result_from_output, review_result, read_local_evidence
+from evidence_contract import validate_observed_evidence_receipt
 from runner_launch import (
     command_for_dispatch, execute_dispatch_launch, plan_dispatch_launch, prompt_for_dispatch,
 )
-from runner_contract import bind_role_result, fingerprint
+from runner_contract import bind_role_result, fingerprint, runner_results_complete
 
 
 def _arguments(arguments, revision):
@@ -118,7 +120,7 @@ def authorize_task_boundary(state, task_key):
         raise ValueError("runner lifecycle cannot cross the active user task boundary")
 
 
-def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
+def review_request_binding(state, dispatch, request, supplied_fingerprint=None, *, recovery_of=None):
     """Derive a reviewer launch binding from its full frozen Review v3 request."""
     profile = dispatch.get("profile") if isinstance(dispatch, dict) else None
     role = profile.get("role") if isinstance(profile, dict) else None
@@ -145,11 +147,131 @@ def review_request_binding(state, dispatch, request, supplied_fingerprint=None):
         raise ValueError("review request acceptance does not match the current run")
     if request["allowed_scope"] != expected_scope:
         raise ValueError("review request allowed_scope does not match the current run")
-    _require_prior_findings(state, request)
+    rounds = state.get("execution_control", {}).get("review", {}).get("rounds", [])
+    if request["phase"] == "initial" and rounds and any(
+        item.get("axis") == request["axis"] and item.get("status") == "blocked"
+        for item in rounds[-1].get("requests", [])
+    ):
+        raise ValueError("blocked initial review requires explicit bounded recovery")
+    recovery = state.get("execution_control", {}).get("review", {}).get("recovery")
+    if recovery and not any(launch["configuration"].get("review_request_fingerprint")
+                           == recovery["request_fingerprint"]
+                           for launch in state["ledger"].get("runner_launches", [])) \
+            and request_fingerprint(request) != recovery["request_fingerprint"]:
+        raise ValueError("resumed review must dispatch its frozen recovery request")
+    evidence = validate_review_evidence(state, request)
+    if "blocked_request" in request:
+        require_environment_review_recovery(state, request, evidence, recovery_of=recovery_of)
+    else:
+        _require_prior_findings(state, request)
+    if request["axis"] in {"quality", "integration"}:
+        rounds = state.get("execution_control", {}).get("review", {}).get("rounds", [])
+        current = rounds[-1] if rounds else {}
+        latest = {item["axis"]: item for item in current.get("requests", [])}
+        prerequisites = ("spec",) if request["axis"] == "quality" else ("spec", "quality")
+        if any(latest.get(axis, {}).get("status") != "pass"
+               or latest[axis].get("source_fingerprint") != state["source_fingerprint"]
+               for axis in prerequisites):
+            raise ValueError("review dispatch requires current-source spec and prerequisite axis passes")
+        launches = state["ledger"].get("runner_launches", [])
+        results = state["ledger"].get("runner_results", [])
+        runner_results_complete(launches, results)
+        for axis in prerequisites:
+            if not any(
+                launch["profile"]["role"] == "reviewer"
+                and launch["profile"]["worker_id"] == latest[axis].get("reviewer_ref")
+                and (axis != "spec" or request["axis"] != "quality"
+                     or launch["profile"]["worker_id"] == profile.get("worker_id"))
+                and launch["configuration"].get("review_request_fingerprint")
+                    == latest[axis].get("request_fingerprint")
+                and _external_request_matches_state(
+                    launch, latest[axis], task_key=state["task_key"],
+                    baseline_commit=state["baseline"]["commit"],
+                    source_fingerprint=state["source_fingerprint"],
+                    acceptance=expected_acceptance, allowed_scope=expected_scope,
+                )
+                and any(result["launch_fingerprint"] == launch["launch_fingerprint"]
+                        and result["status"] == "completed"
+                        and result.get("role_result", {}).get("status") == "available"
+                        and result["role_result"].get("review_record") == latest[axis]
+                        for result in results)
+                for launch in launches
+            ):
+                raise ValueError("review prerequisite requires a completed bound reviewer receipt")
     fingerprint = request_fingerprint(request)
     if supplied_fingerprint is not None and supplied_fingerprint != fingerprint:
         raise ValueError("review request fingerprint does not match the frozen request")
+    if profile.get("runner_id") == "openai-compatible-v1":
+        raise ValueError("managed reviewer requires source-reading capability; API diagnostics remain available")
     return request, fingerprint
+
+
+def validate_review_evidence(state, request):
+    """Verify local bytes before exposing factual references to a blind reviewer."""
+    observed = []
+    for evidence in request.get("evidence", []):
+        content = read_local_evidence(state["workspace"], evidence["kind"], evidence["reference"])
+        if hashlib.sha256(content).hexdigest() != evidence["content_fingerprint"]:
+            raise ValueError("review evidence content fingerprint does not match")
+        try:
+            value = json.loads(content)
+        except (ValueError, UnicodeError):
+            continue  # Source documents are factual references, not execution receipts.
+        wrapped = isinstance(value, dict) and isinstance(value.get("receipt"), dict)
+        raw = isinstance(value, dict) and value.get("evidence_level") == "observed"
+        if wrapped or raw:
+            item = validate_observed_evidence_receipt(value["receipt"] if wrapped else value)
+            if item["source"] != state["source_receipt"] or item["exit_code"] != 0 \
+                    or (wrapped and value.get("status") != "passed"):
+                raise ValueError("review evidence requires a current-source passing receipt")
+            observed.append((evidence, item))
+    return observed
+
+
+def require_environment_review_recovery(state, request, evidence, *, recovery_of=None):
+    """Allow one evidence-progress recheck, never a repeat of a valid blocked initial."""
+    review = state["execution_control"]["review"]
+    recovery = review.get("recovery", {})
+    if not (state.get("status") == "blocked" and state.get("blocked_code") == "environment") \
+            and not (state.get("status") == "active"
+                     and recovery.get("request_fingerprint") == fingerprint(request)):
+        raise ValueError("blocked review recovery requires an explicit environment recovery")
+    if review["re_review_budget_remaining"] < 1:
+        raise ValueError("blocked review recovery has no re-review budget")
+    rounds = review["rounds"]
+    current = rounds[-1] if rounds else {}
+    records = [item for item in current.get("requests", []) if item["axis"] == request["axis"]]
+    last = records[-1] if records else {}
+    if current.get("source_fingerprint") != state["source_fingerprint"] \
+            or last.get("request_fingerprint") != request["blocked_request"] \
+            or last.get("status") != "blocked" or last.get("phase") != "initial" \
+            or last.get("finding_fingerprints"):
+        raise ValueError("recovery must target the latest same-source empty-finding blocked initial")
+    launches = state["ledger"].get("runner_launches", [])
+    results = state["ledger"].get("runner_results", [])
+    if not runner_results_complete(launches, results):
+        raise ValueError("blocked review recovery requires known completed transports")
+    if any(launch["configuration"].get("review_request", {}).get("blocked_request") == request["blocked_request"]
+           and not (launch["launch_fingerprint"] == recovery_of
+                    and launch["configuration"].get("review_request_fingerprint") == fingerprint(request))
+           for launch in launches):
+        raise ValueError("blocked review recovery was already dispatched")
+    original = next((launch for launch in launches
+        if launch["configuration"].get("review_request_fingerprint") == request["blocked_request"]
+        and _external_request_matches_state(launch, last, task_key=state["task_key"],
+            baseline_commit=state["baseline"]["commit"], source_fingerprint=state["source_fingerprint"],
+            acceptance=request["acceptance"], allowed_scope=request["allowed_scope"])
+        and any(result.get("launch_fingerprint") == launch["launch_fingerprint"]
+            and result.get("role_result", {}).get("status") == "available"
+            and result["role_result"].get("review_record") == last for result in results)), None)
+    if original is None:
+        raise ValueError("blocked review recovery requires its bound completed reviewer receipt")
+    previous = validate_review_evidence(state, original["configuration"]["review_request"])
+    seen = {item["receipt_fingerprint"] for _ref, item in previous}
+    if not any(item["receipt_fingerprint"] not in seen and item.get("test_check", {}).get("passed", 0) > 0
+               and not any(item["test_check"].get(key, 0) for key in ("failed", "errors", "xpassed"))
+               for _ref, item in evidence):
+        raise ValueError("blocked review recovery requires newly handed current-source passing test evidence")
 
 
 def _require_prior_findings(state, request):
@@ -211,11 +333,17 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     authorize_task_boundary(state, arguments.task_key)
     require_multimodel_extension(state, dispatch)
     authorize_dispatch(state, dispatch)
+    if dispatch.get("runner_id") == "openai-compatible-v1" and arguments.allow_network is not True:
+        raise ValueError("external runner lifecycle requires explicit --allow-network")
+    recovery_of = getattr(arguments, "recover_launch", None)
     review_request, review_request_fingerprint = review_request_binding(
         state, dispatch, getattr(arguments, "review_request", None),
         getattr(arguments, "review_request_fingerprint", None),
+        recovery_of=recovery_of,
     )
     prompt = prompt_for_dispatch(dispatch, f"{prompt}\n\n{_TASK_BOUNDARY_INSTRUCTION}", review_request)
+    if recovery_of is not None:
+        prompt += "\nThis is the single explicit format recovery. Recheck every JSON field against the contract."
     launch = plan_dispatch_launch(
         dispatch, prompt, workspace=state["workspace"], codex_bin=arguments.codex_bin,
         claude_bin=arguments.claude_bin,
@@ -224,10 +352,14 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
         implementation_reference_receipt=getattr(arguments, "implementation_reference_receipt", None),
         alignment_target=getattr(arguments, "alignment_target", None),
         alignment_decisions=getattr(arguments, "alignment_decisions", None),
+        recovery_of=recovery_of,
     )
     if launch["runner_id"] == "openai-compatible-v1" and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
-    if launch["runner_id"] != "openai-compatible-v1":
+    if launch["runner_id"] == "openai-compatible-v1":
+        from openai_compatible_runner import preflight_request
+        preflight_request(launch, prompt)
+    else:
         preflight(launch, prompt)
     revision = append(_arguments(arguments, state["revision"]), "runner_launches", launch)
     receipt, role_result = _execute_and_complete(
@@ -235,7 +367,10 @@ def run_dispatch(arguments, dispatch, prompt, *, load=load_current,
     )
     revision = append(_arguments(arguments, revision), "runner_results", receipt)
     return {
-        "status": receipt["status"], "launch": launch, "result": receipt,
+        "status": "blocked" if receipt["status"] == "completed"
+        and role_result["role"] in {"scout", "reviewer"}
+        and role_result["status"] != "available" else receipt["status"],
+        "launch": launch, "result": receipt,
         "role_result": role_result, "revision": revision,
     }
 
@@ -256,10 +391,13 @@ def _completed_execution(launch, execution, review_request=None):
                 json.loads(content), launch["profile"]["worker_id"], review_request,
             )
             role_result = review_result(launch, record)
-        except (KeyError, ValueError, json.JSONDecodeError):
-            role_result = result_from_output(launch, {"status": "unavailable"})
+        except (KeyError, TypeError, ValueError, RecursionError) as error:
+            role_result = invalid_result(launch, str(error) or "review result is invalid")
     else:
         role_result = result_from_output(launch, execution["output"])
+        if role_result["status"] == "available":
+            from role_result import verify_local_evidence
+            role_result = verify_local_evidence(launch, role_result, launch["configuration"]["workspace"])
     if receipt.get("status") == "completed" and role_result["role"] in {"scout", "reviewer"}:
         receipt = bind_role_result(launch, receipt, role_result)
     return receipt, role_result
@@ -307,9 +445,9 @@ def _unknown_execution(launch, error):
 def _execute_and_complete(launch, prompt, review_request, execute, allow_network):
     try:
         execution = execute(launch, prompt, allow_execute=True, allow_network=allow_network)
-        return _completed_execution(launch, execution, review_request)
     except Exception as error:
-        return _completed_execution(launch, _unknown_execution(launch, error), review_request)
+        execution = _unknown_execution(launch, error)
+    return _completed_execution(launch, execution, review_request)
 
 
 def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, review_requests=None, *, load=load_current,
@@ -319,6 +457,8 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     """Persist all bounded read-only launches before concurrently executing and merging them."""
     if arguments.allow_execute is not True:
         raise ValueError("runner lifecycle requires explicit --allow-execute")
+    if getattr(arguments, "recover_launch", None) is not None:
+        raise ValueError("format recovery uses the single-dispatch lifecycle")
     state = load(arguments)
     authorize_task_boundary(state, arguments.task_key)
     if getattr(arguments, "implementation_reference_receipt", None) is not None:
@@ -355,7 +495,10 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
             and arguments.allow_network is not True:
         raise ValueError("external runner lifecycle requires explicit --allow-network")
     for item in prepared:
-        if item["launch"]["runner_id"] != "openai-compatible-v1":
+        if item["launch"]["runner_id"] == "openai-compatible-v1":
+            from openai_compatible_runner import preflight_request
+            preflight_request(item["launch"], item["prompt"])
+        else:
             preflight(item["launch"], item["prompt"])
     revision = append_launches(
         _arguments(arguments, state["revision"]), "runner_launches",
@@ -374,6 +517,8 @@ def run_fanout(arguments, dispatch, prompts, review_request_fingerprints=None, r
     for item, (receipt, role_result) in zip(prepared, executions):
         revision = append(_arguments(arguments, revision), "runner_results", receipt)
         completed.append({"task_id": item["task_id"], "role_result": role_result})
+    if any(item["role_result"]["status"] != "available" for item in completed):
+        return {"status": "blocked", "results": completed, "revision": revision}
     return {
         "status": "completed",
         "fan_in": fan_in(dispatch, completed, {item["task_id"]: item["launch"] for item in prepared}),
@@ -396,6 +541,7 @@ def main():
     parser.add_argument("--claude-bin", default="claude")
     parser.add_argument("--allow-execute", action="store_true")
     parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument("--recover-launch")
     parser.add_argument("--fanout", action="store_true")
     parser.add_argument("--review-request-fingerprint")
     parser.add_argument("--review-request-fingerprints")
@@ -435,7 +581,7 @@ def main():
             if arguments.fanout else run_dispatch(arguments, dispatch, prompt)
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-        return 0
+        return 0 if result["status"] == "completed" else 2
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "error", "message": str(error)}, sort_keys=True))
         return 1

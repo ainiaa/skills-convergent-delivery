@@ -35,7 +35,7 @@ def flow_state():
 
 def review_request(*, task_id="task-1", source_fingerprint="a" * 64, baseline_commit="b" * 40):
     return {
-        "protocol_version": 3, "task_id": task_id, "axis": "quality", "phase": "initial",
+        "protocol_version": 3, "task_id": task_id, "axis": "spec", "phase": "initial",
         "mode": "blind", "acceptance": ["Review behavior"], "allowed_scope": ["scripts"],
         "baseline_commit": baseline_commit, "source_fingerprint": source_fingerprint,
         "prior_findings": [],
@@ -69,6 +69,10 @@ class RunnerLifecycleTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.workspace = Path(self.temporary.name)
+        evidence = self.workspace / 'scripts/test_runner_lifecycle.py'
+        evidence.parent.mkdir()
+        evidence.write_text('fixture evidence\n' * 200)
+        self.evidence_hash = hashlib.sha256(evidence.read_bytes()).hexdigest()
         self.profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home")
         self.arguments = SimpleNamespace(
             allow_execute=True, allow_network=False, codex_bin=shutil.which("codex"), claude_bin="claude",
@@ -99,7 +103,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:44","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"continue"}'},
+                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:44","content_fingerprint":"' + self.evidence_hash + '"}]}],"next_action":"continue"}'},
             }
 
         result = run_dispatch(
@@ -180,19 +184,20 @@ class RunnerLifecycleTest(unittest.TestCase):
             {"task_id": "a", "role": "scout"}, {"task_id": "b", "role": "scout"},
         ])
 
-        with self.assertRaisesRegex(ValueError, "available structured role result"):
-            run_fanout(
-                self.arguments, dispatch, {"a": "Inspect a", "b": "Inspect b"},
-                load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
-                append_launches=lambda arguments, field, values: (
-                    records.append((field, values)) or arguments.expected_revision + 1
-                ),
-                append=lambda arguments, field, record: (
-                    records.append((field, record)) or arguments.expected_revision + 1
-                ),
-                preflight=lambda *_arguments: None,
-                execute=lambda *_arguments, **_kwargs: (_ for _ in ()).throw(RuntimeError("transport failed")),
-            )
+        result = run_fanout(
+            self.arguments, dispatch, {"a": "Inspect a", "b": "Inspect b"},
+            load=lambda _arguments: {"revision": 7, "workspace": str(self.workspace)},
+            append_launches=lambda arguments, field, values: (
+                records.append((field, values)) or arguments.expected_revision + 1
+            ),
+            append=lambda arguments, field, record: (
+                records.append((field, record)) or arguments.expected_revision + 1
+            ),
+            preflight=lambda *_arguments: None,
+            execute=lambda *_arguments, **_kwargs: (_ for _ in ()).throw(RuntimeError("transport failed")),
+        )
+        self.assertEqual('blocked', result['status'])
+        self.assertEqual(10, result['revision'])
 
         self.assertEqual(["runner_launches", "runner_results", "runner_results"],
                          [field for field, _ in records])
@@ -206,7 +211,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             "rounds": [{
                 "source_fingerprint": "d" * 64,
                 "requests": [{
-                    "axis": "quality", "status": "findings",
+                    "axis": "spec", "status": "findings",
                     "finding_fingerprints": ["b" * 64],
                 }],
             }],
@@ -229,7 +234,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             "review": {"rounds": [{
                 "source_fingerprint": "d" * 64,
                 "requests": [{
-                    "axis": "quality", "phase": "closure", "status": "findings",
+                    "axis": "spec", "phase": "closure", "status": "findings",
                     "finding_fingerprints": ["b" * 64],
                 }],
             }]},
@@ -397,7 +402,7 @@ class RunnerLifecycleTest(unittest.TestCase):
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
-                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:92","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}'},
+                "output": {"status": "available", "content": '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:92","content_fingerprint":"' + self.evidence_hash + '"}]}],"next_action":"verify"}'},
             }
 
         result = run_dispatch(
@@ -435,7 +440,6 @@ class RunnerLifecycleTest(unittest.TestCase):
     def test_persists_the_review_request_fingerprint_on_a_real_reviewer_launch(self):
         profiles = resolve(
             None, workspace=self.workspace, home=self.workspace / "home",
-            role_overrides={"reviewer": {"model": "glm-5.2", "reasoning_effort": "high"}},
         )
         dispatch = plan_dispatch(profiles, {
             **flow_state(), "evidence": "sufficient", "implementation": "complete",
@@ -448,10 +452,11 @@ class RunnerLifecycleTest(unittest.TestCase):
         def execute(launch, prompt, **_kwargs):
             self.assertIn("Review v3 result JSON", prompt)
             value = {
-                "schema_version": 1, "runner_id": "openai-compatible-v1",
-                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed",
-                "response_id": "review-1", "response_model": "glm-5.2", "usage": None,
-                "response_fingerprint": "b" * 64,
+                "schema_version": 1, "runner_id": launch["runner_id"],
+                "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                "stdout_fingerprint": "a" * 64, "stderr_fingerprint": "b" * 64,
+                "requested_model": launch["profile"]["effective"]["model"],
+                "requested_reasoning_effort": launch["profile"]["effective"]["reasoning_effort"],
             }
             return {
                 "receipt": {**value, "receipt_fingerprint": fingerprint(value)},
@@ -500,7 +505,7 @@ class RunnerLifecycleTest(unittest.TestCase):
 
         self.assertEqual([], appended)
 
-    def test_malformed_reviewer_output_is_persisted_as_unavailable(self):
+    def test_malformed_reviewer_output_is_persisted_as_invalid(self):
         dispatch = plan_dispatch(self.profiles, {
             **flow_state(), "evidence": "sufficient", "implementation": "complete",
             "verification": "passed", "review": "pending",
@@ -523,7 +528,7 @@ class RunnerLifecycleTest(unittest.TestCase):
                      "output": {"status": "available", "content": None}}, request,
         )
 
-        self.assertEqual("unavailable", role_result["status"])
+        self.assertEqual("invalid", role_result["status"])
         self.assertEqual(role_result, receipt["role_result"])
 
     def test_reviewer_rejects_a_request_from_another_run_before_persisting_a_launch(self):
@@ -634,7 +639,7 @@ class RunnerLifecycleTest(unittest.TestCase):
                 "output": {
                     "status": "available",
                     "content": review_response(launch["configuration"]["review_request"])
-                    if reviewer else '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:143","content_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}],"next_action":"verify"}',
+                    if reviewer else '{"findings":[{"summary":"focused result","evidence":[{"kind":"file","reference":"scripts/test_runner_lifecycle.py:143","content_fingerprint":"' + self.evidence_hash + '"}]}],"next_action":"verify"}',
                 },
             }
 

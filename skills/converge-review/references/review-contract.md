@@ -74,3 +74,9 @@ python3 "$CONVERGE_REVIEW_SKILL_DIR/scripts/review_contract.py" normalize --inpu
 结果只允许 stdin，request 只允许文件，退出码 0 的 JSON 才能追加到 Single State Review v3 round；不得把验收、范围或 findings 放进 argv。编排器必须为该 reviewer 的 frozen runner launch 配置完整 canonical request 和相同的 `review_request_fingerprint`，并将 adapter 生成的同一内部 Review v3 record 写入完成的可用 role result；外部 lifecycle 以该 request 重算摘要，且拒绝 task、baseline、source、当前 acceptance 或 frozen allowed scope 不匹配的请求；状态 record 与 role result record 不完全相同则 pass 无效。request 的 `task_id` 至多 200 字符，acceptance 至多 32 项、allowed_scope 至多 64 项、prior_findings 至多 16 项，列表文本均至多 500 字符。旧请求和结果直接拒绝。
 
 每个 `findings` 由 adapter 原样规范化为当前不可变 round 内的 `finding_records`：仅保存 fingerprint、evidence、impact、root_cause、scope、classification，三个说明字段各不超过 500 字符。它与 `finding_fingerprints` 顺序和身份完全一致，供定向复核、恢复和用户回执追溯；不另建可写台账，也不保存 prompt、完整对话或敏感原始产物。
+
+## 可选事实交接与环境续接
+
+Review v3 保留既有必填字段及旧请求指纹；可附加 `evidence`（1–16 个带全文件哈希的本地 file/artifact 引用）。它们进入 blind 请求，controller 实现理由仍隐藏。引用内容是待核实事实；工具通过只来自与当前源码绑定的 observed Evidence Receipt。
+
+`blocked_request` 仅允许 `re_review` 且 `prior_findings=[]`、非空 evidence。它绑定最新同轴同源码、无 finding 的 blocked initial；必须有此前未交接的新 passing test receipt、原已完成审查回执和剩余复核预算。只有 environment blocked 可以显式恢复；正常 finding 复核规则不变，不能用于格式恢复、业务/权限阻塞或无进展重试。完整命令见主 Skill references/multi-model.md Protocol 23。
