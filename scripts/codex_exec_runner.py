@@ -16,7 +16,7 @@ from pathlib import Path
 from runner_output import OutputLog
 
 from runner_contract import (
-    alignment_launch_binding, fingerprint, freeze_launch, implementation_reference_binding,
+    CODEX_SYSTEM_PROXY_OVERRIDE, alignment_launch_binding, fingerprint, freeze_launch, implementation_reference_binding,
     review_request_binding, validate_launch,
 )
 
@@ -102,8 +102,9 @@ def command_for_launch(launch, prompt):
                 "codex_bin", "binary_fingerprint", "sandbox", "workspace", "user_config_fingerprint",
                 "review_request_fingerprint", "review_request",
                 "implementation_reference_receipt_fingerprint",
-                "alignment_launch_binding_fingerprint", "recovery_of",
+                "alignment_launch_binding_fingerprint", "recovery_of", "hooks_enabled",
             } \
+            or "hooks_enabled" in configuration and configuration["hooks_enabled"] is not False \
             or configuration["sandbox"] not in {"read-only", "workspace-write"} \
             or not isinstance(configuration["codex_bin"], str) \
             or not configuration["codex_bin"] \
@@ -147,7 +148,8 @@ def command_for_launch(launch, prompt):
     effective = launch["profile"]["effective"]
     return [
         configuration["codex_bin"], "exec", "--json", "--ephemeral", "-c",
-        "features.respect_system_proxy=true",
+        CODEX_SYSTEM_PROXY_OVERRIDE,
+        *(["-c", "features.hooks=false"] if configuration.get("hooks_enabled") is False else []),
         "-c", "agents.enabled=false", "-c", "features.multi_agent=false",
         "-c", "features.multi_agent_v2=false", "--sandbox",
         configuration["sandbox"], "-m", effective["model"],

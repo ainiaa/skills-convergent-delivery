@@ -16,6 +16,7 @@ from pathlib import Path
 
 from delivery_lease import lock_record, replace_record, write_exclusive
 from codex_exec_runner import _start_prompt_writer, _terminate_process
+from runner_contract import CODEX_SYSTEM_PROXY_OVERRIDE
 
 
 ATTEMPT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
@@ -154,7 +155,7 @@ def dispatch_codex(executable, workspace, capsule, receipt_dir, attempt_id, star
         try:
             with evidence.open("w", encoding="utf-8") as output:
                 process = subprocess.Popen(
-                    [executable, "exec", "--json", "-C", str(workspace), "-"],
+                    [executable, "exec", "--json", "-c", CODEX_SYSTEM_PROXY_OVERRIDE, "-C", str(workspace), "-"],
                     cwd=workspace, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )

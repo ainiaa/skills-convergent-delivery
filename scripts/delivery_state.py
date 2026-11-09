@@ -13,6 +13,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+from controller_snapshot import PROTOCOL_VERSION, managed_state_snapshot
 from delivery_lease import (
     DEFAULT_TTL_SECONDS,
     as_timestamp,
@@ -822,7 +823,7 @@ def append_runner(arguments, field):
     print(json.dumps({"status": "written", "revision": revision}))
 
 
-def recovery_diagnostic(state, path, *, error=None):
+def recovery_diagnostic(state, path, *, error=None, lease_root=None, verified=True):
     """Project a safe inspection step; this is never a lease or verification receipt."""
     result = {
         "evidence_level": "diagnostic", "lease_status": "not_checked",
@@ -831,30 +832,33 @@ def recovery_diagnostic(state, path, *, error=None):
     }
     if error is not None:
         return result
-    result["active_worker_refs"] = [
-        worker["ref"] for worker in state["workers"]
-        if worker["status"] not in WORKER_TERMINAL_STATUSES
-    ]
+    if verified:
+        result["active_worker_refs"] = [
+            worker["ref"] for worker in state["workers"]
+            if worker["status"] not in WORKER_TERMINAL_STATUSES
+        ]
     if state["status"] == "blocked":
         result.update(action="resolve-blocker", reason=state.get("blocked_reason"))
-    elif state["status"] == "complete" and next_runtime_action(state, "complete")["action"] == "complete":
+    elif state["status"] == "complete" and verified and next_runtime_action(state, "complete")["action"] == "complete":
         result.update(action="none", reason="terminal run; do not resume")
     else:
         script = Path(__file__).with_name("delivery_next.py")
         prefix = [sys.executable, str(script)]
-        snapshot = state["controller"].get("snapshot")
-        if snapshot is not None:
-            prefix = [sys.executable, str(Path(snapshot["root"]) / "scripts/controller_snapshot.py"),
+        if state["controller"].get("snapshot") is not None:
+            launcher = Path(__file__).resolve().with_name("controller_snapshot.py")
+            prefix = [sys.executable, str(launcher),
                       "run", "--descriptor", str(path), "--script", "scripts/delivery_next.py", "--"]
         result.update(
             action="inspect-next", reason="validate current evidence and active lease before continuing",
-            next_command=[*prefix, "--state", str(path), "--run-id", state["run_id"],
+            next_command=[*prefix, "--state", str(path),
+                          *(["--lease-root", str(Path(lease_root).expanduser().resolve())] if lease_root is not None else []),
+                          "--run-id", state["run_id"],
                           "--writer-id", state["writer_id"], "--revision", str(state["revision"])],
         )
     return result
 
 
-def discover(workspace, diagnose=False, state_root=None):
+def discover(workspace, diagnose=False, state_root=None, *, lease_root=None):
     workspace = str(Path(workspace).expanduser().resolve())
     states = []
     paths = (
@@ -879,13 +883,30 @@ def discover(workspace, diagnose=False, state_root=None):
             }
             if diagnose:
                 try:
-                    summary["next_action"] = validate_state(
-                        state, SimpleNamespace(strict_evidence=False)
+                    controller = state["controller"]
+                    if "snapshot" in controller and controller["protocol_version"] != PROTOCOL_VERSION:
+                        # A scan checks snapshot bytes only. Explicit inspection runs the frozen validator.
+                        snapshot = managed_state_snapshot(path)
+                        upgrade_state(state)
+                        if any(controller.get(key) != snapshot[key] for key in (
+                                "protocol_version", "protocol_fingerprint", "package_version"
+                        )) or state["status"] not in ("active", "blocked", "complete") \
+                                or type(state["revision"]) is not int or state["revision"] < 0 \
+                                or not isinstance(state["writer_id"], str) or not state["writer_id"]:
+                            raise ValueError("historical managed state identity is invalid")
+                        summary["health"] = "unverified"
+                    else:
+                        summary["next_action"] = validate_state(
+                            state, SimpleNamespace(strict_evidence=False)
+                        )
+                        summary["health"] = "valid"
+                    summary["recovery"] = recovery_diagnostic(
+                        state, path, lease_root=lease_root, verified=summary["health"] == "valid",
                     )
-                    summary["health"] = "valid"
                 except (KeyError, OSError, TypeError, ValueError) as error:
-                    summary.update(health="blocked", reason=str(error))
-                summary["recovery"] = recovery_diagnostic(state, path, error=summary.get("reason"))
+                    summary.update(health="blocked", reason=str(error), recovery=recovery_diagnostic(
+                        state, path, error=str(error), lease_root=lease_root,
+                    ))
             states.append(summary)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             if diagnose:
@@ -899,7 +920,7 @@ def discover(workspace, diagnose=False, state_root=None):
     return {"workspace": workspace, "states": states}
 
 
-def main():
+def parse_state_arguments(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=(
         "path", "write", "append-runner-launch", "append-runner-launches", "append-runner-result", "list", "doctor", "resume-review",
@@ -914,7 +935,11 @@ def main():
     parser.add_argument("--writer-id")
     parser.add_argument("--repo-id")
     parser.add_argument("--expected-revision", type=int)
-    arguments = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_state_arguments()
     try:
         if arguments.command == "path":
             if not all((arguments.repo, arguments.task_key, arguments.run_id)):
@@ -924,10 +949,11 @@ def main():
         if arguments.command in {"list", "doctor"}:
             if not arguments.workspace:
                 raise ValueError(f"{arguments.command} requires --workspace")
-            result = discover(arguments.workspace, arguments.command == "doctor", arguments.state_root)
+            result = discover(arguments.workspace, arguments.command == "doctor", arguments.state_root,
+                              lease_root=arguments.lease_root)
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
             return 0 if arguments.command == "list" or all(
-                state.get("health") == "valid" for state in result["states"]
+                state.get("health") in {"valid", "unverified"} for state in result["states"]
             ) else 1
         if not all(
             (

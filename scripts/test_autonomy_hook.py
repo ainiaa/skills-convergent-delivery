@@ -1,11 +1,13 @@
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import hashlib
-from contextlib import redirect_stdout
+from contextlib import chdir, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +15,7 @@ from unittest.mock import patch
 import autonomy_hook
 from autonomy_arm import arm
 from autonomy_begin import initial_state
-from controller_snapshot import create_snapshot
+from controller_snapshot import create_snapshot, snapshot_files
 from delivery_lease import lease_paths
 from delivery_engine import controller_identity
 from delivery_state import state_path
@@ -42,11 +44,11 @@ class AutonomyHookTest(unittest.TestCase):
 
     def invoke(self, host, payload, environment=None):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--host", host], input=json.dumps(payload),
+            [sys.executable, str(SCRIPT), "--host", host], input=json.dumps({"session_id": "thread-1", **payload}),
             text=True, capture_output=True, check=False, env=environment,
         )
 
-    def managed_hook_state(self, directory, controller=None):
+    def managed_hook_state(self, directory, controller=None, *, session_id="thread-1"):
         workspace = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", SCRIPT.parent.parent)).resolve()
         state_root, lease_root = Path(directory) / "state", Path(directory) / "leases"
         initial = initial_state(
@@ -69,7 +71,9 @@ class AutonomyHookTest(unittest.TestCase):
             "--expected-revision", "-1",
         ], input=json.dumps(initial), text=True, capture_output=True, check=False)
         self.assertEqual(0, created.returncode, created.stderr)
-        armed = arm(initial, ["complete task"], ["tests pass"], "hook")
+        armed = arm(initial, ["complete task"], ["tests pass"], "hook", host_session_id=session_id or "thread-1")
+        if session_id is None:
+            armed["execution_control"]["autonomy"]["runtime"].pop("session_id")
         armed_write = subprocess.run([
             sys.executable, str(SCRIPT.with_name("delivery_state.py")), "write", "--input", "-",
             "--lease-root", str(lease_root), "--state-root", str(state_root), "--repo-id", initial["repo_id"],
@@ -89,11 +93,7 @@ class AutonomyHookTest(unittest.TestCase):
                 directory, controller=controller_identity(snapshot=snapshot),
             )
             workspace = json.loads(path.read_text(encoding="utf-8"))["workspace"]
-            completed = subprocess.CompletedProcess([], 0, '{"decision":"approve"}\n', "")
-            real_run = subprocess.run
-            def execute(command, **kwargs):
-                return completed if "controller_snapshot.py" in str(command[1]) else real_run(command, **kwargs)
-            with patch.object(autonomy_hook.subprocess, "run", side_effect=execute) as run, \
+            with patch.object(autonomy_hook.subprocess, "run", wraps=subprocess.run) as run, \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
                     patch("sys.stdin", StringIO(json.dumps({"cwd": workspace, "session_id": "thread-1"}))), \
                     patch.dict(os.environ, {
@@ -103,17 +103,19 @@ class AutonomyHookTest(unittest.TestCase):
                     redirect_stdout(StringIO()) as output:
                 self.assertEqual(0, autonomy_hook.main())
 
-            self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+            self.assertEqual("block", json.loads(output.getvalue())["decision"])
+            state = json.loads(path.read_text())
+            self.assertEqual("intent", state["execution_control"]["autonomy"]["action_attempts"][0]["status"])
             command = run.call_args.args[0]
-            self.assertEqual(sys.executable, command[0])
-            self.assertTrue(command[1].endswith("controller_snapshot.py"))
+            self.assertEqual([sys.executable, "-I", "-S", "-B", "-c"], command[:5])
+            self.assertIn(str(Path(snapshot["root"]) / "scripts/autonomy_hook.py"), command)
             self.assertIn(str(path), command)
-            self.assertIn("--frozen-runtime", command)
 
     def test_frozen_hook_receives_the_active_run_workspace_from_a_subdirectory(self):
         workspace = SCRIPT.parent.parent.resolve()
         subdirectory = workspace / "scripts"
-        state = {"controller": {"snapshot": {"root": "/frozen"}}, "workspace": str(workspace)}
+        state = {"controller": {"snapshot": {"root": "/frozen"}}, "workspace": str(workspace),
+                 "execution_control": {"autonomy": {"runtime": {"mode": "hook", "session_id": "thread-1"}}}}
         active = (Path("/state/run.json"), state)
         frozen_result = subprocess.CompletedProcess([], 0, '{"decision":"block","reason":"active"}\n', "")
         with patch.object(autonomy_hook, "active_state", side_effect=[None, active]), \
@@ -121,12 +123,187 @@ class AutonomyHookTest(unittest.TestCase):
                 patch.object(autonomy_hook, "git_root", return_value=workspace), \
                 patch.object(autonomy_hook, "run_frozen_hook", return_value=frozen_result) as frozen, \
                 patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
-                patch("sys.stdin", StringIO(json.dumps({"cwd": str(subdirectory)}))), \
+                patch("sys.stdin", StringIO(json.dumps({"cwd": str(subdirectory), "session_id": "thread-1"}))), \
                 redirect_stdout(StringIO()) as output:
             self.assertEqual(0, autonomy_hook.main())
 
         self.assertEqual("block", json.loads(output.getvalue())["decision"])
+        self.assertEqual(active, frozen.call_args.args[0])
         self.assertEqual(str(workspace), frozen.call_args.args[2]["cwd"])
+
+    def test_unbound_or_foreign_stop_does_not_dispatch_the_frozen_controller(self):
+        for runtime in ({"mode": "hook"}, {"mode": "hook", "session_id": "parent"}):
+            with self.subTest(runtime=runtime):
+                state = {"controller": {"snapshot": {"root": "/frozen"}},
+                         "execution_control": {"autonomy": {"runtime": runtime}}}
+                payload = {"cwd": "/repo", "session_id": "reviewer"}
+                with patch.object(autonomy_hook, "active_state", return_value=(Path("/state/run.json"), state)), \
+                        patch.object(autonomy_hook, "run_frozen_hook") as frozen, \
+                        patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                        patch("sys.stdin", StringIO(json.dumps(payload))), redirect_stdout(StringIO()) as output:
+                    self.assertEqual(0, autonomy_hook.main())
+                self.assertEqual({"decision": "approve"}, json.loads(output.getvalue()))
+                frozen.assert_not_called()
+
+    def test_frozen_stop_cannot_switch_to_a_replacement_run_in_the_same_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(SCRIPT.parent.parent, root / "controller", extensions=("autonomy",))
+            old_path, state_root, lease_root = self.managed_hook_state(directory, controller_identity(snapshot=snapshot))
+            old = json.loads(old_path.read_text())
+            later_snapshot = create_snapshot(SCRIPT.parent.parent, root / "later-controller", extensions=("autonomy",))
+            closed = {**old, "status": "blocked", "blocked_code": "no_progress", "blocked_reason": "closed A",
+                      "revision": old["revision"] + 1, "controller": controller_identity(snapshot=later_snapshot)}
+            old_path.write_text(json.dumps(closed))
+            subprocess.run([
+                sys.executable, str(SCRIPT.with_name("delivery_lease.py")), "release", "--root", str(lease_root),
+                "--state-root", str(state_root), "--repo", old["repo_id"], "--workspace", old["workspace"],
+                "--task-key", old["task_key"], "--run-id", old["run_id"], "--writer-id", old["writer_id"],
+            ], check=True, capture_output=True)
+            replacement = subprocess.run([
+                sys.executable, str(SCRIPT.with_name("autonomy_begin.py")), "--workspace", old["workspace"],
+                "--host-session-id", "thread-1", "--mode", "native", "--scope", ".", "--requirement", "run B",
+                "--acceptance", "verify B", "--state-root", str(state_root), "--lease-root", str(lease_root),
+                "--controller-root", str(root / "controller"),
+            ], check=True, text=True, capture_output=True)
+            new_path = Path(json.loads(replacement.stdout)["state_path"])
+            new = json.loads(new_path.read_text())
+            paths = [old_path, new_path, *lease_paths(
+                lease_root, new["repo_id"], new["workspace"], new["task_key"],
+            ).values()]
+            before = [path.read_bytes() for path in paths]
+            payload = {"cwd": old["workspace"], "session_id": "thread-1", "hook_event_name": "Stop"}
+            with patch.object(autonomy_hook, "active_state", return_value=(old_path, old)), \
+                    patch.object(autonomy_hook.subprocess, "run", wraps=subprocess.run) as run, \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps(payload))), redirect_stdout(StringIO()) as output, \
+                    patch.dict(os.environ, {"CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root)}):
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertIn("lease", json.loads(output.getvalue())["reason"])
+            self.assertIn(str(Path(snapshot["root"]) / "scripts/autonomy_hook.py"), run.call_args.args[0])
+            self.assertEqual(before, [path.read_bytes() for path in paths])
+
+    def test_subagent_stop_with_the_parent_session_cannot_write_parent_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text())
+            paths = [path, *lease_paths(lease_root, state["repo_id"], state["workspace"], state["task_key"]).values()]
+            before = [record.read_bytes() for record in paths]
+            result = self.invoke("codex", {
+                "cwd": state["workspace"], "session_id": "thread-1", "hook_event_name": "SubagentStop",
+                "agent_id": "reviewer", "agent_type": "reviewer",
+            }, os.environ | {"CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root)})
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+            self.assertEqual(before, [record.read_bytes() for record in paths])
+
+    def test_frozen_stop_ignores_workspace_modules_that_shadow_python_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            marker = root / "workspace-module-ran"
+            shadow = workspace / "subprocess.py"
+            shadow.write_text(
+                f"open({str(marker)!r}, 'w').close()\nprint('{{\"decision\":\"approve\"}}')\nraise SystemExit(0)\n"
+            )
+            snapshot = create_snapshot(SCRIPT.parent.parent, root / "controller", extensions=("autonomy",))
+            with patch.dict(os.environ, {"CONVERGE_EVAL_WORKSPACE": str(workspace)}):
+                path, state_root, lease_root = self.managed_hook_state(directory, controller_identity(snapshot=snapshot))
+            state = json.loads(path.read_text())
+            environment = {"CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
+                           "PYTHONPATH": str(workspace)}
+            with chdir(workspace), patch.dict(os.environ, environment):
+                result = autonomy_hook.run_frozen_hook((path, state), "codex", {
+                    "cwd": str(workspace), "session_id": "thread-1", "hook_event_name": "Stop",
+                })
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual("block", json.loads(result.stdout)["decision"])
+            self.assertFalse(marker.exists())
+            current = json.loads(path.read_text())
+            self.assertEqual("intent", current["execution_control"]["autonomy"]["action_attempts"][0]["status"])
+
+    def test_malformed_frozen_descriptor_returns_a_structured_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = create_snapshot(SCRIPT.parent.parent, root / "controller", extensions=("autonomy",))
+            state = {"workspace": str(root), "controller": {"snapshot": {**snapshot, "root": None}},
+                     "execution_control": {"autonomy": {"runtime": {"mode": "hook", "session_id": "thread-1"}}}}
+            path = root / "run.json"
+            path.write_text(json.dumps(state))
+            payload = {"cwd": str(root), "session_id": "thread-1", "hook_event_name": "Stop"}
+            with patch.object(autonomy_hook, "active_state", return_value=(path, state)), \
+                    patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
+                    patch("sys.stdin", StringIO(json.dumps(payload))), redirect_stdout(StringIO()) as output:
+                self.assertEqual(2, autonomy_hook.main())
+            self.assertIn("snapshot descriptor", json.loads(output.getvalue())["reason"])
+
+    def test_live_and_legacy_frozen_stop_skip_site_startup_and_persist_progress(self):
+        from test_controller_snapshot import python_with_startup_marker
+        from test_install import InstallTest
+
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                controller = None
+                if legacy:
+                    suite = SCRIPT.parent.parent
+                    source = root / "legacy-suite"
+                    for relative in (*snapshot_files(suite, ("autonomy",)), "VERSION"):
+                        target = source / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(suite / relative, target)
+                    with (source / "scripts/autonomy_hook.py").open("a", encoding="utf-8") as hook:
+                        hook.write("\n\ndef hook_control_command(name, *arguments):\n"
+                                   "    return [sys.executable, str(Path(__file__).with_name(name)), *arguments]\n")
+                    snapshot = create_snapshot(source, root / "control", extensions=("autonomy",))
+                    controller = controller_identity(snapshot=snapshot)
+                python, marker = python_with_startup_marker(root)
+                home = root / "home"
+                home.mkdir()
+                workspace = root / "repo"
+                subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+                subprocess.run([
+                    "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                    "commit", "--allow-empty", "-qm", "base",
+                ], check=True)
+                with patch.dict(os.environ, {"HOME": str(home), "CONVERGE_EVAL_WORKSPACE": str(workspace)}):
+                    path, state_root, lease_root = self.managed_hook_state(directory, controller)
+                codex = python.parent / "codex"
+                codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                codex.chmod(0o755)
+                installed = InstallTest().run_installer_from(
+                    home, SCRIPT.parent.parent, "--target", "codex", "--autonomy", path=python.parent,
+                )
+                self.assertEqual(0, installed.returncode, installed.stderr)
+                stop_command = json.loads((home / ".codex/hooks.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+                state = json.loads(path.read_text())
+                payload = {"cwd": state["workspace"], "session_id": "thread-1", "hook_event_name": "Stop"}
+                environment = os.environ | {"HOME": str(home), "CONVERGE_STATE_ROOT": str(state_root),
+                                            "CONVERGE_LEASE_ROOT": str(lease_root)}
+
+                def stop(event):
+                    result = subprocess.run(shlex.split(stop_command), input=json.dumps(event), text=True,
+                                            capture_output=True, env=environment, check=False)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual("block", json.loads(result.stdout)["decision"], result.stderr)
+
+                stop(payload)
+                current = json.loads(path.read_text())
+                self.assertEqual("intent", current["execution_control"]["autonomy"]["action_attempts"][0]["status"])
+                self.assertFalse(marker.exists(), "site startup ran during continuation")
+                stop({**payload, "stop_hook_active": True})
+
+                self.assertEqual("blocked", json.loads(path.read_text())["status"])
+                self.assertFalse(any(lease.exists() for lease in lease_paths(
+                    lease_root, state["repo_id"], state["workspace"], state["task_key"],
+                ).values()))
+                self.assertFalse(marker.exists(), "site startup ran during terminalization or release")
 
     def test_terminal_history_does_not_trigger_per_state_git_lookups(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1003,17 +1180,103 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(0, status)
         lease_root.assert_called_once_with(workspace)
 
-    def test_codex_does_not_require_a_session_identifier_for_native_stop(self):
+    def test_unbound_legacy_hook_does_not_write_or_release_a_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_hook_state(directory, session_id=None)
+            state = json.loads(path.read_text(encoding="utf-8"))
+            records = [path, *lease_paths(lease_root, state["repo_id"], state["workspace"], state["task_key"]).values()]
+            for runtime_absent in (False, True):
+                if runtime_absent:
+                    del state["execution_control"]["autonomy"]["runtime"]
+                    path.write_text(json.dumps(state), encoding="utf-8")
+                before = [record.read_bytes() for record in records]
+                for host in ("codex", "claude"):
+                    with self.subTest(host=host, runtime_absent=runtime_absent):
+                        result = self.invoke(host, {"cwd": state["workspace"], "session_id": "reviewer"}, os.environ | {
+                            "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
+                        })
+                        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                        self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+                        self.assertEqual(before, [record.read_bytes() for record in records])
+
+    def test_corrupt_session_binding_is_reported_without_changing_records(self):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_hook_state(directory)
-            state = json.loads(path.read_text(encoding="utf-8"))
+            state = json.loads(path.read_text())
+            state["execution_control"]["autonomy"]["runtime"]["session_id"] = None
+            path.write_text(json.dumps(state))
+            records = [path, *lease_paths(lease_root, state["repo_id"], state["workspace"], state["task_key"]).values()]
+            before = [record.read_bytes() for record in records]
+            result = self.invoke("codex", {"cwd": state["workspace"], "session_id": "reviewer"}, os.environ | {
+                "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
+            })
+            self.assertEqual(2, result.returncode, result.stdout)
+            self.assertIn("invalid autonomous session", json.loads(result.stdout)["reason"])
+            self.assertEqual(before, [record.read_bytes() for record in records])
 
-            result = self.invoke("codex", {"cwd": state["workspace"]}, os.environ | {
+    def test_legacy_stop_skips_source_revalidation_in_a_foreign_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "repo"
+            workspace.mkdir()
+            subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+            subprocess.run([
+                "git", "-C", str(workspace), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-qm", "base",
+            ], check=True)
+            with patch.dict(os.environ, {"CONVERGE_EVAL_WORKSPACE": str(workspace)}):
+                path, state_root, lease_root = self.managed_hook_state(directory)
+            state = json.loads(path.read_text())
+            del state["execution_control"]["autonomy"]["runtime"]
+            path.write_text(json.dumps(state))
+            before = path.read_bytes()
+            (workspace / "parent-change.txt").write_text("change awaiting verification")
+
+            result = self.invoke("codex", {"cwd": str(workspace), "session_id": "reviewer"}, os.environ | {
                 "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
             })
 
-        self.assertEqual(0, result.returncode)
-        self.assertEqual("block", json.loads(result.stdout)["decision"])
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual({"decision": "approve"}, json.loads(result.stdout))
+            self.assertEqual(before, path.read_bytes())
+
+    def test_reviewer_keeps_peer_hooks_and_leaves_the_parent_state_and_leases_unchanged(self):
+        from codex_exec_runner import execute_launch, plan_launch
+        from test_codex_exec_runner import profile
+
+        for session_id in ("thread-1", None):
+            with self.subTest(session_id=session_id), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path, state_root, lease_root = self.managed_hook_state(directory, session_id=session_id)
+                state = json.loads(path.read_text())
+                records = [path, *lease_paths(lease_root, state["repo_id"], state["workspace"], state["task_key"]).values()]
+                before = [record.read_bytes() for record in records]
+                peer = root / "peer-hook-ran"
+                executable = root / "codex"
+                executable.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, os, subprocess, sys\n"
+                    "from pathlib import Path\n"
+                    "sys.stdin.read()\n"
+                    "if 'features.hooks=false' not in sys.argv:\n"
+                    f"    Path({str(peer)!r}).touch()\n"
+                    "    payload = json.dumps({'cwd': os.getcwd(), 'session_id': 'reviewer', 'stop_hook_active': True})\n"
+                    f"    command = [sys.executable, {str(SCRIPT)!r}, '--host', 'codex']\n"
+                    "    result = subprocess.run(command, input=payload, text=True, capture_output=True, check=True)\n"
+                    "    if json.loads(result.stdout)['decision'] != 'approve':\n"
+                    "        raise SystemExit(3)\n"
+                    "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'review result'}}))\n",
+                    encoding="utf-8",
+                )
+                executable.chmod(0o700)
+                reviewer = profile(role="reviewer", permissions={"workspace": "read", "shell": False, "network": "egress"})
+                launch = plan_launch(reviewer, "review", workspace=state["workspace"], codex_bin=str(executable))
+                with patch.dict(os.environ, {"CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root)}):
+                    receipt, content = execute_launch(launch, "review", allow_execute=True, capture_content=True)
+
+                self.assertEqual("completed", receipt["status"])
+                self.assertEqual("review result", content)
+                self.assertTrue(peer.exists())
+                self.assertEqual(before, [record.read_bytes() for record in records])
 
     def test_session_bound_run_does_not_continue_in_another_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1029,7 +1292,7 @@ class AutonomyHookTest(unittest.TestCase):
             other = self.invoke("codex", {
                 "cwd": state["workspace"], "session_id": "thread-b",
             }, environment)
-            missing = self.invoke("codex", {"cwd": state["workspace"]}, environment)
+            missing = self.invoke("codex", {"cwd": state["workspace"], "session_id": None}, environment)
             same = self.invoke("codex", {
                 "cwd": state["workspace"], "session_id": "thread-a",
             }, environment)
@@ -1044,7 +1307,7 @@ class AutonomyHookTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, state_root, lease_root = self.managed_hook_state(directory)
             workspace = Path(json.loads(path.read_text(encoding="utf-8"))["workspace"])
-            result = self.invoke("claude", {"cwd": str(workspace), "session_id": "thread-123"}, os.environ | {
+            result = self.invoke("claude", {"cwd": str(workspace)}, os.environ | {
                 "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
             })
             current = json.loads(path.read_text(encoding="utf-8"))
@@ -1084,7 +1347,7 @@ class AutonomyHookTest(unittest.TestCase):
                 record["lease_expires_at"] = "2000-01-01T00:00:00Z"
                 lease.write_text(json.dumps(record), encoding="utf-8")
             capture = root / "commands"
-            result = self.invoke("codex", {"cwd": state["workspace"], "session_id": "thread-123"}, os.environ | {
+            result = self.invoke("codex", {"cwd": state["workspace"]}, os.environ | {
                 "CONVERGE_STATE_ROOT": str(state_root), "CONVERGE_LEASE_ROOT": str(lease_root),
                 "AUTONOMY_CAPTURE": str(capture),
             })
@@ -1099,7 +1362,7 @@ class AutonomyHookTest(unittest.TestCase):
         output = StringIO()
         with patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
                 patch.object(sys, "argv", ["autonomy_hook.py", "--host", host]), \
-                patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace), **payload}))), \
+                patch("sys.stdin", StringIO(json.dumps({"cwd": str(workspace), "session_id": "thread-1", **payload}))), \
                 patch.dict(os.environ, {
                     "CONVERGE_STATE_ROOT": str(state_root),
                     "CONVERGE_LEASE_ROOT": str(lease_root),
@@ -1111,12 +1374,14 @@ class AutonomyHookTest(unittest.TestCase):
     def test_gate_allow_short_circuits_to_an_approval(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            state = {"workspace": str(root), "execution_control": {"autonomy": {"enabled": True}}}
+            state = {"workspace": str(root), "execution_control": {"autonomy": {
+                "enabled": True, "runtime": {"mode": "hook", "session_id": "thread-1"},
+            }}}
             output = StringIO()
             with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
                     patch.object(autonomy_hook, "decide", return_value={"decision": "allow"}), \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
-                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root)}))), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root), "session_id": "thread-1"}))), \
                     redirect_stdout(output):
                 result = autonomy_hook.main()
 
@@ -1145,18 +1410,14 @@ class AutonomyHookTest(unittest.TestCase):
     def test_frozen_hook_failure_blocks_with_the_runner_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            state = {"workspace": str(root), "controller": {"snapshot": {"root": str(root)}}}
-            real_run = subprocess.run
+            state = {"workspace": str(root), "controller": {"snapshot": {"root": str(root)}},
+                     "execution_control": {"autonomy": {"runtime": {"mode": "hook", "session_id": "thread-1"}}}}
             failed = subprocess.CompletedProcess([], 2, "", "frozen runner exploded")
-
-            def execute(command, **kwargs):
-                return failed if "controller_snapshot.py" in str(command[1]) else real_run(command, **kwargs)
-
             output = StringIO()
             with patch.object(autonomy_hook, "active_state", return_value=(root / "run.json", state)), \
-                    patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
+                    patch.object(autonomy_hook, "run_frozen_hook", return_value=failed), \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "codex"]), \
-                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root)}))), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": str(root), "session_id": "thread-1"}))), \
                     redirect_stdout(output):
                 result = autonomy_hook.main()
 
@@ -1170,7 +1431,7 @@ class AutonomyHookTest(unittest.TestCase):
             failed = subprocess.CompletedProcess([], 2, "", "state write blocked")
 
             def execute(command, **kwargs):
-                return failed if "delivery_state.py" in str(command[1]) else real_run(command, **kwargs)
+                return failed if str(SCRIPT.with_name("delivery_state.py")) in command else real_run(command, **kwargs)
 
             result, output = self.run_managed_hook_in_process(
                 "codex", {}, path, state_root, lease_root, execute,
@@ -1189,7 +1450,7 @@ class AutonomyHookTest(unittest.TestCase):
             state_writes = []
 
             def execute(command, **kwargs):
-                if "delivery_state.py" in str(command[1]):
+                if str(SCRIPT.with_name("delivery_state.py")) in command:
                     state_writes.append(command)
                     if len(state_writes) == 1:
                         return failed
@@ -1212,7 +1473,7 @@ class AutonomyHookTest(unittest.TestCase):
             real_run = subprocess.run
 
             def execute(command, **kwargs):
-                if "delivery_lease.py" in str(command[1]):
+                if str(SCRIPT.with_name("delivery_lease.py")) in command:
                     return subprocess.CompletedProcess([], 1, "", "lease unavailable")
                 return real_run(command, **kwargs)
 
@@ -1220,7 +1481,7 @@ class AutonomyHookTest(unittest.TestCase):
             with patch.object(autonomy_hook, "write_state"), \
                     patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "claude"]), \
-                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"]}))), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"], "session_id": "thread-1"}))), \
                     patch.dict(os.environ, {
                         "CONVERGE_STATE_ROOT": str(state_root),
                         "CONVERGE_LEASE_ROOT": str(lease_root),
@@ -1244,7 +1505,7 @@ class AutonomyHookTest(unittest.TestCase):
             real_run = subprocess.run
 
             def execute(command, **kwargs):
-                if "delivery_lease.py" in str(command[1]):
+                if str(SCRIPT.with_name("delivery_lease.py")) in command:
                     return subprocess.CompletedProcess([], 0, '{"status": "kept"}', "")
                 return real_run(command, **kwargs)
 
@@ -1252,7 +1513,7 @@ class AutonomyHookTest(unittest.TestCase):
             with patch.object(autonomy_hook, "write_state"), \
                     patch.object(autonomy_hook.subprocess, "run", side_effect=execute), \
                     patch.object(sys, "argv", ["autonomy_hook.py", "--host", "claude"]), \
-                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"]}))), \
+                    patch("sys.stdin", StringIO(json.dumps({"cwd": state["workspace"], "session_id": "thread-1"}))), \
                     patch.dict(os.environ, {
                         "CONVERGE_STATE_ROOT": str(state_root),
                         "CONVERGE_LEASE_ROOT": str(lease_root),

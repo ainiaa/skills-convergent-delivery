@@ -19,6 +19,14 @@ def _argv(value, name):
     return value
 
 
+def validate_hook_session(runtime, session_id):
+    if runtime == "hook":
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("Hook autonomy requires a nonempty --host-session-id")
+    elif session_id is not None:
+        raise ValueError("hook session id is invalid for this runtime")
+
+
 def arm(state, requirements, acceptance, runtime="hook", service_runner=None, verification_argv=None,
         audit_argv=None, audit_findings_exit_code=None, host_session_id=None):
     if not isinstance(state, dict) or state.get("schema_version") != 10:
@@ -27,6 +35,7 @@ def arm(state, requirements, acceptance, runtime="hook", service_runner=None, ve
         raise ValueError("only an active state can be armed")
     if not requirements or not acceptance:
         raise ValueError("autonomous arming requires requirement and acceptance items")
+    validate_hook_session(runtime, host_session_id)
     updated = copy.deepcopy(state)
     updated["revision"] += 1
     routing = updated["execution_control"]["routing"]
@@ -39,11 +48,7 @@ def arm(state, requirements, acceptance, runtime="hook", service_runner=None, ve
           for index, value in enumerate(acceptance, 1)),
     ]
     updated["schema_version"] = 11
-    runtime_value = {"mode": "hook"}
-    if host_session_id is not None:
-        if runtime != "hook" or not isinstance(host_session_id, str) or not host_session_id.strip():
-            raise ValueError("hook session id is invalid")
-        runtime_value["session_id"] = host_session_id
+    runtime_value = {"mode": "hook", "session_id": host_session_id}
     if runtime == "service":
         if routing["review_tier"] != "low":
             raise ValueError("service autonomy supports only low-risk routes")
@@ -97,6 +102,7 @@ def main():
     parser.add_argument("--verification-argv")
     parser.add_argument("--audit-argv")
     parser.add_argument("--audit-findings-exit-code", type=int)
+    parser.add_argument("--host-session-id")
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--lease-root")
     parser.add_argument("--state-root")
@@ -114,7 +120,7 @@ def main():
         audit_argv = json.loads(arguments.audit_argv) if arguments.audit_argv is not None else None
         candidate = arm(state, arguments.requirement, arguments.acceptance,
                         arguments.runtime, arguments.service_runner, verification_argv, audit_argv,
-                        arguments.audit_findings_exit_code)
+                        arguments.audit_findings_exit_code, arguments.host_session_id)
         if not arguments.write:
             print(json.dumps(candidate, sort_keys=True))
             return 0

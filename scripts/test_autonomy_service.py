@@ -299,7 +299,7 @@ else:
                                 autonomy_service.run_once(path, state_root, lease_root)
                         else:
                             result = autonomy_service.run_once(path, state_root, lease_root)
-                            self.assertEqual('advanced' if outcome == 'completed' else 'blocked', result['status'])
+                            self.assertEqual('advanced' if outcome in {'completed', 'verifier-failed'} else 'blocked', result['status'])
                     current = json.loads(path.read_text())
                     self.assertIn('implementation.py', current['source_receipt']['changed_paths'])
                     self.assertEqual(0 if outcome == 'exception' else 1, len(current['ledger'].get('runner_results', [])))
@@ -308,7 +308,11 @@ else:
                     self.assertEqual(state['execution_control']['review']['rounds'], rounds[:-1])
                     self.assertEqual([], rounds[-1]['requests'])
                     self.assertEqual(current['source_fingerprint'], rounds[-1]['source_fingerprint'])
-                    if outcome != 'completed':
+                    if outcome == 'verifier-failed':
+                        self.assertEqual('active', current['status'])
+                        self.assertEqual('fail', current['ledger']['checks'][-1]['result'])
+                        self.assertEqual(1, current['ledger']['checks'][-1]['evidence_receipts'][0]['exit_code'])
+                    elif outcome != 'completed':
                         self.assertEqual('blocked', current['status'])
                         self.assertTrue(all(p.exists() == (outcome == 'exception') for p in lease_paths(
                             lease_root, current['repo_id'], current['workspace'], current['task_key']
@@ -384,7 +388,7 @@ else:
                 ["true"], audit_argv or ["python3", "-c", "pass"],
             )
         else:
-            armed = arm(initial, ["complete task"], ["tests pass"], runtime)
+            armed = arm(initial, ["complete task"], ["tests pass"], runtime, host_session_id="thread-1")
         write(armed, 0)
         path = state_path(state_root, initial["repo_id"], initial["task_key"], initial["run_id"])
         if runtime == "service" and with_trace:
@@ -1028,7 +1032,7 @@ else:
 
     def test_service_records_the_failed_verifier_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            path, state_root, lease_root = self.managed_service_state(directory)
+            path, state_root, lease_root = self.managed_service_state(directory, 'round-2-risk-review')
             state = json.loads(path.read_text(encoding="utf-8"))
             state["execution_control"]["autonomy"]["runtime"]["verification_argv"] = ["false"]
             path.write_text(json.dumps(state), encoding="utf-8")
@@ -1064,6 +1068,143 @@ else:
             current = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual("autonomy-repair", current["current_stage"])
             self.assertEqual("findings", current["execution_control"]["autonomy"]["audit_batches"][-1]["status"])
+
+    def test_original_product_verification_failure_reaches_the_existing_audit_repair(self):
+        original = Path(__file__).resolve().parents[1] / 'evals/interaction-fixtures/product-original-failure.json'
+        observed = json.loads(original.read_text())['release']
+        self.assertEqual(1, observed['exit'])
+        self.assertEqual('invalid', json.loads(observed['stdout'])['status'])
+        verify = [sys.executable, '-c',
+                  'import json,sys; r=json.load(open(sys.argv[1]))["release"]; '
+                  'print(r["stdout"]); raise SystemExit(r["exit"])', str(original)]
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, 'round-2-risk-review', [sys.executable, '-c', 'raise SystemExit(7)'])
+            state = json.loads(path.read_text())
+            runtime = state['execution_control']['autonomy']['runtime']
+            runtime.update(verification_argv=verify, audit_findings_exit_code=7)
+            path.write_text(json.dumps(state))
+            with patch.object(autonomy_service, 'execute', return_value={
+                    'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual(('advanced', 'audit_findings'), (result['status'], result['reason']))
+            stored = json.loads(path.read_text())
+            self.assertEqual('active', stored['status'])
+            self.assertEqual('autonomy-repair', stored['current_stage'])
+            self.assertEqual(1, stored['execution_control']['autonomy']['repair_budget_remaining'])
+            failed = [check for check in stored['ledger']['checks']
+                      if check['stage'] == 'autonomy-verification' and check['result'] == 'fail']
+            self.assertEqual(1, len(failed))
+            self.assertEqual(verify, failed[0]['evidence_receipts'][0]['argv'])
+            self.assertEqual(1, failed[0]['evidence_receipts'][0]['exit_code'])
+            audits = [check for check in stored['ledger']['checks'] if check['stage'] == 'autonomy-audit']
+            self.assertEqual(1, len(audits))
+            self.assertEqual(runtime['audit_argv'], audits[0]['evidence_receipts'][0]['argv'])
+            self.assertEqual(7, audits[0]['evidence_receipts'][0]['exit_code'])
+            self.assertEqual('autonomy-repair', autonomy_service.decide(stored, lease_root=lease_root)['next_action']['phase'])
+
+    def test_failed_final_verification_is_not_approved_by_a_passing_audit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, 'round-2-risk-review')
+            state = json.loads(path.read_text())
+            state['execution_control']['autonomy']['runtime']['verification_argv'] = ['false']
+            path.write_text(json.dumps(state))
+            with patch.object(autonomy_service, 'execute', return_value={
+                    'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual(('blocked', 'verification_failed'), (result['status'], result['reason']))
+            stored = json.loads(path.read_text())
+            self.assertEqual([], stored['execution_control']['autonomy']['audit_batches'])
+            self.assertEqual(1, stored['execution_control']['autonomy']['repair_budget_remaining'])
+
+    def test_final_verifier_tooling_gap_does_not_trigger_a_business_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, 'round-2-risk-review', [sys.executable, '-c', 'raise SystemExit(7)'])
+            state = json.loads(path.read_text())
+            runtime = state['execution_control']['autonomy']['runtime']
+            runtime.update(verification_argv=['/missing-original-product-verifier'], audit_findings_exit_code=7)
+            path.write_text(json.dumps(state))
+            with patch.object(autonomy_service, 'execute', return_value={
+                    'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual(('blocked', 'verification_failed'), (result['status'], result['reason']))
+            stored = json.loads(path.read_text())
+            self.assertEqual([], stored['execution_control']['autonomy']['audit_batches'])
+            self.assertEqual(1, stored['execution_control']['autonomy']['repair_budget_remaining'])
+
+    def test_auditor_import_failure_does_not_authorize_a_business_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, 'round-2-risk-review',
+                [sys.executable, '-c', 'import converge_missing_auditor_dependency'])
+            state = json.loads(path.read_text())
+            state['execution_control']['autonomy']['runtime']['audit_findings_exit_code'] = 1
+            path.write_text(json.dumps(state))
+            with patch.object(autonomy_service, 'execute', return_value={
+                    'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual(('blocked', 'audit_failed'), (result['status'], result['reason']))
+            stored = json.loads(path.read_text())
+            self.assertEqual([], stored['execution_control']['autonomy']['audit_batches'])
+            self.assertEqual(1, stored['execution_control']['autonomy']['repair_budget_remaining'])
+            failed = stored['ledger']['checks'][-1]['evidence_receipts'][0]
+            self.assertEqual(1, failed['exit_code'])
+            self.assertEqual('unavailable', failed['tooling_failure'])
+
+    def test_failed_verification_is_preserved_when_audit_cannot_classify_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, 'round-2-risk-review', ['false'])
+            state = json.loads(path.read_text())
+            state['execution_control']['autonomy']['runtime'].update(
+                verification_argv=[sys.executable, '-c', 'raise SystemExit(1)'], audit_findings_exit_code=7)
+            path.write_text(json.dumps(state))
+            with patch.object(autonomy_service, 'execute', return_value={
+                    'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual(('blocked', 'audit_failed'), (result['status'], result['reason']))
+            checks = json.loads(path.read_text())['ledger']['checks']
+            self.assertEqual(['autonomy-verification', 'autonomy-audit'], [c['stage'] for c in checks])
+            self.assertTrue(all(c['result'] == 'fail' and c['evidence_receipts'][0]['exit_code'] != 0
+                                for c in checks))
+
+    def test_intermediate_verification_failure_keeps_the_existing_build_review_path(self):
+        for stage, expected in [('scope', 'round-1-semantic-review'), ('round-1-build', 'verify-final')]:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                path, state_root, lease_root = self.managed_service_state(directory, stage)
+                state = json.loads(path.read_text())
+                state['execution_control']['autonomy']['runtime']['verification_argv'] = ['false']
+                path.write_text(json.dumps(state))
+                with patch.object(autonomy_service, 'execute', return_value={
+                        'status': 'completed', 'receipt_fingerprint': 'a' * 64}):
+                    result = autonomy_service.run_once(path, state_root, lease_root)
+                self.assertEqual('advanced', result['status'])
+                stored = json.loads(path.read_text())
+                self.assertEqual('active', stored['status'])
+                self.assertEqual(expected, autonomy_service.decide(stored, lease_root=lease_root)['next_action']['phase'])
+                self.assertEqual('fail', stored['ledger']['checks'][-1]['result'])
+                self.assertTrue(all(item['result'] != 'pass' for item in stored['ledger']['acceptance']))
+
+    def test_audit_tooling_exit_code_collision_never_authorizes_repair(self):
+        for audit, code in [(['/missing-original-product-auditor'], 127),
+                            ([sys.executable, '-c', 'import time; time.sleep(5)'], 124)]:
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                path, state_root, lease_root = self.managed_service_state(directory, 'round-2-risk-review', audit)
+                state = json.loads(path.read_text())
+                state['execution_control']['autonomy']['runtime']['audit_findings_exit_code'] = code
+                path.write_text(json.dumps(state))
+                observed = autonomy_service.run_evidence
+                def short_audit(workspace, baseline, argv, timeout_seconds=600):
+                    return observed(workspace, baseline, argv,
+                                    timeout_seconds=.02 if argv == audit else timeout_seconds)
+                with patch.object(autonomy_service, 'execute', return_value={
+                        'status': 'completed', 'receipt_fingerprint': 'a' * 64}), \
+                        patch.object(autonomy_service, 'run_evidence', side_effect=short_audit):
+                    result = autonomy_service.run_once(path, state_root, lease_root)
+                self.assertEqual(('blocked', 'audit_failed'), (result['status'], result['reason']))
+                stored = json.loads(path.read_text())
+                self.assertEqual([], stored['execution_control']['autonomy']['audit_batches'])
+                self.assertEqual(1, stored['execution_control']['autonomy']['repair_budget_remaining'])
 
     def test_service_records_a_reaudit_finding_after_the_repair_budget_is_spent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1189,6 +1330,102 @@ else:
             current = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual([launch], current["ledger"]["runner_launches"])
             self.assertEqual([receipt], current["ledger"]["runner_results"])
+
+    def test_repair_commit_survives_a_crash_after_persistence_without_replaying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(
+                directory, 'round-2-risk-review', [sys.executable, '-c', 'raise SystemExit(7)'])
+            state = json.loads(path.read_text())
+            state['execution_control']['autonomy']['runtime']['audit_findings_exit_code'] = 7
+            path.write_text(json.dumps(state))
+            receipt = {'status': 'completed', 'receipt_fingerprint': 'a' * 64}
+            with patch.object(autonomy_service, 'execute', return_value=receipt):
+                self.assertEqual('audit_findings', autonomy_service.run_once(path, state_root, lease_root)['reason'])
+            marker = Path(state['workspace']) / 'atomic_repair.py'
+            self.addCleanup(marker.unlink, missing_ok=True)
+            original_write = autonomy_service._write
+
+            def crash_after_commit(*args):
+                saved = original_write(*args)
+                if saved['current_stage'] == 'verify-final':
+                    raise SystemExit('simulated controller crash after persistence')
+                return saved
+
+            def repair(*args):
+                marker.write_text('repaired = True\n')
+                return receipt
+
+            with patch.object(autonomy_service, 'execute', side_effect=repair), \
+                    patch.object(autonomy_service, '_write', side_effect=crash_after_commit), \
+                    self.assertRaisesRegex(SystemExit, 'simulated controller crash'):
+                autonomy_service.run_once(path, state_root, lease_root)
+            saved = json.loads(path.read_text())
+            autonomy = saved['execution_control']['autonomy']
+            self.assertEqual('committed', autonomy['action_attempts'][-1]['status'])
+            self.assertEqual(0, autonomy['repair_budget_remaining'])
+            self.assertEqual(1, len(saved['ledger']['autonomy_repair_fingerprints']))
+            self.assertEqual('verify-final', autonomy_service.decide(saved, lease_root=lease_root)['next_action']['phase'])
+            with patch.object(autonomy_service, 'execute', return_value={**receipt, 'status': 'failed'}) as execute:
+                result = autonomy_service.run_once(path, state_root, lease_root)
+            self.assertEqual('runner_not_completed', result['reason'])
+            self.assertEqual('verify-final', execute.call_args.args[2]['phase'])
+            self.assertEqual(1, len(json.loads(path.read_text())['ledger']['autonomy_repair_fingerprints']))
+
+    def test_complete_repair_cycle_dispatches_both_final_verifications(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, state_root, lease_root = self.managed_service_state(directory, with_trace=True)
+            state = json.loads(path.read_text())
+            marker = Path(state["workspace"]) / "repaired.py"
+            self.addCleanup(marker.unlink, missing_ok=True)
+            runtime = state["execution_control"]["autonomy"]["runtime"]
+            original_profile = json.loads(json.dumps(runtime["runner_profile"]))
+            runtime["verification_argv"] = [sys.executable, "-c",
+                f"from pathlib import Path; raise SystemExit(0 if Path({str(marker)!r}).exists() else 1)"]
+            runtime["audit_argv"] = [sys.executable, "-c",
+                f"from pathlib import Path; raise SystemExit(0 if Path({str(marker)!r}).exists() else 7)"]
+            runtime["audit_findings_exit_code"] = 7
+            path.write_text(json.dumps(state))
+
+            def transport(launch, request, **kwargs):
+                from runner_contract import validate_launch
+                validate_launch(launch, request)
+                current = json.loads(path.read_text())
+                if current["execution_control"]["autonomy"]["action_attempts"][-1]["action"]["phase"] == "autonomy-repair":
+                    marker.write_text("repaired = True\n")
+                profile = launch["profile"]
+                receipt = {"schema_version": 1, "runner_id": "codex-exec-v1",
+                    "launch_fingerprint": launch["launch_fingerprint"], "status": "completed", "exit_code": 0,
+                    "stdout_fingerprint": "c" * 64, "stderr_fingerprint": "d" * 64,
+                    "requested_model": profile["effective"]["model"],
+                    "requested_reasoning_effort": profile["effective"]["reasoning_effort"]}
+                content = ""
+                if marker.exists():
+                    source = workspace_source(state["workspace"], state["baseline"]["commit"])
+                    content = json.dumps({"tdd_trace": native_tdd_trace(
+                        state["workspace"], state["baseline"]["commit"], source,
+                    )})
+                return {**receipt, "receipt_fingerprint": fingerprint(receipt)}, content
+
+            with patch("codex_exec_runner._is_isolated_worktree", return_value=True), \
+                    patch.object(autonomy_service, "execute_codex", side_effect=transport):
+                outcomes = [autonomy_service.run_once(path, state_root, lease_root) for _ in range(5)]
+
+            self.assertEqual(["advanced"] * 4 + ["complete"], [item["status"] for item in outcomes])
+            final = json.loads(path.read_text())
+            autonomy = final["execution_control"]["autonomy"]
+            self.assertEqual(["round-1-build", "round-1-semantic-review", "verify-final", "autonomy-repair", "verify-final"],
+                             [item["action"]["phase"] for item in autonomy["action_attempts"]])
+            launches = final["ledger"]["runner_launches"]
+            self.assertEqual(5, len({item["launch_fingerprint"] for item in launches}))
+            self.assertEqual(["findings", "pass"], [item["status"] for item in autonomy["audit_batches"]])
+            self.assertNotEqual(autonomy["audit_batches"][0]["source_fingerprint"],
+                                autonomy["audit_batches"][1]["source_fingerprint"])
+            self.assertEqual((0, 0), (autonomy["repair_budget_remaining"], autonomy["re_audit_budget_remaining"]))
+            self.assertEqual(original_profile, autonomy["runtime"]["runner_profile"])
+            for attempt, launch in zip(autonomy["action_attempts"], launches):
+                self.assertEqual(attempt["attempt_id"], launch["profile"]["worker_id"])
+                self.assertEqual({k: v for k, v in original_profile.items() if k not in {"worker_id", "profile_fingerprint"}},
+                                 {k: v for k, v in launch["profile"].items() if k not in {"worker_id", "profile_fingerprint"}})
 
     def test_service_persists_an_unexpected_finalization_error_as_blocked(self):
         with tempfile.TemporaryDirectory() as directory:

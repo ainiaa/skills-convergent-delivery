@@ -556,6 +556,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不自动修改", activation)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
+    def test_generic_activation_keeps_specialized_page_work_outside_core(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
+        self.assertNotIn("pages", skill.lower())
+        self.assertIn("](references/activation.md)", skill)
+        self.assertNotIn("pages", activation.lower())
+        self.assertNotIn("pages_task.py", activation)
+
     def test_active_write_authorization_survives_an_in_scope_review_checkpoint(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
@@ -585,6 +593,7 @@ class SkillContractTest(unittest.TestCase):
             encoding="utf-8"
         )
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        activation = (ROOT / "references/activation.md").read_text(encoding="utf-8")
 
         for marker in (
             "SkillOpt",
@@ -602,10 +611,10 @@ class SkillContractTest(unittest.TestCase):
             "只报告问题、证据和候选方向",
         ):
             self.assertIn(marker, policy)
-        self.assertIn("用户明确要求 SkillOpt", root)
-        self.assertIn("self-improving.md", root)
-        self.assertIn("skillopt_policy.py", root)
-        self.assertIn("用户级", root)
+        self.assertIn("用户明确要求 SkillOpt", activation)
+        self.assertIn("self-improving.md", activation)
+        self.assertNotIn("skillopt_policy.py", root)
+        self.assertIn("skillopt_policy.py", policy)
         self.assertIn("scripts/test_skillopt_policy.py", (ROOT / "scripts/check.sh").read_text())
 
     def test_exhausted_review_budget_is_per_run_not_a_same_session_authorization_end(self):

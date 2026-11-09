@@ -26,11 +26,15 @@ REQUIRED_SOURCE_FILES=(
   references/evaluation-scenarios.md
   references/execution-control.md
   references/execution-protocol.md
+  references/execution-topology.md
+  references/reference-alignment.md
+  references/host-capabilities.md
   references/review-orchestration.md
   references/reporting.md
   references/state-schema.md
   references/task-routing.md
   references/tdd-providers.md
+  references/inline-tdd.md
   references/worker-runners.md
   references/multi-model.md
   references/multi-model-evaluation.json
@@ -43,6 +47,7 @@ REQUIRED_SOURCE_FILES=(
   providers/pdlc-v1.json
   providers/superpowers-tdd-v1.json
   scripts/delivery_engine.py
+  scripts/execution_topology.py
   scripts/tdd_impact_guard.py
   scripts/native_tdd_policy.py
   scripts/delivery_lease.py
@@ -628,13 +633,15 @@ autonomy_hook_config() {
   local stop_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_hook.py") --host ${runtime}"
   local prompt_command=""
   local record_state="${HOME}/.convergent-delivery/autonomy-hooks.json"
+  local helper="${SOURCE_DIR}/scripts/autonomy_hook_config.py"
+  local python=("$py3")
+  [[ "$runtime" != "codex" ]] || python+=(-E -S -B)
+  local args=(--config "$config" --record-state "$record_state" --record-runtime "$runtime")
   local recorded_stop="" recorded_prompt=""
   if [[ "$remove" == "remove" && -f "$record_state" ]]; then
-    # Read both recorded commands before any removal drops the runtime entry:
-    # exact-command matching must survive interpreter drift between install and
-    # uninstall, and a second lookup after drop_record would see nothing.
+    # Read all recorded commands before removal drops the runtime entry.
     local recorded_pair
-    recorded_pair="$("$py3" - "$record_state" "$runtime" <<'PY'
+    recorded_pair="$("${python[@]}" - "$record_state" "$runtime" <<'PY'
 import json, sys
 from pathlib import Path
 try:
@@ -649,27 +656,22 @@ PY
     recorded_prompt="$(sed -n '2p' <<<"$recorded_pair")"
     [[ -n "$recorded_stop" ]] && stop_command="$recorded_stop"
   fi
-  local args=(--config "$config" --command "$stop_command")
-  [[ "$remove" == "remove" ]] && args+=(--remove)
   if [[ "$remove" == "remove" ]]; then
-    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
-      --record-state "$record_state" --record-runtime "$runtime" || return
-  else
-    "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
-      --record-state "$record_state" --record-runtime "$runtime" --record-event "Stop" || return
-  fi
-  if [[ "$runtime" == "codex" ]]; then
-    prompt_command="$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_prompt_hook.py") --host codex"
-    [[ -n "$recorded_prompt" ]] && prompt_command="$recorded_prompt"
-    args=(--config "$config" --command "$prompt_command" --event UserPromptSubmit)
-    [[ "$remove" == "remove" ]] && args+=(--remove)
-    if [[ "$remove" == "remove" ]]; then
-      "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
-        --record-state "$record_state" --record-runtime "$runtime" || return
-    else
-      "$py3" "${SOURCE_DIR}/scripts/autonomy_hook_config.py" "${args[@]}" \
-        --record-state "$record_state" --record-runtime "$runtime" --record-event "UserPromptSubmit" || return
+    "${python[@]}" "$helper" "${args[@]}" --command "$stop_command" --remove || return
+    if [[ "$runtime" == "codex" ]]; then
+      prompt_command="${recorded_prompt:-$(printf %q "$py3") $(printf %q "${SOURCE_DIR}/scripts/autonomy_prompt_hook.py") --host codex}"
+      "${python[@]}" "$helper" "${args[@]}" --event UserPromptSubmit --command "$prompt_command" --remove || return
     fi
+  elif [[ "$runtime" == "codex" ]]; then
+    local prefix="$(printf %q "$py3") -E -S -B" registered
+    stop_command="$prefix $(printf %q "${SOURCE_DIR}/scripts/autonomy_hook.py") --host codex"
+    prompt_command="$prefix $(printf %q "${SOURCE_DIR}/scripts/autonomy_prompt_hook.py") --host codex"
+    registered="$("${python[@]}" "$helper" "${args[@]}" --command "$stop_command")" || return
+    stop_command="${registered:-$stop_command}"
+    registered="$("${python[@]}" "$helper" "${args[@]}" --event UserPromptSubmit --command "$prompt_command")" || return
+    prompt_command="${registered:-$prompt_command}"
+  else
+    "${python[@]}" "$helper" "${args[@]}" --command "$stop_command" || return
   fi
   if [[ "$remove" == "remove" ]]; then
     echo "${runtime}: autonomy Stop hook removed"
@@ -693,8 +695,12 @@ backup_autonomy_hook_configs() {
   AUTONOMY_HOOK_CONFIG_BACKUPS=()
   AUTONOMY_HOOK_CONFIG_EXISTED=()
   local runtime config backup
+  local configs=()
   for runtime in "${RUNTIMES[@]}"; do
-    config="$(autonomy_hook_config_path "$runtime")"
+    configs+=("$(autonomy_hook_config_path "$runtime")")
+  done
+  configs+=("${HOME}/.convergent-delivery/autonomy-hooks.json")
+  for config in "${configs[@]}"; do
     AUTONOMY_HOOK_CONFIG_PATHS+=("$config")
     if [[ -e "$config" ]]; then
       backup="$(mktemp "${TMPDIR:-/tmp}/converge-autonomy-hook.XXXXXX")" || return 1
@@ -730,14 +736,15 @@ discard_autonomy_hook_backups() {
   done
 }
 
-install_autonomy_hooks() {
+configure_autonomy_hooks() {
+  local mode="${1:-}"
   backup_autonomy_hook_configs || return 1
   AUTONOMY_HOOK_RUNTIMES=()
   AUTONOMY_HOOK_STOP_COMMANDS=()
   AUTONOMY_HOOK_PROMPT_COMMANDS=()
   local runtime index args
   for runtime in "${RUNTIMES[@]}"; do
-    if ! autonomy_hook_config "$runtime"; then
+    if ! autonomy_hook_config "$runtime" "$mode"; then
       restore_autonomy_hook_configs
       return 1
     fi
@@ -759,7 +766,9 @@ install_autonomy_hooks() {
 autonomy_preflight() {
   local runtime="$1"
   shift
-  python3 "${SOURCE_DIR}/scripts/autonomy_preflight.py" --host "$runtime" --source "$SOURCE_DIR" "$@"
+  local python=(python3)
+  [[ "$runtime" != "codex" ]] || python+=(-E -S -B)
+  "${python[@]}" "${SOURCE_DIR}/scripts/autonomy_preflight.py" --host "$runtime" --source "$SOURCE_DIR" "$@"
 }
 
 autonomy_service_config() {
@@ -843,7 +852,7 @@ if [[ "$ACTION" == "install" || "$ACTION" == "upgrade" ]]; then
     done
   done
   if [[ "$AUTONOMY" -eq 1 ]]; then
-    install_autonomy_hooks
+    configure_autonomy_hooks
   fi
   echo "✅ converge $(head -1 "$SOURCE_DIR/VERSION") is ready. Claude Code reloads Skills live; start a new Codex task only if discovery is stale."
 elif [[ "$ACTION" == "uninstall" ]]; then
@@ -856,7 +865,7 @@ elif [[ "$ACTION" == "uninstall" ]]; then
   done
   if [[ "$AUTONOMY" -eq 1 ]]; then
     prepare_removal_source "scripts/autonomy_hook_config.py"
-    for runtime in "${RUNTIMES[@]}"; do autonomy_hook_config "$runtime" remove; done
+    configure_autonomy_hooks remove
   fi
   for runtime in "${RUNTIMES[@]}"; do
     for skill in "${SKILL_NAMES[@]}"; do

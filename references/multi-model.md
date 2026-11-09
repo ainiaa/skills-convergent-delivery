@@ -117,20 +117,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/multi_model_eval.py" \
 
 GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `--allow-network`；这不会绕过凭据、预算或 runner 的既有网络授权。
 
-## 机制依据（2026-09）
-
-| 参考与决定 | 采用 / 不采用 | 原因 | 行为测试 |
-| --- | --- | --- | --- |
-| [多代理模式原始 Skill 的显式交接](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) | 采用与解析器一致的只读结果示例；不采用格式失败后的自动重试或结果改写 | 修复生产端提示的契约缺失，保留消费端严格校验与原始失败回执；Skills.sh 分类页不可访问，核对原始 Skill | `test_role_prompt_examples_round_trip_through_the_real_contract`、`test_file_line_ranges_from_the_failed_scout_remain_invalid` |
-| [OpenAI 的代码编排与结构化输出](https://openai.github.io/openai-agents-python/multi_agent/) | 采用类型化、可验证结果 | controller 需要检查输出，而不是转述 agent 对话 | `test_role_result.py` |
-| [Anthropic 的小样本评测与隐私观测](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用固定、显式执行的 16 场景评测 | 先测合规、路由和用量，且报告不存 transcript | `test_multi_model_eval.py` |
-| [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |
-| peer swarm、成员互聊、自动扩容 | 不采用 | 编码任务依赖高；当前目标是可恢复的单写入者控制 | `test_role_flow.py`、`test_runner_lifecycle.py` |
-| [Git rev-parse 路径输出](https://git-scm.com/docs/git-rev-parse) | 采用只移除行终止符的隔离 worktree 身份检查；不新增路径注册表 | 合法路径末尾空格不应改变单写入者隔离判定 | `test_writer_accepts_isolated_worktree_with_trailing_space_in_path` |
-| [OpenAI 模型选择](https://developers.openai.com/api/docs/guides/model-selection)、[GPT-6 迁移](https://developers.openai.com/api/docs/guides/latest-model) | 采用 GPT-6 Luna/Sol 的实际可派发角色分层；不采用串行 Astra 画像 | 只有 runner 能切换模型；Sol high→medium 须经真实同模式任务对比，不把官方建议当作本仓质量结论 | `test_multi_model.py`、`test_multi_model_repo_eval.py` |
-| [OpenAI GPT-6 Skill 指南](https://learn.chatgpt.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)、[skill-creator](https://developers.openai.com/codex/skills) | 采用短入口和按需加载；不新增 GPT-6 专属状态机 | 减少默认上下文与无效角色配置，同时保留既有授权、验证和有限退出边界 | `test_skill_contracts.py`、`test_multi_model.py` |
-| [Claude Code 模型别名](https://code.claude.com/docs/en/model-config) | 采用现有 `haiku`/`sonnet`/`opus` 别名；不钉死具体版本 | 别名随宿主与提供方变化，保留显式 profile 与真实 smoke 门槛 | `test_multi_model.py`、`test_multi_model_smoke.py` |
-| [多代理模式原始 Skill](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md)、[Superpowers 原始 Skill](https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md) | 不采用每角色常驻或每阶段强制新代理 | 更强模型不构成增加代理的证据；保持单控制器与按需隔离 | `test_role_flow.py`、`test_role_dispatch.py` |
+## 执行边界
 
 本地 runner workspace 由当前 run state 派生，调用方不能另传目录：读写角色都只能在 state 的 workspace 工作；`implementer` 因而要求该 run 本身已在独立 Git worktree。`shell=false` 的统一含义是“没有可写工作区的 shell 能力”，不是两套 CLI 都不存在任何命令执行：Codex 在 `read-only` sandbox 内仍可能运行只读命令；Claude 则限制为 `--tools Read,Grep,Glob` 与 `plan` permission mode。Codex 以 sandbox 强制边界；Claude 没有可验证的等价 OS sandbox，因此不开放其可写角色。`mode=serial` 明确复用当前 controller，`mode=tool` 只运行确定性验证。
 
@@ -138,7 +125,30 @@ GLM reviewer 评测仍需同时显式配置 `--role reviewer=glm-5.2@high` 与 `
 
 `inline`、`serial` 与 `tool` 路径不创建 lifecycle、launch 或 runner ledger 记录；现有非多模型流程不经过该入口。未来只有宿主确实可证明精确模型选择、稳定 worker ref、查询和 workspace binding 时，才可作为同一契约的 native transport；当前不伪造该能力。
 
-Desktop controller 若实际暴露 `create_thread`、`wait_threads` 与 `set_thread_archived`，可用 `multi_model.py desktop-task --project-id <id> --title <title> --input <prompt>` 生成一次 `desktop-task-v1` 创建动作。controller 提交该动作后，只从实际 `create_thread` 结果生成 receipt、只接受正式 `threadId`、以该精确引用调用 `wait_threads`；归档必须消费由该查询及同一 task ref 绑定的终态 observation，不能接受调用方提供的裸状态字符串。该动作同时绑定已验证的 implementer profile fingerprint、请求的 `model` / `thinking`；它们仍不代表远端实际模型观察。Python 命令本身不会调用宿主、不会进入 `workers[]` lifecycle；完整宿主顺序见 `extensions/converge-multimodel/SKILL.md`。
+## Desktop 任务派发
+
+`multi_model.py desktop-task --project-id <id> --title <title> --input <prompt>` 生成绑定 implementer profile、请求模型和推理档位的冻结创建动作。
+
+The `multi_model.py desktop-task` command emits only a frozen `create_thread`
+request. It does not, and cannot, call Desktop MCP tools itself. When the user explicitly requests a separate Desktop task and the host exposes the required tools, the controller follows this lifecycle:
+
+1. Generate the action with `desktop-task`, then call `create_thread` using
+   its `arguments` unchanged.
+2. Build `creation_receipt(action, create_thread_result)` only from that live
+   tool result. A `clientThreadId` is indeterminate, not a confirmed task.
+3. Generate `query_action(receipt)` and call `wait_threads` using its
+   `arguments` unchanged.
+4. From a terminal `wait_threads` result for that exact task, call
+   `terminal_observation(receipt, query, normalized_result)`, where
+   `normalized_result` retains only `tool`, terminal `status`, and `task_ref`.
+5. Only then call `archive_action(receipt, observation)` and invoke
+   `set_thread_archived` with its `arguments` unchanged.
+
+The controller must not call `archive_action` from a model-supplied status
+string, and it leaves tasks unarchived when the status is non-terminal,
+missing, or the task reference differs. This is a host-controller protocol,
+not an automatic continuation mechanism; a real smoke requires an explicitly
+requested Desktop task.
 
 ## 配置
 

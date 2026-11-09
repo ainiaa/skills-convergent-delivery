@@ -80,3 +80,18 @@
 证据模块 39 项通过。修复后再次逐个核对上述退出路径，未留已确认的同范围缺陷；最终验收在源码冻结后运行全量检查和 90% 覆盖率 gate，不靠重复采样放行。
 
 最终验收：本轮首次完整 coverage gate 退出 0，137.12 秒，生产 Python 覆盖率 **90.44%**，统计范围及 90% 门槛不变。验收前后 Source Receipt 一致（`9f0219e4f80b63f65d9f132850395d57d5da384581518335593e186653646a46`）；本段是其后的结果记录。冻结控制器确定性预检 ready，模型行为及宿主生命周期未运行；`git diff --check` 通过。未提交、推送或发布。
+
+## Suite 运行说明复审
+
+| 参考与已有模式 | 采用 | 不采用及原因 | 验证 |
+|---|---|---|---|
+| [OpenAI Skill Creator](https://github.com/openai/skills/blob/main/skills/.system/skill-creator/SKILL.md) 和 [Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) 的渐进披露 | 入口按需链接，运行参考只放当前规则，研究与迁移记录归回既有设计文档 | 不新增专项手册或索引层，现有文档职责已经足够 | Suite 文档契约和相对链接核对，Batch 文档命令在临时 Git 仓库写入 revision 0 |
+| [Filesystem Context](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/filesystem-context/SKILL.md) 与既有 Inline TDD 快照修复 | 只把根入口直接需要的说明与拓扑 helper 加入 core 冻结资源，旧 Protocol 25 快照按原字节校验 | 不复制整套仓库或在运行中读取变化中的同名文件，避免扩大能力与引入漂移 | 在 core 快照中读取三个引用并从独立 cwd 执行拓扑校验，复验旧描述符 |
+
+## 过期租约与人工决策
+
+| 参考 | 采用 | 不采用及原因 | 对应行为验证 |
+|---|---|---|---|
+| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) 与 [build-iterated-agentic-loop](https://github.com/humanlayer/skills/blob/main/plugins/build-iterated-agentic-loop/skills/build-iterated-agentic-loop/SKILL.md) | 依照可观察证据决定是否自动继续，证据不足时保留人工决定 | 复用当前租约和控制器，无需调度器或新审批状态 | 活跃或无法验证清场的冲突返回 `ask_user` 并保留旧记录 |
+| [Filesystem Context](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/filesystem-context/SKILL.md) 与 [Planning with Files](https://github.com/OthmanAdi/planning-with-files) | 按旧 owner 精确定位原任务，复用终态、回执和现有锁 | 无需另外记录恢复日志，历史状态继续保留 | 工作区及任务租约两种冲突均可释放已验证清场的旧租约并获取新租约，历史状态逐字节不变 |
+| [Anthropic Skill Creator](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md) 与 [Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 从真实误建工作区的对话提炼反例，先复现再改提示和控制规则 | CLI 断言只验证工具输出和磁盘状态，宿主是否确实先问用户需另行观察 | 过期但 runner 缺少回执的原型场景退出 2，旧状态和租约内容不变 |

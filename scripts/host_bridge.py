@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from codex_exec_runner import _binary_identity
+from runner_contract import CODEX_SYSTEM_PROXY_OVERRIDE
 
 
 PROTOCOL = "host-bridge-v1"
@@ -87,7 +88,8 @@ class _CodexAppServer:
     def __enter__(self):
         binary, _fingerprint = _binary_identity(self.codex_bin)
         self.process = subprocess.Popen(
-            [binary, "app-server", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [binary, "app-server", "--stdio", "-c", CODEX_SYSTEM_PROXY_OVERRIDE],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True,
         )
         threading.Thread(target=self._read, daemon=True).start()
@@ -170,6 +172,7 @@ class CodexSession:
         self.task_id = None
         self.started = False
         self.last_text = ""
+        self.last_items = []
 
     def turn(self, prompt):
         remaining = self.deadline - time.monotonic()
@@ -194,7 +197,8 @@ class CodexSession:
         while time.monotonic() < self.deadline:
             status = self.server.turn_statuses.get(turn_id)
             if status is not None:
-                text = "\n".join(item.get("text", "") for item in self.server.turn_items.get(turn_id, [])
+                self.last_items = list(self.server.turn_items.get(turn_id, []))
+                text = "\n".join(item.get("text", "") for item in self.last_items
                                  if item.get("type") == "agentMessage")
                 self.last_text = text
                 return {"task_id": self.task_id, "turn_id": turn_id, "status": status,

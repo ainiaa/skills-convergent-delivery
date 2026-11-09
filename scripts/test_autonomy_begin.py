@@ -64,8 +64,9 @@ class AutonomyBeginTest(unittest.TestCase):
         self.assertEqual(expected_stage, state["current_stage"])
 
     def test_missing_task_profile_is_routed_conservatively(self):
+        from test_delivery_next import WORKSPACE
         state = initial_state(
-            ROOT, ["fix login redirect"], ["redirect is correct"], ["."],
+            WORKSPACE, ["fix login redirect"], ["redirect is correct"], ["."],
             "run-conservative", "writer-conservative", mode="native",
         )
 
@@ -74,6 +75,7 @@ class AutonomyBeginTest(unittest.TestCase):
         self.assertEqual("normal", routing["review_tier"])
 
     def test_explicit_task_profile_is_frozen_instead_of_a_local_default(self):
+        from test_delivery_next import WORKSPACE
         task_profile = {
             "schema_version": 2, "assessment_phase": "frozen", "scope": "cross-service",
             "coupling": "dependent", "uncertainty": "medium", "verification": "external",
@@ -81,7 +83,7 @@ class AutonomyBeginTest(unittest.TestCase):
             "context_isolation_benefit": False,
         }
         state = initial_state(
-            ROOT, ["coordinate services"], ["integration passes"], ["."],
+            WORKSPACE, ["coordinate services"], ["integration passes"], ["."],
             "run-profile", "writer-profile", mode="native", task_profile=task_profile,
         )
 
@@ -99,6 +101,31 @@ class AutonomyBeginTest(unittest.TestCase):
             _task_key(*arguments, ["fix payment retry"]),
         )
 
+    def test_existing_changes_add_only_owned_path_risks(self):
+        from evidence_contract import workspace_source
+        source = workspace_source(ROOT, "HEAD")
+        for scope, paths, expected in (
+            (["."], ["src/security/authorization.py"], {"security", "permission"}),
+            (["src"], ["src/security/authorization.py"], {"security", "permission"}),
+            (["src/main.py"], ["src/main.py", "other/security.py"], set()),
+            (["src/"], ["src/payment.py", "src-other/authorization.py"], {"payment"}),
+            (["src"], [], set()),
+        ):
+            with self.subTest(scope=scope, paths=paths), patch.object(
+                autonomy_begin, "workspace_source", return_value={**source, "changed_paths": paths},
+            ):
+                state = initial_state(ROOT, ["repair owned changes"], ["verified"], scope,
+                                      "run-owned", "writer-owned", ["timezone"], mode="native")
+                routing = state["execution_control"]["routing"]
+                self.assertEqual(expected | {"timezone"}, set(routing["profile"]["risk_flags"]))
+                self.assertEqual("high", routing["review_tier"])
+
+    def test_invalid_scope_is_rejected_before_owned_path_matching(self):
+        for scope in (["../security"], [None], [], "src"):
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                initial_state(ROOT, ["task"], ["verified"], scope,
+                              "run-invalid", "writer-invalid", mode="native")
+
     def test_task_key_does_not_bind_the_worktree_path(self):
         arguments = ("a" * 40, ["."], ["tests pass"], ["fix login redirect"])
 
@@ -108,11 +135,12 @@ class AutonomyBeginTest(unittest.TestCase):
         )
 
     def test_service_mode_rejects_the_primary_checkout_before_acquiring_a_lease(self):
+        from test_delivery_next import WORKSPACE
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = subprocess.run([
                 sys.executable, str(Path(__file__).with_name("autonomy_begin.py")),
-                "--workspace", str(ROOT), "--runtime", "service", "--service-runner", "codex-exec-v1",
+                "--workspace", str(WORKSPACE), "--runtime", "service", "--service-runner", "codex-exec-v1",
                 "--verification-argv", '["true"]', "--state-root", str(root / "state"),
                 "--lease-root", str(root / "leases"), "--requirement", "task", "--acceptance", "pass", "--scope", ".",
             ], text=True, capture_output=True, check=False)
@@ -129,7 +157,7 @@ class AutonomyBeginTest(unittest.TestCase):
                     "--scope", ".", "--requirement", "complete the frozen task",
                     "--acceptance", "targeted tests pass", "--state-root", str(state_root),
                     "--lease-root", str(lease_root), "--controller-root", str(Path(directory) / "control"),
-                    "--mode", "native",
+                    "--mode", "native", "--host-session-id", "thread-1",
                 ], text=True, capture_output=True, check=False,
             )
 
@@ -145,8 +173,22 @@ class AutonomyBeginTest(unittest.TestCase):
             self.assertTrue((Path(snapshot["root"]) / "scripts/autonomy_hook.py").is_file())
             self.assertNotIn("scripts/multi_model.py", snapshot["files"])
             self.assertTrue(state["execution_control"]["autonomy"]["enabled"])
+            self.assertEqual("thread-1", state["execution_control"]["autonomy"]["runtime"]["session_id"])
             self.assertEqual([], state["execution_control"]["autonomy"]["action_attempts"])
             self.assertEqual("round-1-build", validate_state(state, type("Args", (), {"strict_evidence": True})()))
+
+    def test_hook_admission_requires_a_host_session_before_creating_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = subprocess.run([
+                sys.executable, str(SCRIPT), "--workspace", str(ROOT), "--scope", ".",
+                "--requirement", "complete task", "--acceptance", "tests pass", "--mode", "native",
+                "--state-root", str(root / "state"), "--lease-root", str(root / "leases"),
+                "--controller-root", str(root / "controller"),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(2, result.returncode, result.stdout)
+            self.assertIn("--host-session-id", result.stderr)
+            self.assertEqual([], list(root.iterdir()))
 
     def test_rejects_an_empty_scope_or_acceptance_before_acquiring_a_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -169,6 +211,7 @@ class AutonomyBeginTest(unittest.TestCase):
                 sys.executable, str(SCRIPT), "--workspace", str(ROOT), "--scope", ".",
                 "--requirement", "complete the frozen task", "--acceptance", "targeted tests pass",
                 "--state-root", str(state_root), "--lease-root", str(lease_root),
+                "--host-session-id", "thread-1",
             ]
             first = subprocess.run(command, text=True, capture_output=True, check=False)
             second = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -188,6 +231,7 @@ class AutonomyBeginTest(unittest.TestCase):
                     sys.executable, str(SCRIPT), "--workspace", str(ROOT), "--scope", ".",
                     "--requirement", "complete the frozen task", "--acceptance", "targeted tests pass",
                     "--state-root", str(state_root), "--lease-root", str(lease_root),
+                    "--host-session-id", "thread-1",
                 ], text=True, capture_output=True, check=False,
             )
 
@@ -208,10 +252,11 @@ class AutonomyBeginTest(unittest.TestCase):
                 autonomy_begin._release_lease(arguments, state)
 
     def test_service_mode_requires_an_isolated_worktree(self):
+        from test_delivery_next import WORKSPACE
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
                 [
-                    sys.executable, str(SCRIPT), "--workspace", str(ROOT), "--scope", ".",
+                    sys.executable, str(SCRIPT), "--workspace", str(WORKSPACE), "--scope", ".",
                     "--requirement", "complete the frozen task", "--acceptance", "targeted tests pass",
                     "--runtime", "service", "--service-runner", "codex-exec-v1",
                     "--verification-argv", '["true"]', "--state-root", str(Path(directory) / "state"),
@@ -357,6 +402,7 @@ class AutonomyBeginTest(unittest.TestCase):
             audit_argv=None, audit_findings_exit_code=None, risk_flag=[], request_file=None,
             mode="native", task_kind="feature", full_closure=False, task_profile_json=None,
             state_root="/state", lease_root="/leases", controller_root="/control",
+            host_session_id="thread-1",
         )
         acquired = subprocess.CompletedProcess([], 0, '{"status": "acquired"}', "")
         failed = subprocess.CompletedProcess([], 2, "", "state write blocked")

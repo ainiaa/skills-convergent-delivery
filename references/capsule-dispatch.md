@@ -37,7 +37,7 @@ python3 "$CONVERGE_SKILL_DIR/scripts/capsule_dispatch.py" \
 
 | 宿主 | 实际调用 | `delivered` 的判据 | 不确定时 |
 | --- | --- | --- | --- |
-| Codex CLI | `codex exec --json -C <workspace> -` | JSONL 首个有效 `thread.started.thread_id` | 记录 attempt 与 JSONL；不重派。 |
+| Codex CLI | `codex exec --json -c features.respect_system_proxy=true -C <workspace> -` | JSONL 首个有效 `thread.started.thread_id` | 记录 attempt 与 JSONL；不重派。 |
 | Claude Code | `claude --background --name <attempt-unique-name> --append-system-prompt-file <attempt-snapshot> <fixed-prompt>` | 启动前后以 `claude agents --json --all --cwd` 比较；只接受本次新出现且 name、workspace 均匹配的 agent；`sessionId` 存在时作为 external task id | 查询不到精确新 agent 时记录 `indeterminate`；不重派。 |
 
 这两个命令创建的是宿主自己的独立 session/task，不是 `spawn_agent`，也不是同一 session 的消息队列。Codex 的 `queue` 仍只用于向现有 session 追加消息，不能当作 successor adapter。

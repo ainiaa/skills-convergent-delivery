@@ -2,7 +2,7 @@
 
 面向 Codex 与 Claude Code 的软件交付 Skill：将复杂需求拆成有限任务，要求新鲜验证与明确交付边界。
 
-当前发布版本：[0.10.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
+当前发布版本：[0.11.0](VERSION)。未发布改动见 [变更日志](CHANGELOG.md) 的 Unreleased。
 
 多事项执行支持[局部阻塞与独立事项](references/execution-control.md#局部阻塞与独立事项)：验收工具缺失或超时后，保留缺口并继续有独立验证的无关任务；依赖项等待。安全停止和最终验收不放宽，恢复须有新鲜同工具通过证据且最多一次。受管依赖计划使用 Batch v5，既有 v4 保持顺序语义。
 
@@ -11,8 +11,8 @@
 1. 安装当前稳定版本：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.10.0/install.sh -o converge-install.sh
-   bash converge-install.sh --release 0.10.0 --target all
+   curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.11.0/install.sh -o converge-install.sh
+   bash converge-install.sh --release 0.11.0 --target all
    ```
 
 2. 重启或刷新 Codex / Claude Code 的 Skill 发现；找不到 Skill 时运行 `bash install.sh --doctor --target codex --offline`。
@@ -140,6 +140,8 @@ bash scripts/test_python_matrix.sh
 矩阵脚本需要 [`uv`](https://docs.astral.sh/uv/)；它将解释器缓存交给 `uv`，并复用 Git 忽略的 `.venv/py311`、`.venv/py314`，不会安装或修改全局 Python。首次运行会下载缺失解释器与依赖，后续只同步 `requirements-dev.txt`。
 
 这两个命令只代表**确定性回归**。它们不代表模型已遵守 Skill，也不代表桌面宿主自动续跑成功。交互行为以 [冻结场景](evals/converge-interaction-v1.json) 在 fresh Codex 会话中的实际观察为准；未做 smoke 时保持 `uncovered`。
+
+交互定向回归：`python3 -m unittest discover -s scripts -p test_interaction_replay.py -v`。`full-flow-review` 逐入口验证配置规则，`simple-local-fix` 限制局部改动范围，`product-decisions` 同时核查必要追问、无依据追问与擅自决定；后者是约束决策摘要，不是完整 PRD 语义验收。回放前用真实解释器验证冻结判定器的正反对照；缺证据不消耗业务修复机会，受控模式沿用单次修复预算，记录 `controller_actions` 与每次输入的 `prompt_origin`，不以固定提醒计数证明自治。夹具与判定器随 `host-eval` 快照冻结。真实宿主运行仍须单独选择并提供 `--allow-execute`，上述单测不调用模型。
 
 ## 参考与鸣谢
 

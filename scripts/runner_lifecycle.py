@@ -59,7 +59,7 @@ def require_multimodel_extension(state, dispatch=None):
     if not isinstance(profile, dict):
         raise ValueError("runner dispatch profile is invalid")
     permissions = profile.get("permissions")
-    if extensions == [] and profile.get("role") == "reviewer" \
+    if extensions in ([], ["autonomy"]) and profile.get("role") == "reviewer" \
             and profile.get("runner_id") in {"codex-exec-v1", "claude-code-v1"} \
             and isinstance(permissions, dict) and permissions.get("workspace") == "read" \
             and permissions.get("shell") is False:

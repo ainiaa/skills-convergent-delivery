@@ -24,7 +24,11 @@ class HostBridgeTest(unittest.TestCase):
                              "two": [{"type": "agentMessage", "text": "May I repair?"}]}
         with patch.object(host_bridge, "_CodexAppServer", return_value=server):
             session = host_bridge.CodexSession("/tmp", "policy", deadline=time.monotonic() + 2)
-            one, two = session.turn("implement"), session.turn("review")
+            self.assertEqual([], session.last_items)
+            one = session.turn("implement")
+            self.assertEqual(server.turn_items['one'], session.last_items)
+            two = session.turn("review")
+            self.assertEqual(server.turn_items['two'], session.last_items)
             session.close()
         self.assertEqual(one["task_id"], two["task_id"])
         self.assertEqual(1, two["questions"])
@@ -198,6 +202,19 @@ class HostBridgeTest(unittest.TestCase):
             fingerprint = host_bridge.codex_schema_fingerprint()
 
         self.assertEqual(64, len(fingerprint))
+
+    def test_app_server_launch_uses_system_proxy_without_overriding_hooks_or_environment(self):
+        server = host_bridge._CodexAppServer("codex")
+        with patch.object(host_bridge, "_binary_identity", return_value=("/bin/codex", FINGERPRINT)), \
+                patch.object(host_bridge.subprocess, "Popen") as popen, \
+                patch.object(host_bridge.threading, "Thread"), patch.object(server, "request"):
+            self.assertIs(server, server.__enter__())
+
+        self.assertEqual(
+            ["/bin/codex", "app-server", "--stdio", "-c", "features.respect_system_proxy=true"],
+            popen.call_args.args[0],
+        )
+        self.assertNotIn("env", popen.call_args.kwargs)
 
     def test_app_server_request_returns_its_matching_response(self):
         server = host_bridge._CodexAppServer("codex", timeout_seconds=1)

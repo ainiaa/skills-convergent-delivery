@@ -1674,7 +1674,7 @@ class DeliveryNextTest(unittest.TestCase):
 
     def test_native_complete_state_rejects_an_oversized_tdd_trace(self):
         payload = state(status="complete", current_stage="verify-final")
-        payload["ledger"]["tdd_trace"]["acceptance"][0]["tests"][0]["selector"] = "x" * (256 * 1024)
+        payload["ledger"]["tdd_trace"]["acceptance"][0]["tests"][0]["selector"] = "x" * (delivery_next.MAX_TDD_TRACE_BYTES + 1)
 
         with self.assertRaisesRegex(ValueError, "size limit"):
             validate_state(payload, SimpleNamespace())

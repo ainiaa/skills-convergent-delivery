@@ -36,6 +36,12 @@ registry 是静态 capability 表，只含三个 adapter，不保存 task graph�
 
 ## 真实执行与密钥
 
+Converge 启动的 Codex CLI runner 和评测 app-server 都在各自的启动命令中启用 Codex 的系统代理路由。启动参数复用宿主代理解析，代理环境变量、全局配置与 Hooks 无需迁移。[Codex HTTP 代理策略](https://github.com/openai/codex/tree/main/codex-rs/http-client#outbound-proxy-policy)
+
+通过当前可信启动器执行旧 `host-eval` 快照时，先校验快照，再给旧 bridge 的 `app-server --stdio` 补齐该参数。判定器和快照文件仍按冻结版本执行。普通交付续跑的冻结 `codex exec` 已在发布版本中自带该参数。
+
+新冻结的 Codex 叶子执行沿用宿主的 Hooks 配置。Converge Stop Hook 在转交冻结控制器或写入任务状态前核对宿主会话归属。已冻结且显式设置 `hooks_enabled=false` 的旧 launch 沿用原命令。
+
 stdout/stderr 读取或进度回调异常必须传回共享执行函数，终止并回收本次进程，返回 `unknown` 和异常类型，且不交付已读取的部分回答。读取线程结束本身不能证明流已完整读取；真实读流故障或清场失败不得伪装成成功。日志落盘错误则继续排空管道并单独标为 partial，不因展示预算而中断工作。
 
 三个 adapter 默认只产生 `status=planned` receipt。正式多模型执行使用 `runner_lifecycle.py`：先持久化 launch，再执行，最后持久化 receipt。最终模型文本在成功提取后返回 controller，正文不写入 ledger；`unavailable` 不是有效审查结论。Codex/Claude 持续读取 stdout/stderr，增量计算完整摘要，超过预览大小仅淘汰旧内存片段。日志以 1 MiB 分段写入本机临时私有目录（目录 0700、文件 0600），最终文本另存 result.txt；Runner Receipt v2 的可选 output_log 仅保存目录、字节数、分段数、截断/缺口状态和结果路径，不内嵌日志、prompt 或密钥。旧 receipt 和 output_exceeded 失败记录仍可读取，不改写历史。
@@ -47,15 +53,6 @@ Claude 使用官方 stream-json + verbose，将执行日志和最终 result 事�
 requested 字段只证明本地命令请求，并非远端模型观察。写权限仍只允许独立 Git worktree；父 controller 负责 diff 和独立验证。
 
 核心冻结包包含共享日志模块，保证不启用多模型扩展的回执读取路径也能验证 output_log。
-
-### 机制参考与回归
-
-| 参考 | 采用 | 不采用 / 原因 | 行为验证 |
-|---|---|---|---|
-| [Filesystem Context](https://raw.githubusercontent.com/muratcankoylan/Agent-Skills-for-Context-Engineering/main/skills/filesystem-context/SKILL.md)；Skills.sh 对应条目检索不可访问 | 大输出文件化，返回紧凑引用，按需读取 | 不新增记忆服务、代理拓扑或自动删除策略；此次只修输出传输 | test_runner_output.py 大输出、分段、权限、有限预览 |
-| [Python subprocess](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.communicate) | 并发排空两条管道，超时/取消独立清场 | 不用 communicate 累积全部执行日志 | 实际子进程大输出、真实超时、取消、既有孤儿进程组回归 |
-| [Claude headless](https://code.claude.com/docs/en/headless) | 官方 stream-json 和最终 result 提取 | 不以提示约束模型必须预估全部日志大小 | Claude 命令断言及大 stderr 后最终结果回归 |
-
 
 `openai_compatible_runner.execute_request(..., allow_network=True)` 才会发送 HTTPS 请求。它只从冻结的 `api_key_env` 环境变量读取 key；profile、计划和 receipt 都不保存 key 或 prompt。返回的 `model` 必须精确等于 frozen effective model，否则 adapter 阻断，避免 provider alias/回退被误当成功。Runner Receipt v2 的 `attestation.model` 明确区分：本地 CLI 只有 `requested`，HTTPS provider 返回并匹配模型时才是 `observed`，未知或失败时为 `unavailable`；`attestation.usage` 只复制可验证的 provider usage，绝不估算 token 或成本。
 
@@ -71,7 +68,7 @@ requested 字段只证明本地命令请求，并非远端模型观察。写权�
 
 ## 当前接线状态
 
-`codex-exec-v1` 与 `claude-code-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 Zhipu HTTPS request。三者当前都是受限叶子执行器，不是宿主原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
+`codex-exec-v1` 与 `claude-code-v1` 已可在明确允许后实际启动 CLI；OpenAI-compatible adapter 已可在明确允许后执行一次无工具 HTTPS 请求。三者当前都是受限叶子执行器，不是宿主原生 subagent bridge：没有公开 host capability/tree receipt 时，controller 必须把它们的结果当作外部工作产物并自行核验，不能自动把它们登记为完成的 host worker。
 
 `role_dispatch.py` 是 runner 与动态角色流之间的确定性派发计划器。它对所有 agent profile 都输出 `external_runner`，`runner_lifecycle.py` 消费该冻结 profile 并通过 `runner_launch.py` 构造 launch/本地命令或批准的 HTTPS request；因此不会继承父代理模型，也不会把计划冒充为宿主任务树或完成回执。
 

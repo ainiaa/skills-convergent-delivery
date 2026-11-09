@@ -22,8 +22,8 @@ Converge Suite 在 Codex 和 Claude Code 中使用同一份源码。安装器只
 安装当前发布的稳定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.10.0/install.sh -o converge-install.sh
-bash converge-install.sh --release 0.10.0 --target all
+curl -fsSL https://raw.githubusercontent.com/ainiaa/skills-convergent-delivery/v0.11.0/install.sh -o converge-install.sh
+bash converge-install.sh --release 0.11.0 --target all
 ```
 
 从本地 clone 安装：
@@ -58,6 +58,10 @@ bash install.sh --doctor --target codex --offline
 `--doctor` 检查 Suite 七个入口是否来自同一版本、必需文件、Git、Python、CodeGraph 可用性和 Provider 解析，不修改安装；doctor 自身要求 Python ≥ 3.11。
 
 已开始的任务中断后，使用 `python3 scripts/delivery_state.py doctor --workspace <绝对工作区>`（在 Suite 目录运行）查看原 run 的状态与 `recovery`。`inspect-next` 的 `next_command` 是可直接运行的只读 argv，它会重新检查证据和原 owner 的 lease；若已过期或不匹配仍会阻塞。`resolve-blocker` 先解决所示决定或工具缺口，`repair-state` 先核实原始状态；两者均不自动恢复。终态不重新执行业务；若宿主计划还未同步，仍提供只读检查入口，是否需要同步由共享下一动作 helper 决定。安装诊断与任务恢复诊断用途不同；不要手改 revision、清零预算或用 takeover 掩盖仍在运行的写入者。
+
+有旧快照的任务从当前安装版 `doctor` 重新生成 `next_command`。诊断将旧协议的任务标为 `unverified`，表示回执待原冻结校验器核验。该命令由当前可信启动器校验快照，再用冻结的 `delivery_next.py` 检查原 run。任务使用自定义租约目录时，将原目录通过 `--lease-root` 传给 `doctor`。
+
+手头只有之前从可信 `doctor` 输出保存的 JSON argv 时，执行 `python3 scripts/controller_snapshot.py replay-next < saved-next.json`。这会保留原 run、writer 和 revision，再执行只读检查。旧 argv 缺少自定义租约目录时，可给 `replay-next` 传入原 `--lease-root`。
 
 Git 目录探测超时时会报告 managed state 位置未知并停止；排查 Git 工具后再诊断，不能将超时当作“非 Git 工作区”或“没有活跃任务”。
 

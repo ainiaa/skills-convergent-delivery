@@ -3,6 +3,7 @@ import json
 import hashlib
 import os
 import copy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -314,7 +315,7 @@ class DeliveryStateTest(unittest.TestCase):
         self.assertEqual("False", result.stdout.strip())
 
     def test_legacy_autonomy_state_upgrades_with_no_action_attempts(self):
-        armed = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+        armed = arm(state(), ["fix requested behavior"], ["targeted test passes"], host_session_id="thread-1")
         self.assertEqual([], armed["execution_control"]["autonomy"]["action_attempts"])
         del armed["execution_control"]["autonomy"]["action_attempts"]
         self.assertEqual([], upgrade_state(armed)["execution_control"]["autonomy"]["action_attempts"])
@@ -333,7 +334,7 @@ class DeliveryStateTest(unittest.TestCase):
             validate_transition(candidate, replaced)
 
     def test_autonomous_attempt_must_progress_intent_running_observed_committed(self):
-        current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+        current = arm(state(), ["fix requested behavior"], ["targeted test passes"], host_session_id="thread-1")
 
         intent = copy.deepcopy(current)
         intent["revision"] += 1
@@ -366,7 +367,7 @@ class DeliveryStateTest(unittest.TestCase):
         validate_transition(observed, committed)
 
     def test_autonomous_attempt_cannot_commit_without_a_observed_result(self):
-        current = arm(state(), ["fix requested behavior"], ["targeted test passes"])
+        current = arm(state(), ["fix requested behavior"], ["targeted test passes"], host_session_id="thread-1")
         intent = copy.deepcopy(current)
         intent["revision"] += 1
         intent["execution_control"]["autonomy"]["action_attempts"] = [action_attempt()]
@@ -403,7 +404,7 @@ class DeliveryStateTest(unittest.TestCase):
         self.assertEqual([], json.loads(listed.stdout)["states"])
     def test_explicit_arm_is_the_only_schema_v10_to_v11_transition(self):
         previous = upgrade_state(state())
-        candidate = arm(previous, ["fix requested behavior"], ["targeted test passes"])
+        candidate = arm(previous, ["fix requested behavior"], ["targeted test passes"], host_session_id="thread-1")
 
         validate_transition(previous, candidate)
 
@@ -726,9 +727,16 @@ class DeliveryStateTest(unittest.TestCase):
         payload = state()
         payload["controller"]["snapshot"] = {"root": "/frozen/controller"}
         result = delivery_state_module.recovery_diagnostic(payload, Path("/managed/state.json"))
-        self.assertEqual("/frozen/controller/scripts/controller_snapshot.py", result["next_command"][1])
+        self.assertEqual(str(STATE_SCRIPT.resolve().with_name("controller_snapshot.py")), result["next_command"][1])
         self.assertIn("--descriptor", result["next_command"])
         self.assertIn("scripts/delivery_next.py", result["next_command"])
+
+    def test_recovery_inspection_preserves_the_explicit_lease_root(self):
+        payload = state()
+        result = delivery_state_module.recovery_diagnostic(payload, Path("/managed/state.json"),
+                                                          lease_root="custom-leases")
+        command = result["next_command"]
+        self.assertEqual(str(Path("custom-leases").resolve()), command[command.index("--lease-root") + 1])
 
     def test_recovery_keeps_pending_terminal_host_sync_on_the_shared_action_path(self):
         payload = state()
@@ -779,21 +787,38 @@ class DeliveryStateTest(unittest.TestCase):
                 discover_root()
 
     def test_doctor_commands_execute_through_local_and_frozen_gates_without_writes(self):
-        from controller_snapshot import create_snapshot
+        import controller_snapshot
+        import test_delivery_next
         from test_delivery_next import state as observed_state
 
-        for frozen in (False, True):
-            with self.subTest(frozen=frozen), tempfile.TemporaryDirectory() as directory:
+        for mode in ("local", "current", "historical"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 payload = observed_state(current_stage="scope")
                 workspace = payload["workspace"]
                 payload["repo_id"] = str(Path(workspace) / ".git")
-                if frozen:
-                    snapshot = create_snapshot(Path(__file__).resolve().parents[1], Path(directory) / "control")
+                source = Path(__file__).resolve().parents[1]
+                control = Path(directory) / "control"
+                if mode == "historical":
+                    for relative in (*controller_snapshot.snapshot_files(source), "VERSION"):
+                        target = Path(directory) / "old-suite" / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source / relative, target)
+                    source = Path(directory) / "old-suite"
+                    evidence = source / "scripts/evidence_contract.py"
+                    with evidence.open("a", encoding="utf-8") as stream:
+                        stream.write("\n# Historical evidence helper bytes.\n")
+                    with patch.object(controller_snapshot, "PROTOCOL_VERSION", 26):
+                        snapshot = controller_snapshot.create_snapshot(source, control)
+                    with patch.dict(test_delivery_next.EVIDENCE, runner_fingerprint=hashlib.sha256(evidence.read_bytes()).hexdigest()):
+                        payload["ledger"]["tdd_trace_candidate"] = test_delivery_next.tdd_trace(payload["source_receipt"])
+                elif mode == "current":
+                    snapshot = controller_snapshot.create_snapshot(source, control)
+                if mode != "local":
                     payload["controller"] = {
                         **{key: snapshot[key] for key in ("package_version", "protocol_version", "protocol_fingerprint")},
                         "snapshot": snapshot,
                     }
-                lease_root = project_lease_root(workspace)
+                lease_root = Path(directory) / "custom-leases" if mode != "local" else project_lease_root(workspace)
                 path = delivery_state_module.state_path(project_state_root(workspace), payload["repo_id"],
                                                         payload["task_key"], payload["run_id"])
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -806,9 +831,12 @@ class DeliveryStateTest(unittest.TestCase):
                 self.assertEqual(0, acquired.returncode, acquired.stderr)
                 try:
                     before = {str(item): item.read_bytes() for item in [path, *lease_root.rglob("*.json")]}
-                    diagnosed = discover(workspace, diagnose=True)
+                    doctor = [sys.executable, str(STATE_SCRIPT), "doctor", "--workspace", workspace]
+                    if mode != "local":
+                        doctor.extend(("--lease-root", str(lease_root)))
+                    diagnosed = json.loads(subprocess.check_output(doctor, text=True, timeout=15))
                     summary = next(item for item in diagnosed["states"] if item["path"] == str(path))
-                    self.assertEqual("valid", summary["health"], summary)
+                    self.assertEqual("unverified" if mode == "historical" else "valid", summary["health"], summary)
                     command = summary["recovery"]["next_command"]
                     result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=30)
                     self.assertEqual(0, result.returncode, result.stderr)

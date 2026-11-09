@@ -8,6 +8,7 @@ from runner_registry import validate_runner_profile
 
 
 LOCAL_PROCESS_RUNNERS = {"codex-exec-v1", "claude-code-v1"}
+CODEX_SYSTEM_PROXY_OVERRIDE = "features.respect_system_proxy=true"
 
 
 def fingerprint(value):

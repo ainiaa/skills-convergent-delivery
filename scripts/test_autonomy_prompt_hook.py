@@ -28,6 +28,8 @@ class AutonomyPromptHookTest(unittest.TestCase):
         self.assertFalse(autonomy_prompt_hook.matches_continue_repair({"prompt": "仅审查，不要修改"}))
 
     def test_same_conversation_recheck_offers_only_advisory_context(self):
+        from test_controller_snapshot import python_with_startup_marker
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo = root / "repo"
@@ -42,10 +44,14 @@ class AutonomyPromptHookTest(unittest.TestCase):
                 "CONVERGE_LEASE_ROOT": str(root / "leases"),
                 "CONVERGE_CONTROLLER_ROOT": str(root / "controller"),
             }
-            first = self.invoke(PROMPT_HOOK, {
-                "cwd": str(repo), "session_id": "thread-a", "prompt": "继续修复已知问题",
-            }, environment)
+            python, marker = python_with_startup_marker(root)
+            first = subprocess.run(
+                [str(python), "-E", "-S", "-B", str(PROMPT_HOOK), "--host", "codex"],
+                input=json.dumps({"cwd": str(repo), "session_id": "thread-a", "prompt": "继续修复已知问题"}),
+                text=True, capture_output=True, check=False, env=environment,
+            )
             self.assertEqual(0, first.returncode, first.stderr)
+            self.assertFalse(marker.exists(), ".pth ran while arming a Codex repair")
             state_path = next((root / "state").rglob("*.json"))
             completed = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual("thread-a", completed["execution_control"]["autonomy"]["runtime"]["session_id"])
@@ -289,14 +295,14 @@ class AutonomyPromptHookTest(unittest.TestCase):
         run.assert_not_called()
 
     def test_repair_shortcut_cannot_claim_another_conversations_active_run(self):
-        state = {"execution_control": {"autonomy": {"runtime": {
-            "mode": "hook", "session_id": "thread-a",
-        }}}}
-        with patch.object(autonomy_prompt_hook, "active_state", return_value=(Path("/state/run.json"), state)), \
-                patch.object(autonomy_prompt_hook, "run") as run:
-            with self.assertRaisesRegex(ValueError, "another conversation owns"):
-                autonomy_prompt_hook.arm("/repo/linked", "thread-b")
-        run.assert_not_called()
+        for runtime in ({"mode": "hook", "session_id": "thread-a"}, {"mode": "hook"}):
+            with self.subTest(runtime=runtime):
+                state = {"execution_control": {"autonomy": {"runtime": runtime}}}
+                with patch.object(autonomy_prompt_hook, "active_state", return_value=(Path("/state/run.json"), state)), \
+                        patch.object(autonomy_prompt_hook, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "another conversation owns"):
+                        autonomy_prompt_hook.arm("/repo/linked", "thread-b")
+                run.assert_not_called()
 
     def test_root_prompt_reuses_a_pre_upgrade_subdirectory_run(self):
         import autonomy_prompt_hook

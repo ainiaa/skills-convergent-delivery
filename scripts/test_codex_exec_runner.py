@@ -60,6 +60,21 @@ class CodexExecRunnerTest(unittest.TestCase):
             launch = plan_launch(profile(), "probe", workspace=linked, codex_bin=sys.executable)
         self.assertEqual("workspace-write", launch["configuration"]["sandbox"])
 
+    def test_new_leaf_launches_preserve_hooks_and_old_launches_keep_their_override(self):
+        reader = profile(permissions={"workspace":"read", "shell":False, "network":"egress"})
+        launch = plan_launch(reader, "probe", workspace="/tmp", codex_bin=sys.executable)
+        self.assertNotIn("hooks_enabled", launch["configuration"])
+        command = command_for_launch(launch, "probe")
+        self.assertFalse(any(value.startswith("features.hooks=") for value in command))
+        self.assertEqual("read-only", command[command.index("--sandbox")+1])
+        self.assertIn("agents.enabled=false", command)
+        changed = dict(launch["configuration"], hooks_enabled=True)
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            command_for_launch(freeze_launch(reader, "probe", changed), "probe")
+        legacy = dict(launch["configuration"], hooks_enabled=False)
+        legacy_command = command_for_launch(freeze_launch(reader, "probe", legacy), "probe")
+        self.assertIn("features.hooks=false", legacy_command)
+
     def test_leaf_commands_override_agent_settings_for_readers_and_writers(self):
         for access in ("read", "write"):
             with self.subTest(access=access), mock.patch("codex_exec_runner._is_isolated_worktree", return_value=True):
@@ -70,6 +85,7 @@ class CodexExecRunnerTest(unittest.TestCase):
                 self.assertEqual("false", overrides.get("agents.enabled"))
                 self.assertEqual("false", overrides.get("features.multi_agent"))
                 self.assertEqual("false", overrides.get("features.multi_agent_v2"))
+                self.assertNotIn("features.hooks", overrides)
                 self.assertEqual("workspace-write" if access == "write" else "read-only",
                                  command[command.index("--sandbox") + 1])
                 self.assertEqual(worker_profile["effective"]["model"], command[command.index("-m") + 1])
@@ -362,8 +378,9 @@ class CodexExecRunnerTest(unittest.TestCase):
             execute_launch(launch, "Do something else", allow_execute=True)
 
     def test_rejects_write_launches_in_the_primary_worktree(self):
+        from test_delivery_next import WORKSPACE
         with self.assertRaisesRegex(ValueError, "worktree"):
-            plan_launch(profile(), "Fix the isolated task", workspace=".")
+            plan_launch(profile(), "Fix the isolated task", workspace=str(WORKSPACE))
 
     def test_rejects_a_primary_worktree_subdirectory_for_write_access(self):
         scripts_dir = Path(__file__).resolve().parent
@@ -386,12 +403,13 @@ class CodexExecRunnerTest(unittest.TestCase):
             command_for_launch(launch, "Fix the isolated task")
 
     def test_rechecks_directly_frozen_write_workspace_before_execution(self):
+        from test_delivery_next import WORKSPACE
         binary = Path(shutil.which("codex")).resolve()
         launch = freeze_launch(profile(), "Fix the isolated task", {
             "codex_bin": str(binary),
             "binary_fingerprint": __import__("hashlib").sha256(binary.read_bytes()).hexdigest(),
             "sandbox": "workspace-write",
-            "workspace": str(Path(".").resolve()),
+            "workspace": str(WORKSPACE),
         })
 
         with self.assertRaisesRegex(ValueError, "worktree"):

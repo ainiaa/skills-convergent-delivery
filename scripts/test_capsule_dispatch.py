@@ -252,7 +252,9 @@ class CapsuleDispatchTest(unittest.TestCase):
         self.assertEqual("delivered", result["status"])
         self.assertEqual("thread-codex-1", result["external_task_id"])
         self.assertEqual(result, receipt)
-        self.assertEqual(["exec", "--json", "-C", str(root.resolve()), "-"], arguments)
+        self.assertEqual([
+            "exec", "--json", "-c", "features.respect_system_proxy=true", "-C", str(root.resolve()), "-",
+        ], arguments)
         self.assertNotIn("frozen capsule", receipt_text)
 
     def test_codex_reads_final_confirmation_after_observing_child_exit(self):

@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 import shlex
 import subprocess
 import sys
@@ -9,7 +10,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("plan_check.py")
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(os.environ.get("CONVERGE_EVAL_WORKSPACE", Path(__file__).resolve().parents[3])).resolve()
 sys.path.insert(0, str(ROOT / "scripts"))
 import evidence_contract
 import plan_check

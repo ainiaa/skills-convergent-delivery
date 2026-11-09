@@ -185,10 +185,12 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" doctor --workspace <abso
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" write --input - --repo-id <repo> --task-key <task> \
   --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_arm.py" --state <derived-path> --requirement <item> \
-  --acceptance <item> --write --lease-root <root> --state-root <state-root> --repo-id <repo> \
+  --acceptance <item> --host-session-id <host-session-id> --write \
+  --lease-root <root> --state-root <state-root> --repo-id <repo> \
   --task-key <task> --run-id <run> --writer-id <writer> --expected-revision <revision>
 python3 "$CONVERGE_SKILL_DIR/scripts/autonomy_begin.py" --workspace <absolute-worktree> \
   --scope <relative-path> --requirement <item> --acceptance <criterion> \
+  --host-session-id <host-session-id> \
   --mode <auto|pdlc|native> --kind <feature|fix|refactor> \
   --task-profile-json '<frozen-profile-json>'
 python3 "$CONVERGE_SKILL_DIR/scripts/delivery_state.py" append-runner-launches --input - --repo-id <repo> --task-key <task> \
@@ -197,13 +199,13 @@ python3 "$CONVERGE_SKILL_DIR/scripts/delivery_next.py" --state <derived-path> --
   --writer-id <writer> --revision <revision>
 ```
 
-`doctor` 的每条结果附带只读 `recovery` 投影：`inspect-next` 给出绑定原 run/writer/revision 的 `next_command` argv；冻结 controller 的 run 使用该快照的 trusted runner。该命令只检查当前证据与 lease，并不恢复或派发动作。`resolve-blocker` 要求先处理原阻塞原因，`repair-state` 要求核实损坏或不兼容状态；完成且共享下一动作确认无需宿主计划同步时返回 `none`。这三种 action 没有可执行恢复命令；完成但待同步的状态仍提供检查入口，不复活业务。`lease_status=not_checked`、`verification_status=not_revalidated` 和 `evidence_level=diagnostic` 明确诊断不能证明 owner 存活或验收仍新鲜；`active_worker_refs` 仅来自已校验的登记表，不是宿主 tree 观察。不得据此抢占 lease、重置预算或重新开启终态。
+`doctor` 的每条结果附带只读 `recovery` 投影：`inspect-next` 给出绑定原 run/writer/revision 的 `next_command` argv；冻结 controller 的 run 由当前可信启动器校验快照，再运行原冻结检查。该命令只检查当前证据与 lease，并不恢复或派发动作。`resolve-blocker` 要求先处理原阻塞原因，`repair-state` 要求核实损坏或不兼容状态；完成且共享下一动作确认无需宿主计划同步时返回 `none`。这三种 action 没有可执行恢复命令；完成但待同步的状态仍提供检查入口，不复活业务。`lease_status=not_checked`、`verification_status=not_revalidated` 和 `evidence_level=diagnostic` 明确诊断不能证明 owner 存活或验收仍新鲜；`active_worker_refs` 仅来自已校验的登记表，不是宿主 tree 观察。不得据此抢占 lease、重置预算或重新开启终态。
 
 不得把 `/tmp` 文件、调用者指定的任意路径或自然语言回执当作状态真源。workspace 只有在同 owner 的有效 lease move 后才能改变；revision、worker 身份和终态均不可回退。
 
 普通与自治 run 的 `repo_id` 均取 `git rev-parse --path-format=absolute --git-common-dir`。workspace writer lease 按规范化工作区路径共享，不再受 repo_id 别名影响；task lease 仍按仓库分组。已有旧布局 lease 原位读取、续租和释放，不复制或覆盖；新 acquire/move 不会重新创建旧布局路径，旧 owner 恢复使用 renew；发现同一 workspace 已有多个旧 writer lease 时拒绝继续，由原 owner 清场。Hook 同时查找 common-dir 和旧 workspace 身份的状态目录。
 
-Hook runtime 可额外冻结非空 `session_id`；Codex 新建 Prompt Hook 门禁要求该 ID，缺失时不 arm。Codex Stop 只有在宿主输入同一 ID 时才续跑，其他会话不得接管，身份缺失记为未覆盖。此 ID 不证明事项身份或跨宿主恢复时稳定；完成记录保持终态，后续同会话同事项的 Bug 必须开启新 run，不复活旧状态。缺少新进展的 blocked 事项不得靠新 run 重置预算。
+新建 Hook runtime 必须冻结非空的宿主 `session_id`。Codex 和 Claude 的 Stop 只有收到与冻结归属相同的 ID，才可调用冻结控制器、写续跑记录或终止任务。旧的无绑定状态仍可读取，Stop 跳过其自动续跑，交由控制器按原身份恢复。已绑定任务遇到缺失事件身份时标记未覆盖。此 ID 只证明会话归属，事项身份和跨宿主恢复仍须分别核对。完成记录保持终态，缺少新进展的 blocked 事项不得靠新 run 重置预算。
 
 ## Protocol 23 显式审查恢复
 

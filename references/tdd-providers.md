@@ -18,7 +18,7 @@ native workflow 进入运行时 TDD 时读取 Trace 与前置条件；仅绑定�
 
 native 运行时任务（含第三方 TDD stage）第一次业务写入前执行 `tdd_impact_guard.py preflight --workspace <workspace>`：只检查 CodeGraph CLI、已有 `.codegraph/` 和 coverage 配置，缺口返回 `uncovered`/退出码 2，不自动安装或建索引。`ready` 不证明测试已经通过，也不证明索引新鲜；最终 rerun 仍为门禁。PDLC 使用自身预检。
 
-预检缺口是最终证据缺口，不是整段实现的停止条件。已冻结的同范围下一任务可用项目现有测试独立验证时，运行 `python3 scripts/plan_execution.py --task-id <冻结任务> --implementation-authorized --native-preflight-workspace <workspace>`；helper 实际读取预检，返回单个实现动作并保留 `uncovered_reason`。其他原生验收工具已确认不可用或超时，可使用其精确分类 `--validation-error 'native acceptance tool is unavailable'` 或 `--validation-error 'native acceptance tool timed out'`，同时保留原始工具错误。该分类仅用于工具未产生验收结果，不适用于测试失败、权限错误、未知错误或业务/契约阻塞；不得调用它绕过受管状态的 `block`。控制器继续可独立验证的 TDD 和复核，不反复重试缺失工具；交付时列明实现结果和未覆盖验收，最终 native complete 的 trace/rerun 门禁保持不变。
+预检缺口是最终证据缺口，不是整段实现的停止条件。已冻结的同范围下一任务可用项目现有测试独立验证时，运行 `python3 "$CONVERGE_SKILL_DIR/scripts/plan_execution.py" --task-id <冻结任务> --implementation-authorized --native-preflight-workspace <workspace>`；helper 实际读取预检，返回单个实现动作并保留 `uncovered_reason`。其他原生验收工具已确认不可用或超时，可使用其精确分类 `--validation-error 'native acceptance tool is unavailable'` 或 `--validation-error 'native acceptance tool timed out'`，同时保留原始工具错误。该分类仅用于工具未产生验收结果，不适用于测试失败、权限错误、未知错误或业务/契约阻塞；不得调用它绕过受管状态的 `block`。控制器继续可独立验证的 TDD 和复核，不反复重试缺失工具；交付时列明实现结果和未覆盖验收，最终 native complete 的 trace/rerun 门禁保持不变。
 
 运行时功能、修复和重构在最终验证前都生成一次 trace，并以 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" validate --input -` 校验；它不运行命令。普通、Hook 和 service native run 在执行期间保存 `ledger.tdd_trace_candidate`，不提前固化正式 Trace；后续源码变化时可保留历史候选供诊断和恢复，但最终必须补齐当前源码回执。最终验收前必须对当前源码候选执行 `python3 "$CONVERGE_SKILL_DIR/scripts/tdd_impact_guard.py" rerun --input - --workspace <workspace> --baseline <commit>`；每条冻结命令默认最多运行 600 秒，可用 `--timeout-seconds <0..3600>` 调整；超时生成非零 observed receipt 并阻止完成。native 在同一 complete revision 中将 stdout 的刷新 trace 首次写入 `ledger.tdd_trace` 并删除候选；正式 Trace 不可替换。PDLC 留在自身交付记录。rerun 只执行已冻结的最终绿灯、coverage、mutation 与 CodeGraph argv，不改 state；native workflow 追加 `--native-coverage`，此时 coverage 的 argv 与阈值还必须精确匹配同一 workspace 的 `native_tdd_policy.py resolve` 结果；native complete 入口独立执行相同的策略校验，缺失配置或不匹配的命令不能通过状态门禁。PDLC 使用自身 coverage 门槛，不能被 native 策略覆盖。若命令生成未忽略的工作区文件并改变 Source Receipt，会阻塞并要求先清理或忽略该工件。native-v1 complete 门禁再次校验正式 Trace 与最终 Source Receipt、冻结风险和全部当前验收项一致。PDLC workflow 不使用 native completion gate；但 native workflow 即使委托第三方 TDD stage provider，仍必须满足该 gate。Trace 的 `source` 是最终源码的 Source Receipt，`graph` 为 `{"status":"covered","receipt":<codegraph observed receipt>,"impacts_fingerprint":<sha256>,"query":<derived query>}`，或 CodeGraph 不可用时的 `{"status":"uncovered","reason":<non-empty>}`；后者使 trace 返回 `uncovered`，不能使 native 状态完成。
 
@@ -115,10 +115,12 @@ cargo mutants --manifest-path <manifest> --no-config --baseline run --no-shuffle
 
 参考：[cargo-mutants 原始项目](https://github.com/sourcefrog/cargo-mutants)、[原生过滤语义](https://mutants.rs/filter_mutants.html)。
 
-### Python mutation 与本仓 coverage
+### Python mutation
 
-Python 3.10+ / POSIX 使用固定 `mutmut==3.7.0`；开发推荐 Python 3.11+ 安装 `requirements-dev.txt`。Trace mutation 的 argv 为 `[当前 Python 绝对路径, 冻结 Snapshot/scripts/evidence_contract.py 绝对路径, "mutmut", "--source-file", "src/module.py", "--selector", "tests/test_module.py::test_case"]`，tool 为该 Python 可执行文件的 basename。通过同一冻结 `evidence_contract.py run` 或 Trace rerun 收集证据；不能手填摘要或直接提交 `mutmut results` 的旧缓存。
+在 Suite 支持的 Python 3.11+ POSIX 环境中使用固定 `mutmut==3.7.0`。Trace mutation 的 argv 为 `[当前 Python 绝对路径, 冻结 Snapshot/scripts/evidence_contract.py 绝对路径, "mutmut", "--source-file", "src/module.py", "--selector", "tests/test_module.py::test_case"]`，tool 为该 Python 可执行文件的 basename。通过同一冻结 `evidence_contract.py run` 或 Trace rerun 收集证据；不能手填摘要或直接提交 `mutmut results` 的旧缓存。
 
-适配器只变异指定 Python 文件，用唯一 pytest node selector 执行测试；复制 Git 可见的当前文件到全新临时目录，保留文件权限及 pytest 配置，排除旧 mutants 缓存。mutmut 3.7.0 的配置读取与 `.meta`/stats 文件格式属于固定适配契约。只有非空变异全为 pytest 退出 1 且实际关联测试非空才通过；pytest 内部错误、存活、无覆盖、超时或未知结果拒绝。调用复用 Evidence runner 的进程组清理和超时，原工作区保持不变。Python 3.9 仍可运行核心控制器，不能运行此 mutation 工具。
+适配器只变异指定 Python 文件，用唯一 pytest node selector 执行测试；复制 Git 可见的当前文件到全新临时目录，保留文件权限及 pytest 配置，排除旧 mutants 缓存。mutmut 3.7.0 的配置读取与 `.meta`/stats 文件格式属于固定适配契约。只有非空变异全为 pytest 退出 1 且实际关联测试非空才通过；pytest 内部错误、存活、无覆盖、超时或未知结果拒绝。调用复用 Evidence runner 的进程组清理和超时，原工作区保持不变。
 
-本仓 coverage 命令在 `docs/00_standards/test-commands.yml`，85% 目标在 `quality-targets.yml`。pytest-cov 包装原有 `bash scripts/check.sh --full`，coverage subprocess patch 收集其子进程；`.coveragerc` 纳入 scripts、skills、extensions 全部生产 Python，排除测试文件。每次重新采集，不 append 历史数据；CI 使用同一命令执行完整 gate 并检查阈值。
+### 分组 cargo-llvm-cov 启动器
+
+仅执行 `native_tdd_policy.py resolve` 识别的已审计启动器和精确 argv。脚本变更、未知参数或脚本实际阈值低于目标时保持 `uncovered`。Evidence 必须执行完整覆盖率命令并核对前后源码回执。Trace v5 与 native 状态输入均限 4 MiB。

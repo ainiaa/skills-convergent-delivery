@@ -277,17 +277,16 @@ if arguments and arguments[0] == "clone":
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["Stop"]
                 for item in entry["hooks"]
             ]
-            managed = f"{shutil.which('python3')} {ROOT}/scripts/autonomy_hook.py --host codex"
+            managed = f"{shutil.which('python3')} -E -S -B {ROOT}/scripts/autonomy_hook.py --host codex"
             self.assertEqual(["peer", managed], commands)
             prompt_commands = [
                 item["command"] for entry in json.loads(config.read_text())["hooks"]["UserPromptSubmit"]
                 for item in entry["hooks"]
             ]
             self.assertEqual(
-                [f"{shutil.which('python3')} {ROOT}/scripts/autonomy_prompt_hook.py --host codex"],
+                [f"{shutil.which('python3')} -E -S -B {ROOT}/scripts/autonomy_prompt_hook.py --host codex"],
                 prompt_commands,
             )
-
             removed = self.run_installer_from(
                 home, ROOT, "--autonomy-uninstall", "--target", "codex", path=home,
             )
@@ -300,6 +299,90 @@ if arguments and arguments[0] == "clone":
             ]
             self.assertEqual(["peer"], commands)
             self.assertEqual([], json.loads(config.read_text())["hooks"].get("UserPromptSubmit", []))
+            self.assertNotIn("PostToolUse", json.loads(config.read_text())["hooks"])
+
+    def test_codex_migrates_old_registrations_in_place_and_skips_site_startup(self):
+        from test_controller_snapshot import python_with_startup_marker
+
+        self.maxDiff = None
+        for wrapped_stop in (False, True):
+            with self.subTest(wrapped_stop=wrapped_stop), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                python, marker = python_with_startup_marker(home)
+                python = python.with_name("python3")
+                codex = python.parent / "codex"
+                codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                codex.chmod(0o755)
+                config = home / ".codex/hooks.json"
+                config.parent.mkdir()
+                record = home / ".convergent-delivery/autonomy-hooks.json"
+                record.parent.mkdir()
+                adapter = config.parent / "hook-adapters/codex_stop_adapter.py"
+                adapter.parent.mkdir()
+                adapter.write_text("import subprocess, sys\nraise SystemExit(subprocess.call(sys.argv[2:]))\n")
+                original = {"hooks": {
+                    event: [{"hooks": [{"type": "command", "command": "peer"}]}]
+                    for event in ("SessionStart", "PostToolUse")
+                }}
+                recorded = {}
+                expected = {}
+                for event, field, script in (
+                    ("Stop", "stop_command", "autonomy_hook.py"),
+                    ("UserPromptSubmit", "prompt_command", "autonomy_prompt_hook.py"),
+                ):
+                    args = [str(ROOT / "scripts" / script), "--host", "codex"]
+                    old_python = "/old/bin/python3"
+                    old = [old_python, *args]
+                    recorded[field] = shlex.join(old)
+                    new = [str(python), "-E", "-S", "-B", *args]
+                    if event == "Stop" and wrapped_stop:
+                        old = ["/outer/bin/python3", str(adapter), "approve", *old]
+                        new = [str(python), "-E", "-S", "-B", str(adapter), "approve", *new]
+                    original["hooks"][event] = [{"matcher": "*", "hooks": [
+                        {"type": "command", "command": shlex.join(old), "timeout": 17},
+                        {"type": "command", "command": f"echo {script}"},
+                        {"type": "command", "command": f"python3 /other-suite/scripts/{script} --host codex"},
+                    ]}]
+                    if event == "Stop":
+                        original["hooks"][event][0]["hooks"].append({"type": "command", "command": shlex.join([
+                            str(python), str(adapter), "empty", "peer-stop",
+                        ])})
+                    expected[field] = shlex.join(new)
+                config.write_text(json.dumps(original), encoding="utf-8")
+                record.write_text(json.dumps({"codex": recorded, "claude": {"stop_command": "peer"}}))
+                legacy_config, legacy_record = config.read_bytes(), record.read_bytes()
+
+                for _ in range(2):
+                    result = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy", path=python.parent)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                for event, command in zip(("Stop", "UserPromptSubmit"), expected.values()):
+                    original["hooks"][event][0]["hooks"][0]["command"] = command
+                    result = subprocess.run(shlex.split(command), input="{}", text=True, capture_output=True,
+                                            env=os.environ | {"HOME": str(home)}, check=False)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                self.assertFalse(marker.exists(), ".pth ran while configuring or executing the registered Hooks")
+                self.assertEqual(original, json.loads(config.read_text()))
+                self.assertEqual({"codex": expected, "claude": {"stop_command": "peer"}}, json.loads(record.read_text()))
+
+                if wrapped_stop:
+                    adapter.unlink()
+                    before = (config.read_bytes(), record.read_bytes())
+                    result = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy", path=python.parent)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertIn("Stop adapter is missing", result.stderr)
+                    self.assertEqual(before, (config.read_bytes(), record.read_bytes()))
+
+                result = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy-uninstall", path=python.parent)
+                self.assertEqual(0, result.returncode, result.stderr)
+                for event in ("Stop", "UserPromptSubmit"):
+                    original["hooks"][event][0]["hooks"].pop(0)
+                self.assertEqual(original, json.loads(config.read_text()))
+
+                config.write_bytes(legacy_config)
+                record.write_bytes(legacy_record)
+                removed = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy-uninstall", path=python.parent)
+                self.assertEqual(0, removed.returncode, removed.stderr)
+                self.assertEqual(original, json.loads(config.read_text()))
 
     def test_all_autonomy_install_restores_existing_hooks_when_later_runtime_registration_fails(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -320,6 +403,10 @@ if arguments and arguments[0] == "clone":
             claude_config = home / ".claude/settings.json"
             claude_config.parent.mkdir(parents=True)
             claude_config.write_text("{broken", encoding="utf-8")
+            record = home / ".convergent-delivery/autonomy-hooks.json"
+            record.parent.mkdir()
+            original_record = '{"codex":{"stop_command":"old"}}\n'
+            record.write_text(original_record, encoding="utf-8")
 
             result = self.run_installer_from(
                 home, ROOT, "--target", "all", "--autonomy", path=bin_dir,
@@ -327,6 +414,7 @@ if arguments and arguments[0] == "clone":
 
             self.assertNotEqual(0, result.returncode)
             self.assertEqual(original, codex_config.read_text(encoding="utf-8"))
+            self.assertEqual(original_record, record.read_text(encoding="utf-8"))
 
     def test_autonomy_uninstall_uses_the_recorded_commands_after_interpreter_drift(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -358,6 +446,26 @@ if arguments and arguments[0] == "clone":
             self.assertEqual([], json.loads(config.read_text())["hooks"].get("UserPromptSubmit", []))
             record = home / ".convergent-delivery/autonomy-hooks.json"
             self.assertFalse(record.exists())
+
+    def test_autonomy_uninstall_restores_registration_and_record_on_later_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            codex = home / "codex"
+            codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex.chmod(0o755)
+            installed = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy", path=home)
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            config = home / ".codex/hooks.json"
+            malformed = json.loads(config.read_text())
+            malformed["hooks"]["UserPromptSubmit"] = "invalid"
+            config.write_text(json.dumps(malformed), encoding="utf-8")
+            record = home / ".convergent-delivery/autonomy-hooks.json"
+            before = (config.read_bytes(), record.read_bytes())
+
+            removed = self.run_installer_from(home, ROOT, "--target", "codex", "--autonomy-uninstall", path=home)
+            self.assertNotEqual(0, removed.returncode)
+            self.assertTrue(record.exists())
+            self.assertEqual(before, (config.read_bytes(), record.read_bytes()))
 
     def test_autonomy_uninstall_survives_an_incomplete_installer_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -774,6 +882,20 @@ if arguments and arguments[0] == "clone":
 
             self.assertNotEqual(0, result.returncode)
             self.assertIn("references/review-orchestration.md", result.stderr)
+            self.assertFalse((home / ".codex/skills/converge").exists())
+
+    def test_install_rejects_a_suite_missing_inline_tdd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            source = root / "source"
+            shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(
+                ".git", ".claude", ".codex", ".codegraph", "__pycache__",
+            ))
+            (source / "references/inline-tdd.md").unlink()
+            result = self.run_installer_from(home, source, "--target", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("references/inline-tdd.md", result.stderr)
             self.assertFalse((home / ".codex/skills/converge").exists())
 
     def test_install_rejects_a_suite_missing_capsule_dispatch(self):

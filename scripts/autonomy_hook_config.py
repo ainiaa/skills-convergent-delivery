@@ -10,6 +10,37 @@ from pathlib import Path
 
 
 HOOK_TIMEOUT_SECONDS = 30
+CODEX_PYTHON_FLAGS = ["-E", "-S", "-B"]
+RECORD_FIELDS = {"Stop": "stop_command", "UserPromptSubmit": "prompt_command"}
+
+
+def command_arguments(command):
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def without_python_flags(args):
+    return args[:1] + args[4:] if args[1:4] == CODEX_PYTHON_FLAGS else args
+
+
+def matches_codex_command(args, target):
+    return bool(args) and Path(args[0]).name == "python3" and without_python_flags(args)[1:] == target[1:]
+
+
+def codex_stop_wrapper(existing, legacy, previous, adapter):
+    # Keep the local Stop adapter only when it wraps an exact owned command.
+    outer = without_python_flags(command_arguments(existing))
+    if outer[1:3] != [str(adapter), "approve"]:
+        return None
+    if Path(outer[0]).name != "python3" and existing != previous:
+        return None
+    inner = without_python_flags(outer[3:])
+    owned = without_python_flags(command_arguments(previous)) if previous else []
+    if owned[1:3] == outer[1:3]:
+        owned = without_python_flags(owned[3:])
+    return outer[1:3] if inner and (inner == owned or matches_codex_command(inner, legacy)) else None
 
 
 def raise_for_stale_same_script_entries(entries, command):
@@ -19,14 +50,15 @@ def raise_for_stale_same_script_entries(entries, command):
     resolved differently; a different source path belongs to another checkout and
     stays untouched.
     """
-    try:
-        script = shlex.split(command)[1]
-    except (IndexError, ValueError):
+    args = without_python_flags(command_arguments(command))
+    if len(args) < 2:
         return
     stale = [
         item["command"]
         for entry in entries for item in entry["hooks"]
-        if script in item.get("command", "") and item.get("command") != command
+        if isinstance(item.get("command"), str)
+        and matches_codex_command(command_arguments(item["command"]), args)
+        and item["command"] != command
     ]
     if stale:
         raise ValueError(
@@ -35,7 +67,7 @@ def raise_for_stale_same_script_entries(entries, command):
         )
 
 
-def update(path, command, event="Stop", remove=False):
+def update(path, command, event="Stop", remove=False, *, previous=None, legacy=None, codex_adapter=None):
     path = Path(path)
     value = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if not isinstance(value, dict):
@@ -46,19 +78,46 @@ def update(path, command, event="Stop", remove=False):
     entries = hooks.setdefault(event, [])
     if not isinstance(entries, list):
         raise ValueError(f"hook configuration {event} must be a list")
+    registered = None
     for entry in entries[:]:
         if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list) \
                 or any(not isinstance(item, dict) for item in entry["hooks"]):
-            raise ValueError("hook configuration Stop entry is invalid")
-        entry["hooks"] = [item for item in entry["hooks"] if item.get("command") != command]
-        if not entry["hooks"]:
+            raise ValueError(f"hook configuration {event} entry is invalid")
+        before = len(entry["hooks"])
+        for item in entry["hooks"][:]:
+            existing = item.get("command")
+            if item.get("type") != "command" or not isinstance(existing, str):
+                continue
+            replacement = None
+            if codex_adapter is not None:
+                wrapper = codex_stop_wrapper(existing, legacy, previous, codex_adapter)
+                if wrapper and remove:
+                    replacement = command
+                elif wrapper:
+                    if not codex_adapter.is_file():
+                        raise ValueError(f"registered Converge Stop adapter is missing: {codex_adapter}")
+                    target = command_arguments(command)
+                    replacement = shlex.join([target[0], *CODEX_PYTHON_FLAGS, *wrapper, *target])
+            if replacement is None and (existing in (command, previous)
+                                        or (legacy and matches_codex_command(command_arguments(existing), legacy))):
+                replacement = command
+            if replacement is None:
+                continue
+            if remove or registered == replacement:
+                entry["hooks"].remove(item)
+            elif registered is not None:
+                raise ValueError(f"multiple Converge registrations match the {event} event")
+            else:
+                item["command"] = registered = replacement
+        if before and not entry["hooks"]:
             entries.remove(entry)
     if remove:
         raise_for_stale_same_script_entries(entries, command)
-    else:
+    elif registered is None:
         entries.append({"hooks": [
             {"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}
         ]})
+        registered = command
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -70,6 +129,7 @@ def update(path, command, event="Stop", remove=False):
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+    return registered
 
 
 def record_command(path, runtime, event, command):
@@ -78,7 +138,7 @@ def record_command(path, runtime, event, command):
     value = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if not isinstance(value, dict):
         raise ValueError("hook record must be an object")
-    field = {"Stop": "stop_command", "UserPromptSubmit": "prompt_command"}.get(event)
+    field = RECORD_FIELDS.get(event)
     if field is None:
         raise ValueError(f"hook record does not track the {event} event")
     entry = value.setdefault(runtime, {})
@@ -137,9 +197,24 @@ def main():
     parser.add_argument("--remove", action="store_true")
     parser.add_argument("--record-state")
     parser.add_argument("--record-runtime")
-    parser.add_argument("--record-event", default="Stop")
+    parser.add_argument("--record-event", help=argparse.SUPPRESS)
     arguments = parser.parse_args()
-    update(arguments.config, arguments.command, arguments.event, arguments.remove)
+    command = arguments.command
+    previous = None
+    legacy = None
+    adapter = None
+    argv = command_arguments(command)
+    managed_codex = (arguments.record_state and arguments.record_runtime == "codex"
+                     and (arguments.remove or argv[1:4] == CODEX_PYTHON_FLAGS))
+    if managed_codex:
+        legacy = without_python_flags(argv)
+        previous = command if arguments.remove else recorded_command(
+            arguments.record_state, "codex", RECORD_FIELDS[arguments.event],
+        )
+        if arguments.event == "Stop":
+            adapter = Path(arguments.config).parent / "hook-adapters/codex_stop_adapter.py"
+    registered = update(arguments.config, command, arguments.event, arguments.remove,
+                        previous=previous, legacy=legacy, codex_adapter=adapter)
     if arguments.record_state:
         if not arguments.record_runtime:
             raise ValueError("--record-state requires --record-runtime")
@@ -148,8 +223,10 @@ def main():
         else:
             record_command(
                 arguments.record_state, arguments.record_runtime,
-                arguments.event, arguments.command,
+                arguments.event, registered,
             )
+    if managed_codex and not arguments.remove:
+        print(registered)
 
 
 if __name__ == "__main__":

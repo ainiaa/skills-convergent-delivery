@@ -52,7 +52,7 @@ NO_OPEN_ISSUES = {
     "", "0", "none", "no", "n/a", "无", "没有", "无需处理",
     "no remaining scoped findings",
 }
-MAX_TDD_TRACE_BYTES = 256 * 1024
+MAX_TDD_TRACE_BYTES = 4 * 1024 * 1024
 
 BLOCKED_CODES = {
     "decision",
