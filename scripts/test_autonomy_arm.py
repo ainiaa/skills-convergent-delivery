@@ -31,7 +31,8 @@ class AutonomyArmTest(unittest.TestCase):
 
     def test_explicit_arm_builds_v11_manifest_from_frozen_scope_without_rewriting_input(self):
         payload = state()
-        result = self.invoke(payload, "--requirement", "fix the bug", "--acceptance", "tests pass")
+        result = self.invoke(payload, "--requirement", "fix the bug", "--acceptance", "tests pass",
+                             "--host-session-id", "thread-1")
 
         self.assertEqual(0, result.returncode, result.stderr)
         armed = json.loads(result.stdout)
@@ -42,6 +43,7 @@ class AutonomyArmTest(unittest.TestCase):
         self.assertEqual({"requirement", "scope", "acceptance"}, {item["kind"] for item in manifest["items"]})
         self.assertEqual([], armed["execution_control"]["autonomy"]["audit_batches"])
         self.assertEqual([], armed["execution_control"]["autonomy"]["action_attempts"])
+        self.assertEqual("thread-1", armed["execution_control"]["autonomy"]["runtime"]["session_id"])
 
     def test_arm_rejects_non_active_or_already_autonomous_states(self):
         blocked = state(status="blocked", blocked_code="environment", blocked_reason="missing")
@@ -151,6 +153,7 @@ class AutonomyArmTest(unittest.TestCase):
                     "--state-root", str(state_root), "--repo-id", payload["repo_id"],
                     "--task-key", payload["task_key"], "--run-id", payload["run_id"],
                     "--writer-id", payload["writer_id"], "--expected-revision", "0",
+                    "--host-session-id", "thread-1",
                 ], text=True, capture_output=True, check=False,
             )
 
@@ -199,14 +202,15 @@ class AutonomyArmTest(unittest.TestCase):
     def test_hook_arm_rejects_service_only_arguments(self):
         result = self.invoke(
             state(), "--requirement", "fix", "--acceptance", "pass",
-            "--verification-argv", '["true"]',
+            "--host-session-id", "thread-1", "--verification-argv", '["true"]',
         )
 
         self.assertEqual(2, result.returncode)
         self.assertIn("runtime is invalid", result.stderr)
 
     def test_write_requires_the_managed_write_parameters(self):
-        result = self.invoke(state(), "--requirement", "fix", "--acceptance", "pass", "--write")
+        result = self.invoke(state(), "--requirement", "fix", "--acceptance", "pass",
+                             "--host-session-id", "thread-1", "--write")
 
         self.assertEqual(2, result.returncode)
         self.assertIn("--write requires", result.stderr)
@@ -215,7 +219,7 @@ class AutonomyArmTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = self.invoke(
-                state(), "--requirement", "fix", "--acceptance", "pass", "--write",
+                state(), "--requirement", "fix", "--acceptance", "pass", "--write", "--host-session-id", "thread-1",
                 "--lease-root", str(root / "empty-leases"), "--state-root", str(root / "state"),
                 "--repo-id", "repo", "--task-key", "task", "--run-id", "run",
                 "--writer-id", "writer", "--expected-revision", "0",

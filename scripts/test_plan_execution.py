@@ -23,6 +23,8 @@ class PlanExecutionTest(unittest.TestCase):
             task_key=envelope['plan']['plan_id'], run_id='plan-runtime', writer_id='plan-writer',
             baseline={'commit':source['baseline_commit'],'diff_fingerprint':'clean'}))
         runtime.update(source_receipt=source,source_fingerprint=source['source_fingerprint'])
+        runtime['baseline'] = {'commit':source['baseline_commit'], 'diff_fingerprint':source['diff_fingerprint'],
+                               'source':json.loads(json.dumps(source))}
         runtime['ledger']['tdd_trace']=None
         runtime['execution_control']['review']['rounds']=[]
         final_entries = [entry for entry in envelope['final_acceptance'] if isinstance(entry.get('evidence'), dict)]
@@ -671,6 +673,41 @@ class PlanExecutionTest(unittest.TestCase):
                         self.assertIn("codegraph_index", result["uncovered_reason"])
                         self.assertIn("coverage", result["uncovered_reason"])
                     self.assertEqual([], list(Path(workspace).iterdir()))
+
+    def test_external_preflight_result_cli_preserves_authorization_without_inventing_success(self):
+        gap = {"status": "uncovered", "kind": "tooling",
+               "reason": "domain-modeling 缺少 GLOSSARY-FORMAT.md 和 ADR-FORMAT.md；评测环境无效"}
+        for validation, authorized, status in (
+            (gap, True, "execute"), (gap, False, "blocked"),
+            ({"status": "valid"}, True, "execute"),
+            ({"status": "blocked", "reason": "有效复验失败且候选修订预算耗尽"}, True, "blocked"),
+        ):
+            with self.subTest(validation=validation, authorized=authorized):
+                argv = [sys.executable, str(Path(__file__).with_name("plan_execution.py")),
+                        "--task-id", "original-product-evaluation", "--validation-json", json.dumps(validation)]
+                if authorized:
+                    argv.append("--implementation-authorized")
+                result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                decision = json.loads(result.stdout)
+                self.assertEqual(status, decision["status"])
+                if status == "execute":
+                    self.assertEqual("original-product-evaluation", decision["next_action"]["task_id"])
+                    self.assertEqual(validation.get("reason"), decision["uncovered_reason"])
+                elif authorized:
+                    self.assertEqual(validation["reason"], decision["reason"])
+
+    def test_external_preflight_result_cli_rejects_unknown_or_malformed_contracts(self):
+        for raw in ('{', 'null', '[]', '{"status":"ready"}',
+                    '{"status":"uncovered","kind":"business","reason":"approval required"}',
+                    '{"status":"valid","ignore_failure":true}'):
+            with self.subTest(raw=raw):
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).with_name("plan_execution.py")),
+                     "--task-id", "original-product-evaluation", "--implementation-authorized",
+                     "--validation-json", raw], capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("blocked", json.loads(result.stdout)["status"])
 
     def test_ready_native_preflight_retains_normal_execution(self):
         from plan_execution import main

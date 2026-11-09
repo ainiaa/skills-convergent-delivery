@@ -575,9 +575,29 @@ else:
 
         self.assertEqual("pass", tdd_impact_guard.validate(value)["status"])
 
+    def test_legitimate_dirty_workspace_trace_exceeding_old_capacity_is_valid(self):
+        for index in range(400):
+            (self.workspace / (f'previous-{index:04}-' + 'x'*80 + '.txt')).write_text('preexisting context')
+        value = self.trace()
+        import json
+        self.assertGreater(len(json.dumps(value).encode()), 256*1024)
+        try:
+            observed = tdd_impact_guard.validate(value)
+        except ValueError as error:
+            self.fail(f'valid dirty-workspace evidence rejected: {error}')
+        self.assertEqual('pass', observed['status'])
+        from delivery_next import validate_native_tdd_trace
+        validate_native_tdd_trace(value, value['source'], value['risk_flags'],
+                                  [row['criterion'] for row in value['acceptance']],
+                                  required=False, workspace=self.workspace)
+        changed = copy.deepcopy(value)
+        changed['acceptance'][0]['tests'][0]['green']['receipts'][0]['source']['source_fingerprint'] = 'f'*64
+        with self.assertRaises(ValueError):
+            tdd_impact_guard.validate(changed)
+
     def test_trace_size_is_bounded(self):
         value = self.trace()
-        value["acceptance"][0]["tests"][0]["selector"] = "x" * (256 * 1024)
+        value["acceptance"][0]["tests"][0]["selector"] = "x" * (tdd_impact_guard.MAX_TRACE_BYTES + 1)
 
         with self.assertRaisesRegex(ValueError, "size limit"):
             tdd_impact_guard.validate(value)

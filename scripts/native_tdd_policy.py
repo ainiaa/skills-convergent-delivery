@@ -2,6 +2,7 @@
 """Resolve the native TDD coverage command and threshold without executing it."""
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -213,6 +214,17 @@ def percentage(value):
 
 
 def project_gate_threshold(workspace, argv, revision=None):
+    # Audited grouped LLVM launcher v1: fresh cleanup, exhaustive nonempty tests, then an 85% report.
+    if len(argv) == 2 and re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', Path(argv[0]).name.lower()) \
+            and argv[1] == 'scripts/native-coverage.py':
+        path = Path(workspace) / argv[1]
+        try:
+            if revision is None and (path.is_symlink() or not path.resolve().is_relative_to(Path(workspace).resolve())):
+                return None
+            content = path.read_bytes() if revision is None else config_text(workspace, argv[1], revision).encode('utf-8')
+            return 85 if hashlib.sha256(content).hexdigest() == 'bba868ac8986c4d919173c6fc73598200da47ba699e1a9164486b383c13a11a0' else None
+        except (OSError, UnicodeError):
+            return None
     runners = {coverage_runner(argv)}
     if {"mvn", "mvnw"} & runners and "jacoco:check" in argv:
         return maven_gate_threshold(config_text(workspace, "pom.xml", revision))

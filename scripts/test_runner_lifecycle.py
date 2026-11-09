@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the controller-owned external runner lifecycle."""
 
+import copy
 import json
 import hashlib
 import shutil
@@ -259,6 +260,29 @@ class RunnerLifecycleTest(unittest.TestCase):
                     "controller": {"extensions": []},
                 },
             )
+
+    def test_autonomy_preserves_only_the_core_local_read_only_reviewer(self):
+        dispatch = plan_dispatch(self.profiles, {
+            **flow_state(), "evidence": "sufficient", "implementation": "complete",
+            "verification": "passed", "review": "pending",
+        })
+        for extensions in [[], ["autonomy"]]:
+            managed = {"controller": {"extensions": extensions}}
+            try:
+                require_multimodel_extension(managed, dispatch)
+            except ValueError as error:
+                self.fail(f'core local reviewer rejected: {error}')
+            for field, value in [("workspace", "write"), ("shell", True)]:
+                unsafe = copy.deepcopy(dispatch)
+                unsafe["profile"]["permissions"][field] = value
+                with self.assertRaisesRegex(ValueError, "multimodel extension"):
+                    require_multimodel_extension(managed, unsafe)
+            for field, value in [("role", "scout"), ("runner_id", "openai-compatible-v1")]:
+                unsafe = copy.deepcopy(dispatch);unsafe["profile"][field] = value
+                with self.assertRaisesRegex(ValueError, "multimodel extension"):
+                    require_multimodel_extension(managed, unsafe)
+            with self.assertRaisesRegex(ValueError, "multimodel extension"):
+                require_multimodel_extension(managed)
 
     def test_core_can_persist_a_bound_read_only_local_review(self):
         profiles = resolve(None, workspace=self.workspace, home=self.workspace / "home", role_overrides={

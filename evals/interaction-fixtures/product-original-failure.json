@@ -1,0 +1,21 @@
+{
+  "origin": {
+    "artifact": "completed-candidate-gates.json",
+    "sha256": "3153f8cd58d11ff31520c6137dbc602d8ecbf378ae4ae7fd1ac7d2d000365d67",
+    "scope": "Original observed release-gate failure; control-routing regression only, not fresh Product semantic evaluation."
+  },
+  "release": {
+    "argv": [
+      "python3.14",
+      "product_behavior_eval.py",
+      "--release",
+      "--report",
+      "completed-candidate-behavior.json",
+      "--artifacts",
+      "completed-candidate-artifacts.json"
+    ],
+    "exit": 1,
+    "stdout": "{\"status\": \"invalid\", \"checks\": {\"behavior\": {\"status\": \"invalid\", \"reason\": \"{'id': 'refund-unresolved-threshold', 'status': 'failed', 'action': 'clarify', 'scope': 'prd', 'questions': [], 'autoApprove': False, 'writeBusinessCode': False, 'businessUndecided': ['approval-threshold', 'retry-approval'], 'questionDecisions': [], 'evidenceBasis': '实际回复、输入、execution记录及本例落盘成品；questions仅记录实际回复明确请求的事项。autoApprove/writeBusinessCode只描述所见交付，不推定不可见运行历史。', 'deliveryVerdict': 'failed'}\", \"semanticCheck\": \"not_proven\", \"browserCheck\": \"not_run\"}, \"artifacts\": {\"status\": \"invalid\", \"reason\": \"业务规则缺失、矛盾或未验证：calculation-handoff/handoff\", \"semanticCheck\": \"not_proven\", \"browserCheck\": \"not_run\"}}, \"semanticCheck\": \"not_proven\", \"browserCheck\": \"not_run\"}\n",
+    "stderr": ""
+  }
+}

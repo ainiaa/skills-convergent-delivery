@@ -31,7 +31,7 @@ Schema v4 capsule 必须携带完整 Provider Binding，包括 manifest、task c
 
 ## State
 
-Batch Protocol 保持 v1，持久化 state Schema 只接受 v4，完成回执使用 Receipt v4：`plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个 Batch 必须持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`；恢复次数只能从 0 增至 1。旧 Schema v1-v3 直接拒绝。
+Batch Protocol v1 接受顺序 state Schema v4 和带依赖的 [Schema v5](#局部阻塞-v5)。两者都使用 Receipt v4。共同 state 字段包括 `plan`、`preflight`、`batches`、`current_batch`、`final_acceptance`、`delegate_state_root`、owner 和 revision。每个 Batch 必须持久化 `task_id`、完整 Provider Binding、`worker_ref`、`worker_role`、`worker_owner_run_id`、`worker_status` 和 `recovery_count`。恢复次数只能从 0 增至 1，旧 Schema v1-v3 直接拒绝。
 
 状态文件和 scheduler lease 都以 `repo_id + plan_id` 唯一定位；run takeover 只在同一状态文件转移 owner，不创建第二份状态。lease 默认两小时并在每次成功写入时续期；同一计划的活动 owner 会阻塞第二个 run/window。协调者崩溃且 lease 到期后，只有明确传入 `--takeover` 才能由新 owner 接管。
 
@@ -39,7 +39,7 @@ Batch transitions：`pending → dispatching → running → validating-receipt 
 
 Plan transitions：`active ↔ paused`，以及 `active|paused → blocked|stopped`、`active → complete`。
 
-`pause`、`resume` 和 `stop` 只控制后续派发，不删除提交；paused 状态不能新建 dispatch，已有执行者仍可提交 receipt。任一 Batch blocked 时计划也必须 blocked。状态写入使用 revision CAS；stale update 必须失败。
+`pause`、`resume` 和 `stop` 只控制后续派发，不删除提交；paused 状态不能新建 dispatch，已有执行者仍可提交 receipt。v4 中任一 Batch blocked 时计划也必须 blocked，v5 的工具局部阻塞按其依赖规则处理。状态写入使用 revision CAS；stale update 必须失败。
 
 ## Dispatch
 

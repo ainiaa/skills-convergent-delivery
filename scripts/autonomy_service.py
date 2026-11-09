@@ -21,6 +21,7 @@ from delivery_next import validate_active_lease, validate_native_tdd_trace, vali
 from delivery_state import project_lease_root, state_path as managed_state_path
 from evidence_contract import run_evidence, workspace_source
 from tdd_impact_guard import MAX_TRACE_BYTES, MAX_RERUN_TIMEOUT_SECONDS, rerun as rerun_tdd_trace
+from worker_profile import fingerprint as profile_fingerprint
 
 
 # Serve retries a busy path once per 5 second cycle; 60 consecutive busy cycles
@@ -156,17 +157,6 @@ def _observe(state_path, state_root, lease_root, receipt):
     return _update(state_path, state_root, lease_root, mutate, refresh_source=True)
 
 
-def _commit(state_path, state_root, lease_root, verification):
-    def mutate(state):
-        attempt = _latest(state)
-        attempt["status"] = "committed"
-        attempt["commit"] = {
-            "source_fingerprint": state["source_fingerprint"],
-            "verification_fingerprint": verification["receipt_fingerprint"],
-        }
-    return _update(state_path, state_root, lease_root, mutate)
-
-
 def _advance_verified_action(state_path, state_root, lease_root, action, verification):
     def mutate(state):
         source = verification["source"]
@@ -184,6 +174,12 @@ def _advance_verified_action(state_path, state_root, lease_root, action, verific
             state["current_stage"] = "verify-final"
         else:
             state["current_stage"] = action["phase"]
+        attempt = _latest(state)
+        attempt["status"] = "committed"
+        attempt["commit"] = {
+            "source_fingerprint": state["source_fingerprint"],
+            "verification_fingerprint": verification["receipt_fingerprint"],
+        }
     return _update(state_path, state_root, lease_root, mutate)
 
 
@@ -292,7 +288,11 @@ def _append_runner_record(state_path, state_root, lease_root, field, record):
 
 def execute(state_path, state, next_action, state_root, lease_root):
     runtime = service_runtime(state)
-    profile = runtime["runner_profile"]
+    profile = copy.deepcopy(runtime["runner_profile"])
+    profile["worker_id"] = _latest(state)["attempt_id"]
+    profile["profile_fingerprint"] = profile_fingerprint({
+        key: value for key, value in profile.items() if key != "profile_fingerprint"
+    })
     request = prompt(state_path, next_action)
     runner = profile["runner_id"]
     if runner == "codex-exec-v1":
@@ -353,6 +353,10 @@ def _record_audit_findings(state_path, state_root, lease_root, verification, aud
         state["source_receipt"] = source
         state["source_fingerprint"] = source["source_fingerprint"]
         state["current_stage"] = "autonomy-repair"
+        state["ledger"]["checks"].append({
+            "stage": "autonomy-audit", "command": audit["command"],
+            "result": "fail", "evidence_receipts": [audit],
+        })
         autonomy["audit_batches"].append({
             "source_fingerprint": source["source_fingerprint"],
             "phase": "initial",
@@ -380,13 +384,25 @@ def _finalize_observed(state_path, state_root, lease_root):
         state["workspace"], state["baseline"]["commit"], service_runtime(state)["verification_argv"],
         timeout_seconds=_time_policy(service_runtime(state)["runner_profile"])["absolute_seconds"],
     )
-    if verification["exit_code"] != 0:
+    phase = attempt["action"].get("phase")
+    final_action = phase == "verify-final"
+    intermediate_action = phase in {
+        "round-1-build", "round-1-semantic-review", "verify-round-1", "round-2-risk-review",
+    }
+    from plan_execution import is_actual_verification_failure
+    if verification["exit_code"] != 0 and (
+            not is_actual_verification_failure(verification) or not (final_action or intermediate_action)):
         block(
             state_path, state, state_root, lease_root, "frozen autonomous verification failed",
             verification, stage="autonomy-verification",
         )
         return {"status": "blocked", "reason": "verification_failed", "verification": verification}
-    if attempt["action"].get("phase") == "verify-final":
+    if verification["exit_code"] != 0:
+        _update(state_path, state_root, lease_root, lambda candidate: candidate["ledger"]["checks"].append({
+            "stage": "autonomy-verification", "command": verification["command"],
+            "result": "fail", "evidence_receipts": [verification],
+        }))
+    if final_action:
         audit = run_evidence(
             state["workspace"], state["baseline"]["commit"],
             service_runtime(state)["audit_argv"],
@@ -396,7 +412,7 @@ def _finalize_observed(state_path, state_root, lease_root):
             block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
         findings_code = service_runtime(state).get("audit_findings_exit_code")
-        if audit["exit_code"] == findings_code:
+        if audit["exit_code"] == findings_code and is_actual_verification_failure(audit):
             autonomy = state["execution_control"]["autonomy"]
             if autonomy["audit_batches"] or autonomy["repair_budget_remaining"] != 1:
                 block(
@@ -410,6 +426,11 @@ def _finalize_observed(state_path, state_root, lease_root):
         if audit["exit_code"] != 0:
             block(state_path, state, state_root, lease_root, "frozen autonomous audit failed", audit)
             return {"status": "blocked", "reason": "audit_failed", "audit": audit}
+        if verification["exit_code"] != 0:
+            block(
+                state_path, state, state_root, lease_root, "frozen autonomous verification failed",
+            )
+            return {"status": "blocked", "reason": "verification_failed", "verification": verification}
         trace = None
         if state["provider_binding"]["binding"]["workflow_provider"]["id"] == "native-v1":
             trace = state["ledger"].get("tdd_trace_candidate", state["ledger"].get("tdd_trace"))
@@ -428,7 +449,6 @@ def _finalize_observed(state_path, state_root, lease_root):
         return {"status": "complete", "verification": verification, "audit": audit,
                 "revision": completed["revision"]}
     _advance_verified_action(state_path, state_root, lease_root, attempt["action"], verification)
-    committed = _commit(state_path, state_root, lease_root, verification)
     return {"status": "advanced", "verification": verification}
 
 
@@ -577,7 +597,7 @@ def run_frozen_service(state_path, state_root, lease_root, block_reason=None):
         raise ValueError("frozen autonomous service returned invalid JSON") from error
 
 
-def main():
+def parse_service_arguments(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--state")
     parser.add_argument("--state-root")
@@ -585,7 +605,11 @@ def main():
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--frozen-runtime", action="store_true")
     parser.add_argument("--block-reason")
-    arguments = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_service_arguments()
     if not arguments.state and not arguments.serve:
         raise ValueError("provide --state")
     if arguments.serve and arguments.state_root is None:

@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 
 from autonomy_gate import decide
+from controller_snapshot import hook_control_command, isolated_snapshot_command, validate_launch_snapshot
+from delivery_next import upgrade_state, validate_state
 from provider_contract import SUPPORTED_SCHEMA_VERSIONS
 from delivery_state import project_lease_root, project_state_root, repository_state_root, workspace_state_roots
 
@@ -259,13 +261,13 @@ def lease_root(workspace=None):
 
 
 def write_state(state):
-    command = [
-        sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+    command = hook_control_command(
+        "delivery_state.py", "write", "--input", "-",
         "--lease-root", str(lease_root(state["workspace"])), "--state-root", str(state_root(state["workspace"])),
         "--repo-id", state["repo_id"], "--task-key", state["task_key"],
         "--run-id", state["run_id"], "--writer-id", state["writer_id"],
         "--expected-revision", str(state["revision"] - 1),
-    ]
+    )
     result = subprocess.run(command, input=json.dumps(state), text=True, capture_output=True, check=False)
     if result.returncode:
         raise ValueError(result.stderr.strip() or "could not persist autonomous hook state")
@@ -277,12 +279,12 @@ def terminalize_hook_failure(state_path, state, reason):
     candidate["revision"] += 1
     candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
     write_state(candidate)
-    release = subprocess.run([
-        sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "release",
+    release = subprocess.run(hook_control_command(
+        "delivery_lease.py", "release",
         "--root", str(lease_root(state["workspace"])), "--state-root", str(state_root(state["workspace"])),
         "--repo", state["repo_id"], "--workspace", state["workspace"],
         "--task-key", state["task_key"], "--run-id", state["run_id"], "--writer-id", state["writer_id"],
-    ], text=True, capture_output=True, check=False)
+    ), text=True, capture_output=True, check=False)
     if release.returncode:
         raise ValueError(release.stderr.strip() or release.stdout.strip() or "could not release autonomous lease")
     if json.loads(release.stdout) != {"status": "released"}:
@@ -290,16 +292,52 @@ def terminalize_hook_failure(state_path, state, reason):
 
 
 def frozen_snapshot(state):
-    snapshot = state.get("controller", {}).get("snapshot") if isinstance(state, dict) else None
+    controller = state.get("controller")
+    snapshot = controller.get("snapshot") if isinstance(controller, dict) else None
     return snapshot if isinstance(snapshot, dict) else None
 
 
-def run_frozen_hook(state_path, host, payload):
-    return subprocess.run([
-        sys.executable, str(Path(__file__).with_name("controller_snapshot.py")), "run",
-        "--descriptor", str(state_path), "--script", "scripts/autonomy_hook.py", "--",
-        "--host", host, "--frozen-runtime",
-    ], input=json.dumps(payload), text=True, capture_output=True, check=False)
+def run_frozen_hook(active, host, payload):
+    state_path, state = active
+    try:
+        snapshot = validate_launch_snapshot(frozen_snapshot(state))
+    except TypeError as error:
+        raise ValueError("frozen Stop snapshot descriptor is invalid") from error
+    relative_script = "scripts/autonomy_hook.py"
+    if relative_script not in snapshot["files"]:
+        raise ValueError("controller snapshot does not contain the Stop Hook")
+    frozen_script = str(Path(snapshot["root"]) / relative_script)
+    # Import the verified snapshot in a fresh interpreter and pin the checked run.
+    entry = """
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+state_path, host = sys.argv[1:]
+control_scripts = {str(Path(script).with_name(name)) for name in ("delivery_state.py", "delivery_lease.py")}
+
+def run_control(command, *args, **kwargs):
+    if len(command) > 1 and command[0] == sys.executable and command[1] in control_scripts:
+        command = [sys.executable, "-E", "-S", "-B", *command[1:]]
+    return subprocess.run(command, *args, **kwargs)
+
+payload, state = json.load(sys.stdin)
+try:
+    run_hook = run_path(script)["run_hook"]
+    # Older snapshots launch these two controller scripts without Python flags.
+    run_hook.__globals__["subprocess"] = SimpleNamespace(**{**vars(subprocess), "run": run_control})
+    decision, status = run_hook(host, payload, (Path(state_path), state))
+except (OSError, KeyError, ValueError, subprocess.SubprocessError) as error:
+    sys.exit(str(error))
+print(json.dumps(decision, sort_keys=True))
+raise SystemExit(status)
+"""
+    return subprocess.run(
+        isolated_snapshot_command(frozen_script, entry, str(state_path), host),
+        input=json.dumps([payload, state]), text=True, capture_output=True, check=False,
+    )
 
 
 def continuation_intent(state, next_action):
@@ -323,16 +361,32 @@ def continuation_intent(state, next_action):
     return candidate
 
 
+def stop_session_decision(state, payload):
+    autonomy = state.get("execution_control", {}).get("autonomy", {})
+    if "runtime" not in autonomy:
+        validate_state(upgrade_state(state), argparse.Namespace(strict_evidence=True), check_workspace=False)
+        return approve()
+    runtime = autonomy["runtime"]
+    if not isinstance(runtime, dict) or runtime.get("mode") not in ("hook", "service"):
+        raise ValueError("invalid autonomous runtime for Stop Hook")
+    if runtime["mode"] == "service":
+        return None
+    if runtime == {"mode": "hook"}:
+        return approve()
+    owner_session = runtime.get("session_id")
+    if set(runtime) != {"mode", "session_id"} or not isinstance(owner_session, str) or not owner_session.strip():
+        raise ValueError("invalid autonomous session binding for Stop Hook")
+    incoming_session = payload.get("session_id")
+    if not isinstance(incoming_session, str) or not incoming_session.strip():
+        return block("Converge cannot confirm the active run's conversation; report the host identity as uncovered.")
+    return approve() if incoming_session != owner_session else None
+
+
 def run_hook(host, payload, active):
     state_path, state = active
-    runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime", {})
-    owner_session = runtime.get("session_id")
-    if host == "codex" and owner_session is not None:
-        incoming_session = payload.get("session_id")
-        if not isinstance(incoming_session, str) or not incoming_session:
-            return block("Converge cannot confirm the active run's conversation; report the host identity as uncovered."), 0
-        if incoming_session != owner_session:
-            return approve(), 0
+    session_decision = stop_session_decision(state, payload)
+    if session_decision is not None:
+        return session_decision, 0
     result = decide(state, lease_root=lease_root(state["workspace"]))
     if result["decision"] == "allow":
         return approve(), 0
@@ -377,7 +431,7 @@ def main():
         print(json.dumps(approve(), sort_keys=True))
         return 0
     workspace = payload.get("cwd") if isinstance(payload, dict) else None
-    if not isinstance(workspace, str) or not workspace:
+    if not isinstance(workspace, str) or not workspace or payload.get("hook_event_name", "Stop") != "Stop":
         print(json.dumps(approve(), sort_keys=True))
         return 0
     try:
@@ -389,20 +443,14 @@ def main():
         if active is None:
             print(json.dumps(approve(), sort_keys=True))
             return 0
-        state_path, state = active
-        runtime = state.get("execution_control", {}).get("autonomy", {}).get("runtime", {})
-        owner_session = runtime.get("session_id") if isinstance(runtime, dict) else None
-        if arguments.host == "codex" and owner_session is not None:
-            incoming_session = payload.get("session_id")
-            if not isinstance(incoming_session, str) or not incoming_session:
-                print(json.dumps(block("Converge cannot confirm the active run's conversation."), sort_keys=True))
-                return 0
-            if incoming_session != owner_session:
-                print(json.dumps(approve(), sort_keys=True))
-                return 0
+        _, state = active
+        session_decision = stop_session_decision(state, payload)
+        if session_decision is not None:
+            print(json.dumps(session_decision, sort_keys=True))
+            return 0
         if not arguments.frozen_runtime and frozen_snapshot(state):
             result = run_frozen_hook(
-                state_path, arguments.host, {**payload, "cwd": state["workspace"]},
+                active, arguments.host, {**payload, "cwd": state["workspace"]},
             )
             if result.returncode:
                 raise ValueError(result.stderr.strip() or "frozen autonomous hook failed")

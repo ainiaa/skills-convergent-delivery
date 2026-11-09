@@ -1,6 +1,6 @@
 # Review Orchestration Contract v1
 
-Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读 reviewer（Codex CLI 或 Claude Code）：冻结 profile、完整 Review v3 request，并显式提供 `--allow-execute`。该路径不要求启用多模型扩展，也不授予写入、shell 或扇出权限。其他角色、并发扇出和 OpenAI-compatible API runner 仍要求冻结 `multimodel` 扩展；无可用 CLI 或无执行授权时明确交接，不伪造独立审查回执。
+Core 的普通/高风险门禁复用 `runner_lifecycle.py` 的单个本地只读 reviewer（Codex CLI 或 Claude Code）：冻结 profile、完整 Review v3 request，并显式提供 `--allow-execute`。仅启用 autonomy 的原生运行也可走此入口。该路径不要求启用多模型扩展，也不授予写入、shell 或扇出权限。其他角色、并发扇出和 OpenAI-compatible API runner 仍要求冻结 `multimodel` 扩展；无可用 CLI 或无执行授权时明确交接，不伪造独立审查回执。
 
 控制器按风险选择复核成本。需求符合性与实现质量仍分别保存结论；普通任务由同一个有冻结 profile、request binding 与 completed role result 的外部只读 fresh reviewer 接收两个有序单轴请求，先 `spec`，通过后再独立盲审 `quality`；它只是外部证据身份，不能伪称宿主 worker。低风险任务使用实现者自检和新鲜验证，不创建 reviewer。高风险任务使用一个 blind reviewer，同样按单轴顺序执行。只有多任务或跨服务计划才增加一次 integration review。任何源码变化都会使旧结果 stale。
 
@@ -26,17 +26,3 @@ integration 随 pass 保存的 task-local defect 仍须在本次交付关闭：�
 首次 integration 的 initial 请求只消费一次 integration 预算；修复后的 integration re_review/closure 仅消费现有 re-review 预算，不重复扣 initial 预算，也不能借 initial 请求重开审查。冻结画像要求 integration 时，complete 必须具有当前源码最后一轮的 integration pass；历史通过和已消耗的 initial 预算不能替代修复后复核。
 
 只接受 Protocol v3。旧 Protocol v1/v2 不转换、不用于推进状态；历史记录可供人工理解，但不能据此跳过 v3 门禁。
-
-## 本轮机制取舍
-
-受管理的 schema 10 run 在最终验证前由 `delivery_next.next_runtime_action` 检查当前源码指纹与各轴最新审查。范围内已确认缺陷复用 `run_contract.followup_action` 和现有一次修复预算；旧 findings 被后续 pass 覆盖后不再修复。未分类问题或预算耗尽返回 block。schema 11 继续使用已有自治审计。普通桌面对话只有 Skill 引导，不能宣称拥有结束/提问拦截能力。
-
-本轮采用 HumanLayer 控制循环的显式下一动作和有限退出，复用现有机器状态；不增加第二套授权账本或常驻监督代理。行为回归：`test_final_verification_routes_unresolved_findings_to_bounded_repair`、`test_followup_never_repairs_out_of_scope_or_unclassified_issues`。采用 SkillOpt 官方 EnvAdapter 的四个环境方法及继承反思接口；不在运行时自动训练或修改判定器。回归：`test_skillopt_adapter.py` 与 `test_interaction_replay.py`。
-
-| 参考 | 采用 | 不采用及原因 | 对应行为测试 |
-|---|---|---|---|
-| 本机 `skill-creator`、[Superpowers writing-skills](https://github.com/obra/superpowers/blob/main/skills/writing-skills/SKILL.md) | 先让已知问题穿过完成门禁，再补失败回归和单轮交互场景 | 不增设另一套可写问题台账；现有 `handoff.open_issues` 已是待处理真源 | `test_complete_rejects_known_open_issues_even_when_acceptance_passes`、`authorized-delivery-closes-review-findings` |
-| [Superpowers verification-before-completion](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) | 最终声明绑定当前源码的通过证据，且已记录问题不能被 `attention` 包装为完成 | 不承诺未知 Bug 为零；测试与审查只能证明其覆盖的范围 | `test_complete_with_known_open_issues_cannot_render_as_attention` |
-| [HumanLayer design-control-loop](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md)、本机 PDLC `loop-next` | 复用现有状态、单步决定和 `blocked` 停止条件 | 不引入定时控制器、额外 Hook 状态或无限修复循环；普通开发是一次已授权任务，不是持续巡检 | `test_structured_open_issues_preserve_the_exact_item_count`、现有 review 预算回归 |
-| PDLC v1.7.17 `batch-review`（来源提交 `ef05bf2`；机制引入于 `f8d1aa2`） | 采用阶段性问题必须在最终交付闭环的原则；复用 Review v3 finding_records、最新轴结论与完成门禁 | 不增加 batch-review Markdown 台账或固定每 2～3 项的额外评审：现有任务级与集成审查已覆盖分层，第二台账会增加同步、恢复和简单任务成本 | `test_integration_local_defect_routes_to_repair_even_when_the_axis_passes`、`test_integration_local_defect_cannot_complete_with_an_empty_handoff`、`test_current_integration_pass_does_not_reopen_historical_local_defects` |
-| [Superpowers writing-plans](https://github.com/obra/superpowers/blob/main/skills/writing-plans/SKILL.md)、[multi-agent-patterns](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) | 按独立可验收结果划定任务，只有明确上下文隔离收益才委派；参考发现先核对 Skills.sh Agent workflows/榜单，再读原始机制 | 不照搬逐阶段 fresh agent 或新增批次角色；当前缺陷由共享 helper 漏读既有记录造成，增加代理不能修复；不把安装量作为行为证据 | `test_integration_local_suggestion_does_not_add_a_repair`、`test_inline_route_rejects_low_risk_reviewer_and_host_only_roles` |

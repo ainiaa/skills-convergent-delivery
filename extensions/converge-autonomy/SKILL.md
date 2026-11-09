@@ -10,8 +10,10 @@ metadata:
 This is an opt-in extension. It owns Stop-hook continuation, bounded recovery,
 and the macOS service adapter; it does not replace ordinary `converge` work.
 
-Start autonomous work through `autonomy_begin.py`. That command freezes the
-`autonomy` extension set with the run. Read the core [execution control](../../references/execution-control.md)
+Start autonomous work through `scripts/autonomy_begin.py` in the Suite root,
+two levels above this Skill's resolved directory. Pass the observed host session
+as `--host-session-id` for Hook mode. The command freezes the `autonomy`
+extension set with the run. Read the core [execution control](../../references/execution-control.md)
 and [runtime adapters](../../references/runtime-adapters.md) before changing a
 continuation or service configuration.
 

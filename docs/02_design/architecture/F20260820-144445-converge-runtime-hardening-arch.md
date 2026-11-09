@@ -77,3 +77,26 @@ Batch Skill 根据宿主能力读取对应段落：
 ---
 作者：Jeff.Liu
 状态：已评审
+
+## Runner 输出传输的取舍
+
+| 参考 | 采用 | 不采用 / 原因 | 行为验证 |
+|---|---|---|---|
+| [Filesystem Context](https://raw.githubusercontent.com/muratcankoylan/Agent-Skills-for-Context-Engineering/main/skills/filesystem-context/SKILL.md)；Skills.sh 对应条目检索不可访问 | 大输出文件化，返回紧凑引用，按需读取 | 不新增记忆服务、代理拓扑或自动删除策略；此次只修输出传输 | test_runner_output.py 大输出、分段、权限、有限预览 |
+| [Python subprocess](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.communicate) | 并发排空两条管道，超时/取消独立清场 | 不用 communicate 累积全部执行日志 | 实际子进程大输出、真实超时、取消、既有孤儿进程组回归 |
+| [Claude headless](https://code.claude.com/docs/en/headless) | 官方 stream-json 和最终 result 提取 | 不以提示约束模型必须预估全部日志大小 | Claude 命令断言及大 stderr 后最终结果回归 |
+
+## 多模型协作的参考与取舍
+
+| 参考与决定 | 采用 / 不采用 | 原因 | 行为测试 |
+| --- | --- | --- | --- |
+| [多代理模式原始 Skill 的显式交接](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md) | 采用与解析器一致的只读结果示例；不采用格式失败后的自动重试或结果改写 | 修复生产端提示的契约缺失，保留消费端严格校验与原始失败回执；Skills.sh 分类页不可访问，核对原始 Skill | `test_role_prompt_examples_round_trip_through_the_real_contract`、`test_file_line_ranges_from_the_failed_scout_remain_invalid` |
+| [OpenAI 的代码编排与结构化输出](https://openai.github.io/openai-agents-python/multi_agent/) | 采用类型化、可验证结果 | controller 需要检查输出，而不是转述 agent 对话 | `test_role_result.py` |
+| [Anthropic 的小样本评测与隐私观测](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用固定、显式执行的 16 场景评测 | 先测合规、路由和用量，且报告不存 transcript | `test_multi_model_eval.py` |
+| [Anthropic 的独立方向研究](https://www.anthropic.com/engineering/multi-agent-research-system) | 采用显式异质只读 fan-out | 对高风险任务降低同构偏差，不扩大写入并发 | `test_role_fanout.py` |
+| peer swarm、成员互聊、自动扩容 | 不采用 | 编码任务依赖高；当前目标是可恢复的单写入者控制 | `test_role_flow.py`、`test_runner_lifecycle.py` |
+| [Git rev-parse 路径输出](https://git-scm.com/docs/git-rev-parse) | 采用只移除行终止符的隔离 worktree 身份检查；不新增路径注册表 | 合法路径末尾空格不应改变单写入者隔离判定 | `test_writer_accepts_isolated_worktree_with_trailing_space_in_path` |
+| [OpenAI 模型选择](https://developers.openai.com/api/docs/guides/model-selection)、[GPT-6 迁移](https://developers.openai.com/api/docs/guides/latest-model) | 采用 GPT-6 Luna/Sol 的实际可派发角色分层；不采用串行 Astra 画像 | 只有 runner 能切换模型；Sol high→medium 须经真实同模式任务对比，不把官方建议当作本仓质量结论 | `test_multi_model.py`、`test_multi_model_repo_eval.py` |
+| [OpenAI GPT-6 Skill 指南](https://learn.chatgpt.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)、[skill-creator](https://developers.openai.com/codex/skills) | 采用短入口和按需加载；不新增 GPT-6 专属状态机 | 减少默认上下文与无效角色配置，同时保留既有授权、验证和有限退出边界 | `test_skill_contracts.py`、`test_multi_model.py` |
+| [Claude Code 模型别名](https://code.claude.com/docs/en/model-config) | 采用现有 `haiku`/`sonnet`/`opus` 别名；不钉死具体版本 | 别名随宿主与提供方变化，保留显式 profile 与真实 smoke 门槛 | `test_multi_model.py`、`test_multi_model_smoke.py` |
+| [多代理模式原始 Skill](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/blob/main/skills/multi-agent-patterns/SKILL.md)、[Superpowers 原始 Skill](https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md) | 不采用每角色常驻或每阶段强制新代理 | 更强模型不构成增加代理的证据；保持单控制器与按需隔离 | `test_role_flow.py`、`test_role_dispatch.py` |

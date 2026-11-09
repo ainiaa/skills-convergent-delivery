@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from provider_contract import SUPPORTED_SCHEMA_VERSIONS, provider_manifest_paths
+from runner_contract import CODEX_SYSTEM_PROXY_OVERRIDE
 
 
 EXTENDED_CONTROLLER_FILES = (
@@ -93,6 +94,7 @@ EXTENDED_CONTROL_RESOURCE_FILES = (
     "references/state-schema.md",
     "references/task-routing.md",
     "references/reporting.md",
+    "references/inline-tdd.md",
     "references/tdd-providers.md",
     "evals/evals.json",
     "skills/converge-plan/SKILL.md",
@@ -113,6 +115,7 @@ EXTENDED_CONTROL_RESOURCE_FILES = (
 CORE_CONTROLLER_FILES = (
     "references/execution-control.md",
     "references/execution-protocol.md",
+    "scripts/execution_topology.py",
     "scripts/delivery_engine.py",
     "scripts/plan_execution.py",
     "scripts/tdd_impact_guard.py",
@@ -140,6 +143,9 @@ CORE_CONTROLLER_FILES = (
 CORE_CONTROL_RESOURCE_FILES = (
     "SKILL.md",
     "references/activation.md",
+    "references/execution-topology.md",
+    "references/reference-alignment.md",
+    "references/host-capabilities.md",
     "references/evaluation-scenarios.md",
     "references/evaluation-catalog.json",
     "references/review-orchestration.md",
@@ -147,6 +153,7 @@ CORE_CONTROL_RESOURCE_FILES = (
     "references/state-schema.md",
     "references/task-routing.md",
     "references/reporting.md",
+    "references/inline-tdd.md",
     "references/tdd-providers.md",
     "evals/evals.json",
     "skills/converge-plan/SKILL.md",
@@ -238,14 +245,15 @@ EXTENSION_DEPENDENCIES = {
 # Core is the default controller surface.
 CONTROLLER_FILES = CORE_CONTROLLER_FILES
 CONTROL_RESOURCE_FILES = CORE_CONTROL_RESOURCE_FILES
+EVALUATOR_SCRIPT = "skills/converge-eval/scripts/eval_contract.py"
 TRUSTED_RUN_SCRIPTS = frozenset((
     *(path for path in EXTENDED_CONTROLLER_FILES if path.startswith("scripts/") and "/test_" not in path),
     "skills/converge-batch/scripts/batch_next.py",
     "skills/converge-batch/scripts/batch_state.py",
-    "skills/converge-eval/scripts/eval_contract.py",
+    EVALUATOR_SCRIPT,
 ))
-LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18, 19, 20, 21, 22))
-PROTOCOL_VERSION = 23
+LEGACY_PROTOCOL_VERSIONS = frozenset((16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26))
+PROTOCOL_VERSION = 27
 
 
 def provider_files(root):
@@ -421,7 +429,7 @@ def validate_snapshot(value, *, allow_legacy_release=False):
             raise ValueError("controller snapshot protocol changed")
         valid_files = files == list(snapshot_files(root, snapshot_extensions(value)))
     elif protocol_version in LEGACY_PROTOCOL_VERSIONS:
-        expected_fields = current_fields if protocol_version in {17, 18, 19, 20, 21, 22} else legacy_fields
+        expected_fields = current_fields if protocol_version >= 17 else legacy_fields
         compatible_profile = protocol_version in {18, 19} and fields == legacy_fields
         if fields != expected_fields and not compatible_profile and not allow_legacy_release:
             raise ValueError("controller snapshot protocol changed")
@@ -458,10 +466,93 @@ def validate_snapshot(value, *, allow_legacy_release=False):
     return value
 
 
+def verify_launch_tree(root, files):
+    expected = {*files, "VERSION"}
+    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    for path in (root, *root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            raise ValueError(f"controller snapshot entry is a symlink: {relative}")
+        if path.is_dir():
+            if path.stat().st_mode & writable:
+                raise ValueError("controller snapshot directory is writable")
+        elif relative not in expected:
+            raise ValueError(f"controller snapshot contains an unlisted file: {relative}")
+        elif path.stat().st_mode & writable:
+            raise ValueError("controller snapshot file is writable")
+
+
+def hook_control_command(name, *arguments):
+    return [sys.executable, "-E", "-S", "-B", str(Path(__file__).with_name(name)), *arguments]
+
+
+def isolated_snapshot_command(script, entry, *arguments):
+    bootstrap = """
+import os
+import sys
+from pathlib import Path
+from runpy import run_path
+
+script = sys.argv.pop(1)
+for key in tuple(os.environ):
+    if key.startswith("PYTHON"):
+        del os.environ[key]
+os.environ["PYTHONNOUSERSITE"] = "1"
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+sys.path.insert(0, str(Path(script).parent))
+"""
+    return [sys.executable, "-I", "-S", "-B", "-c", bootstrap + entry, str(script), *arguments]
+
+
+def frozen_host_eval_command(root, arguments):
+    # Scope compatibility to the verified bridge's legacy Codex app-server launch.
+    entry = f"""
+import subprocess
+from types import SimpleNamespace
+
+sys.path.insert(0, sys.argv.pop(1))
+import host_bridge
+
+def launch(command, *args, **kwargs):
+    if tuple(command[1:]) == ("app-server", "--stdio"):
+        command = [*command, "-c", {CODEX_SYSTEM_PROXY_OVERRIDE!r}]
+    return subprocess.Popen(command, *args, **kwargs)
+
+host_bridge.subprocess = SimpleNamespace(**{{**vars(subprocess), "Popen": launch}})
+run_path(script, run_name="__main__")
+"""
+    return isolated_snapshot_command(root / EVALUATOR_SCRIPT, entry, str(root / "scripts"), *arguments)
+
+
+def frozen_autonomy_begin_command(script, arguments):
+    # The frozen controller creates the state. The installed service owns the recurring loop.
+    entry = """
+import subprocess
+from types import SimpleNamespace
+
+live_service = sys.argv.pop(1)
+frozen_service = str(Path(script).with_name("autonomy_service.py"))
+
+def launch(command, *args, **kwargs):
+    if tuple(command[:3]) == (sys.executable, frozen_service, "--serve"):
+        command = [command[0], live_service, *command[2:]]
+    return subprocess.Popen(command, *args, **kwargs)
+
+sys.argv[0] = script
+main = run_path(script)["main"]
+main.__globals__["subprocess"] = SimpleNamespace(**{**vars(subprocess), "Popen": launch})
+raise SystemExit(main())
+"""
+    live_service = Path(__file__).resolve().with_name("autonomy_service.py")
+    return isolated_snapshot_command(script, entry, str(live_service), *arguments)
+
+
 def validate_launch_snapshot(value):
     """Validate immutable snapshot bytes without requiring the live protocol version."""
     if isinstance(value, dict) and "profile" in value:
-        return validate_snapshot(value)
+        snapshot = validate_snapshot(value)
+        verify_launch_tree(Path(snapshot["root"]), snapshot["files"])
+        return snapshot
     fields = {
         "root", "control_root", "source_root", "package_version", "protocol_version",
         "protocol_fingerprint", "extensions", "files",
@@ -489,19 +580,13 @@ def validate_launch_snapshot(value):
         pass
     else:
         raise ValueError("controller snapshot must be isolated from the target workspace")
-    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
-    if root.stat().st_mode & writable or aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
+    verify_launch_tree(root, files)
+    if aggregate_fingerprint(root, files) != value["protocol_fingerprint"]:
         raise ValueError("controller snapshot changed")
-    for directory in (root, *(path for path in root.rglob("*") if path.is_dir())):
-        if directory.is_symlink() or directory.stat().st_mode & writable:
-            raise ValueError("controller snapshot directory is writable")
-    for relative in (*files, "VERSION"):
-        if (root / relative).stat().st_mode & writable:
-            raise ValueError("controller snapshot file is writable")
     if (root / "VERSION").read_text(encoding="utf-8").strip() != value["package_version"]:
         raise ValueError("controller snapshot version changed")
     result = subprocess.run(
-        [sys.executable, str(root / "scripts/controller_snapshot.py"), "validate"],
+        isolated_snapshot_command(root / "scripts/controller_snapshot.py", 'run_path(script, run_name="__main__")', "validate"),
         input=json.dumps(value), text=True, capture_output=True, check=False,
     )
     if result.returncode:
@@ -521,6 +606,8 @@ def managed_state_snapshot(path):
                 "repo_id", "task_key", "run_id"
             )):
         raise ValueError("managed state identity is invalid")
+    if len(path.parents) < 3:
+        raise ValueError("snapshot descriptor must be the managed state path")
     root = path.parents[2]
     expected = root / hashlib.sha256(state["repo_id"].encode()).hexdigest() \
         / hashlib.sha256(state["task_key"].encode()).hexdigest() \
@@ -539,7 +626,10 @@ def trusted_command(descriptor_path, script, arguments):
     snapshot = payload.get("controller", {}).get("snapshot") if isinstance(
         payload, dict
     ) else None
-    value = snapshot or payload
+    return trusted_snapshot_command(snapshot or payload, script, arguments)
+
+
+def trusted_snapshot_command(value, script, arguments):
     release = script == "scripts/delivery_lease.py" and arguments[:1] == ["release"]
     if release and isinstance(value, dict) and value.get("protocol_version") != PROTOCOL_VERSION:
         validate_snapshot(value, allow_legacy_release=True)
@@ -551,16 +641,53 @@ def trusted_command(descriptor_path, script, arguments):
     frozen = validate_launch_snapshot(value)
     if script not in TRUSTED_RUN_SCRIPTS or script not in frozen["files"]:
         raise ValueError("controller snapshot script is not authorized")
-    if script == "scripts/autonomy_service.py" and not {
-        "autonomy", "multimodel"
-    }.issubset(snapshot_extensions(frozen)):
-        raise ValueError("autonomous service requires autonomy and multimodel extensions")
-    return [sys.executable, str(Path(frozen["root"]) / script), *arguments]
+    if script == "scripts/autonomy_service.py":
+        if not {"autonomy", "multimodel"}.issubset(snapshot_extensions(frozen)):
+            raise ValueError("autonomous service requires autonomy and multimodel extensions")
+        from autonomy_service import parse_service_arguments
+        if not parse_service_arguments(arguments).frozen_runtime:
+            live_service = Path(__file__).resolve().with_name("autonomy_service.py")
+            return [sys.executable, str(live_service), *arguments]
+    if script == "scripts/delivery_state.py" and "doctor" in arguments:
+        from delivery_state import parse_state_arguments
+        if parse_state_arguments(arguments).command == "doctor":
+            live_diagnostic = Path(__file__).resolve().with_name("delivery_state.py")
+            return [sys.executable, str(live_diagnostic), *arguments]
+    root = Path(frozen["root"])
+    if script == "scripts/autonomy_begin.py" and "scripts/autonomy_service.py" in frozen["files"]:
+        return frozen_autonomy_begin_command(root / script, arguments)
+    if script == EVALUATOR_SCRIPT and "scripts/host_bridge.py" in frozen["files"]:
+        return frozen_host_eval_command(root, arguments)
+    return [sys.executable, str(root / script), *arguments]
+
+
+def replay_next_command(saved, *, lease_root=None):
+    """Replay a saved doctor check through this launcher with its original owner and revision."""
+    script = "scripts/delivery_next.py"
+    if not isinstance(saved, list) or len(saved) not in (16, 18) \
+            or any(not isinstance(arg, str) or not arg for arg in saved) \
+            or Path(saved[1]).name != "controller_snapshot.py" or saved[2:4] != ["run", "--descriptor"] \
+            or saved[5:8] != ["--script", script, "--"]:
+        raise ValueError("saved next_command is not a frozen recovery check")
+    arguments = saved[8:]
+    keys = arguments[::2]
+    identity = ["--run-id", "--writer-id", "--revision"]
+    if keys not in (["--state", *identity], ["--state", "--lease-root", *identity]) \
+            or arguments[1] != saved[4]:
+        raise ValueError("saved next_command has invalid state or owner arguments")
+    snapshot = managed_state_snapshot(saved[4])
+    if lease_root is not None:
+        lease_root = Path(lease_root).expanduser().resolve()
+        if "--lease-root" not in keys:
+            arguments.extend(("--lease-root", str(lease_root)))
+        elif Path(arguments[3]).expanduser().resolve() != lease_root:
+            raise ValueError("saved next_command already binds a different lease root")
+    return trusted_snapshot_command(snapshot, script, arguments)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("create", "validate", "run"))
+    parser.add_argument("command", choices=("create", "validate", "run", "replay-next"))
     parser.add_argument("--source")
     parser.add_argument("--root")
     parser.add_argument("--descriptor")
@@ -568,7 +695,7 @@ def main():
     parser.add_argument("--extension", action="append", default=[])
     arguments, remainder = parser.parse_known_args()
     try:
-        if arguments.command != "run" and remainder:
+        if arguments.command in ("create", "validate") and remainder:
             raise ValueError(f"unexpected arguments: {' '.join(remainder)}")
         if arguments.command == "create":
             if not arguments.source or not arguments.root:
@@ -576,6 +703,11 @@ def main():
             result = create_snapshot(arguments.source, arguments.root, arguments.extension)
         elif arguments.command == "validate":
             result = validate_snapshot(json.load(sys.stdin))
+        elif arguments.command == "replay-next":
+            replay = argparse.ArgumentParser(prog="controller_snapshot.py replay-next")
+            replay.add_argument("--lease-root")
+            command = replay_next_command(json.load(sys.stdin), lease_root=replay.parse_args(remainder).lease_root)
+            os.execv(sys.executable, command)
         else:
             if not arguments.descriptor or not arguments.script:
                 raise ValueError("run requires --descriptor and --script")

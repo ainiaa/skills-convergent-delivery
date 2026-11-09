@@ -22,6 +22,8 @@ bash install.sh --autonomy-uninstall --target <codex|claude>
 
 `autonomy_begin.py --runtime service --service-runner <id> --verification-argv '<JSON argv>' --audit-argv '<JSON argv>'` 创建 low-risk service run，并只启动该 run 的项目内 state path；不会扫描其他项目。state 和 lease 默认位于 Git common-dir 的 `.git/convergent-delivery/state` 与 `leases`，也可显式传入共享 root。无需安装 LaunchAgent：service Stop Hook 对有效 run 直接 approve。argv 在 arm 时冻结、相互不同，不能是 shell 字符串。语义风险用 `--risk-flag` 声明，与路径风险合并后只要进入 high review tier 就拒绝 service。每次仅以该 state 冻结的 implementer runner 执行一个 gate action：先持久化 `intent → running` 和冻结 runner launch，启动后写入匹配 runner receipt，再记录回执为 `observed`，并实际执行冻结 verifier；controller 使用 verifier 收据原子更新 source receipt 和阶段，再写为 `committed`。失败 verifier 与 audit 都以 fail check 保存完整 receipt。最终独立 audit 必须在同一 source 通过，才在同一写入归档验收并记录完整 manifest 的 pass audit；runner 不能写 managed state。可写状态的异常会持久化为 blocked；终态 lease 必须返回 `released`，否则服务以手工恢复错误退出；重启发现 `running` 也按未知结果 `blocked/no_progress`，绝不猜测性重放。
 
+旧 service 从冻结目录启动时仍使用该目录下的启动器。确认旧进程已退出、原租约仍有效后，可从当前安装路径用 `autonomy_service.py --serve --state <原状态文件> --state-root <原状态目录> --lease-root <原租约目录>` 接续同一 run。若上一动作仍记为 `running`，现有恢复规则会将结果标为未知并阻塞。
+
 service 只能执行 `execute-inline` 和带 `phase` 的 `verify`；其他宿主 controller action 不启动 external runner，也不将该 action 改写为模型阶段，并持久化 `blocked/no_progress`。
 
 ## 决策语义
@@ -33,10 +35,14 @@ Hook 从 stdin 读取宿主提供的 `cwd`。仅当该 Git 项目 `.git/converge
 - 多个 run、状态损坏（含不可解析或非对象 JSON）、scope/risk 漂移或证据不新鲜：block 并写明可恢复原因。
 - 没有 run、非自治 run 或无效宿主 payload：approve，不干扰普通任务。非 Git cwd 的 `continue repair` Prompt 不 arm，也不阻断该用户消息；旧版以子目录建的 active run 仍优先按原 workspace 接续。
 
-Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是 arm 受限 repair gate、写入 continuation intent，或将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Codex 原生 Stop continuation 不需要 `session_id`/`thread_id`，因此 Desktop 与 CLI 使用同一 adapter。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次 block 后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
+Hook 不执行模型命令、不推进业务状态、不保存 prompt/transcript，也不能创建后台恢复；唯一写入例外是 arm 受限 repair gate、写入 continuation intent，或将 Codex/Claude continuation 的确定失败收束为 `blocked/no_progress`。Stop 续跑要求宿主事件的 `session_id` 匹配冻结归属。冻结控制器只处理已核对的 run 和 revision，仍通过租约及 CAS 写入。显式 `SubagentStop` 事件直接放行。native v11 无 finding 路径最多五次连续续跑，一次 finding 修复最多七次，均低于 Claude 的八次宿主保护上限；未推进源码、阶段或动作的 Codex/Claude run 在一次 block 后停止自动续跑。用户停止、权限/不可逆决策、没有进展或宿主能力缺失必须按现有状态机进入 `blocked` 或 decision gate。
 
 本轮参考取舍：采用 [HumanLayer 控制回路](https://github.com/humanlayer/skills/blob/main/plugins/design-control-loop/skills/design-control-loop/SKILL.md) 的单一可重复测量边界，复用已有 Source Receipt 而不增加第二个全仓文件扫描；不采用其定时 actuator/记忆文件，因为本 Hook 只处理当前任务的一次有限续跑。对应行为测试为 `test_subdirectory_prompt_uses_repo_root_without_unchanged_security_risk`。采用 [Superpowers 新鲜验证](https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md) 的当前源码证据原则，不把风险路径扫描当作验收；对应 `test_autonomy_prompt_hook.py` 与全量测试门禁。
 
 ## Arm
 
-用户明确闭环后，controller 从已验证的 active Schema v10 state 生成候选 v11 状态。`autonomy_arm.py` 默认只输出候选；显式 `--write` 时必须提供既有 lease、state root、run/writer/repo/task 和 expected revision，并委托 `delivery_state.py write` 以同一 CAS 原子落盘。它必须带至少一个 requirement 与 acceptance，scope 自动来自既有 frozen routing；缺任何写入身份或比较版本即拒绝，所以旧状态不会被静默升级。
+用户明确闭环后，controller 从已验证的 active Schema v10 state 生成候选 v11 状态。`autonomy_arm.py` 默认只输出候选；显式 `--write` 时必须提供既有 lease、state root、run/writer/repo/task 和 expected revision，并委托 `delivery_state.py write` 以同一 CAS 原子落盘。Hook 模式另需 `--host-session-id`，Stop 在调用冻结控制器和写入状态之前核对该归属。它必须带至少一个 requirement 与 acceptance，scope 自动来自既有 frozen routing；缺任何写入身份或比较版本即拒绝，所以旧状态不会被静默升级。
+
+冻结 Stop 的校验和执行都从已核验的快照源码启动。快照有清单外文件或符号链接时拒绝启动。校验、冻结 Stop、状态写入和租约释放的 Python 子进程禁用站点启动（含 `.pth`）与外部 Python 搜索路径。冻结入口只为旧 Hook 的两条控制命令补齐隔离参数，不修改旧快照。Codex 子进程的其他 Hooks 继续沿用宿主配置。
+
+重新运行 Codex 的 `--autonomy` 安装会原位更新 Converge 自己的 Stop 和 UserPromptSubmit 命令，使外层 Python 启动也跳过 `.pth`。同组 Hooks 的位置和配置保持原样。Codex 按命令定义的哈希记录信任，更新后从 `/hooks` 审核这些命令。[Codex Hook 信任](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks)

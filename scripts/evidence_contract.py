@@ -204,6 +204,11 @@ def test_execution_result(argv, stdout, stderr):
                 return None
             row = {aliases[key.strip()]: int(value) for key, value in outcomes.items()}
             row['passed'] = int(total) - sum(row.values())
+            if row['passed'] < 0 and int(total) > 0 and status == 'FAILED':
+                subtests = re.findall(r'^(?:FAIL|ERROR): .+ \([^\n]+\) \([^\n]+\)$', output, re.M)
+                if len(subtests) >= -row['passed']:
+                    # Subtest failures can exceed parent tests; no passing parents are proven here.
+                    row['passed'] = 0
             if status == 'FAILED' and not any(row.get(key, 0) for key in ('failed', 'errors', 'xpassed')):
                 return None
             rows.append(row)
@@ -764,6 +769,12 @@ def run_evidence(workspace, baseline_commit, argv, timeout_seconds=DEFAULT_TIMEO
     test_check = test_execution_result(argv, stdout, stderr)
     if test_check is not None:
         receipt['test_check'] = test_check
+    if exit_code == 1 and re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', Path(argv[0]).name.lower()) \
+            and not any((test_check or {}).get(key, 0) for key in ('failed', 'errors', 'xpassed')) \
+            and (re.search(rb'(?m)^ModuleNotFoundError: No module named ', stderr)
+                 or re.search(rb'(?m)^ImportError: (?:cannot import name|No module named) ', stderr)
+                 or re.search(rb'(?m)^[^\r\n]*python[^\r\n:]*: No module named ', stderr)):
+        receipt['tooling_failure'] = 'unavailable'
     mutation_check = mutation_execution_result(argv, stdout) if exit_code == 0 else None
     if mutation_check is not None:
         receipt['mutation_check'] = mutation_check
@@ -801,8 +812,10 @@ def validate_observed_evidence_receipt(item):
     if item["runner_fingerprint"] != _runner_fingerprint() \
             or item.get("evidence_level") != "observed":
         raise ValueError("Evidence Receipt provenance is invalid")
-    if 'tooling_failure' in item and (item['tooling_failure'] not in {'timed_out', 'unavailable'} \
-            or item['exit_code'] != {'timed_out': 124, 'unavailable': 127}.get(item['tooling_failure'])):
+    if 'tooling_failure' in item and not (
+            item['tooling_failure'] == 'timed_out' and item['exit_code'] == 124
+            or item['tooling_failure'] == 'unavailable' and (item['exit_code'] == 127
+                or item['exit_code'] == 1 and re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', Path(item['argv'][0]).name.lower()))):
         raise ValueError('Evidence Receipt tooling observation is invalid')
     if 'test_check' in item:
         check = item['test_check']

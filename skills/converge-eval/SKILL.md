@@ -9,6 +9,8 @@ metadata:
 
 只负责有限、可复现的行为评估。不得实现候选规则、修改被测工作区、替代 `converge-review` 做代码审查，或直接执行外部副作用。
 
+先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_EVAL_SKILL_DIR`；Suite helper 从其上两级目录解析，不能依赖被测仓库的 `scripts/`。
+
 ## 当前能力预检
 
 确定性规则和脚本回归优先使用下一节的 `--preflight --deterministic`。模型行为评估先运行 `python3 "$CONVERGE_EVAL_SKILL_DIR/scripts/eval_contract.py" --preflight`：只有 Codex app-server schema 与 Claude Code 会话清单均可用时才返回 `status=ready`。此预检只证明适配器可连接，不证明模型调用能成功；真实任务若失败、超时或连接中断仍返回 `uncovered`。任一宿主不可用、身份漂移或会话状态未知时也返回 `uncovered`，绝不伪造成功回执。
@@ -17,7 +19,7 @@ metadata:
 
 ## 确定性进程 bridge
 
-`--preflight --deterministic` 探测本地进程模式；此模式运行真实 unittest 判定器，不调用模型、不创建 worker。必须从仓库外的 Controller Snapshot 启动，复用上述 trusted runner，并在 Eval 参数中加入 `--deterministic`。请求文件包含：
+`--preflight --deterministic` 探测本地进程模式；此模式运行真实 unittest 判定器，不调用模型、不创建 worker。用下方 trusted runner 启动仓库外的 Controller Snapshot。请求文件包含：
 
 ```json
 {
@@ -29,17 +31,22 @@ metadata:
 }
 ```
 
+```bash
+python3 "$CONVERGE_EVAL_SKILL_DIR/../../scripts/controller_snapshot.py" run \
+  --descriptor <old-snapshot-or-state-json> \
+  --script skills/converge-eval/scripts/eval_contract.py -- \
+  --deterministic --input <evaluation-request.json> --repository <absolute-candidate-repository>
+```
+
 `suite` 只从 control tree 读取，须在候选修改前冻结；它包含 `allowed_scope`、`touched_control_surfaces` 和 `scenarios`。每个场景为 `{"id":"唯一验收或历史 ID","class":"known_acceptance|history|exploration","judge":"evals/test_case.py"}`。判定器使用独立、非空的标准库 unittest 文件，通过 cwd 或导入目标模块测试被测行为；判定逻辑不得从 candidate 的测试辅助文件动态加载。至少一个 known acceptance，且包含旧 catalog 中全部匹配 history ID。
 
 场景和判定器都来自 control；候选不得修改它们或超出 allowed_scope。helper 为每个场景的每一侧重新导出 Git tree，单独运行冻结判定器，退出后确认进程组清场并删除临时目录；仅支持指向临时工作区内部的相对符号链接。最多 32 个场景，总预算最多 600 秒；零测试、跳过、预期失败、错误、超时归为 uncovered；对照侧缺证据不能计为修复。exploration 单列且不抵消 gating 失败。不接受外部手填的结果样本。
 
 无宿主字段时，结果为 `deterministic-eval-v1`、`evidence_level=process_observed` 且 `release_status=uncovered`。带宿主字段时，结果为 `host_observed`，包含每侧受限宿主回执；只有全部 gating 侧均通过才可输出对应 release status。临时目录与进程组是测试隔离，不是针对恶意代码的 OS sandbox；只运行已授权的本地测试。
 
-首次加入该 bridge 时，旧快照没有此入口，不能用新候选自证旧版 locked Eval 通过。该次实现以真实 bridge 集成回归验证；后续任务可以冻结已含 bridge 的旧版本后使用。默认模型模式和既有 v5 离线统计契约保持不变，以下 worker/multi-sample 规则仅适用于模型模式。
+冻结 suite 与 judge 必须以相同字节同时存在于 control 与 candidate 两棵树。快照使用 control 树自带的 `controller_snapshot.py` 创建，附着只添加已冻结的 suite 和 judge。
 
-## 输入与冻结
-
-先将本 `SKILL.md` 所在目录的绝对路径记为 `CONVERGE_EVAL_SKILL_DIR`；Suite helper 从其上两级目录解析，不能依赖被测仓库的 `scripts/`。
+## 模型评估输入与冻结
 
 开始前读取 [机器契约](references/evaluation-contract.json)。修改 Converge 自身时，必须在接触 candidate 前创建 Controller Snapshot；本轮 catalog、judge 和 evaluator 只能来自该旧快照，不能从 candidate 读取。control/candidate 必须是被测 Git 仓库可解析、tree 不同的完整 commit 或 tree。`worker_state_source` 必须是 `delivery_state.py` 在候选项目 Git common-dir 的 `.git/convergent-delivery/state` 下推导的正式 Single State v10 路径，并绑定当前 `--repository` workspace 与正在执行的旧 Snapshot；其中样本 worker 均为 completed evaluator，且 tree receipt 为 host-observed、无 active/unexpected refs。不得自由填写平行 worker registry。每个样本的 `touched_paths` 必须是 `allowed_scope` 内不含绝对路径、反斜杠或 `..` 的仓库相对路径。Sample v4 的 `evidence_source` 必须是候选仓库外的绝对 JSON artifact，使用 `evaluator_attested` 明确其来源级别，并绑定 worker、judge 与双侧结果；它不能冒充宿主直接签名的结果。旧 `samples=["pass"]` 或 Sample v3 不是证据，必须拒绝。
 
@@ -55,10 +62,6 @@ python3 "$CONVERGE_EVAL_SKILL_DIR/../../scripts/controller_snapshot.py" run \
 request 中的 `judge_source` 必须精确指向 `<old-snapshot-root>/skills/converge-eval/references/evaluation-contract.json`；helper 从自己的旧快照读取 `references/evaluation-catalog.json`，用同一快照的 `delivery_next.py` 完整校验 Single State，并在结果中输出 judge、catalog、evaluator、state-validator 与 worker-state fingerprint。缺少旧快照或正式 worker state 时必须阻塞。
 
 control 与 candidate 必须运行相同场景、输入、判定器和样本预算；分别保存原始结果，再计算差分。不能冻结旧版时不得用当前候选冒充对照。
-
-确定性桥的三项操作约束（首次 dogfood 实证）：冻结 suite 与 judge 文件必须以字节相同的形式同时存在于 control 与 candidate 两棵树——diff 检查会把两侧不一致的 suite/judge 路径判为 `candidate changes frozen judges, suite, or files outside allowed scope`，不存在"只在 control 侧、helper 自动豁免"的语义；创建 Controller Snapshot 必须使用 control 树自带的 `controller_snapshot.py`，否则新协议描述符会被冻结 evaluator 自带的校验器拒绝；把 suite 附着到 candidate 树时只允许新增 suite/judge 文件本身，附着操作的精确性由 `git diff --name-only` 的路径数核对。
-
-仅 Controller Protocol v9→v10 首次把 Eval helper 加入 trusted runner 时，旧 v9 Snapshot 虽含 helper 但确定性拒绝执行。该次迁移必须保存旧 runner 的 unauthorized 证据、一个 fresh 独立只读 evaluator 报告和全量/定向测试，并把 locked differential 明确列为 `uncovered`；不得宣称 locked eval 通过。此 bootstrap 不适用于 v10 之后的任何变更。
 
 ## 场景集合
 

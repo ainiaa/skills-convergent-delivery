@@ -12,7 +12,7 @@
 
 ### 计划校验未覆盖不撤销实现授权
 
-计划校验是质量门禁，不是对已授予 `implementation_authorized` 的撤销。校验修复一次后，控制器把原始错误和首个冻结 `task_id` 交给 `python3 scripts/plan_execution.py`。只有 helper 识别的 `tooling`（例如 CodeGraph 无法索引一个非代码路径）才返回 `execute`：控制器记录相同错误为 `uncovered`，随后进入首个冻结步骤；不得为同一错误再次请求授权或停在“已计划”。helper 返回 `blocked` 时才停止，包含未决决策、权限、安全、不可逆事项和所有未知/契约错误。无论哪条分支，都不得把 `uncovered` 写成已验证、已完成或全量收口。
+计划校验是质量门禁。用户已授权实现（`implementation_authorized=true`）时，校验修复一次后，把原始错误和首个冻结 `task_id` 交给 `python3 "$CONVERGE_SKILL_DIR/scripts/plan_execution.py" --task-id <task> --implementation-authorized --validation-error <error>`。已有结构化预检结果时改用 `--validation-json <validation-json>`。只有 helper 识别的 `tooling` 才允许带着 `uncovered` 继续首个冻结步骤。真实失败、未知契约、未决决策和权限缺口按 helper 的阻塞结果收口。有新环境通过证据时沿用候选和有效复验预算。
 
 Codex 等宿主提供原生计划工具时，主控制器负责同步，不把该责任交给 Provider 或 worker。未要求分步展示的简单 `inline` 不创建宿主计划项；普通同会话计划从已冻结任务及完成证据派生宿主步骤状态，不为显示额外创建持久 run。持久任务 active/complete 路径只在 `delivery_next` 返回 `sync-plan` 时同步 `delivery_progress projection`，宿主返回成功后才以 `host_observed` 确认相同 projection fingerprint，不允许控制器自述冒充宿主回执。投影不包含 revision 或确认字段，因此确认写入不会制造新一轮同步。
 
@@ -22,7 +22,7 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 多任务控制器先冻结 Plan v6 的 `depends_on`、`owned_paths` 和独立验证命令；不按文件不同就推断业务独立。单任务 `block` 仍停止该 run；父控制器只在确认它已停止、清场和源码边界安全后选择其他事项。用户停止、权限/业务决定、真实验证失败、未知派发结果、清场不明或预算耗尽始终阻塞整个运行。工具缺失/超时只能分类为该项的局部证据缺口，不满足它的依赖，也不放行最终 complete。
 
-普通同会话计划每次推进前，把既有 `{plan, task_results, final_acceptance}` 审计 envelope 经 stdin 交给 `python3 scripts/plan_execution.py --input - --workspace <workspace> --implementation-authorized`。它先调用完成审计核对源码链、范围与每条冻结验证命令，只有 audited DONE 才满足依赖。工具阻塞记录为 `task_results.<id>={status:PARTIAL, blocker:{reason:<精确工具分类>, evidence:<observed failure receipt>}}`；若该项已产生源码改动，还须保留真实 `source_before/source_after`，审计会核对部分改动的范围和源码链。分类仅为 `native acceptance tool is unavailable` 或 `native acceptance tool timed out`。无关任务按冻结顺序推进；直接/间接依赖和重叠路径任务等待。结果中的 `progress.blocked/waiting/blocker_reasons` 是用户进度来源，不另建可写真相。
+普通同会话计划每次推进前，把既有 `{plan, task_results, final_acceptance}` 审计 envelope 经 stdin 交给 `python3 "$CONVERGE_SKILL_DIR/scripts/plan_execution.py" --input - --workspace <workspace> --implementation-authorized`。它先调用完成审计核对源码链、范围与每条冻结验证命令，只有 audited DONE 才满足依赖。工具阻塞记录为 `task_results.<id>={status:PARTIAL, blocker:{reason:<精确工具分类>, evidence:<observed failure receipt>}}`；若该项已产生源码改动，还须保留真实 `source_before/source_after`，审计会核对部分改动的范围和源码链。分类仅为 `native acceptance tool is unavailable` 或 `native acceptance tool timed out`。无关任务按冻结顺序推进；直接/间接依赖和重叠路径任务等待。结果中的 `progress.blocked/waiting/blocker_reasons` 是用户进度来源，不另建可写真相。
 
 普通计划 envelope 必须提供 `runtime_state_path`，指向现有受管 Single State；计划 ID 与该 run 的 task_key 一致。入口核对当前源码、规范状态路径和实际 writer 租约，再核对 worker、runner 与未结束 action attempt。缺少状态、全局 blocked、未知派发或清场未完成时停止，不用验收工具回执推断整个任务已停止。局部阻塞记在 task_results，父 run 保持 active；普通实现动作结束后持久化实际 outcome 与失败回执指纹，结果或失败证据丢失时停止；已有动作记录还按实际顺序核对依赖，不能靠重排源码轨迹掩盖倒序执行；恢复执行使用现有 autonomy action attempts，在执行前持久化 helper 返回的 implementation-recovery intent，提交后的相同任务恢复动作不可重放，缺少持久化动作记录能力时保持阻塞；完整重建包括修改后回退、无改动回执和恢复前尝试的源码边界链，所有提供的边界必须接入从基线到当前源码的链。源码链中的尝试必须满足当时已完成的显式依赖与共享范围顺序；任务其它证据或当前源码的最终验收证据中存在真实失败时仍全局停止。最终验收工具故障必须先把 observed 回执持久化到现有 ledger.acceptance；更新由原 acceptance_history 留存，输入清空或源码变化不能解除历史工具缺口。只有同一工具在当前源码上的真实通过证据才能解除该缺口。已确认的最终工具阻塞只有在全部任务完成、全部冻结验收有当前通过证据且旧故障 argv 全部匹配时，才可从 blocked 直接进入正常 complete 校验；不恢复 active 或业务写入。普通父状态还须为 environment 分类，源码保持不变，完成、预算、清场与验收历史门禁继续执行。
 
@@ -67,7 +67,11 @@ Codex 等宿主提供原生计划工具时，主控制器负责同步，不把�
 
 这不是针对恶意篡改本地文件、宿主或调用链的安全承诺。不为恶意篡改额外引入签名服务、后台守护、平行日志或第二状态；当前范围内优先让正常控制路径不能因模型自述而放行。若未来需要对抗恶意来源，先由宿主提供可验证 provenance，再单独设计和授权。
 
-writer lease 的同身份 acquire 重试不续租，只返回两份已持有租约中最早的真实到期时间。任一租约已过期时返回 blocked_*_expired；原 owner 可显式 renew，或在确认旧执行停止后显式 takeover。task lease 获取失败不能删除此前已持有的 workspace lease；本次新获取的 workspace lease 仍按原有回滚规则释放。
+### 租约冲突与过期清理
+
+同身份 acquire 重试不续租，只返回两份已持有租约中最早的真实到期时间。遇到过期的同仓库租约时，`delivery_lease.py acquire` 在原有文件锁下核对旧 owner、剩余租约的到期时间，以及终态和清场证据。全部通过后直接释放旧租约，保留旧状态及回执，并尝试在原请求的工作区获取一次新租约。这也适用于仅剩任务租约或使用旧路径的工作区租约。获取 task lease 和失败回滚均在两把锁下核对当前租约，保留并发重试已取得的租约，显式接管被拒时恢复被替换的旧租约。
+
+遇到活跃占用，或过期但缺少终态或清场证据时，保留原记录。控制器收到 `recommended_action=ask_user` 或查到仍未解决的旧任务冲突时，先只读核对旧任务、工作区及阻塞原因。若用户尚未指定处理方式，给出一个推荐并等待答复。等待期间不得新建或切换 worktree、接管、手工清理或绕过租约写入。已明确的处理指示直接沿用，接管仍须确认旧执行已停止。
 
 acquire 的幂等判断和 move 的来源/目标检查均核对 kind、repo、workspace、task、run、writer 完整归属；复用 run/writer 但错填工作区或任务不算同一租约。renew 在固定顺序持有两份文件锁并核对完整归属后才续租，身份错误不能先更新其中一份。move 身份错误不删除来源租约，也不创建目标租约。
 
@@ -81,7 +85,7 @@ release 按固定顺序持有两份租约的文件锁，核对各自 kind 与完
 
 service 在记录 runner result、observation 或 blocked 状态时采集当前 Source Receipt；源码变化只追加空的 review round，历史审查保留，不把采集动作当作验证通过。扫描和恢复仅对 active 且末次动作为 running/observed 的状态允许旧工作区快照，其他结构、范围、风险和租约校验不放宽；running 记录未知后阻塞，observed 重新执行冻结 verifier，均不重放模型动作。
 
-正式任务的 lease release 统一核对每条 runner launch 的结果契约与指纹。缺少结果或结果为 unknown 时无法确认外部进程已清场，必须保留租约并报告手工恢复；不得猜测 PID、重放动作或将 blocked 等同于清场完成。确定退出的 completed/failed/timed_out/output_exceeded 结果才通过 runner 清场检查。租约过期不会自动允许第二个 writer，仍须显式 takeover；接管前必须人工确认旧执行已停止。native service 通过模型 JSON 返回的 `tdd_trace` 收集候选证据，见 [TDD 提供者](tdd-providers.md)；最终验证必须重跑候选后才写 complete。
+正式任务的 lease release 统一核对每条 runner launch 的结果契约与指纹。缺少结果或结果为 unknown 时无法确认外部进程已清场，必须保留租约并报告手工恢复；不得猜测 PID、重放动作或将 blocked 等同于清场完成。确定退出的 completed/failed/timed_out/output_exceeded 结果才通过 runner 清场检查。native service 通过模型 JSON 返回的 `tdd_trace` 收集候选证据，见 [TDD 提供者](tdd-providers.md)；最终验证必须重跑候选后才写 complete。
 
 service 只执行 `execute-inline` 或带 `phase` 的 `verify`。其他宿主 controller action 必须由同会话控制器处理；service 遇到它们立即停止，绝不降级为普通模型阶段，并写为 `blocked/no_progress`。
 
@@ -157,7 +161,7 @@ Provider 负责在当前 task 内完成有效红灯、最小实现和绿灯。�
 
 ### 6.1 全量收口矩阵
 
-“修复全部已知问题”“还有没有其他问题”“深度审查”“彻底检查”“不留遗漏”以及“全部完成”都要求控制器明确决定是否为全量收口；该决定必须作为 `full_closure_required=true` 冻结，不能交给关键词匹配。开始修改前必须调用 `converge-plan`，以 CodeGraph/实际调用链冻结有限矩阵；已带 `planned_task=true` 的 capsule 也必须携带该矩阵，缺失即 `blocked`，不能借递归保护跳过。
+按完整请求语义核对用户明确要求的范围。当前事项的复审或“全部完成”沿用原范围。只有用户明确要求全量收口时，才冻结 `full_closure_required=true`，并在首次写入前调用 `converge-plan`，以 CodeGraph 和实际调用链冻结有限矩阵。已带 `planned_task=true` 的全量收口 capsule 也必须携带该矩阵，缺失即 `blocked`。
 
 每一条受影响的数据或控制链都必须覆盖：`输入`（提示词、文件、CLI/API 和解析边界）、`冻结`（范围、验收、配置、源码身份）、`副作用`（写入/外部调用及其所有共享入口和 caller）、`回执`（结果、状态完成门禁）以及`恢复`（异常、并发、超时、重试和终态清场）。将每一格映射为 task acceptance 或 `final_acceptance`；每项必须有最后修改后的新鲜正/负向证据，或有可核查的 `not_applicable` 理由。`plan_check.py audit --require-complete` 继续作为唯一完成门禁。
 

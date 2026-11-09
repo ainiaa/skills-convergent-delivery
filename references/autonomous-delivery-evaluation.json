@@ -48,7 +48,7 @@
     {"id": "autonomy-repair-stage-required", "check": ["scripts/test_delivery_state.py", "DeliveryStateTest.test_autonomy_repair_budget_cannot_be_consumed_outside_its_repair_stage"]},
     {"id": "hook-no-progress-terminalizes", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_second_native_stop_terminalizes_no_progress_then_allows_the_report"]},
     {"id": "hook-config-preserves-peers", "check": ["scripts/test_autonomy_hook_config.py", "AutonomyHookConfigTest.test_add_remove_preserves_peer_hooks_and_never_duplicates_its_exact_entry"]},
-    {"id": "hook-native-stop-no-session", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_codex_does_not_require_a_session_identifier_for_native_stop"]},
+    {"id": "hook-native-stop-no-session", "check": ["scripts/test_autonomy_hook.py", "AutonomyHookTest.test_unbound_legacy_hook_does_not_write_or_release_a_lease"]},
     {"id": "service-verifier-failure-receipt", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_the_failed_verifier_receipt"]},
     {"id": "service-reaudit-finding-receipt", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_records_a_reaudit_finding_after_the_repair_budget_is_spent"]},
     {"id": "service-non-object-state-visible", "check": ["scripts/test_autonomy_service.py", "AutonomyServiceTest.test_service_scan_reports_a_non_object_managed_state"]},

@@ -302,7 +302,7 @@ class ReviewEnvironmentRecoveryTest(unittest.TestCase):
         self.assertEqual(state['ledger'],after['ledger'])
         self.assertEqual(1,after['execution_control']['review']['re_review_budget_remaining'])
         self.assertEqual(state['controller'],after['execution_control']['review']['recovery']['previous_controller'])
-        self.assertEqual(23,after['controller']['protocol_version'])
+        self.assertEqual(new['protocol_version'],after['controller']['protocol_version'])
         for revision in ('0','1'):
             result=subprocess.run([*resume[:-1],revision],input=payload,text=True,capture_output=True)
             self.assertNotEqual(0,result.returncode)
@@ -310,9 +310,10 @@ class ReviewEnvironmentRecoveryTest(unittest.TestCase):
 
 
     def test_recovery_candidate_changes_only_status_revision_and_explicit_controller(self):
+        from controller_snapshot import PROTOCOL_VERSION
         old_controller={'snapshot':{'extensions':['multimodel']},'extensions':['multimodel']}
-        new_controller={**old_controller,'protocol_version':23,
-                        'snapshot':{**old_controller['snapshot'],'protocol_version':23}}
+        new_controller={**old_controller,'protocol_version':PROTOCOL_VERSION,
+                        'snapshot':{**old_controller['snapshot'],'protocol_version':PROTOCOL_VERSION}}
         state=copy.deepcopy(self.state)
         state.update(status='blocked',blocked_code='environment',blocked_reason='readonly sandbox',controller=old_controller,workers=[],run_id='run-1',writer_id='writer-1',repo_id='/repo')
         before=copy.deepcopy(state)

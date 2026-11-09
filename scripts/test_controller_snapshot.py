@@ -2,12 +2,14 @@ import importlib.util
 import io
 import json
 import os
+import py_compile
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import stat
+import venv
 from unittest import mock
 from pathlib import Path
 
@@ -49,7 +51,106 @@ REQUIRED_CONTROL_REFERENCES = (
 )
 
 
+def python_with_startup_marker(root):
+    environment = root / "python-env"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin" / "python"
+    purelib = subprocess.check_output(
+        [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True,
+    ).strip()
+    marker = root / "site-startup-ran"
+    (Path(purelib) / "converge-test.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).touch()\n", encoding="utf-8",
+    )
+    subprocess.run([str(python), "-c", "pass"], check=True)
+    marker.unlink()  # A normal startup must have processed the marker.
+    return python, marker
+
+
 class ControllerSnapshotTest(unittest.TestCase):
+    def test_core_snapshot_can_follow_root_guidance_and_run_topology_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            frozen = Path(descriptor["root"])
+            for name in ("execution-topology.md", "reference-alignment.md", "host-capabilities.md"):
+                path = Path("references") / name
+                with self.subTest(path=path):
+                    self.assertEqual((ROOT / path).read_bytes(), (frozen / path).read_bytes())
+
+            topology = {
+                "schema_version": 1, "mode": "sequential",
+                "writers": [{"id": "controller", "workspace": directory, "allowed_paths": ["src"],
+                             "isolation_evidence": ["single writer"]}],
+                "integrator": None, "joint_verification": [],
+            }
+            result = subprocess.run([sys.executable, str(frozen / "scripts/execution_topology.py")],
+                                    input=json.dumps(topology), cwd=directory, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_protocol_25_without_the_added_resources_remains_readable(self):
+        resources = tuple(path for path in controller_snapshot.CORE_CONTROL_RESOURCE_FILES if path not in {
+            "references/execution-topology.md", "references/reference-alignment.md", "references/host-capabilities.md",
+        })
+        scripts = tuple(path for path in controller_snapshot.CORE_CONTROLLER_FILES
+                        if path != "scripts/execution_topology.py")
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(controller_snapshot, "PROTOCOL_VERSION", 25), \
+                    mock.patch.object(controller_snapshot, "CORE_CONTROL_RESOURCE_FILES", resources), \
+                    mock.patch.object(controller_snapshot, "CORE_CONTROLLER_FILES", scripts):
+                frozen = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
+            self.assertNotIn("scripts/execution_topology.py", frozen["files"])
+            self.assertEqual(frozen, controller_snapshot.validate_snapshot(frozen))
+
+    def test_inline_tdd_is_readable_from_core_and_host_eval_snapshots(self):
+        relative = "references/inline-tdd.md"
+        for extensions in ((), ("host-eval",)):
+            with self.subTest(extensions=extensions), tempfile.TemporaryDirectory() as directory:
+                frozen = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control", extensions)
+                path = Path(frozen["root"]) / relative
+                self.assertTrue(path.is_file(), "frozen simple tasks must be able to read Inline TDD")
+                self.assertIn(relative, frozen["files"])
+                result = subprocess.run([sys.executable, "-c",
+                    "from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text(), end='')",
+                    str(path)], capture_output=True, text=True, check=False)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual((ROOT / relative).read_text(), result.stdout)
+
+    def test_inline_tdd_remains_frozen_when_the_live_reference_changes(self):
+        relative = "references/inline-tdd.md"
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            live = source / relative
+            live.write_text("original inline guidance\n")
+            frozen = controller_snapshot.create_snapshot(source, Path(directory) / "control")
+            path = Path(frozen["root"]) / relative
+            self.assertTrue(path.is_file(), "the inline reference must be part of the snapshot")
+            live.write_text("changed live guidance\n")
+            self.assertEqual("original inline guidance\n", path.read_text())
+            self.assertEqual(frozen, controller_snapshot.validate_snapshot(frozen))
+            changed = controller_snapshot.create_snapshot(source, Path(directory) / "control")
+            self.assertNotEqual(frozen["protocol_fingerprint"], changed["protocol_fingerprint"])
+
+    def test_missing_inline_tdd_blocks_snapshot_creation_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            path = source / "references/inline-tdd.md"
+            path.write_text("inline guidance\n")
+            path.unlink()
+            control = Path(directory) / "control"
+            with self.assertRaisesRegex(ValueError, "references/inline-tdd.md"):
+                controller_snapshot.create_snapshot(source, control)
+            self.assertFalse(control.exists())
+
+    def test_protocol_23_without_inline_tdd_remains_readable(self):
+        resources = tuple(path for path in controller_snapshot.CORE_CONTROL_RESOURCE_FILES
+                          if path != "references/inline-tdd.md")
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(controller_snapshot, "PROTOCOL_VERSION", 23), \
+                    mock.patch.object(controller_snapshot, "CORE_CONTROL_RESOURCE_FILES", resources):
+                frozen = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control", ("host-eval",))
+            self.assertNotIn("references/inline-tdd.md", frozen["files"])
+            self.assertEqual(frozen, controller_snapshot.validate_snapshot(frozen))
+
     def test_protocol_21_and_22_snapshots_remain_readable_without_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             for version in (21,22):
@@ -164,6 +265,54 @@ class ControllerSnapshotTest(unittest.TestCase):
                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
             self.assertEqual(2, controller_snapshot.main())
         self.assertIn("run requires", stderr.getvalue())
+
+    def test_snapshot_validation_ignores_inherited_pythonpath(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            descriptor = controller_snapshot.create_snapshot(ROOT, root / "control")
+            marker = root / "inherited-module-ran"
+            (root / "subprocess.py").write_text(f"open({str(marker)!r}, 'w').close()\nraise SystemExit(0)\n")
+
+            with mock.patch.dict(os.environ, {"PYTHONPATH": str(root)}):
+                self.assertEqual(descriptor, controller_snapshot.validate_launch_snapshot(descriptor))
+
+            self.assertFalse(marker.exists())
+
+    def test_snapshot_validation_skips_site_startup_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            descriptor = controller_snapshot.create_snapshot(ROOT, root / "control")
+            python, marker = python_with_startup_marker(root)
+
+            with mock.patch.object(sys, "executable", str(python)):
+                self.assertEqual(descriptor, controller_snapshot.validate_launch_snapshot(descriptor))
+
+            self.assertFalse(marker.exists())
+
+    def test_snapshot_validation_refuses_unlisted_imports_before_executing(self):
+        for bytecode in (False, True):
+            with self.subTest(bytecode=bytecode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                descriptor = controller_snapshot.create_snapshot(ROOT, root / "control")
+                scripts = Path(descriptor["root"]) / "scripts"
+                marker = root / "unlisted-module-ran"
+                source = root / "payload.py"
+                source.write_text(f"open({str(marker)!r}, 'w').close()\nraise SystemExit(0)\n")
+                scripts.chmod(0o700)
+                if bytecode:
+                    injected = Path(importlib.util.cache_from_source(str(scripts / "provider_contract.py")))
+                    py_compile.compile(str(source), cfile=str(injected), doraise=True,
+                                       invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+                    injected.parent.chmod(0o500)
+                else:
+                    injected = scripts / "subprocess.py"
+                    shutil.copyfile(source, injected)
+                injected.chmod(0o400)
+                scripts.chmod(0o500)
+
+                with self.assertRaisesRegex(ValueError, "unlisted"):
+                    controller_snapshot.validate_launch_snapshot(descriptor)
+                self.assertFalse(marker.exists())
 
     def test_snapshot_error_boundaries_reject_tampering_and_unmanaged_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -340,6 +489,35 @@ class ControllerSnapshotTest(unittest.TestCase):
                     descriptor_path, "scripts/autonomy_service.py", []
                 )
 
+    def test_snapshot_recovery_dispatches_through_live_entry_points(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = controller_snapshot.create_snapshot(ROOT, root / "control", ("autonomy", "multimodel"))
+            descriptor = root / "snapshot.json"
+            descriptor.write_text(json.dumps(snapshot))
+            for name, arguments in (
+                ("delivery_state.py", ["doctor", "--workspace", "/workspace"]),
+                ("delivery_state.py", ["--workspace", "/workspace", "doctor"]),
+                ("autonomy_service.py", ["--state", "/managed/state.json"]),
+                ("autonomy_service.py", ["--serve", "--state-root", "/managed"]),
+            ):
+                with self.subTest(name=name):
+                    command = controller_snapshot.trusted_command(descriptor, f"scripts/{name}", arguments)
+                    self.assertEqual([sys.executable, str(ROOT / "scripts" / name), *arguments], command)
+
+            for flag in ("--frozen-runtime", "--frozen-runt"):
+                with self.subTest(flag=flag):
+                    arguments = ["--state", "/managed/state.json", flag]
+                    command = controller_snapshot.trusted_command(descriptor, "scripts/autonomy_service.py", arguments)
+                    self.assertEqual(
+                        [sys.executable, str(Path(snapshot["root"]) / "scripts/autonomy_service.py"), *arguments],
+                        command,
+                    )
+            arguments = ["path", "--task-key", "doctor"]
+            command = controller_snapshot.trusted_command(descriptor, "scripts/delivery_state.py", arguments)
+            self.assertEqual([sys.executable, str(Path(snapshot["root"]) / "scripts/delivery_state.py"), *arguments],
+                             command)
+
     def test_launch_uses_a_valid_snapshot_after_the_live_protocol_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             descriptor = controller_snapshot.create_snapshot(ROOT, Path(directory) / "control")
@@ -354,6 +532,77 @@ class ControllerSnapshotTest(unittest.TestCase):
 
             self.assertEqual(sys.executable, command[0])
             self.assertEqual(str(Path(descriptor["root"]) / "scripts/delivery_engine.py"), command[1])
+
+    def test_frozen_begin_starts_service_from_live_installation_and_keeps_hook_begin_frozen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "suite"
+            extensions = ("autonomy", "multimodel")
+            for relative in (*controller_snapshot.snapshot_files(ROOT, extensions), "VERSION"):
+                target = source / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / relative, target)
+            (source / "scripts/autonomy_begin.py").write_text(
+                "import subprocess, sys\n"
+                "from pathlib import Path\n"
+                "def main():\n"
+                "    print('frozen begin ' + sys.argv[1], flush=True)\n"
+                "    if sys.argv[1] == 'service':\n"
+                "        with subprocess.Popen([sys.executable, str(Path(__file__).with_name('autonomy_service.py')),\n"
+                "                               '--serve', '--help']) as process:\n"
+                "            return process.wait()\n"
+                "if __name__ == '__main__':\n"
+                "    raise SystemExit(main())\n"
+            )
+            (source / "scripts/autonomy_service.py").write_text("print('frozen background process')\n")
+            snapshot = controller_snapshot.create_snapshot(source, root / "control", extensions)
+            descriptor = root / "snapshot.json"
+            descriptor.write_text(json.dumps(snapshot))
+            for mode in ("service", "hook"):
+                with self.subTest(mode=mode):
+                    result = subprocess.run([
+                        sys.executable, str(MODULE_PATH), "run", "--descriptor", str(descriptor),
+                        "--script", "scripts/autonomy_begin.py", "--", mode,
+                    ], capture_output=True, text=True, check=False, timeout=10)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertTrue(result.stdout.startswith(f"frozen begin {mode}\n"))
+                    self.assertNotIn("frozen background process", result.stdout)
+                    if mode == "service":
+                        self.assertIn("--state-root", result.stdout)
+
+    def test_saved_recovery_replays_only_the_original_next_check_through_the_live_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = controller_snapshot.create_snapshot(ROOT, root / "control")
+            repo, task, run = "/repo/.git", "task", "run"
+            repo_hash, task_hash, run_hash = (controller_snapshot.hashlib.sha256(key.encode()).hexdigest()
+                                             for key in (repo, task, run))
+            descriptor = root / "state" / repo_hash / task_hash / f"{run_hash}.json"
+            descriptor.parent.mkdir(parents=True)
+            descriptor.write_text(json.dumps({"schema_version": 11, "repo_id": repo, "task_key": task, "run_id": run,
+                                              "controller": {"snapshot": snapshot}}))
+            args = ["--state", str(descriptor), "--run-id", "run", "--writer-id", "writer", "--revision", "2"]
+            old = ["/old/python", str(Path(snapshot["root"]) / "scripts/controller_snapshot.py"), "run",
+                   "--descriptor", str(descriptor), "--script", "scripts/delivery_next.py", "--", *args]
+            command = controller_snapshot.replay_next_command(old, lease_root=root / "leases")
+            self.assertEqual([sys.executable, str(Path(snapshot["root"]) / "scripts/delivery_next.py"),
+                              *args, "--lease-root", str((root / "leases").resolve())], command)
+            with_lease = [*old[:10], "--lease-root", str(root / "leases"), *old[10:]]
+            self.assertEqual(with_lease[8:], controller_snapshot.replay_next_command(with_lease, lease_root=root / "leases")[2:])
+            with self.assertRaisesRegex(ValueError, "different lease root"):
+                controller_snapshot.replay_next_command(with_lease, lease_root=root / "other")
+            for invalid in ([*old, "--format", "legacy"], [*old[:6], "scripts/delivery_state.py", *old[7:]],
+                            [*old[:9], str(root / "other.json"), *old[10:]]):
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "saved next_command"):
+                    controller_snapshot.replay_next_command(invalid)
+            descriptor.write_text(json.dumps(snapshot))
+            with self.assertRaisesRegex(ValueError, "managed state identity"):
+                controller_snapshot.replay_next_command(old)
+            payload = {"schema_version": 11, "repo_id": repo, "task_key": task, "run_id": run,
+                       "controller": {"snapshot": snapshot}}
+            with mock.patch.object(Path, "read_text", return_value=json.dumps(payload)), \
+                    self.assertRaisesRegex(ValueError, "must be the managed state path"):
+                controller_snapshot.managed_state_snapshot("/state.json")
 
     def test_launch_rejects_a_descriptor_that_does_not_fingerprint_its_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -515,6 +764,46 @@ class ControllerSnapshotTest(unittest.TestCase):
             self.assertEqual(sys.executable, command[0])
             self.assertEqual(str(Path(descriptor["root"]) / "scripts/delivery_engine.py"), command[1])
 
+    def test_frozen_host_eval_adds_proxy_only_to_the_legacy_app_server_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "suite"
+            evaluator = "skills/converge-eval/scripts/eval_contract.py"
+            for relative in (*controller_snapshot.snapshot_files(ROOT, ("host-eval",)), "VERSION"):
+                target = source / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / relative, target)
+            (source / "scripts/host_bridge.py").write_text(
+                "import subprocess\n"
+                "def launch(binary, *args):\n"
+                "    with subprocess.Popen([binary, *args], stdout=subprocess.PIPE, text=True) as process:\n"
+                "        return process.communicate()[0].strip()\n"
+            )
+            (source / evaluator).write_text(
+                "import json, subprocess, sys\n"
+                "from pathlib import Path\n"
+                "sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'scripts'))\n"
+                "from host_bridge import launch\n"
+                "args = ('app-server', '--stdio')\n"
+                "flag = ('-c', 'features.respect_system_proxy=true')\n"
+                "binary = sys.argv[1]\n"
+                "print(json.dumps([launch(binary, *args), launch(binary, *args, *flag),\n"
+                "                  launch(binary, 'app-server', 'generate-json-schema'),\n"
+                "                  subprocess.check_output([binary, *args], text=True).strip()]))\n"
+            )
+            descriptor = controller_snapshot.create_snapshot(source, root / "control", extensions=("host-eval",))
+            descriptor_path = root / "snapshot.json"
+            descriptor_path.write_text(json.dumps(descriptor))
+            result = subprocess.run([
+                sys.executable, str(MODULE_PATH), "run", "--descriptor", str(descriptor_path),
+                "--script", evaluator, "--", "/bin/echo",
+            ], capture_output=True, text=True, check=False)
+            self.assertEqual(0, result.returncode, result.stderr)
+            expected = "app-server --stdio -c features.respect_system_proxy=true"
+            self.assertEqual([expected, expected, "app-server generate-json-schema", "app-server --stdio"],
+                             json.loads(result.stdout))
+            self.assertEqual(descriptor, controller_snapshot.validate_launch_snapshot(descriptor))
+
     def test_writable_workspace_cannot_masquerade_as_a_controller_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
@@ -559,7 +848,8 @@ class ControllerSnapshotTest(unittest.TestCase):
 
     def source(self, directory):
         source = Path(directory) / "suite"
-        for relative in controller_snapshot.EXTENDED_CONTROLLER_FILES:
+        for relative in set((*controller_snapshot.CORE_CONTROLLER_FILES, *controller_snapshot.EXTENDED_CONTROLLER_FILES,
+                             *controller_snapshot.AUTONOMY_CONTROLLER_FILES)):
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{relative}\n", encoding="utf-8")
@@ -567,7 +857,8 @@ class ControllerSnapshotTest(unittest.TestCase):
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n", encoding="utf-8")
-        for relative in controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES:
+        for relative in set((*controller_snapshot.CORE_CONTROL_RESOURCE_FILES,
+                             *controller_snapshot.EXTENDED_CONTROL_RESOURCE_FILES)):
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{relative}\n", encoding="utf-8")

@@ -23,6 +23,33 @@ def pit_output(generated=2, killed=2, outcome='SURVIVED'):
 
 
 class EvidenceContractTest(unittest.TestCase):
+    def test_python_import_startup_failure_is_tooling_but_test_errors_are_business_failures(self):
+        from plan_execution import is_actual_verification_failure, require_tool_failure
+        executable = self.workspace / 'tools with spaces' / 'python3'
+        executable.parent.mkdir()
+        executable.symlink_to(sys.executable)
+        for argv in ([sys.executable, '-c', 'import converge_missing_auditor_dependency'],
+                     [sys.executable, '-m', 'converge_missing_auditor_dependency'],
+                     [sys.executable, '-c', 'from os import converge_missing_auditor_dependency'],
+                     [str(executable), '-m', 'converge_missing_auditor_dependency']):
+            with self.subTest(argv=argv):
+                receipt = evidence_contract.run_evidence(self.workspace, self.baseline, argv)
+                self.assertEqual(1, receipt['exit_code'])
+                self.assertEqual('unavailable', receipt.get('tooling_failure'))
+                evidence_contract.validate_observed_evidence_receipt(receipt)
+                require_tool_failure('native acceptance tool is unavailable', receipt)
+                self.assertFalse(is_actual_verification_failure(receipt))
+        (self.workspace / 'test_import.py').write_text('import converge_missing_application_dependency\n')
+        receipt = evidence_contract.run_evidence(self.workspace, self.baseline,
+            [sys.executable, '-m', 'unittest', 'test_import'])
+        self.assertGreater(receipt['test_check']['errors'], 0)
+        self.assertNotIn('tooling_failure', receipt)
+        self.assertTrue(is_actual_verification_failure(receipt))
+        for code in ('assert False, "business defect"', 'raise SystemExit(127)'):
+            receipt = evidence_contract.run_evidence(self.workspace, self.baseline, [sys.executable, '-c', code])
+            self.assertNotIn('tooling_failure', receipt)
+            self.assertTrue(is_actual_verification_failure(receipt))
+
     def test_real_mutmut_campaigns_are_fresh_scoped_and_fail_closed(self):
         import importlib.util
         if importlib.util.find_spec('mutmut') is None:
@@ -163,6 +190,25 @@ class EvidenceContractTest(unittest.TestCase):
                 expected = dict(passed=0, failed=0, errors=0, skipped=0, xfailed=0, xpassed=0)
                 expected.update(outcomes)
                 self.assertEqual(expected, evidence_contract.test_execution_result(argv, output.encode(), b''))
+
+    def test_real_failing_subtests_remain_failure_evidence_without_inventing_passes(self):
+        program = ('import unittest\n'
+                   'class Parent(unittest.TestCase):\n'
+                   ' def test_values(self):\n'
+                   '  for value in range(3):\n'
+                   '   with self.subTest(value=value): self.assertEqual(value, -1)\n'
+                   'unittest.main()\n')
+        result = subprocess.run([sys.executable, '-c', program], capture_output=True, timeout=10)
+        self.assertEqual(1, result.returncode)
+        observed = evidence_contract.test_execution_result(
+            [sys.executable, '-m', 'unittest'], result.stdout, result.stderr)
+        self.assertIsNotNone(observed)
+        self.assertEqual(3, observed['failed'])
+        self.assertEqual(0, observed['passed'])
+        for output in (b'Ran 1 test in 0.01s\nFAILED (failures=3)',
+                       b'Ran 0 tests in 0.01s\nFAILED (failures=3)'):
+            self.assertIsNone(evidence_contract.test_execution_result(
+                [sys.executable, '-m', 'unittest'], output, b''))
 
     def test_legacy_or_inconsistent_outcomes_cannot_be_resealed_as_evidence(self):
         tool = self.workspace / 'pytest'

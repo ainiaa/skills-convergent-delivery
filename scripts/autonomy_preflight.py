@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from autonomy_hook_config import CODEX_PYTHON_FLAGS
+
 
 MIN_CLAUDE_STOP_HOOK_VERSION = (2, 1, 246)
 
@@ -82,7 +84,8 @@ def inspect(host, source, verify_registration=False, config=None, expect_stop=No
     if adapter.is_file():
         try:
             result = subprocess.run(
-                [sys.executable, str(adapter), "--host", host], input="{}", text=True,
+                [sys.executable, *(CODEX_PYTHON_FLAGS if host == "codex" else ()), str(adapter), "--host", host],
+                input="{}", text=True,
                 capture_output=True, check=False, timeout=10,
             )
             adapter_works = result.returncode == 0 and json.loads(result.stdout) == {"decision": "approve"}

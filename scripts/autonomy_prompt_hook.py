@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Arm the bounded Converge repair gate after an explicit repair request."""
+"""Provide Converge routing context and handle explicit repair shortcuts."""
 
 import argparse
 import json
@@ -124,7 +124,7 @@ def arm(workspace, session_id=None):
     active = active_state(requested)
     if active is not None:
         owner = active[1].get("execution_control", {}).get("autonomy", {}).get("runtime", {}).get("session_id")
-        if owner is not None and owner != session_id:
+        if owner != session_id:
             raise ValueError("another conversation owns the active Converge run")
         return None
     workspace = git_root(requested)
@@ -138,7 +138,7 @@ def arm(workspace, session_id=None):
         active = active_state(workspace)
         if active is not None:
             owner = active[1].get("execution_control", {}).get("autonomy", {}).get("runtime", {}).get("session_id")
-            if owner is not None and owner != session_id:
+            if owner != session_id:
                 raise ValueError("another conversation owns the active Converge run")
             return None
     if blocked_without_progress(workspace, session_id):
@@ -173,6 +173,20 @@ def main():
         workspace = payload.get("cwd") if isinstance(payload, dict) else None
         explicit = matches_continue_repair(payload)
         recheck = matches_recheck(payload)
+        prompt = payload.get("prompt") if isinstance(payload, dict) else None
+        if isinstance(prompt, str) and re.search(r"(?<![a-z0-9_-])\$?converge(?![a-z0-9_-])", prompt, re.I):
+            session_id = payload.get("session_id")
+            routing = {
+                "workspace": workspace if isinstance(workspace, str) and workspace.strip() else None,
+                "session_id": session_id if isinstance(session_id, str) and session_id.strip() else None,
+                "skill_dir": str(Path(__file__).resolve().parents[1]),
+            }
+            message = ("Converge routing context: " + json.dumps(routing, ensure_ascii=False) +
+                       ". Read references/activation.md under skill_dir. "
+                       "Use the full user request to select an authorized, supported workflow. "
+                       "Report managed admission unavailable if that workflow requires missing host identity.")
+            print(json.dumps(hook_output(message), sort_keys=True))
+            return 0
         if not isinstance(workspace, str) or not workspace or not (explicit or recheck):
             print(json.dumps({"continue": True}, sort_keys=True))
             return 0
@@ -183,7 +197,7 @@ def main():
             print(json.dumps({"continue": True}, sort_keys=True))
             return 0
         session_id = payload.get("session_id")
-        if session_id is not None and (not isinstance(session_id, str) or not session_id):
+        if session_id is not None and (not isinstance(session_id, str) or not session_id.strip()):
             raise ValueError("hook session id is invalid")
         if recheck:
             previous = completed_contract(git_root(workspace), session_id)

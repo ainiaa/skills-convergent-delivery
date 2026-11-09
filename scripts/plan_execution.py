@@ -325,7 +325,7 @@ def require_tool_recovery(blocker, evidence, source):
 
 
 def require_tool_failure(reason, evidence):
-    """Only the evidence executor can classify timeout or missing executable."""
+    """Only the evidence executor can classify tool unavailability or timeout."""
     from evidence_contract import validate_observed_evidence_receipt
     validate_observed_evidence_receipt(evidence)
     expected = dict(zip(ACCEPTANCE_TOOL_FAILURES, ('timed_out', 'unavailable')))
@@ -396,11 +396,13 @@ def main():
     parser.add_argument("--implementation-authorized", action="store_true")
     observation = parser.add_mutually_exclusive_group()
     observation.add_argument("--validation-error")
+    observation.add_argument("--validation-json")
     observation.add_argument("--native-preflight-workspace")
     arguments = parser.parse_args()
     if arguments.input is not None:
         if arguments.input != "-" or not arguments.workspace or arguments.task_id \
-                or arguments.validation_error or arguments.native_preflight_workspace:
+                or arguments.validation_error or arguments.validation_json is not None \
+                or arguments.native_preflight_workspace:
             parser.error("plan selection requires --input - and --workspace, without task preflight arguments")
         try:
             output = next_plan_action(json.load(sys.stdin), arguments.workspace,
@@ -412,10 +414,15 @@ def main():
         return
     if not arguments.task_id or arguments.workspace or arguments.global_block:
         parser.error("single task selection requires --task-id")
-    validation = (
-        classify_validation_failure(arguments.validation_error)
-        if arguments.validation_error is not None else {"status": "valid"}
-    )
+    try:
+        validation = (
+            _validation(json.loads(arguments.validation_json)) if arguments.validation_json is not None else
+            classify_validation_failure(arguments.validation_error)
+            if arguments.validation_error is not None else {"status": "valid"}
+        )
+    except (ValueError, TypeError) as error:
+        print(json.dumps({"status": "blocked", "reason": str(error)}, ensure_ascii=False, sort_keys=True))
+        return
     if arguments.native_preflight_workspace is not None:
         from tdd_impact_guard import preflight
 

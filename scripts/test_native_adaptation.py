@@ -71,8 +71,8 @@ class DirtyBaselineTest(unittest.TestCase):
 
     def test_new_risky_path_inside_wide_scope_still_requires_declared_risk(self):
         state = self.state(('.',))
-        self.assertEqual([], state['execution_control']['routing']['profile']['risk_flags'])
-        (self.root / 'permissions.txt').write_text('new authorization behavior\n')
+        self.assertEqual(['permission', 'security'], state['execution_control']['routing']['profile']['risk_flags'])
+        (self.root / 'payment.txt').write_text('new payment behavior\n')
         with self.assertRaisesRegex(ValueError, 'source risk exceeds'):
             validate_state(self.refresh(state), SimpleNamespace())
 
@@ -416,3 +416,31 @@ class NativeCoveragePolicyTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GroupedCargoCoverageLauncherTest(unittest.TestCase):
+    def test_only_audited_launcher_enforces_the_declared_project_threshold(self):
+        from native_tdd_policy import resolve
+        fixture = Path(__file__).parent / 'fixtures/yam-native-coverage-v1.txt'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            standards = root / 'docs/00_standards';standards.mkdir(parents=True)
+            scripts = root / 'scripts';scripts.mkdir()
+            launcher = scripts / 'native-coverage.py';launcher.write_bytes(fixture.read_bytes())
+            commands = standards / 'test-commands.yml';target = standards / 'quality-targets.yml'
+            commands.write_text('coverage: python3 scripts/native-coverage.py\n');target.write_text('coverage: 85\n')
+            result = resolve(root)
+            self.assertEqual('ready', result['status'])
+            self.assertEqual(['python3','scripts/native-coverage.py'], result['argv'])
+            self.assertEqual(85, result['threshold'])
+            target.write_text('coverage: 90\n')
+            self.assertEqual('uncovered', resolve(root)['status'])
+            target.write_text('coverage: 85\n')
+            for suffix in [' --prepare-cache target', ' --fail-under-lines=85', ' --help']:
+                commands.write_text('coverage: python3 scripts/native-coverage.py'+suffix+'\n')
+                self.assertEqual('uncovered', resolve(root)['status'])
+            commands.write_text('coverage: python3 scripts/native-coverage.py\n')
+            launcher.write_bytes(fixture.read_bytes().replace(b'--fail-under-lines=85',b'--fail-under-lines=1'))
+            self.assertEqual('uncovered', resolve(root)['status'])
+            launcher.write_text("print('TOTAL 100%')\n")
+            self.assertEqual('uncovered', resolve(root)['status'])

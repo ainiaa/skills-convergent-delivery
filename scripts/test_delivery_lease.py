@@ -279,11 +279,12 @@ class DeliveryLeaseTest(unittest.TestCase):
                 original["lease_expires_at"] = "2000-01-01T00:00:00Z"
                 path.write_text(json.dumps(original))
                 wanted = delivery_lease.make_record("workspace", "/repo", "/repo/a", "task", replacement, "writer-1", 7200)
-                status, _ = delivery_lease.acquire_one(path, wanted, takeover=False)
+                status, _, _ = delivery_lease.acquire_one(path, wanted, takeover=False)
                 self.assertEqual("expired", status)
                 self.assertEqual(original, json.loads(path.read_text()))
-                status, saved = delivery_lease.acquire_one(path, wanted, takeover=True)
+                status, saved, replaced = delivery_lease.acquire_one(path, wanted, takeover=True)
                 self.assertEqual("taken_over", status)
+                self.assertEqual(original, replaced)
                 self.assertEqual(saved, json.loads(path.read_text()))
                 self.assertFalse(delivery_lease.is_expired(saved))
 
@@ -318,7 +319,7 @@ class DeliveryLeaseTest(unittest.TestCase):
 
     def run_lease(
         self, root, command, *, workspace, task_key, run_id=None, writer_id=None,
-        from_workspace=None, state_root=None
+        from_workspace=None, state_root=None, takeover=False,
     ):
         arguments = [
             sys.executable,
@@ -341,6 +342,8 @@ class DeliveryLeaseTest(unittest.TestCase):
             arguments.extend(["--from-workspace", from_workspace])
         if state_root:
             arguments.extend(["--state-root", str(state_root)])
+        if takeover:
+            arguments.append("--takeover")
         return subprocess.run(arguments, text=True, capture_output=True, check=False)
 
     def test_same_workspace_allows_only_one_writer(self):
@@ -352,7 +355,9 @@ class DeliveryLeaseTest(unittest.TestCase):
 
             second = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory")
             self.assertEqual(2, second.returncode)
-            self.assertEqual("blocked_workspace", json.loads(second.stdout)["status"])
+            blocked = json.loads(second.stdout)
+            self.assertEqual("blocked_workspace", blocked["status"])
+            self.assertEqual("ask_user", blocked["recommended_action"])
 
             released = self.run_lease(
                 root,
@@ -366,6 +371,286 @@ class DeliveryLeaseTest(unittest.TestCase):
 
             retry = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory")
             self.assertEqual(0, retry.returncode, retry.stderr)
+
+    def test_expired_terminal_conflicts_reclaim_leases_and_keep_old_state(self):
+        for workspace, task_key, kind in (
+            ("/repo/a", "inventory", "workspace"),
+            ("/repo/b", "payment", "task"),
+        ):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root, state_root, _, state_path = self.expired_run(directory, "blocked")
+                before = state_path.read_bytes()
+
+                result = self.run_lease(root, "acquire", workspace=workspace, task_key=task_key, state_root=state_root)
+
+                self.assertEqual(0, result.returncode, result.stdout)
+                acquired = json.loads(result.stdout)
+                leases = [json.loads(path.read_text()) for path in root.rglob("*.json")]
+                self.assertEqual(2, len(leases))
+                self.assertEqual({acquired["run_id"]}, {record["run_id"] for record in leases})
+                self.assertEqual(before, state_path.read_bytes())
+
+    def test_expired_completed_run_reclaims_without_rechecking_the_old_workspace(self):
+        from delivery_next import validate_state
+        from test_delivery_next import state as completed_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_root, _, state_path = self.expired_run(directory, "complete")
+            previous = json.loads(state_path.read_text())
+            formal = completed_state(status="complete", current_stage="verify-final")
+            self.assertEqual("complete", validate_state(formal, SimpleNamespace()))
+            formal.update({field: previous[field] for field in (
+                "repo_id", "workspace", "task_key", "run_id", "writer_id",
+            )})
+            state_path.write_text(json.dumps(formal))
+            before = state_path.read_bytes()
+
+            result = self.run_lease(root, "acquire", workspace="/repo/b", task_key="payment", state_root=state_root)
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertEqual(before, state_path.read_bytes())
+
+    def test_reclaims_a_single_expired_task_lease_in_the_same_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_root, paths, state_path = self.expired_run(directory, "blocked")
+            paths["workspace"].unlink()
+            before = state_path.read_bytes()
+
+            result = self.run_lease(root, "acquire", workspace="/repo/a", task_key="payment", state_root=state_root)
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            run_id = json.loads(result.stdout)["run_id"]
+            self.assertEqual({run_id}, {json.loads(path.read_text())["run_id"] for path in paths.values()})
+            self.assertEqual(before, state_path.read_bytes())
+
+    def test_reclaims_a_legacy_expired_workspace_lease_in_the_current_namespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_root, paths, state_path = self.expired_run(directory, "blocked")
+            legacy = paths["task"].parent.parent / "workspaces" / paths["workspace"].name
+            legacy.parent.mkdir()
+            paths["workspace"].rename(legacy)
+            before = state_path.read_bytes()
+
+            result = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory", state_root=state_root)
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertFalse(legacy.exists())
+            self.assertFalse(paths["task"].exists())
+            self.assertEqual(json.loads(result.stdout)["run_id"], json.loads(paths["workspace"].read_text())["run_id"])
+            self.assertEqual(before, state_path.read_bytes())
+
+    def test_reclaims_an_expired_task_without_touching_the_reused_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_root, paths, state_path = self.expired_run(directory, "blocked")
+            paths["workspace"].unlink()
+            other = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory", state_root=state_root)
+            self.assertEqual(0, other.returncode, other.stdout)
+            before = paths["workspace"].read_bytes(), state_path.read_bytes()
+
+            result = self.run_lease(root, "acquire", workspace="/repo/b", task_key="payment", state_root=state_root)
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertEqual(json.loads(result.stdout)["run_id"], json.loads(paths["task"].read_text())["run_id"])
+            self.assertEqual(before, (paths["workspace"].read_bytes(), state_path.read_bytes()))
+
+    def test_malformed_task_lease_does_not_leave_a_new_workspace_lease(self):
+        for content in ("[]", "{", '{"lease_expires_at": null}'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                root, state_root, paths, _ = self.expired_run(directory, "blocked")
+                paths["workspace"].unlink()
+                paths["task"].write_text(content)
+
+                result = self.run_lease(root, "acquire", workspace="/repo/a", task_key="payment", state_root=state_root)
+
+                self.assertFalse(paths["workspace"].exists())
+                self.assertEqual(1, result.returncode)
+                self.assertEqual("error", json.loads(result.stdout)["status"])
+                self.assertEqual(content, paths["task"].read_text())
+
+    def test_failed_task_write_rolls_back_both_new_leases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, workspace, task_key = "/repo/common.git", "/repo/a", "payment"
+            arguments = SimpleNamespace(root=root, task_key=task_key, run_id="run-1", writer_id="writer-1",
+                                        ttl_seconds=600, takeover=False)
+            paths = delivery_lease.lease_paths(root, repo, workspace, task_key)
+
+            with patch.object(delivery_lease.os, "fsync", side_effect=[None, OSError("task sync failed")]):
+                with self.assertRaisesRegex(OSError, "task sync failed"):
+                    delivery_lease.acquire(arguments, paths, repo, workspace)
+
+            self.assertFalse(paths["workspace"].exists())
+            self.assertFalse(paths["task"].exists())
+            retry = self.run_lease(root, "acquire", workspace=workspace, task_key=task_key)
+            self.assertEqual(0, retry.returncode, retry.stdout)
+
+    def test_failed_explicit_takeover_restores_the_previous_workspace_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, state_root, paths, _ = self.expired_run(directory, "blocked")
+            other = self.run_lease(root, "acquire", workspace="/repo/b", task_key="inventory", state_root=state_root)
+            self.assertEqual(0, other.returncode, other.stdout)
+            before = {path: json.loads(path.read_text()) for path in root.rglob("*.json")}
+
+            blocked = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory",
+                                     state_root=state_root, takeover=True)
+
+            self.assertEqual(2, blocked.returncode, blocked.stdout)
+            self.assertEqual("blocked_task", json.loads(blocked.stdout)["status"])
+            self.assertEqual(before, {path: json.loads(path.read_text()) for path in root.rglob("*.json")})
+
+            acquired = self.run_lease(root, "acquire", workspace="/repo/a", task_key="payment",
+                                      state_root=state_root, takeover=True)
+            self.assertEqual(0, acquired.returncode, acquired.stdout)
+            result = json.loads(acquired.stdout)
+            for path in paths.values():
+                record = json.loads(path.read_text())
+                self.assertEqual(result["run_id"], record["run_id"])
+                self.assertFalse(delivery_lease.is_expired(record))
+            self.assertGreater(delivery_lease.parse_timestamp(result["lease_expires_at"]), delivery_lease.now())
+
+    def test_failed_acquire_and_same_identity_retry_keep_a_consistent_lease_pair(self):
+        for rollback_first in (False, True):
+            with self.subTest(rollback_first=rollback_first), tempfile.TemporaryDirectory() as directory, \
+                    concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                root = Path(directory)
+                repo, workspace, task_key = "/repo/common.git", "/repo/a", "payment"
+                arguments = SimpleNamespace(root=root, task_key=task_key, run_id="run-1", writer_id="writer-1",
+                                            ttl_seconds=600, takeover=False)
+                paths = delivery_lease.lease_paths(root, repo, workspace, task_key)
+                rolling_back, allow_rollback = threading.Event(), threading.Event()
+                retry_at_task, allow_task = threading.Event(), threading.Event()
+                attempt = threading.local()
+                fsync = delivery_lease.os.fsync
+                acquire_one = delivery_lease.acquire_one
+                remove_if_owned = delivery_lease.remove_if_owned
+
+                def sync(descriptor):
+                    if getattr(attempt, "fail", False) and paths["task"].exists():
+                        raise OSError("task sync failed")
+                    return fsync(descriptor)
+
+                def pause_rollback(*args, **kwargs):
+                    rolling_back.set()
+                    self.assertTrue(allow_rollback.wait(5))
+                    return remove_if_owned(*args, **kwargs)
+
+                def pause_task(path, *args, **kwargs):
+                    if rollback_first and path == paths["task"] and not getattr(attempt, "fail", False):
+                        retry_at_task.set()
+                        self.assertTrue(allow_task.wait(5))
+                    return acquire_one(path, *args, **kwargs)
+
+                def acquire_failing_attempt():
+                    attempt.fail = True
+                    with self.assertRaisesRegex(OSError, "task sync failed"):
+                        delivery_lease.acquire(arguments, paths, repo, workspace)
+
+                with patch.object(delivery_lease.os, "fsync", side_effect=sync), \
+                        patch.object(delivery_lease, "acquire_one", side_effect=pause_task), \
+                        patch.object(delivery_lease, "remove_if_owned", side_effect=pause_rollback), \
+                        patch.object(delivery_lease, "payload"):
+                    failed = pool.submit(acquire_failing_attempt)
+                    self.assertTrue(rolling_back.wait(5))
+                    retry = pool.submit(delivery_lease.acquire, arguments, paths, repo, workspace)
+                    if rollback_first:
+                        self.assertTrue(retry_at_task.wait(5))
+                        allow_rollback.set()
+                        failed.result(timeout=5)
+                        allow_task.set()
+                        self.assertEqual(2, retry.result(timeout=5))
+                    else:
+                        self.assertEqual(0, retry.result(timeout=5))
+                        allow_rollback.set()
+                        failed.result(timeout=5)
+
+                self.assertEqual({not rollback_first}, {path.exists() for path in paths.values()})
+
+    def test_expired_conflicts_without_cleanup_proof_require_a_user_decision(self):
+        for case in ("missing-state", "active", "missing-result", "renewed-task", "malformed-status", "truncated-state",
+                     "missing-revision", "invalid-schema", "empty-ledger", "malformed-controller", "premature-complete",
+                     "invalid-completion-source", "unverified-completion"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                status = "active" if case == "active" else "blocked"
+                root, state_root, paths, state_path = self.expired_run(directory, status)
+                if case == "missing-state":
+                    state_path.unlink()
+                if case == "missing-result":
+                    state = json.loads(state_path.read_text())
+                    state["ledger"] = {"runner_launches": [freeze_launch(profile(), "review", {})]}
+                    state_path.write_text(json.dumps(state))
+                if case == "malformed-status":
+                    state = json.loads(state_path.read_text())
+                    state["status"] = []
+                    state_path.write_text(json.dumps(state))
+                if case in {"truncated-state", "missing-revision", "invalid-schema", "empty-ledger",
+                            "malformed-controller", "premature-complete", "invalid-completion-source",
+                            "unverified-completion"}:
+                    state = json.loads(state_path.read_text())
+                    if case == "truncated-state":
+                        state = {key: state[key] for key in (
+                            "repo_id", "workspace", "task_key", "run_id", "writer_id", "status", "ledger", "workers",
+                        )}
+                        state["ledger"] = {}
+                    elif case == "missing-revision":
+                        state.pop("revision", None)
+                    elif case == "invalid-schema":
+                        state["schema_version"] = 999
+                    elif case == "empty-ledger":
+                        state["ledger"] = {}
+                    elif case == "malformed-controller":
+                        state["controller"] = {}
+                    else:
+                        from test_delivery_next import SOURCE
+
+                        state["status"] = "complete"
+                        state.pop("blocked_code")
+                        state.pop("blocked_reason")
+                        if case != "premature-complete":
+                            state["current_stage"] = "verify-final"
+                            state["baseline"]["commit"] = SOURCE["baseline_commit"]
+                            state["source_fingerprint"] = SOURCE["source_fingerprint"]
+                            state["source_receipt"] = {} if case == "invalid-completion-source" else SOURCE
+                            if case == "unverified-completion":
+                                state["ledger"]["acceptance"][0].update(result="unknown", freshness="unavailable")
+                    state_path.write_text(json.dumps(state))
+                if case == "renewed-task":
+                    record = json.loads(paths["task"].read_text())
+                    record["lease_expires_at"] = "2999-01-01T00:00:00Z"
+                    paths["task"].write_text(json.dumps(record))
+                before = {path: path.read_bytes() for path in Path(directory).rglob("*.json")}
+
+                result = self.run_lease(root, "acquire", workspace="/repo/a", task_key="inventory", state_root=state_root)
+
+                self.assertEqual(2, result.returncode, result.stdout)
+                self.assertEqual(before, {path: path.read_bytes() for path in Path(directory).rglob("*.json")})
+                blocked = json.loads(result.stdout)
+                self.assertEqual("blocked_workspace_expired", blocked["status"])
+                self.assertEqual("old-run", blocked["holder"]["run_id"])
+                self.assertEqual("ask_user", blocked["recommended_action"])
+
+    def expired_run(self, directory, status):
+        from test_delivery_state import state as managed_state
+
+        root, state_root = Path(directory) / "leases", Path(directory) / "state"
+        repo, workspace, task_key = "/repo/common.git", "/repo/a", "payment"
+        first = self.run_lease(root, "acquire", workspace=workspace, task_key=task_key,
+                               run_id="old-run", writer_id="old-writer", state_root=state_root)
+        self.assertEqual(0, first.returncode, first.stdout)
+        paths = delivery_lease.lease_paths(root, repo, workspace, task_key)
+        for path in paths.values():
+            record = json.loads(path.read_text())
+            record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+            path.write_text(json.dumps(record))
+        state_path = state_root / delivery_lease.digest(repo) / delivery_lease.digest(task_key) / f"{delivery_lease.digest('old-run')}.json"
+        state_path.parent.mkdir(parents=True)
+        formal = managed_state() | {
+            "repo_id": repo, "workspace": workspace, "task_key": task_key,
+            "run_id": "old-run", "writer_id": "old-writer", "status": status,
+        }
+        if status == "blocked":
+            formal.update(blocked_code="no_progress", blocked_reason="fixture stopped")
+        state_path.write_text(json.dumps(formal))
+        return root, state_root, paths, state_path
 
     def test_git_subdirectory_and_root_share_one_writer_lease(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -499,7 +784,9 @@ class DeliveryLeaseTest(unittest.TestCase):
 
             second = self.run_lease(root, "acquire", workspace="/repo/b", task_key="payment")
             self.assertEqual(2, second.returncode)
-            self.assertEqual("blocked_task", json.loads(second.stdout)["status"])
+            blocked = json.loads(second.stdout)
+            self.assertEqual("blocked_task", blocked["status"])
+            self.assertEqual("ask_user", blocked["recommended_action"])
 
     def test_distinct_tasks_in_distinct_worktrees_can_run_in_parallel(self):
         with tempfile.TemporaryDirectory() as directory:

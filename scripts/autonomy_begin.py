@@ -10,13 +10,13 @@ import sys
 import uuid
 from pathlib import Path
 
-from controller_snapshot import create_snapshot
+from controller_snapshot import create_snapshot, hook_control_command
 from delivery_engine import controller_identity, selection
 from delivery_state import project_lease_root, project_state_root, state_path
 from evidence_contract import workspace_source
-from autonomy_arm import arm
+from autonomy_arm import arm, validate_hook_session
 from provider_contract import canonical_fingerprint
-from task_profile import classify, freeze_routing, infer_path_risks
+from task_profile import _canonical_paths, classify, freeze_routing, infer_path_risks
 
 def _git(workspace, *arguments):
     result = subprocess.run(["git", "-C", str(workspace), *arguments], text=True,
@@ -41,13 +41,13 @@ def _is_linked_worktree(workspace):
 
 def _release_lease(arguments, state):
     result = subprocess.run(
-        [
-            sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "release",
+        hook_control_command(
+            "delivery_lease.py", "release",
             "--root", arguments.lease_root, "--state-root", arguments.state_root,
             "--repo", state["repo_id"], "--workspace", state["workspace"],
             "--task-key", state["task_key"], "--run-id", state["run_id"],
             "--writer-id", state["writer_id"],
-        ],
+        ),
         text=True, capture_output=True, check=False,
     )
     if result.returncode:
@@ -66,13 +66,13 @@ def _terminalize_service_start_failure(arguments, state, reason):
     candidate["revision"] += 1
     candidate.update(status="blocked", blocked_code="no_progress", blocked_reason=reason)
     write = subprocess.run(
-        [
-            sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
+        hook_control_command(
+            "delivery_state.py", "write", "--input", "-",
             "--lease-root", arguments.lease_root, "--state-root", arguments.state_root,
             "--repo-id", state["repo_id"], "--task-key", state["task_key"],
             "--run-id", state["run_id"], "--writer-id", state["writer_id"],
             "--expected-revision", str(state["revision"]),
-        ],
+        ),
         input=json.dumps(candidate), text=True, capture_output=True, check=False,
     )
     if write.returncode:
@@ -124,7 +124,11 @@ def initial_state(workspace, requirements, acceptance, scope, run_id, writer_id,
     workspace = Path(workspace).expanduser().resolve()
     baseline = _git(workspace, "rev-parse", "HEAD")
     source = workspace_source(workspace, baseline)
-    profile = _task_profile(task_profile, scope, [], risk_flags)
+    scope = _canonical_paths(scope)
+    owned_changes = [path for path in source["changed_paths"] if any(
+        owner == "." or path == owner or path.startswith(owner + "/") for owner in scope
+    )]
+    profile = _task_profile(task_profile, scope, owned_changes, risk_flags)
     task_key = _task_key(workspace, baseline, scope, acceptance, requirements)
     routing = freeze_routing(
         profile, scope, request_text=request_text, full_closure_required=full_closure_required,
@@ -190,6 +194,8 @@ def run(arguments):
         raise ValueError("autonomy begin requires an acceptance criterion")
     if not scope:
         raise ValueError("autonomy begin requires a scope")
+    host_session_id = getattr(arguments, "host_session_id", None)
+    validate_hook_session(arguments.runtime, host_session_id)
     if getattr(arguments, "state_root", None) is None:
         arguments.state_root = str(project_state_root(workspace))
     if getattr(arguments, "lease_root", None) is None:
@@ -221,22 +227,27 @@ def run(arguments):
     state = arm(
         state, requirements, acceptance, arguments.runtime, arguments.service_runner,
         verification_argv, audit_argv, arguments.audit_findings_exit_code,
-        getattr(arguments, "host_session_id", None),
+        host_session_id,
     )
     lease = subprocess.run(
-        [sys.executable, str(Path(__file__).with_name("delivery_lease.py")), "acquire",
-         "--root", arguments.lease_root, "--repo", state["repo_id"], "--workspace", state["workspace"],
-         "--task-key", state["task_key"], "--run-id", run_id, "--writer-id", writer_id],
+        hook_control_command(
+            "delivery_lease.py", "acquire",
+            "--root", arguments.lease_root, "--state-root", arguments.state_root,
+            "--repo", state["repo_id"], "--workspace", state["workspace"],
+            "--task-key", state["task_key"], "--run-id", run_id, "--writer-id", writer_id,
+        ),
         text=True, capture_output=True, check=False,
     )
     if lease.returncode:
         raise ValueError(lease.stdout.strip() or lease.stderr.strip() or "could not acquire autonomy lease")
     try:
         write = subprocess.run(
-            [sys.executable, str(Path(__file__).with_name("delivery_state.py")), "write", "--input", "-",
-             "--lease-root", arguments.lease_root, "--state-root", arguments.state_root,
-             "--repo-id", state["repo_id"], "--task-key", state["task_key"], "--run-id", run_id,
-             "--writer-id", writer_id, "--expected-revision", "-1"],
+            hook_control_command(
+                "delivery_state.py", "write", "--input", "-",
+                "--lease-root", arguments.lease_root, "--state-root", arguments.state_root,
+                "--repo-id", state["repo_id"], "--task-key", state["task_key"], "--run-id", run_id,
+                "--writer-id", writer_id, "--expected-revision", "-1",
+            ),
             input=json.dumps(state), text=True, capture_output=True, check=False,
         )
         if write.returncode:
